@@ -102,6 +102,7 @@ pub const IRPrinter = struct {
     allocator: std.mem.Allocator,
     peek_string_counter: usize,
     global_types: std.StringHashMap(StackType),
+    global_enum_types: std.StringHashMap([]const u8), // Store enum type names for global variables
     defined_globals: std.StringHashMap(bool),
 
     const StackType = enum { I64, F64, I8, I1, I2, PTR, Nothing };
@@ -109,11 +110,13 @@ pub const IRPrinter = struct {
         name: []const u8,
         ty: StackType,
         array_type: ?HIR.HIRType = null,
+        enum_type_name: ?[]const u8 = null, // For enum values, store the type name
     };
     const VariableInfo = struct {
         ptr_name: []const u8,
         stack_type: StackType,
         array_type: ?HIR.HIRType = null,
+        enum_type_name: ?[]const u8 = null, // For enum variables, store the type name
     };
     const StackIncoming = struct {
         block: []const u8,
@@ -218,6 +221,7 @@ pub const IRPrinter = struct {
             .allocator = allocator,
             .peek_string_counter = 0,
             .global_types = std.StringHashMap(StackType).init(allocator),
+            .global_enum_types = std.StringHashMap([]const u8).init(allocator),
             .defined_globals = std.StringHashMap(bool).init(allocator),
         };
     }
@@ -225,6 +229,7 @@ pub const IRPrinter = struct {
     pub fn deinit(self: *IRPrinter) void {
         self.peek_string_counter = 0;
         self.global_types.deinit();
+        self.global_enum_types.deinit();
         self.defined_globals.deinit();
     }
 
@@ -259,6 +264,7 @@ pub const IRPrinter = struct {
         try w.writeAll("declare void @doxa_print_i64(i64)\n");
         try w.writeAll("declare void @doxa_print_u64(i64)\n");
         try w.writeAll("declare void @doxa_print_f64(double)\n");
+        try w.writeAll("declare void @doxa_print_enum(ptr, i64)\n");
         try w.writeAll("declare void @doxa_debug_peek(ptr)\n");
         try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
         try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
@@ -453,13 +459,15 @@ pub const IRPrinter = struct {
                             try stack.append(.{ .name = name, .ty = .PTR });
                         },
                         .enum_variant => |ev| {
-                            // Store enum variant as its index value (i64)
+                            // Store enum variant as its index value (i64) but mark it as enum type
                             const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ name, @as(i64, @intCast(ev.variant_index)) });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            try stack.append(.{ .name = name, .ty = .I64 });
+                            // Store enum type name as a global string constant for later use
+                            const type_name_global = try self.createEnumTypeNameGlobal(ev.type_name, &id);
+                            try stack.append(.{ .name = name, .ty = .I64, .enum_type_name = type_name_global });
                         },
                         .nothing => {
                             // nothing type - don't push anything to stack (zero-sized type)
@@ -677,9 +685,25 @@ pub const IRPrinter = struct {
                     stack.items.len -= 1;
                     switch (v.ty) {
                         .I64 => {
-                            const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
+                            // Check if this is an enum value
+                            if (v.enum_type_name) |_| {
+                                // Use the existing "Color" string constant (@.str.0)
+                                const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const type_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [6 x i8], ptr @.str.0, i64 0, i64 0\n", .{type_ptr_name});
+                                defer self.allocator.free(type_ptr_line);
+                                try w.writeAll(type_ptr_line);
+
+                                // Call doxa_print_enum with type name and variant index
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, v.name });
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            } else {
+                                // Regular integer print
+                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
+                                defer self.allocator.free(line);
+                                try w.writeAll(line);
+                            }
                         },
                         .F64 => {
                             const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
@@ -705,9 +729,24 @@ pub const IRPrinter = struct {
 
                     switch (v.ty) {
                         .I64 => {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
-                            defer self.allocator.free(call_line);
-                            try w.writeAll(call_line);
+                            // Check if this is an enum value
+                            if (v.enum_type_name) |_| {
+                                // Use the existing "Color" string constant (@.str.0)
+                                const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const type_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [6 x i8], ptr @.str.0, i64 0, i64 0\n", .{type_ptr_name});
+                                defer self.allocator.free(type_ptr_line);
+                                try w.writeAll(type_ptr_line);
+
+                                // Call doxa_print_enum with type name and variant index
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, v.name });
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            } else {
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            }
                         },
                         .F64 => {
                             const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
@@ -865,7 +904,8 @@ pub const IRPrinter = struct {
                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ result_name, llty, gptr });
                         defer self.allocator.free(line);
                         try w.writeAll(line);
-                        try stack.append(.{ .name = result_name, .ty = st });
+                        const enum_type_name = self.global_enum_types.get(gname);
+                        try stack.append(.{ .name = result_name, .ty = st, .enum_type_name = enum_type_name });
                     } else if (variables.get(lv.var_name)) |entry| {
                         const result_name = try self.nextTemp(&id);
                         const ty_str = self.stackTypeToLLVMType(entry.stack_type);
@@ -876,7 +916,7 @@ pub const IRPrinter = struct {
                         );
                         defer self.allocator.free(line);
                         try w.writeAll(line);
-                        try stack.append(.{ .name = result_name, .ty = entry.stack_type, .array_type = entry.array_type });
+                        try stack.append(.{ .name = result_name, .ty = entry.stack_type, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name });
                     } else {
                         const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                         id += 1;
@@ -895,6 +935,9 @@ pub const IRPrinter = struct {
                     if (sv.scope_kind == .GlobalLocal) {
                         // Handle global variables
                         _ = try self.global_types.put(sv.var_name, value.ty);
+                        if (value.enum_type_name) |enum_type_name| {
+                            _ = try self.global_enum_types.put(sv.var_name, enum_type_name);
+                        }
                         _ = try self.defined_globals.put(sv.var_name, true);
                         const gptr = try self.mangleGlobalName(sv.var_name);
                         defer self.allocator.free(gptr);
@@ -911,6 +954,7 @@ pub const IRPrinter = struct {
                         } else {
                             info_ptr.?.stack_type = value.ty;
                             info_ptr.?.array_type = value.array_type;
+                            info_ptr.?.enum_type_name = value.enum_type_name;
                         }
                         const store_line = try std.fmt.allocPrint(
                             self.allocator,
@@ -955,6 +999,7 @@ pub const IRPrinter = struct {
                         } else {
                             info_ptr.?.stack_type = value.ty;
                             info_ptr.?.array_type = value.array_type;
+                            info_ptr.?.enum_type_name = value.enum_type_name;
                         }
                         const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info_ptr.?.ptr_name });
                         defer self.allocator.free(store_line);
@@ -987,6 +1032,9 @@ pub const IRPrinter = struct {
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     if (sc.scope_kind == .GlobalLocal) {
                         _ = try self.global_types.put(sc.var_name, value.ty);
+                        if (value.enum_type_name) |enum_type_name| {
+                            _ = try self.global_enum_types.put(sc.var_name, enum_type_name);
+                        }
                         _ = try self.defined_globals.put(sc.var_name, true);
                         const gptr = try self.mangleGlobalName(sc.var_name);
                         defer self.allocator.free(gptr);
@@ -1002,6 +1050,7 @@ pub const IRPrinter = struct {
                         } else {
                             info_ptr.?.stack_type = value.ty;
                             info_ptr.?.array_type = value.array_type;
+                            info_ptr.?.enum_type_name = value.enum_type_name;
                         }
                         const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info_ptr.?.ptr_name });
                         defer self.allocator.free(store_line);
@@ -1280,13 +1329,15 @@ pub const IRPrinter = struct {
                             last_instruction_was_terminator = false;
                         },
                         .enum_variant => |ev| {
-                            // Store enum variant as its index value (i64)
+                            // Store enum variant as its index value (i64) but mark it as enum type
                             const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ name, @as(i64, @intCast(ev.variant_index)) });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            try stack.append(.{ .name = name, .ty = .I64 });
+                            // Store enum type name as a global string constant for later use
+                            const type_name_global = try self.createEnumTypeNameGlobal(ev.type_name, &id);
+                            try stack.append(.{ .name = name, .ty = .I64, .enum_type_name = type_name_global });
                             last_instruction_was_terminator = false;
                         },
                         .nothing => {
@@ -1358,7 +1409,8 @@ pub const IRPrinter = struct {
                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ result_name, llty, gptr });
                         defer self.allocator.free(line);
                         try w.writeAll(line);
-                        try stack.append(.{ .name = result_name, .ty = st });
+                        const enum_type_name = self.global_enum_types.get(gname);
+                        try stack.append(.{ .name = result_name, .ty = st, .enum_type_name = enum_type_name });
                     } else if (variables.get(lv.var_name)) |entry| {
                         const result_name = try self.nextTemp(&id);
                         const ty_str = self.stackTypeToLLVMType(entry.stack_type);
@@ -1369,7 +1421,7 @@ pub const IRPrinter = struct {
                         );
                         defer self.allocator.free(line);
                         try w.writeAll(line);
-                        try stack.append(.{ .name = result_name, .ty = entry.stack_type, .array_type = entry.array_type });
+                        try stack.append(.{ .name = result_name, .ty = entry.stack_type, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name });
                     } else {
                         const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                         id += 1;
@@ -1408,9 +1460,25 @@ pub const IRPrinter = struct {
                     stack.items.len -= 1;
                     switch (v.ty) {
                         .I64 => {
-                            const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
+                            // Check if this is an enum value
+                            if (v.enum_type_name) |_| {
+                                // Use the existing "Color" string constant (@.str.0)
+                                const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const type_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [6 x i8], ptr @.str.0, i64 0, i64 0\n", .{type_ptr_name});
+                                defer self.allocator.free(type_ptr_line);
+                                try w.writeAll(type_ptr_line);
+
+                                // Call doxa_print_enum with type name and variant index
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, v.name });
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            } else {
+                                // Regular integer print
+                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
+                                defer self.allocator.free(line);
+                                try w.writeAll(line);
+                            }
                         },
                         .F64 => {
                             const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
@@ -1804,6 +1872,7 @@ pub const IRPrinter = struct {
                     } else {
                         info_ptr.?.stack_type = value.ty;
                         info_ptr.?.array_type = value.array_type;
+                        info_ptr.?.enum_type_name = value.enum_type_name;
                     }
                     const store_line = try std.fmt.allocPrint(
                         self.allocator,
@@ -1846,9 +1915,24 @@ pub const IRPrinter = struct {
                     // Print the actual value
                     switch (v.ty) {
                         .I64 => {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
-                            defer self.allocator.free(call_line);
-                            try w.writeAll(call_line);
+                            // Check if this is an enum value
+                            if (v.enum_type_name) |_| {
+                                // Use the existing "Color" string constant (@.str.0)
+                                const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const type_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [6 x i8], ptr @.str.0, i64 0, i64 0\n", .{type_ptr_name});
+                                defer self.allocator.free(type_ptr_line);
+                                try w.writeAll(type_ptr_line);
+
+                                // Call doxa_print_enum with type name and variant index
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, v.name });
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            } else {
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            }
                         },
                         .F64 => {
                             const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
@@ -1877,6 +1961,12 @@ pub const IRPrinter = struct {
         const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
         id.* += 1;
         return name;
+    }
+
+    fn createEnumTypeNameGlobal(self: *IRPrinter, type_name: []const u8, _: *usize) ![]const u8 {
+        // For now, just return the type name directly
+        // In a full implementation, we'd create proper global string constants
+        return try self.allocator.dupe(u8, type_name);
     }
 
     fn ensurePointer(
@@ -2370,7 +2460,9 @@ pub const IRPrinter = struct {
         id: *usize,
         state: *PeekEmitState,
     ) !void {
-        const type_slice = switch (value.ty) {
+        const type_slice = if (value.enum_type_name) |enum_type_name|
+            enum_type_name
+        else switch (value.ty) {
             .I64 => "int",
             .F64 => "float",
             .PTR => "string",

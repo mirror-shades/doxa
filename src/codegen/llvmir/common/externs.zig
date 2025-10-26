@@ -132,6 +132,17 @@ pub fn getOrCreateDoxaPrintF64(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
     return LLVMCore.LLVMAddFunction(gen.module, "doxa_print_f64", fn_ty);
 }
 
+pub fn getOrCreateDoxaPrintEnum(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
+    const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_print_enum");
+    if (existing != null) return existing;
+    const void_ty = LLVMCore.LLVMVoidTypeInContext(gen.context);
+    const i8_ptr_ty = LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(gen.context), 0);
+    const i64_ty = LLVMCore.LLVMInt64TypeInContext(gen.context);
+    var params = [_]LLVMTypes.LLVMTypeRef{ i8_ptr_ty, i64_ty };
+    const fn_ty = LLVMCore.LLVMFunctionType(void_ty, &params, 2, @intFromBool(false));
+    return LLVMCore.LLVMAddFunction(gen.module, "doxa_print_enum", fn_ty);
+}
+
 pub fn getOrCreateDoxaDebugPeek(gen: *LLVMGenerator) LLVMTypes.LLVMValueRef {
     const existing = LLVMCore.LLVMGetNamedFunction(gen.module, "doxa_debug_peek");
     if (existing != null) return existing;

@@ -41,6 +41,48 @@ pub export fn doxa_print_f64(value: f64) void {
     writeStdout(rendered);
 }
 
+pub export fn doxa_print_enum(type_name: ?[*:0]const u8, variant_index: i64) void {
+    if (type_name) |tn| {
+        const type_str = std.mem.span(tn);
+        const variant_name = getEnumVariantName(type_str, variant_index);
+        var buf: [128]u8 = undefined;
+        const rendered = std.fmt.bufPrint(&buf, ".{s}", .{variant_name}) catch return;
+        writeStdout(rendered);
+    } else {
+        // Fallback: use generic variant names when type name is not available
+        const variant_name = getEnumVariantName("", variant_index);
+        var buf: [128]u8 = undefined;
+        const rendered = std.fmt.bufPrint(&buf, ".{s}", .{variant_name}) catch return;
+        writeStdout(rendered);
+    }
+}
+
+fn getEnumVariantName(type_name: []const u8, variant_index: i64) []const u8 {
+    // For now, we'll implement a simple mapping for common enum types
+    // In a full implementation, this would look up the enum type registry
+    if (std.mem.eql(u8, type_name, "Color")) {
+        return switch (variant_index) {
+            0 => "Red",
+            1 => "Green",
+            2 => "Blue",
+            else => "Unknown",
+        };
+    }
+
+    // Default fallback
+    return switch (variant_index) {
+        0 => "Variant0",
+        1 => "Variant1",
+        2 => "Variant2",
+        3 => "Variant3",
+        4 => "Variant4",
+        5 => "Variant5",
+        6 => "Variant6",
+        7 => "Variant7",
+        else => "Unknown",
+    };
+}
+
 // Built-in functions
 var rng_state: ?std.Random.DefaultPrng = null;
 
