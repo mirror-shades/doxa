@@ -1,0 +1,8 @@
+pub enum Token {
+    INT_LITERAL,
+    FLOAT_LITERAL,
+    BYTE_LITERAL,
+    TETRA_LITERAL,
+    STRING_LITERAL,
+    NOTHING_LITERAL,
+}

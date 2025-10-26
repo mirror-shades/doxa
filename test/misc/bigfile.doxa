@@ -31,10 +31,9 @@ enum Color {
 const b :: Color is .Blue
 const g :: Color is .Green
 
-var blankColor :: Color
-
-blankColor is .Red
-blankColor?
+var unspecified_enum :: Color
+unspecified_enum is .Red
+unspecified_enum?
 
 var matchResult is match b {
     .Red then "It's red",

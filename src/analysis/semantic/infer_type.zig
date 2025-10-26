@@ -184,74 +184,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     type_info.base = .Nothing;
                     return type_info;
                 }
-            } else if (std.mem.eql(u8, op, "is")) {
-                // Special handling for 'is' operator - check if we can infer enum case from left type
-                if (left_type.base == .Custom and left_type.custom_type != null) {
-                    const enum_type_name = left_type.custom_type.?;
-                    if (self.custom_types.get(enum_type_name)) |custom_type| {
-                        if (custom_type.kind == .Enum) {
-                            // Check if right side is a variable that could be an enum case
-                            if (bin.right.?.data == .Variable) {
-                                const case_name = bin.right.?.data.Variable.lexeme;
-                                // Check if this case exists in the enum
-                                if (custom_type.enum_variants) |variants| {
-                                    for (variants) |variant| {
-                                        if (std.mem.eql(u8, variant.name, case_name)) {
-                                            // Found the enum case - transform the right side to be a proper enum member access
-                                            const enum_member_expr = try self.allocator.create(ast.Expr);
-                                            enum_member_expr.* = .{
-                                                .base = .{
-                                                    .id = ast.generateNodeId(),
-                                                    .span = bin.right.?.base.span,
-                                                },
-                                                .data = .{
-                                                    .FieldAccess = .{
-                                                        .object = try self.allocator.create(ast.Expr),
-                                                        .field = bin.right.?.data.Variable,
-                                                    },
-                                                },
-                                            };
-
-                                            // Create the enum type reference
-                                            const enum_type_expr = try self.allocator.create(ast.Expr);
-                                            enum_type_expr.* = .{
-                                                .base = .{
-                                                    .id = ast.generateNodeId(),
-                                                    .span = bin.left.?.base.span,
-                                                },
-                                                .data = .{
-                                                    .Variable = .{
-                                                        .type = .IDENTIFIER,
-                                                        .lexeme = enum_type_name,
-                                                        .literal = .{ .string = enum_type_name },
-                                                        .line = bin.left.?.base.span.?.location.range.start_line,
-                                                        .column = bin.left.?.base.span.?.location.range.start_col,
-                                                        .file = bin.left.?.base.span.?.location.file,
-                                                    },
-                                                },
-                                            };
-
-                                            enum_member_expr.data.FieldAccess.object.* = enum_type_expr.*;
-
-                                            // Replace the right side with the proper enum member access
-                                            bin.right.?.* = enum_member_expr.*;
-
-                                            // Now infer the type of the corrected expression
-                                            const corrected_right_type = try inferTypeFromExpr(self, bin.right.?);
-                                            try unifyTypes(self, left_type, corrected_right_type, .{ .location = getLocationFromBase(expr.base) });
-                                            type_info.* = left_type.*;
-                                            return type_info;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Fall back to regular unification for non-enum cases
-                try unifyTypes(self, left_type, right_type, .{ .location = getLocationFromBase(expr.base) });
-                type_info.* = left_type.*;
             } else {
                 try unifyTypes(self, left_type, right_type, .{ .location = getLocationFromBase(expr.base) });
                 type_info.* = left_type.*;
@@ -277,37 +209,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     ErrorCode.VARIABLE_NOT_FOUND,
                     "Undefined variable",
                     .{},
-                );
-                self.fatal_error = true;
-                type_info.base = .Nothing;
-            }
-        },
-        .EnumCase => |enum_case_token| {
-            // Handle enum case tokens (e.g., .TOO_BIG)
-            var found_enum_case = false;
-            var enum_iter = self.custom_types.iterator();
-            while (enum_iter.next()) |entry| {
-                if (entry.value_ptr.kind == .Enum) {
-                    if (entry.value_ptr.enum_variants) |variants| {
-                        for (variants) |variant| {
-                            if (std.mem.eql(u8, variant.name, enum_case_token.lexeme)) {
-                                // Found the enum case - return the enum type
-                                type_info.* = .{ .base = .Custom, .custom_type = entry.key_ptr.* };
-                                found_enum_case = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (found_enum_case) break;
-            }
-
-            if (!found_enum_case) {
-                self.reporter.reportCompileError(
-                    getLocationFromBase(expr.base),
-                    ErrorCode.FIELD_NOT_FOUND,
-                    "Enum case '{s}' not found in any enum",
-                    .{enum_case_token.lexeme},
                 );
                 self.fatal_error = true;
                 type_info.base = .Nothing;
@@ -708,41 +609,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             }
         },
         .FieldAccess => |field| {
-            // Special handling for dot-prefixed enum cases (e.g., .TOO_BIG)
-            // Check if the object is a dot token (which would be parsed as a variable with empty lexeme)
-            if (field.object.data == .Variable and field.object.data.Variable.lexeme.len == 0) {
-                // This is a dot-prefixed identifier - check if it's an enum case
-                var found_enum_case = false;
-                var enum_iter = self.custom_types.iterator();
-                while (enum_iter.next()) |entry| {
-                    if (entry.value_ptr.kind == .Enum) {
-                        if (entry.value_ptr.enum_variants) |variants| {
-                            for (variants) |variant| {
-                                if (std.mem.eql(u8, variant.name, field.field.lexeme)) {
-                                    // Found the enum case - return the enum type
-                                    type_info.* = .{ .base = .Custom, .custom_type = entry.key_ptr.* };
-                                    found_enum_case = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                    if (found_enum_case) break;
-                }
-
-                if (!found_enum_case) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.FIELD_NOT_FOUND,
-                        "Enum case '{s}' not found in any enum",
-                        .{field.field.lexeme},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                }
-                return type_info;
-            }
-
             const object_type = try infer_type.inferTypeFromExpr(self, field.object);
 
             var resolved_object_type = object_type;
@@ -1358,6 +1224,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 requireArity.check(self, expr, bc.arguments.len, 0, fname);
                 if (bc.arguments.len != 0) return type_info;
                 type_info.* = .{ .base = .Float };
+                return type_info;
+            } else if (std.mem.eql(u8, fname, "dice_roll")) {
+                requireArity.check(self, expr, bc.arguments.len, 0, fname);
+                if (bc.arguments.len != 0) return type_info;
+                type_info.* = .{ .base = .Int };
                 return type_info;
             } else if (std.mem.eql(u8, fname, "tick")) {
                 requireArity.check(self, expr, bc.arguments.len, 0, fname);

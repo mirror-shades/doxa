@@ -163,9 +163,6 @@ pub const TokenType = enum {
     LOGIC, // logic
     CUSTOM, // custom
 
-    // enum case access
-    ENUM_CASE, // .identifier (enum case)
-
     EOF, // end of file
 };
 

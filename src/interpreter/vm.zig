@@ -1491,12 +1491,6 @@ pub const VM = struct {
                             .int => |key_int| entry_int == key_int,
                             else => false,
                         },
-                        .enum_variant => |entry_enum| switch (key_frame.value) {
-                            .enum_variant => |key_enum| (std.mem.eql(u8, entry_enum.type_name, key_enum.type_name) and
-                                std.mem.eql(u8, entry_enum.variant_name, key_enum.variant_name) and
-                                entry_enum.variant_index == key_enum.variant_index),
-                            else => false,
-                        },
                         else => false,
                     };
 
