@@ -423,8 +423,20 @@ pub const LexicalAnalyzer = struct {
             tracked_lexeme = try self.addString(lexeme);
         }
 
-        const token_line = self.line;
-        const token_column = self.start - self.line_start + 1;
+        const token_line = self.token_line;
+        // Calculate column position relative to the line where the token started
+        // We need to find the line start for the token's line
+        var token_line_start: usize = 0;
+        var current_line: usize = 1;
+        var i: usize = 0;
+        while (i < self.start and current_line < token_line) {
+            if (self.source[i] == '\n') {
+                current_line += 1;
+                token_line_start = i + 1;
+            }
+            i += 1;
+        }
+        const token_column = self.start - token_line_start + 1;
 
         try self.tokens.append(Token.initWithFile(token_type, tracked_lexeme, tracked_literal, token_line, token_column, self.file_path));
     }
@@ -554,7 +566,46 @@ pub const LexicalAnalyzer = struct {
 
         while (!self.isAtEnd() and self.peekAt(0) != '"') {
             const c = self.peekAt(0);
-            self.advance();
+
+            if (c == '\n' or c == '\r') {
+                // Look ahead to see if there's an ellipsis continuation
+                var lookahead_pos = self.current + 1; // Skip the newline/carriage return
+                var found_ellipsis = false;
+
+                // Skip whitespace and any remaining carriage returns/newlines
+                while (lookahead_pos < self.source.len and
+                    (self.source[lookahead_pos] == ' ' or
+                        self.source[lookahead_pos] == '\t' or
+                        self.source[lookahead_pos] == '\r' or
+                        self.source[lookahead_pos] == '\n'))
+                {
+                    lookahead_pos += 1;
+                }
+
+                // Check for ellipsis
+                if (lookahead_pos + 2 < self.source.len and
+                    self.source[lookahead_pos] == '.' and
+                    self.source[lookahead_pos + 1] == '.' and
+                    self.source[lookahead_pos + 2] == '.')
+                {
+                    found_ellipsis = true;
+                    // Skip the ellipsis
+                    lookahead_pos += 3;
+                }
+
+                if (found_ellipsis) {
+                    // Skip the newline/carriage return and ellipsis, continue processing
+                    self.current = lookahead_pos;
+                    // Don't update line tracking - self.start points to the token start
+                    continue; // Don't add the newline/carriage return to the result
+                } else {
+                    // Add the newline/carriage return as a literal character
+                    self.advance(); // Advance past the newline/carriage return
+                    try result.append(c);
+                }
+            } else {
+                self.advance();
+            }
 
             if (c == '\\') {
                 if (self.isAtEnd()) {
