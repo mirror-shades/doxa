@@ -1292,6 +1292,21 @@ pub const SemanticAnalyzer = struct {
                 }
                 type_info.* = .{ .base = .Struct, .struct_fields = struct_fields };
             },
+            .Map => |map| {
+                const key_type_info = if (map.key_type) |key_type| 
+                    try self.typeExprToTypeInfo(key_type) 
+                else 
+                    null;
+                
+                const value_type_info = try self.typeExprToTypeInfo(map.value_type);
+                
+                type_info.* = .{
+                    .base = .Map,
+                    .map_key_type = key_type_info,
+                    .map_value_type = value_type_info,
+                    .is_mutable = map.is_mutable,
+                };
+            },
             .Enum => |_| {
                 type_info.* = .{ .base = .Nothing };
             },

@@ -502,6 +502,7 @@ pub const ControlFlowHandler = struct {
                         else => break :blk "array[]",
                     }
                 },
+                .Map => break :blk "map",
                 .Struct => break :blk "struct",
                 .Enum => break :blk "enum",
                 .Union => break :blk "union",
