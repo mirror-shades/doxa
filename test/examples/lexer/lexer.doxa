@@ -1,4 +1,19 @@
+module helper from "./helper.doxa"
+
 import Token from "./token.doxa"
+
 
 var x is Token.INT_LITERAL
 x?
+
+helper.isAlpha("a")?
+helper.isAlpha("g")?
+helper.isAlpha("gr")?
+helper.isAlpha("1")?
+helper.isAlpha("")?
+
+helper.isNumeric("5")?
+helper.isNumeric("0")?
+helper.isNumeric("-5")?
+helper.isNumeric("a")?
+helper.isNumeric("")?
