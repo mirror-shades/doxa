@@ -1022,10 +1022,11 @@ pub const VM = struct {
             return;
         }
 
-        if (std.mem.eql(u8, name, "exists_quantifier_gt")) {
+        if (std.mem.eql(u8, name, "exists_quantifier_gt") or std.mem.eql(u8, name, "exists_quantifier_eq")) {
             if (arg_count != 2) return error.UnimplementedInstruction;
             const comparison_value = try self.stack.pop();
             const array_frame = try self.stack.pop();
+            const is_equality = std.mem.eql(u8, name, "exists_quantifier_eq");
 
             switch (array_frame.value) {
                 .array => |arr| {
@@ -1034,12 +1035,19 @@ pub const VM = struct {
                         if (std.meta.eql(elem, HIRValue.nothing)) break;
                         const satisfies = switch (elem) {
                             .int => |elem_int| switch (comparison_value.value) {
-                                .int => |comp_int| elem_int > comp_int,
+                                .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
                                 else => false,
                             },
                             .float => |elem_float| switch (comparison_value.value) {
-                                .float => |comp_float| elem_float > comp_float,
-                                .int => |comp_int| elem_float > @as(f64, @floatFromInt(comp_int)),
+                                .float => |comp_float| if (is_equality) elem_float == comp_float else elem_float > comp_float,
+                                .int => |comp_int| blk: {
+                                    const comp_float = @as(f64, @floatFromInt(comp_int));
+                                    break :blk if (is_equality) elem_float == comp_float else elem_float > comp_float;
+                                },
+                                else => false,
+                            },
+                            .string => |elem_str| switch (comparison_value.value) {
+                                .string => |comp_str| if (is_equality) std.mem.eql(u8, elem_str, comp_str) else false,
                                 else => false,
                             },
                             else => false,
@@ -1051,15 +1059,16 @@ pub const VM = struct {
                     }
                     try self.stack.push(HIRFrame.initTetra(if (found) 1 else 0));
                 },
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "exists_quantifier_gt: argument must be array", .{}),
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "exists_quantifier: argument must be array", .{}),
             }
             return;
         }
 
-        if (std.mem.eql(u8, name, "forall_quantifier_gt")) {
+        if (std.mem.eql(u8, name, "forall_quantifier_gt") or std.mem.eql(u8, name, "forall_quantifier_eq")) {
             if (arg_count != 2) return error.UnimplementedInstruction;
             const comparison_value = try self.stack.pop();
             const array_frame = try self.stack.pop();
+            const is_equality = std.mem.eql(u8, name, "forall_quantifier_eq");
 
             switch (array_frame.value) {
                 .array => |arr| {
@@ -1070,12 +1079,19 @@ pub const VM = struct {
                         has_elements = true;
                         const satisfies = switch (elem) {
                             .int => |elem_int| switch (comparison_value.value) {
-                                .int => |comp_int| elem_int > comp_int,
+                                .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
                                 else => false,
                             },
                             .float => |elem_float| switch (comparison_value.value) {
-                                .float => |comp_float| elem_float > comp_float,
-                                .int => |comp_int| elem_float > @as(f64, @floatFromInt(comp_int)),
+                                .float => |comp_float| if (is_equality) elem_float == comp_float else elem_float > comp_float,
+                                .int => |comp_int| blk: {
+                                    const comp_float = @as(f64, @floatFromInt(comp_int));
+                                    break :blk if (is_equality) elem_float == comp_float else elem_float > comp_float;
+                                },
+                                else => false,
+                            },
+                            .string => |elem_str| switch (comparison_value.value) {
+                                .string => |comp_str| if (is_equality) std.mem.eql(u8, elem_str, comp_str) else false,
                                 else => false,
                             },
                             else => false,
@@ -1087,7 +1103,7 @@ pub const VM = struct {
                     }
                     try self.stack.push(HIRFrame.initTetra(if (!has_elements or all_satisfy) 1 else 0));
                 },
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "forall_quantifier_gt: argument must be array", .{}),
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "forall_quantifier: argument must be array", .{}),
             }
             return;
         }
