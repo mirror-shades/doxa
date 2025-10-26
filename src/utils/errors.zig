@@ -84,7 +84,9 @@ pub const ErrorList = error{
     UnsupportedFunctionCallType,
     MapLiteralsMustBeStatements,
     ExpectedMapKeyword,
+    ExpectedReturnsKeyword,
     ExpectedMethod,
+    ExpectedLeftBraceOrReturnsKeyword,
 
     // Collections & Indexing
     IndexOutOfBounds,
@@ -399,6 +401,7 @@ pub const ErrorCode = struct {
     pub const EXPECTED_METHOD = "E5013";
     pub const THIS_TYPE_MISMATCH = "E5014";
     pub const INVALID_ARGUMENT = "E5015";
+    pub const EXPECTED_LEFT_BRACE_OR_RETURNS_KEYWORD = "E5016";
 
     // 6xxx - Collections & Data Structures
     pub const INVALID_ARRAY_TYPE = "E6001";

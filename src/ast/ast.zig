@@ -1046,6 +1046,11 @@ pub const TypeExpr = struct {
         Struct: []*StructField,
         Enum: []const []const u8,
         Union: []*TypeExpr,
+        Map: struct {
+            key_type: ?*TypeExpr,
+            value_type: *TypeExpr,
+            is_mutable: bool,
+        },
     };
 
     pub fn getBase(self: *TypeExpr) *Base {
@@ -1079,6 +1084,14 @@ pub const TypeExpr = struct {
                     allocator.destroy(type_expr);
                 }
                 allocator.free(types);
+            },
+            .Map => |*map| {
+                if (map.key_type) |key_type| {
+                    key_type.deinit(allocator);
+                    allocator.destroy(key_type);
+                }
+                map.value_type.deinit(allocator);
+                allocator.destroy(map.value_type);
             },
             else => {},
         }
@@ -1226,6 +1239,21 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
             };
         },
         .Custom => |custom_token| TypeInfo{ .base = .Custom, .custom_type = custom_token.lexeme },
+        .Map => |map| blk: {
+            const key_type_info = if (map.key_type) |key_type| 
+                try typeInfoFromExpr(allocator, key_type) 
+            else 
+                null;
+            
+            const value_type_info = try typeInfoFromExpr(allocator, map.value_type);
+            
+            break :blk TypeInfo{
+                .base = .Map,
+                .map_key_type = key_type_info,
+                .map_value_type = value_type_info,
+                .is_mutable = map.is_mutable,
+            };
+        },
         .Enum => TypeInfo{ .base = .Nothing },
         .Union => |types| blk: {
             var union_types = try allocator.alloc(*TypeInfo, types.len);

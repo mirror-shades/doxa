@@ -1,8 +1,25 @@
-pub enum Token {
+pub enum TokenType {
+    // type literals
     INT_LITERAL,
     FLOAT_LITERAL,
     BYTE_LITERAL,
     TETRA_LITERAL,
     STRING_LITERAL,
     NOTHING_LITERAL,
+
+    //keywords
+    VAR,
+    CONST,
+    FUNCTION,
+    MAIN,
+    ENTRY,
+    ASSIGN
+}
+
+pub struct Token {
+    type :: TokenType
+    literal :: string
+    start :: int
+    end :: int
+
 }

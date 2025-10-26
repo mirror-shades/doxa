@@ -1,6 +1,40 @@
 module Helper from "./helper.doxa"
 
-import Token from "./token.doxa"
+import Token, TokenType from "./token.doxa"
+
+function lex(src :: string) {
+    var tokens :: Token[]
+    var line is 1
+    var inside_string is false
+
+    each c at i in src {
+        if c == "\n" then {
+            line += 1
+        }
+
+        if c == "\"" then {
+            inside_string is not inside_string
+        }
+
+        if not inside_string then {
+            if Helper.isAlpha(c) then {
+                var word :: string is c
+                for j is i + 1 do j += 1 {
+                    const word_char is src[j]
+                    if not Helper.isAlpha(word_char) then {
+                        i is j
+                        break
+                    }
+                    word += word_char
+                }
+                if Helper.isKeyword(word) then @print("{word}\n")
+            } else if Helper.isNumeric(c) {
+
+            }
+        }
+    }
+    @print("there are {line} lines")
+}
 
 entry function main() {
     var program_src is "
@@ -10,20 +44,5 @@ entry function main() {
     ...    hello?\n
     ...}"
     
-    each c at i in program_src {
-        if Helper.isAlpha(c) then {
-            var word :: string is c
-            for j is i + 1 do j += 1 {
-                const word_char is program_src[j]
-                if not Helper.isAlpha(word_char) then {
-                    i is j
-                    break
-                }
-                word += word_char
-                @print("{word}\n")
-            }
-        } else if Helper.isNumeric(c) {
-
-        }
-    }
+    lex(program_src)
 }

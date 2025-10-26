@@ -1,0 +1,18 @@
+pub struct Context {
+    name :: string
+    literal :: string
+    line_breaks :: int[]
+    // TODO: add hash :: int for caching
+
+    function new(_name :: string, _literal :: string, _line_breaks :: int[]) returns Context {
+        return Context {
+            name is _name
+            literal is _literal
+            line_breaks is _line_breaks
+        }
+    }
+}
+
+pub struct SourceManager {
+    pub var map FileToContext :: string returns Context
+}

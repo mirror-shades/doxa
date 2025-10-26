@@ -233,26 +233,84 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             };
             try methods.append(method);
         } else {
-            if (self.peek().type != .IDENTIFIER) {
-                return error.ExpectedIdentifier;
+            // Check if this is a map field declaration (pub var map or pub const map)
+            if (self.peek().type == .VAR or self.peek().type == .CONST) {
+                const map_const = self.peek().type == .CONST;
+                self.advance();
+                
+                if (self.peek().type != .MAP_TYPE) {
+                    return error.ExpectedMapKeyword;
+                }
+                self.advance();
+
+                // Parse map name
+                if (self.peek().type != .IDENTIFIER) {
+                    return error.ExpectedIdentifier;
+                }
+                const field_name = self.peek();
+                self.advance();
+
+                // Parse map key type (optional)
+                var key_type_expr: ?*ast.TypeExpr = null;
+                if (self.peek().type == .TYPE_SYMBOL) {
+                    self.advance();
+                    key_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+                }
+
+                // Parse map value type (required)
+                if (self.peek().type != .RETURNS) {
+                    return error.ExpectedReturnsKeyword;
+                }
+                self.advance();
+                const value_type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+
+                // Create map type expression
+                const map_type_expr = try self.allocator.create(ast.TypeExpr);
+                map_type_expr.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(field_name),
+                    },
+                    .data = .{
+                        .Map = .{
+                            .key_type = key_type_expr,
+                            .value_type = value_type_expr,
+                            .is_mutable = !map_const,
+                        },
+                    },
+                };
+
+                const field = try self.allocator.create(ast.StructField);
+                field.* = .{
+                    .name = field_name,
+                    .type_expr = map_type_expr,
+                    .is_public = is_public_method,
+                };
+                try fields.append(field);
+            } else {
+                // Regular field declaration
+                if (self.peek().type != .IDENTIFIER) {
+                    return error.ExpectedIdentifier;
+                }
+                const field_name = self.peek();
+                self.advance();
+
+                // Original simple field parsing
+                if (self.peek().type != .TYPE_SYMBOL) {
+                    return error.ExpectedTypeAnnotation;
+                }
+                self.advance();
+
+                const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+
+                const field = try self.allocator.create(ast.StructField);
+                field.* = .{
+                    .name = field_name,
+                    .type_expr = type_expr,
+                    .is_public = is_public_method,
+                };
+                try fields.append(field);
             }
-            const field_name = self.peek();
-            self.advance();
-
-            if (self.peek().type != .TYPE_SYMBOL) {
-                return error.ExpectedTypeAnnotation;
-            }
-            self.advance();
-
-            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
-
-            const field = try self.allocator.create(ast.StructField);
-            field.* = .{
-                .name = field_name,
-                .type_expr = type_expr,
-                .is_public = is_public_method,
-            };
-            try fields.append(field);
         }
 
         if (self.peek().type == .COMMA) {
@@ -390,8 +448,21 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
         self.allocator.destroy(type_info_ptr);
     }
 
+    if (self.peek().type == .RETURN) {
+        const location = Location{
+            .file = self.current_file,
+            .range = .{
+                .start_line = self.peek().line,
+                .start_col = self.peek().column,
+                .end_line = self.peek().line,
+                .end_col = self.peek().column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_LEFT_BRACE_OR_RETURNS_KEYWORD, "`return` is only valid inside a function body. use `returns` inside signatures.", .{});
+    }
+
     if (self.peek().type != .LEFT_BRACE) {
-        return error.ExpectedLeftBrace;
+        return error.ExpectedLeftBraceOrReturnsKeyword;
     }
     self.advance();
 
