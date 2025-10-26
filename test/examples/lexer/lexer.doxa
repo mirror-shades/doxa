@@ -1,19 +1,16 @@
-module helper from "./helper.doxa"
+module Helper from "./helper.doxa"
 
 import Token from "./token.doxa"
 
 
-var x is Token.INT_LITERAL
-x?
 
-helper.isAlpha("a")?
-helper.isAlpha("g")?
-helper.isAlpha("gr")?
-helper.isAlpha("1")?
-helper.isAlpha("")?
+entry function main() {
+    var program_src is "
+    ...var hello is \"hello... world\"\n
+    ...\n
+    ...entry function main() {\n
+    ...    hello?\n
+    ...}"
 
-helper.isNumeric("5")?
-helper.isNumeric("0")?
-helper.isNumeric("-5")?
-helper.isNumeric("a")?
-helper.isNumeric("")?
+    @print("{program_src}")
+}
