@@ -518,7 +518,6 @@ pub const Expr = struct {
             prompt: Token,
         },
         Variable: Token,
-        EnumCase: Token,
         Assignment: Assignment,
         Grouping: ?*Expr,
         If: If,
@@ -714,7 +713,6 @@ pub const Expr = struct {
                 }
             },
             .Variable => {},
-            .EnumCase => {},
             .Literal => |lit| {
                 switch (lit) {
                     .string => |str| allocator.free(str),

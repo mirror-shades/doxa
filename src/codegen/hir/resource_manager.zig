@@ -78,7 +78,6 @@ fn makeKey(alloc: std.mem.Allocator, value: HIRValue) ![]u8 {
         },
         .string => |s| try std.fmt.allocPrint(alloc, "s:{s}", .{s}),
         .tetra => |t| try std.fmt.allocPrint(alloc, "t:{d}", .{t}),
-        .enum_variant => |e| try std.fmt.allocPrint(alloc, "e:{s}:{s}:{d}", .{ e.type_name, e.variant_name, e.variant_index }),
         else => error.Unsupported, // Skip dedup for complex values
     };
 }

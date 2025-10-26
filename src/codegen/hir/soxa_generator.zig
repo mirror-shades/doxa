@@ -79,6 +79,7 @@ pub const HIRGenerator = struct {
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
     current_enum_type: ?[]const u8 = null,
+    current_assignment_target: ?[]const u8 = null,
 
     loop_context_stack: std.array_list.Managed(LoopContext),
 
@@ -913,7 +914,6 @@ pub const HIRGenerator = struct {
             .This => try basic_handler.generateThis(),
             .Literal => |lit| try basic_handler.generateLiteral(lit, preserve_result, should_pop_after_use),
             .Variable => |var_token| try basic_handler.generateVariable(var_token),
-            .EnumCase => |enum_case_token| try basic_handler.generateEnumCase(enum_case_token),
             .Grouping => |grouping| try basic_handler.generateGrouping(grouping, preserve_result),
             .EnumMember => |member| try basic_handler.generateEnumMember(member),
             .DefaultArgPlaceholder => try basic_handler.generateDefaultArgPlaceholder(),
@@ -1578,6 +1578,9 @@ pub const HIRGenerator = struct {
                 }
                 if (std.mem.eql(u8, function_name, "random")) {
                     return .Float;
+                }
+                if (std.mem.eql(u8, function_name, "dice_roll")) {
+                    return .Int;
                 }
                 return .String;
             },

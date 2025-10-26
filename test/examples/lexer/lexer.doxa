@@ -1,0 +1,4 @@
+import Token from "./token.doxa"
+
+var x is Token.INT_LITERAL
+x?

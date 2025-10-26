@@ -41,25 +41,6 @@ pub export fn doxa_print_f64(value: f64) void {
     writeStdout(rendered);
 }
 
-pub export fn doxa_print_enum(value: i64) void {
-    // For now, we'll implement a simple mapping for the Error enum
-    // This is a temporary solution - in a real implementation, we'd need
-    // to pass the enum type information and variant names to the runtime
-    const variant_name = switch (value) {
-        0 => ".TOO_BIG",
-        1 => ".TOO_SMALL", 
-        2 => ".UNDEFINED",
-        else => {
-            // Fallback to raw value if unknown
-            var buf: [64]u8 = undefined;
-            const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
-            writeStdout(rendered);
-            return;
-        },
-    };
-    writeStdout(variant_name);
-}
-
 // Built-in functions
 var rng_state: ?std.Random.DefaultPrng = null;
 

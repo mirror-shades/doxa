@@ -50,8 +50,15 @@ pub const AssignmentsHandler = struct {
             }
         }
 
+        // Set the current assignment target for enum type inference
+        const previous_target = self.generator.current_assignment_target;
+        self.generator.current_assignment_target = assign.name.lexeme;
+
         // Generate the value expression
         try self.generator.generateExpression(assign.value.?, true, false);
+
+        // Restore the previous assignment target
+        self.generator.current_assignment_target = previous_target;
 
         // NEW: Track the variable's type from the assigned value
         const assigned_type = self.generator.inferTypeFromExpression(assign.value.?);
@@ -84,7 +91,6 @@ pub const AssignmentsHandler = struct {
                 }
             }
         }
-
 
         // Check if this is an alias parameter
         if (self.generator.symbol_table.isAliasParameter(assign.name.lexeme)) {
