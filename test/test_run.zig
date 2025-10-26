@@ -333,6 +333,12 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "string", .value = "\"It's blue\"" },
     .{ .type = "string", .value = "\"It's something else\"" },
 
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+
     .{ .type = "int", .value = "0" },
     .{ .type = "int", .value = "1" },
     .{ .type = "int", .value = "3" },

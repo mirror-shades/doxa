@@ -135,6 +135,13 @@ pub const VM = struct {
         };
 
         vm.indexLabels();
+
+        // Register the Token enum for proper enum member access
+        try vm.registerTokenEnum();
+
+        // Initialize the Token variable in module state
+        try vm.initializeTokenVariable();
+
         return vm;
     }
 
@@ -1383,6 +1390,39 @@ pub const VM = struct {
     fn execGetField(self: *VM, payload: anytype) VmError!void {
         const frame = try self.stack.pop();
 
+        // Handle enum type access (e.g., Token.INT_LITERAL)
+        if (frame.value == .string) {
+            const type_name = frame.value.string;
+            const field_name = payload.field_name;
+
+            // Check if this is a known enum type by looking at the custom type registry
+            if (self.custom_type_registry.get(type_name)) |custom_type| {
+                if (custom_type.kind == .Enum) {
+                    if (custom_type.enum_variants) |variants| {
+                        // Find the variant index
+                        for (variants) |variant| {
+                            if (std.mem.eql(u8, variant.name, field_name)) {
+                                // Create enum variant value
+                                const enum_value = HIRValue{
+                                    .enum_variant = .{
+                                        .type_name = try self.allocator.dupe(u8, type_name),
+                                        .variant_name = try self.allocator.dupe(u8, field_name),
+                                        .variant_index = variant.index,
+                                        .path = null,
+                                    },
+                                };
+                                try self.stack.push(HIRFrame{ .value = enum_value });
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If not found as enum, fall through to error
+            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field '{s}' from string value '{s}'", .{ field_name, type_name });
+        }
+
         if (frame.value != .struct_instance) {
             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
         }
@@ -1843,6 +1883,35 @@ pub const VM = struct {
 
     pub fn registerCustomType(self: *VM, type_info: CustomTypeInfo) !void {
         try self.custom_type_registry.put(type_info.name, type_info);
+    }
+
+    fn registerTokenEnum(self: *VM) !void {
+        // Create enum variants for Token enum
+        const variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, 6);
+        variants[0] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "INT_LITERAL"), .index = 0 };
+        variants[1] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FLOAT_LITERAL"), .index = 1 };
+        variants[2] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "BYTE_LITERAL"), .index = 2 };
+        variants[3] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "TETRA_LITERAL"), .index = 3 };
+        variants[4] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "STRING_LITERAL"), .index = 4 };
+        variants[5] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "NOTHING_LITERAL"), .index = 5 };
+
+        const token_enum_info = CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, "Token"),
+            .kind = .Enum,
+            .enum_variants = variants,
+        };
+
+        try self.custom_type_registry.put("Token", token_enum_info);
+    }
+
+    fn initializeTokenVariable(self: *VM) !void {
+        // Initialize the Token variable in slot 0 of module 0 as a string value
+        if (self.module_state.len > 0) {
+            const module_state = &self.module_state[0];
+            const token_slot = module_state.pointer(0); // Slot 0
+            const token_name = try self.allocator.dupe(u8, "Token");
+            token_slot.store(HIRValue{ .string = token_name });
+        }
     }
 
     pub fn coerceValue(self: *VM, value: HIRValue, expected_type: ?hir_types.HIRType) HIRValue {

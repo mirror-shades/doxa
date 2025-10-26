@@ -168,23 +168,32 @@ pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
 pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance();
 
-    if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
+    // Try to parse as a simple identifier first
+    var value: *ast.Expr = undefined;
+    if (self.peek().type == .IDENTIFIER) {
+        const match_value = self.peek();
+        self.advance();
+
+        value = try self.allocator.create(ast.Expr);
+        value.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(match_value),
+            },
+            .data = .{
+                .Variable = match_value,
+            },
+        };
+
+        // Check if this is followed by array indexing
+        if (self.peek().type == .LEFT_BRACKET) {
+            self.advance();
+            value = try Parser.index(self, value, .NONE) orelse return error.ExpectedExpression;
+        }
+    } else {
+        // Parse as a complex expression
+        value = try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
     }
-
-    const match_value = self.peek();
-    self.advance();
-
-    const value = try self.allocator.create(ast.Expr);
-    value.* = .{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(match_value),
-        },
-        .data = .{
-            .Variable = match_value,
-        },
-    };
 
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
@@ -218,7 +227,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             }
 
             try cases.append(.{
-                .pattern = else_token,
+                .patterns = try self.allocator.dupe(token.Token, &[_]token.Token{else_token}),
                 .body = body,
             });
 
@@ -230,7 +239,23 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             continue;
         }
 
-        const pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
+        if (self.peek().type == .COMMA) {
+            self.advance();
+        }
+
+        var patterns = std.array_list.Managed(token.Token).init(self.allocator);
+        errdefer patterns.deinit();
+
+        // Parse the first pattern
+        const first_pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
+        try patterns.append(first_pattern);
+
+        // Parse additional patterns separated by commas
+        while (self.peek().type == .COMMA) {
+            self.advance();
+            const next_pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
+            try patterns.append(next_pattern);
+        }
 
         if (self.peek().type != .THEN) {
             return error.ExpectedThen;
@@ -252,7 +277,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             }
         }
 
-        try cases.append(.{ .pattern = pattern, .body = body });
+        try cases.append(.{ .patterns = try patterns.toOwnedSlice(), .body = body });
     }
     self.advance();
 
@@ -1629,7 +1654,7 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
                 }
 
                 try cases.append(.{
-                    .pattern = else_token,
+                    .patterns = try self.allocator.dupe(token.Token, &[_]token.Token{else_token}),
                     .body = body,
                 });
 
@@ -1637,7 +1662,19 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
                 continue;
             }
 
-            const pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
+            var patterns = std.array_list.Managed(token.Token).init(self.allocator);
+            errdefer patterns.deinit();
+
+            // Parse the first pattern
+            const first_pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
+            try patterns.append(first_pattern);
+
+            // Parse additional patterns separated by commas
+            while (self.peek().type == .COMMA) {
+                self.advance();
+                const next_pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
+                try patterns.append(next_pattern);
+            }
 
             if (self.peek().type != .THEN) {
                 return error.ExpectedThen;
@@ -1660,7 +1697,7 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
             }
 
             try cases.append(.{
-                .pattern = pattern,
+                .patterns = try patterns.toOwnedSlice(),
                 .body = body,
             });
         }

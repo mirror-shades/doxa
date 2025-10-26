@@ -1192,35 +1192,38 @@ pub const SemanticAnalyzer = struct {
         defer self.current_scope = prev_scope;
 
         if (matched_var_name) |name| {
-            // Build a narrowed TypeInfo from the pattern
-            const narrow_info = try self.allocator.create(ast.TypeInfo);
-            narrow_info.* = switch (case.pattern.type) {
-                .INT_TYPE, .INT => .{ .base = .Int, .is_mutable = false },
-                .FLOAT_TYPE, .FLOAT => .{ .base = .Float, .is_mutable = false },
-                .STRING_TYPE, .STRING => .{ .base = .String, .is_mutable = false },
-                .BYTE_TYPE, .BYTE => .{ .base = .Byte, .is_mutable = false },
-                .TETRA_TYPE, .TETRA => .{ .base = .Tetra, .is_mutable = false },
-                .NOTHING_TYPE, .NOTHING => .{ .base = .Nothing, .is_mutable = false },
-                .DOT => .{ .base = .Enum, .is_mutable = false }, // enum member pattern implies enum
-                else => blk: {
-                    if (case.pattern.type == .IDENTIFIER and !std.mem.eql(u8, case.pattern.lexeme, "else")) {
-                        break :blk .{ .base = .Custom, .custom_type = case.pattern.lexeme, .is_mutable = false };
-                    }
-                    // For else or unknown, skip narrowing
-                    break :blk .{ .base = .Nothing, .is_mutable = false };
-                },
-            };
+            // Build a narrowed TypeInfo from the patterns (use first pattern for type narrowing)
+            if (case.patterns.len > 0) {
+                const narrow_info = try self.allocator.create(ast.TypeInfo);
+                const first_pattern = case.patterns[0]; // Use first pattern for type narrowing
+                narrow_info.* = switch (first_pattern.type) {
+                    .INT_TYPE, .INT => .{ .base = .Int, .is_mutable = false },
+                    .FLOAT_TYPE, .FLOAT => .{ .base = .Float, .is_mutable = false },
+                    .STRING_TYPE, .STRING => .{ .base = .String, .is_mutable = false },
+                    .BYTE_TYPE, .BYTE => .{ .base = .Byte, .is_mutable = false },
+                    .TETRA_TYPE, .TETRA => .{ .base = .Tetra, .is_mutable = false },
+                    .NOTHING_TYPE, .NOTHING => .{ .base = .Nothing, .is_mutable = false },
+                    .DOT => .{ .base = .Enum, .is_mutable = false }, // enum member pattern implies enum
+                    else => blk: {
+                        if (first_pattern.type == .IDENTIFIER and !std.mem.eql(u8, first_pattern.lexeme, "else")) {
+                            break :blk .{ .base = .Custom, .custom_type = first_pattern.lexeme, .is_mutable = false };
+                        }
+                        // For else or unknown, skip narrowing
+                        break :blk .{ .base = .Nothing, .is_mutable = false };
+                    },
+                };
 
-            const token_type: TokenType = helpers.convertTypeToTokenType(self, narrow_info.base);
+                const token_type: TokenType = helpers.convertTypeToTokenType(self, narrow_info.base);
 
-            // Shadow the variable in this case scope with the narrowed type
-            _ = case_scope.createValueBinding(
-                name,
-                TokenLiteral{ .nothing = {} },
-                token_type,
-                narrow_info,
-                false,
-            ) catch {};
+                // Shadow the variable in this case scope with the narrowed type
+                _ = case_scope.createValueBinding(
+                    name,
+                    TokenLiteral{ .nothing = {} },
+                    token_type,
+                    narrow_info,
+                    false,
+                ) catch {};
+            }
         }
 
         return try infer_type.inferTypeFromExpr(self, case.body);
