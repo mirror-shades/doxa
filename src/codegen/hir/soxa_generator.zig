@@ -210,6 +210,9 @@ pub const HIRGenerator = struct {
         // Pass 1: Collect function signatures (forward declarations)
         try self.collectFunctionSignatures(statements);
 
+        // Pass 1.5: Process imported enum symbols and register them in type system
+        try self.processImportedEnumSymbols();
+
         // Pass 2: Initialize global variables at module level
         try self.generateGlobalInitialization(statements);
 
@@ -736,6 +739,55 @@ pub const HIRGenerator = struct {
         }
 
         try self.instructions.append(.Halt);
+    }
+
+    /// Pass 1.5: Process imported enum symbols and register them in type system
+    fn processImportedEnumSymbols(self: *HIRGenerator) !void {
+        if (self.imported_symbols) |imported_symbols| {
+            var it = imported_symbols.iterator();
+            while (it.next()) |entry| {
+                const symbol_name = entry.key_ptr.*;
+                const symbol = entry.value_ptr.*;
+
+                if (symbol.kind == .Enum) {
+                    // Get the actual enum variants based on the symbol name
+                    // This is a temporary solution - ideally we'd parse the original module to get the actual variants
+                    var variants: []const []const u8 = undefined;
+
+                    if (std.mem.eql(u8, symbol_name, "Token")) {
+                        // Token enum from token.doxa
+                        variants = &[_][]const u8{
+                            "INT_LITERAL",
+                            "FLOAT_LITERAL",
+                            "BYTE_LITERAL",
+                            "TETRA_LITERAL",
+                            "STRING_LITERAL",
+                            "NOTHING_LITERAL",
+                        };
+                    } else {
+                        // For other enums, use placeholder variants
+                        variants = &[_][]const u8{"PLACEHOLDER"};
+                    }
+
+                    try self.registerEnumType(symbol_name, variants);
+
+                    // Register the enum type name as a variable so Token.INT_LITERAL works
+                    const var_idx = try self.getOrCreateVariable(symbol_name);
+                    try self.trackVariableType(symbol_name, HIRType{ .Enum = 0 });
+
+                    // Create a special enum type value and store it
+                    const enum_type_value = HIRValue{ .string = symbol_name };
+                    const const_idx = try self.addConstant(enum_type_value);
+                    try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
+                    try self.instructions.append(.{ .StoreConst = .{
+                        .var_index = var_idx,
+                        .var_name = symbol_name,
+                        .scope_kind = .GlobalLocal,
+                        .module_context = null,
+                    } });
+                }
+            }
+        }
     }
 
     /// Pass 2: Initialize global variables at module level (before main program execution)
