@@ -1281,6 +1281,11 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
                 return self.index(field_access, .NONE);
             }
 
+            // Check if this field access is followed by parentheses - treat as function call
+            if (self.peek().type == .LEFT_PAREN) {
+                return self.call(field_access, .CALL);
+            }
+
             return field_access;
         }
     }

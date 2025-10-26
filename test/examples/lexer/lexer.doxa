@@ -2,8 +2,6 @@ module Helper from "./helper.doxa"
 
 import Token from "./token.doxa"
 
-
-
 entry function main() {
     var program_src is "
     ...var hello is \"hello... world\"\n
@@ -11,6 +9,12 @@ entry function main() {
     ...entry function main() {\n
     ...    hello?\n
     ...}"
+    
+    each c in program_src {
+        if Helper.isAlpha(c) then {
 
-    @print("{program_src}")
+        } else if Helper.isNumeric(c) {
+
+        }
+    }
 }

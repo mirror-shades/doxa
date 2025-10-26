@@ -346,9 +346,8 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                 if (fa.object.data == .Variable) {
                     const object_name = fa.object.data.Variable.lexeme;
                     if (helpers.isModuleNamespace(@constCast(ctx), object_name)) {
-                        // Module function call - return a generic type for now
-                        type_info.* = .{ .base = .Int };
-                        return type_info;
+                        // Module function call - use proper type inference
+                        return helpers.handleModuleFieldAccess(@constCast(ctx), object_name, method_name, .{ .location = getLocationFromBase(expr.base) });
                     }
                     if (ctx.custom_types.get(object_name)) |ct| {
                         if (ct.kind == .Struct) {
