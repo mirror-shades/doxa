@@ -642,6 +642,7 @@ pub const BytecodeGenerator = struct {
                 }) } }),
                 .AssertFail => |payload| try self.instructions.append(self.allocator, .{ .AssertFail = .{ .location = payload.location, .has_message = payload.has_message } }),
                 .Halt => try self.instructions.append(self.allocator, .Halt),
+                .LoadModule => |payload| try self.instructions.append(self.allocator, .{ .LoadModule = .{ .module_name = payload.module_name } }),
             }
         }
 

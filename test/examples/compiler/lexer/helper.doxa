@@ -1,4 +1,4 @@
-import TokenType from "./types"
+import TokenType from "./token.doxa"
 
 const alpha is [
     ..."a", "b", "c", "d", "e", "f", "g", "h", "i", 
@@ -10,13 +10,15 @@ const alpha is [
 
 const numeric is ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
 
-const keywords is ["var", "const", "function", "main", "entry", "is"]
+const keywords is ["var", "const", "function", "entry", "is"]
 
-const map LiteralToToken {
-    "var" then TokenType.VAR
-    "const" then TokenType.CONST
-    "function" then TokenType.FUNCTION
-    "entry" then TokenType.ENTRY
+// ERROR here, returns token type not found in declared tokens I think
+pub const map LiteralToToken :: string returns TokenType {
+    "var" then TokenType.VAR,
+    "const" then TokenType.CONST,
+    "function" then TokenType.FUNCTION,
+    "entry" then TokenType.ENTRY,
+    "is" then TokenType.ASSIGN
 }
 
 pub function isAlpha(char :: string) returns tetra {

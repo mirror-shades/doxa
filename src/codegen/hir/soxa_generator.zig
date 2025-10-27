@@ -1726,4 +1726,9 @@ pub const HIRGenerator = struct {
     pub fn computeNumericCommonType(self: *HIRGenerator, left_type: HIRType, right_type: HIRType, operator_type: TokenType) HIRType {
         return self.type_system.computeNumericCommonType(left_type, right_type, operator_type);
     }
+
+    pub fn isModuleContext(self: *HIRGenerator) bool {
+        // We're in module context when we're in the global init phase and not in a function
+        return self.is_global_init_phase and self.current_function == null;
+    }
 };

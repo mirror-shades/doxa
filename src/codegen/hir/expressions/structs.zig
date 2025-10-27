@@ -107,6 +107,27 @@ pub const StructsHandler = struct {
                     }
                 }
             }
+
+            // Handle regular module field access like Helper.LiteralToToken
+            if (self.generator.module_namespaces.get(obj_name)) |_| {
+                // This is a module field access - directly load the module variable
+                // instead of loading the entire module as a struct
+
+                // Find the module variable index
+                const module_var_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ obj_name, field.field.lexeme });
+                defer self.generator.allocator.free(module_var_name);
+
+                // Load the module variable directly
+                try self.generator.instructions.append(.{
+                    .LoadVar = .{
+                        .var_index = 0, // Will be resolved by VM
+                        .var_name = module_var_name,
+                        .scope_kind = .ModuleGlobal,
+                        .module_context = obj_name,
+                    },
+                });
+                return;
+            }
         }
 
         // Handle nested module constants: graphics.raylib.SKYBLUE

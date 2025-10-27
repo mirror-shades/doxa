@@ -154,6 +154,35 @@ pub const SymbolTable = struct {
         }
     }
 
+    /// Determine the correct scope for a variable based on where it exists, with module context
+    pub fn determineVariableScopeWithModuleContext(self: *SymbolTable, var_name: []const u8, is_module_context: bool) ScopeKind {
+        if (self.current_function != null) {
+            // Inside function: check if it's a local variable first
+            const in_local = self.local_variables.get(var_name);
+            const in_global = self.variables.get(var_name);
+
+            if (in_local) |_| {
+                return .Local;
+            } else if (in_global) |_| {
+                // Found in global scope, but we're inside a function
+                // This means we're accessing a script-level global variable from within a function
+                return .GlobalLocal;
+            } else {
+                // New variable in function scope
+                return .Local;
+            }
+        } else {
+            // Not in function scope
+            if (is_module_context) {
+                // Module variables should be stored as ModuleGlobal
+                return .ModuleGlobal;
+            } else {
+                // Script variables should be GlobalLocal
+                return .GlobalLocal;
+            }
+        }
+    }
+
     /// Get tracked variable type
     pub fn getTrackedVariableType(self: *SymbolTable, var_name: []const u8) ?HIRType {
         return self.variable_types.get(var_name);

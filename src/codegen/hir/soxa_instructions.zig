@@ -589,6 +589,13 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: LLVMBuildRet from main function
     Halt,
 
+    /// Load module as struct instance
+    /// VM: Load module variables as struct fields
+    /// LLVM: Generate struct with module variables
+    LoadModule: struct {
+        module_name: []const u8,
+    },
+
     /// Map expression
     /// VM: OP_MAP -> map(key, value)
     /// LLVM: Generate map creation and lookup

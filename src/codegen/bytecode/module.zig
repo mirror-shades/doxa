@@ -181,6 +181,7 @@ pub const Instruction = union(enum) {
         has_message: bool,
     },
     Halt,
+    LoadModule: struct { module_name: []const u8 },
     Nop,
 };
 
