@@ -1240,13 +1240,13 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
         },
         .Custom => |custom_token| TypeInfo{ .base = .Custom, .custom_type = custom_token.lexeme },
         .Map => |map| blk: {
-            const key_type_info = if (map.key_type) |key_type| 
-                try typeInfoFromExpr(allocator, key_type) 
-            else 
+            const key_type_info = if (map.key_type) |key_type|
+                try typeInfoFromExpr(allocator, key_type)
+            else
                 null;
-            
+
             const value_type_info = try typeInfoFromExpr(allocator, map.value_type);
-            
+
             break :blk TypeInfo{
                 .base = .Map,
                 .map_key_type = key_type_info,

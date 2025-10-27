@@ -31,6 +31,7 @@ pub const SemanticAnalyzer = struct {
     function_return_types: std.AutoHashMap(u32, *ast.TypeInfo),
     current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     current_initializing_var: ?[]const u8 = null,
+    current_struct_type: ?[]const u8 = null,
     parser: ?*const Parser = null,
 
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager, parser: ?*const Parser) SemanticAnalyzer {
@@ -45,6 +46,7 @@ pub const SemanticAnalyzer = struct {
             .struct_methods = std.StringHashMap(std.StringHashMap(types.StructMethodInfo)).init(allocator),
             .function_return_types = std.AutoHashMap(u32, *ast.TypeInfo).init(allocator),
             .current_function_returns = std.array_list.Managed(*ast.TypeInfo).init(allocator),
+            .current_struct_type = null,
             .parser = parser,
         };
     }
@@ -324,6 +326,7 @@ pub const SemanticAnalyzer = struct {
             self.current_function_returns,
             self.parser,
             &self.fatal_error,
+            self.current_struct_type,
         );
 
         try declaration_collection.collectDeclarations(&decl_ctx, statements, root_scope);
@@ -344,6 +347,7 @@ pub const SemanticAnalyzer = struct {
             self.parser,
             &self.fatal_error,
             self.current_initializing_var,
+            self.current_struct_type,
         );
 
         try validation.validateStatements(&validation_ctx, statements);
@@ -361,6 +365,7 @@ pub const SemanticAnalyzer = struct {
             self.struct_methods,
             self.parser,
             &self.fatal_error,
+            self.current_struct_type,
         );
         return type_analysis.inferTypeFromExpr(&type_ctx, expr);
     }
@@ -386,6 +391,7 @@ pub const SemanticAnalyzer = struct {
             self.struct_methods,
             self.parser,
             &self.fatal_error,
+            self.current_struct_type,
         );
         return type_analysis.unifyTypes(&type_ctx, expected, actual, span);
     }
@@ -401,6 +407,7 @@ pub const SemanticAnalyzer = struct {
             self.struct_methods,
             self.parser,
             &self.fatal_error,
+            self.current_struct_type,
         );
         return type_analysis.resolveTypeInfo(&type_ctx, type_info);
     }
@@ -416,6 +423,7 @@ pub const SemanticAnalyzer = struct {
             self.struct_methods,
             self.parser,
             &self.fatal_error,
+            self.current_struct_type,
         );
         return type_analysis.deepCopyTypeInfo(&type_ctx, type_info);
     }
@@ -431,6 +439,7 @@ pub const SemanticAnalyzer = struct {
             self.struct_methods,
             self.parser,
             &self.fatal_error,
+            self.current_struct_type,
         );
         return type_analysis.deepCopyTypeInfoPtr(&type_ctx, src);
     }

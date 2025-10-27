@@ -52,6 +52,7 @@ pub const SemanticAnalyzer = struct {
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
     current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     current_initializing_var: ?[]const u8 = null,
+    current_struct_type: ?[]const u8 = null,
     parser: ?*const Parser = null,
 
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager, parser: ?*const Parser) SemanticAnalyzer {
@@ -66,6 +67,7 @@ pub const SemanticAnalyzer = struct {
             .struct_methods = std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)).init(allocator),
             .function_return_types = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .current_function_returns = std.array_list.Managed(*ast.TypeInfo).init(allocator),
+            .current_struct_type = null,
             .parser = parser,
         };
     }
@@ -397,8 +399,8 @@ pub const SemanticAnalyzer = struct {
                             if (p.module_cache.get(sym.original_module)) |mi| {
                                 mod_info = mi;
                             } else {
-                                const module_resolver = @import("../../parser/module_resolver.zig");
-                                mod_info = module_resolver.resolveModule(@constCast(p), sym.original_module) catch null;
+                                // Module not in cache, skip for now
+                                continue;
                             }
                             if (mod_info) |mi| {
                                 // Process the module's AST to find the struct
@@ -687,8 +689,8 @@ pub const SemanticAnalyzer = struct {
                     // Convert value to match the declared type
                     value = try self.convertValueToType(value, type_info.base);
 
-                    // ENFORCE: nothing types must be const
-                    if (type_info.base == .Nothing and type_info.is_mutable) {
+                    // ENFORCE: nothing types must be const (unless they have an initializer)
+                    if (type_info.base == .Nothing and type_info.is_mutable and decl.initializer == null) {
                         self.reporter.reportCompileError(
                             getLocationFromBase(stmt.base),
                             ErrorCode.NOTHING_TYPE_MUST_BE_CONST,
@@ -1055,13 +1057,24 @@ pub const SemanticAnalyzer = struct {
                     }
                 },
                 .FunctionDecl => |func| {
-                    // Function declarations are already validated in collectDeclarations
-                    // Just validate the body here with the stored return type
+                    var method_struct_type: ?[]const u8 = null;
+                    var methods_it = self.struct_methods.iterator();
+                    while (methods_it.next()) |entry| {
+                        if (entry.value_ptr.get(func.name.lexeme)) |_| {
+                            method_struct_type = entry.key_ptr.*;
+                            break;
+                        }
+                    }
+
+                    if (method_struct_type) |struct_name| {
+                        std.debug.print("Found method '{s}' in struct '{s}'\n", .{ func.name.lexeme, struct_name });
+                    }
+                    // Removed the warning for functions that aren't methods - they're just regular functions
+
                     if (self.function_return_types.get(stmt.base.id)) |return_type| {
-                        try self.validateFunctionBody(func, .{ .location = getLocationFromBase(stmt.base) }, return_type.*);
+                        try self.validateFunctionBodyWithStruct(func, .{ .location = getLocationFromBase(stmt.base) }, return_type.*, method_struct_type);
                     } else {
-                        // Fallback to original return type if not found
-                        try self.validateFunctionBody(func, .{ .location = getLocationFromBase(stmt.base) }, func.return_type_info);
+                        try self.validateFunctionBodyWithStruct(func, .{ .location = getLocationFromBase(stmt.base) }, func.return_type_info, method_struct_type);
                     }
                 },
                 .MapLiteral => |map_entries| {
@@ -1293,13 +1306,13 @@ pub const SemanticAnalyzer = struct {
                 type_info.* = .{ .base = .Struct, .struct_fields = struct_fields };
             },
             .Map => |map| {
-                const key_type_info = if (map.key_type) |key_type| 
-                    try self.typeExprToTypeInfo(key_type) 
-                else 
+                const key_type_info = if (map.key_type) |key_type|
+                    try self.typeExprToTypeInfo(key_type)
+                else
                     null;
-                
+
                 const value_type_info = try self.typeExprToTypeInfo(map.value_type);
-                
+
                 type_info.* = .{
                     .base = .Map,
                     .map_key_type = key_type_info,
@@ -1687,6 +1700,10 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn validateFunctionBody(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo) !void {
+        try self.validateFunctionBodyWithStruct(func, func_span, expected_return_type, null);
+    }
+
+    fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo, struct_type: ?[]const u8) !void {
         // Create function scope with parameters
         const func_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
         defer func_scope.deinit();
@@ -1726,7 +1743,9 @@ pub const SemanticAnalyzer = struct {
 
         // Temporarily set current scope to function scope
         const prev_scope = self.current_scope;
+        const prev_struct_type = self.current_struct_type;
         self.current_scope = func_scope;
+        self.current_struct_type = struct_type;
 
         // Validate function body statements
         try self.validateStatements(func.body);
@@ -1734,8 +1753,9 @@ pub const SemanticAnalyzer = struct {
         // NEW: Return path analysis with enhanced union subtyping
         _ = try self.validateReturnPaths(func.body, expected_return_type, func_span);
 
-        // Restore previous scope
+        // Restore previous scope and struct type
         self.current_scope = prev_scope;
+        self.current_struct_type = prev_struct_type;
     }
 
     fn validateReturnPaths(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) !bool {

@@ -44,6 +44,7 @@ pub const DeclarationCollectionContext = struct {
     current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     parser: ?*const Parser,
     fatal_error: *bool,
+    current_struct_type: ?[]const u8,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -57,6 +58,7 @@ pub const DeclarationCollectionContext = struct {
         current_function_returns: std.array_list.Managed(*ast.TypeInfo),
         parser: ?*const Parser,
         fatal_error: *bool,
+        current_struct_type: ?[]const u8,
     ) DeclarationCollectionContext {
         return .{
             .allocator = allocator,
@@ -70,6 +72,7 @@ pub const DeclarationCollectionContext = struct {
             .current_function_returns = current_function_returns,
             .parser = parser,
             .fatal_error = fatal_error,
+            .current_struct_type = current_struct_type,
         };
     }
 };
@@ -96,6 +99,7 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                         ctx.struct_methods,
                         ctx.parser,
                         ctx.fatal_error,
+                        ctx.current_struct_type,
                     );
                     const inferred = try inferFunctionReturnType(&type_ctx, func);
                     inferred_return_type = inferred.*;
@@ -192,6 +196,7 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                                 ctx.struct_methods,
                                 ctx.parser,
                                 ctx.fatal_error,
+                                ctx.current_struct_type,
                             );
                             const inferred = try type_analysis.inferTypeFromExpr(&type_ctx, init_expr);
                             type_info.* = inferred.*;
@@ -207,6 +212,7 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                                 ctx.struct_methods,
                                 ctx.parser,
                                 ctx.fatal_error,
+                                ctx.current_struct_type,
                             );
                             type_info.* = try type_analysis.resolveTypeInfo(&type_ctx, decl.type_info);
                         }
@@ -222,6 +228,7 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                             ctx.struct_methods,
                             ctx.parser,
                             ctx.fatal_error,
+                            ctx.current_struct_type,
                         );
                         type_info.* = try type_analysis.resolveTypeInfo(&type_ctx, decl.type_info);
                     }
@@ -237,6 +244,7 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                         ctx.struct_methods,
                         ctx.parser,
                         ctx.fatal_error,
+                        ctx.current_struct_type,
                     );
                     const inferred = try type_analysis.inferTypeFromExpr(&type_ctx, init_expr);
                     // Deep copy the inferred type to avoid dangling internal pointers

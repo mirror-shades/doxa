@@ -237,7 +237,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             if (self.peek().type == .VAR or self.peek().type == .CONST) {
                 const map_const = self.peek().type == .CONST;
                 self.advance();
-                
+
                 if (self.peek().type != .MAP_TYPE) {
                     return error.ExpectedMapKeyword;
                 }

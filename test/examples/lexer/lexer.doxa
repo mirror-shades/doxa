@@ -1,15 +1,18 @@
 module Helper from "./helper.doxa"
+module SourceManager from "./source_manager.doxa"
 
 import Token, TokenType from "./token.doxa"
 
 function lex(src :: string) {
     var tokens :: Token[]
+    var line_breaks :: int[]
     var line is 1
     var inside_string is false
 
     each c at i in src {
         if c == "\n" then {
             line += 1
+            @push(line_breaks, i)
         }
 
         if c == "\"" then {
@@ -33,7 +36,7 @@ function lex(src :: string) {
             }
         }
     }
-    @print("there are {line} lines")
+    @print("there are {line_breaks} lines")
 }
 
 entry function main() {
