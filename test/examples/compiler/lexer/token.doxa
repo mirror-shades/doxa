@@ -17,6 +17,7 @@ pub enum TokenType {
     MODULE,
     IMPORT,
     FROM,
+    IDENTIFIER,
 
 }
 

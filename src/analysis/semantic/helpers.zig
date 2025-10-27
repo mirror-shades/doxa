@@ -592,7 +592,42 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                             .function_type = found_func_type,
                         };
                     },
-                    .Variable => type_info.* = ast.TypeInfo{ .base = .Int, .is_mutable = false },
+                    .Variable => {
+                        // Look up the actual variable type from the module's AST
+                        var found_var_type: ?ast.TypeInfo = null;
+
+                        // Look through module namespaces to find the actual variable
+                        var it = parser.module_namespaces.iterator();
+                        while (it.next()) |entry| {
+                            const module_info = entry.value_ptr.*;
+                            if (module_info.ast) |module_ast| {
+                                if (module_ast.data == .Block) {
+                                    const stmts = module_ast.data.Block.statements;
+                                    for (stmts) |s| {
+                                        switch (s.data) {
+                                            .VarDecl => |v| {
+                                                if (!v.is_public) continue;
+                                                if (!std.mem.eql(u8, v.name.lexeme, field_name)) continue;
+
+                                                // Found matching variable; use its type info
+                                                found_var_type = v.type_info;
+                                                break;
+                                            },
+                                            else => {},
+                                        }
+                                    }
+                                }
+                            }
+                            if (found_var_type != null) break;
+                        }
+
+                        if (found_var_type) |var_type| {
+                            type_info.* = var_type;
+                        } else {
+                            // Fallback: default to Int
+                            type_info.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+                        }
+                    },
                     .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false },
                     .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
                     .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },

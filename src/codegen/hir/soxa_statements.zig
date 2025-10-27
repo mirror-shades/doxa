@@ -361,7 +361,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
 
             if (!decl.type_info.is_mutable) {
-                const scope_kind = self.symbol_table.determineVariableScope(decl.name.lexeme);
+                const is_module_ctx = self.current_function == null and self.isModuleContext();
+                const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);
 
                 try self.instructions.append(.{ .StoreConst = .{
                     .var_index = var_idx,
@@ -373,7 +374,13 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     try self.instructions.append(.Pop);
                 }
             } else {
-                const scope_kind = self.symbol_table.determineVariableScope(decl.name.lexeme);
+                const is_module_ctx = self.current_function == null and self.isModuleContext();
+                const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);
+
+                // Debug output
+                if (std.mem.eql(u8, decl.name.lexeme, "LiteralToToken")) {
+                    std.debug.print("Processing LiteralToToken: is_module_ctx={}, scope_kind={s}\n", .{ is_module_ctx, @tagName(scope_kind) });
+                }
 
                 try self.instructions.append(.{ .StoreDecl = .{
                     .var_index = var_idx,
@@ -387,7 +394,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     try self.instructions.append(.Pop);
                 }
             }
-
         },
         .FunctionDecl => {},
         .Return => |ret| {

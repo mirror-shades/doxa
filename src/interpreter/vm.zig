@@ -536,6 +536,9 @@ pub const VM = struct {
                 self.running = false;
                 self.skip_increment = true;
             },
+            .LoadModule => |payload| {
+                try self.execLoadModule(payload);
+            },
             .Nop => {},
             .AssertFail => |payload| {
                 const location_str = try std.fmt.allocPrint(self.allocator, "{s}:{}:{}", .{ payload.location.file, payload.location.range.start_line, payload.location.range.start_col });
@@ -2107,5 +2110,53 @@ pub const VM = struct {
                 break :blk HIRValue{ .enum_variant = .{ .type_name = type_name, .variant_name = variant_name, .variant_index = e.variant_index, .path = null } };
             },
         };
+    }
+
+    fn execLoadModule(self: *VM, payload: anytype) VmError!void {
+        const module_name = payload.module_name;
+
+        // Find the module by name
+        var module_id: ?module.ModuleId = null;
+        for (self.bytecode.modules, 0..) |mod, idx| {
+            if (std.mem.eql(u8, mod.name, module_name)) {
+                module_id = @intCast(idx);
+                break;
+            }
+        }
+
+        if (module_id == null) {
+            return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Module '{s}' not found", .{module_name});
+        }
+
+        const mod_id = module_id.?;
+        const module_state = try self.resolveModuleState(mod_id);
+
+        // Create a struct instance containing all the module's exported variables
+        const fields = try self.allocator.alloc(HIRStructField, module_state.values.len);
+        defer self.allocator.free(fields);
+
+        for (fields, 0..) |*field, i| {
+            const slot_ptr = module_state.pointer(@intCast(i));
+            const value = slot_ptr.load();
+
+            // Generate a generic variable name since we don't have the actual names
+            const var_name = try std.fmt.allocPrint(self.allocator, "var_{}", .{i});
+            defer self.allocator.free(var_name);
+
+            field.* = HIRStructField{
+                .name = try self.string_interner.intern(var_name),
+                .value = value,
+                .field_type = .Unknown,
+            };
+        }
+
+        const struct_instance = HIRValue{
+            .struct_instance = HIRStruct{
+                .type_name = try self.string_interner.intern(module_name),
+                .fields = fields,
+            },
+        };
+
+        try self.stack.pushValue(struct_instance);
     }
 };

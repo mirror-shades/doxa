@@ -745,7 +745,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     return type_info;
                 }
             } else if (resolved_object_type.base == .Enum) {
-                type_info.* = .{ .base = .Enum };
+                // Return the specific enum type, not just generic .Enum
+                type_info.* = .{ .base = .Custom, .custom_type = resolved_object_type.custom_type };
             } else {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),

@@ -42,15 +42,17 @@ function lex(src :: string) {
                 word += word_char
             }
             if Helper.isKeyword(word) then {
+                // ERROR here infering mapping as string?
+                const token_type :: TokenType is Helper.LiteralToToken[word]
                 const new_token is Token {
-                    type is TokenType.STRING_LITERAL
-                    literal is str
+                    type is token_type
+                    literal is word
                 }
                 @push(tokens, new_token)
             } else {
                 const new_token is Token {
-                    type is TokenType.STRING_LITERAL
-                    literal is str
+                    type is TokenType.IDENTIFIER
+                    literal is word
                 }
                 @push(tokens, new_token)
             }
