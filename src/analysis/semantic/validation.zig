@@ -43,6 +43,7 @@ pub const ValidationContext = struct {
     parser: ?*const Parser,
     fatal_error: *bool,
     current_initializing_var: ?[]const u8,
+    current_struct_type: ?[]const u8,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -55,6 +56,7 @@ pub const ValidationContext = struct {
         parser: ?*const Parser,
         fatal_error: *bool,
         current_initializing_var: ?[]const u8,
+        current_struct_type: ?[]const u8,
     ) ValidationContext {
         return .{
             .allocator = allocator,
@@ -67,6 +69,7 @@ pub const ValidationContext = struct {
             .parser = parser,
             .fatal_error = fatal_error,
             .current_initializing_var = current_initializing_var,
+            .current_struct_type = current_struct_type,
         };
     }
 };
@@ -101,6 +104,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                                         ctx.struct_methods,
                                         ctx.parser,
                                         ctx.fatal_error,
+                                        ctx.current_struct_type,
                                     );
                                     const inferred = try type_analysis.inferTypeFromExpr(&type_ctx, init_expr);
                                     type_info.* = inferred.*;
@@ -116,6 +120,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                                         ctx.struct_methods,
                                         ctx.parser,
                                         ctx.fatal_error,
+                                        ctx.current_struct_type,
                                     );
                                     type_info.* = try type_analysis.resolveTypeInfo(&type_ctx, decl.type_info);
                                 }
@@ -229,6 +234,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                         ctx.struct_methods,
                         ctx.parser,
                         ctx.fatal_error,
+                        ctx.current_struct_type,
                     );
                     const init_type = try type_analysis.inferTypeFromExpr(&type_ctx, decl.initializer.?);
                     const resolved_type = try type_analysis.resolveTypeInfo(&type_ctx, decl.type_info);
@@ -257,6 +263,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                         ctx.struct_methods,
                         ctx.parser,
                         ctx.fatal_error,
+                        ctx.current_struct_type,
                     );
                     _ = try type_analysis.inferTypeFromExpr(&type_ctx, expression);
                 }
@@ -274,6 +281,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                         ctx.struct_methods,
                         ctx.parser,
                         ctx.fatal_error,
+                        ctx.current_struct_type,
                     );
                     _ = try type_analysis.inferTypeFromExpr(&type_ctx, value);
                 }
@@ -294,6 +302,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                     ctx.struct_methods,
                     ctx.parser,
                     ctx.fatal_error,
+                    ctx.current_struct_type,
                 );
                 var dummy_expr = ast.Expr{
                     .data = .{ .Literal = .{ .nothing = {} } },
@@ -314,6 +323,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                     ctx.struct_methods,
                     ctx.parser,
                     ctx.fatal_error,
+                    ctx.current_struct_type,
                 );
                 for (map_entries) |entry| {
                     _ = try type_analysis.inferTypeFromExpr(&type_ctx, entry.key);

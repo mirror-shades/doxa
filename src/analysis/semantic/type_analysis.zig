@@ -43,6 +43,7 @@ pub const TypeAnalysisContext = struct {
     struct_methods: std.StringHashMap(std.StringHashMap(types.StructMethodInfo)),
     parser: ?*const Parser,
     fatal_error: *bool,
+    current_struct_type: ?[]const u8,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -54,6 +55,7 @@ pub const TypeAnalysisContext = struct {
         struct_methods: std.StringHashMap(std.StringHashMap(types.StructMethodInfo)),
         parser: ?*const Parser,
         fatal_error: *bool,
+        current_struct_type: ?[]const u8,
     ) TypeAnalysisContext {
         return .{
             .allocator = allocator,
@@ -65,6 +67,7 @@ pub const TypeAnalysisContext = struct {
             .struct_methods = struct_methods,
             .parser = parser,
             .fatal_error = fatal_error,
+            .current_struct_type = current_struct_type,
         };
     }
 };

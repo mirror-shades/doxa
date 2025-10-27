@@ -544,7 +544,27 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 } else {}
                             } else {}
                         } else {}
-                    } else {}
+                    } else if (index.array.data == .FieldAccess) {
+                        // Handle field access like this.FileToContext[file].line_breaks
+                        const field_access = index.array.data.FieldAccess;
+                        const object_type = try infer_type.inferTypeFromExpr(self, field_access.object);
+
+                        if (object_type.base == .Struct) {
+                            if (object_type.struct_fields) |fields| {
+                                for (fields) |field| {
+                                    if (std.mem.eql(u8, field.name, field_access.field.lexeme)) {
+                                        if (field.type_info.base == .Array) {
+                                            if (field.type_info.array_type) |elem_type| {
+                                                type_info.* = elem_type.*;
+                                                return type_info;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // If we can't determine the element type, default to Nothing
                     type_info.base = .Nothing;
                 }
             } else if (array_type.base == .Map) {
@@ -2224,20 +2244,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 _ = try infer_type.inferTypeFromExpr(self, cond);
             }
 
-            // Use current_scope as parent to ensure function declarations are accessible
+            // Create iteration scope for loop body
             const iteration_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
             defer iteration_scope.deinit();
 
-            if (loop.var_decl) |vd| {
-                const saved_scope = self.current_scope;
-                self.current_scope = iteration_scope;
-
-                var single: [1]ast.Stmt = .{vd.*};
-                try self.validateStatements(single[0..]);
-
-                self.current_scope = saved_scope;
-            }
-
+            // Process loop body in iteration scope
             {
                 const saved_scope = self.current_scope;
                 self.current_scope = iteration_scope;
@@ -2253,7 +2264,17 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Nothing };
         },
         .This => {
-            // TODO: Implement proper 'this' type resolution based on the current method context
+            // Resolve 'this' type based on current method context
+            if (self.current_struct_type) |struct_name| {
+                // Look up the struct type information
+                if (self.custom_types.get(struct_name)) |custom_type| {
+                    if (custom_type.kind == .Struct) {
+                        type_info.* = .{ .base = .Struct, .custom_type = struct_name, .is_mutable = false };
+                        return type_info;
+                    }
+                }
+            }
+            // Fallback: return generic struct type
             type_info.* = .{ .base = .Struct };
         },
         .Range => |range| {

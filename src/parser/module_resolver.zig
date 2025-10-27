@@ -111,7 +111,7 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
 
     const info = try extractModuleInfoWithParser(self, module_block, module_data.resolved_path, null, &new_parser);
 
-    try self.module_resolution_status.put(normalized_path, .COMPLETED);
+    self.module_resolution_status.putAssumeCapacity(normalized_path, .COMPLETED);
     try self.module_cache.put(normalized_path, info);
 
     return info;

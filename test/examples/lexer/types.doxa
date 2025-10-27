@@ -1,0 +1,4 @@
+pub struct Pair {
+    a :: int
+    b :: int
+}
