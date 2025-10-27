@@ -982,10 +982,10 @@ pub const Parser = struct {
                 }
             };
 
-            if (self.peek().type != .ASSIGN) {
+            if (self.peek().type != .THEN) {
                 key.deinit(self.allocator);
                 self.allocator.destroy(key);
-                return error.UseIsForAssignment;
+                return error.ExpectedThen;
             }
             self.advance();
 

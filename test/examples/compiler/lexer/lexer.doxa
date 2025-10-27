@@ -1,0 +1,73 @@
+module Helper from "./helper.doxa"
+module SourceManager from "./source_manager.doxa"
+
+import Token, TokenType from "./token.doxa"
+
+function lex(src :: string) {
+    var tokens :: Token[]
+    var line_breaks :: int[]
+    var line is 1
+
+    each c at i in src {
+        if c == "\n" then {
+            line += 1
+            @push(line_breaks, i)
+        }
+
+        if c == "\"" then {
+            var str :: string
+            for j is i + 1 do j += 1 {
+                const current_char :: string is src[j]
+                if current_char == "\"" then {
+                    i is j
+                    break
+                }
+                str += current_char
+            }
+            const new_token is Token {
+                type is TokenType.STRING_LITERAL
+                literal is str
+            }
+            @push(tokens, new_token)
+        }
+
+        if Helper.isAlpha(c) then {
+            var word :: string is c
+            for j is i + 1 do j += 1 {
+                const word_char is src[j]
+                if not Helper.isAlpha(word_char) then {
+                    i is j
+                    break
+                }
+                word += word_char
+            }
+            if Helper.isKeyword(word) then {
+                const new_token is Token {
+                    type is TokenType.STRING_LITERAL
+                    literal is str
+                }
+                @push(tokens, new_token)
+            } else {
+                const new_token is Token {
+                    type is TokenType.STRING_LITERAL
+                    literal is str
+                }
+                @push(tokens, new_token)
+            }
+        } else if Helper.isNumeric(c) {
+
+        }
+    }
+    // add to source_manager @print("there are {line_breaks} lines")
+}
+
+entry function main() {
+    var program_src is "
+    ...var hello is \"hello... world\"\n
+    ...\n
+    ...entry function main() {\n
+    ...    hello?\n
+    ...}"
+    
+    lex(program_src)
+}
