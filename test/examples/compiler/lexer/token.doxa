@@ -13,7 +13,11 @@ pub enum TokenType {
     FUNCTION,
     MAIN,
     ENTRY,
-    ASSIGN
+    ASSIGN,
+    MODULE,
+    IMPORT,
+    FROM,
+
 }
 
 pub struct Token {
@@ -21,5 +25,4 @@ pub struct Token {
     literal :: string
     start :: int
     end :: int
-
 }

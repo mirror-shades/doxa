@@ -54,6 +54,7 @@ pub const PrintOps = struct {
         const value = try vm.stack.pop();
 
         try PrintOps.formatHIRValueRaw(vm, value.value);
+        try printToStdout("\n", .{});
 
         try vm.stack.push(value);
     }

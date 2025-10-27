@@ -1,0 +1,8 @@
+// in main:
+// lex src file:
+// pass tokens for imports and modules
+// if found, add a dependency to the graph
+// lex the module or import file
+// loop until all used files are lexed 
+// we can verify circular imports with the graph
+// we can begin parsing with all relevant files already tokenized

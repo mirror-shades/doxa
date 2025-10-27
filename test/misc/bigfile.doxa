@@ -593,9 +593,9 @@ resfloat? // 0
 // MAPS
 /////
 var map MyMap {
-    "a" is 1.5,
-    "b" is 2.5,
-    "c" is 3.5,
+    "a" then 1.5,
+    "b" then 2.5,
+    "c" then 3.5,
 }
 
 MyMap["a"]? // 1.5
@@ -606,52 +606,52 @@ MyMap["c"]? // 4.5
 
 
 const map MyMap2 {
-    15 is "fifteen",
-    16 is "sixteen",
-    17 is "seventeen",
+    15 then "fifteen",
+    16 then "sixteen",
+    17 then "seventeen",
 }
 
 MyMap2[15]? // fifteen
 MyMap2[17]? // seventeen
 
 var map MyMap_typed0 returns string {
-    1 is "one",
-    2 is "two",
-    3 is "three",
+    1 then "one",
+    2 then "two",
+    3 then "three",
 }
 
 MyMap_typed0[1]? // one
 MyMap_typed0[2]? // two
 
 var map MyMap_typed1 :: int {
-    1 is "one",
-    2 is "two",
-    3 is "three",
+    1 then "one",
+    2 then "two",
+    3 then "three",
 }
 
 MyMap_typed1[1]? // one
 MyMap_typed1[2]? // two
 
 var map MyMap_typed2 :: int returns string {
-    1 is "one",
-    2 is "two",
-    3 is "three",
+    1 then "one",
+    2 then "two",
+    3 then "three",
 }
 
 MyMap_typed2[1]? // one
 MyMap_typed2[2]? // two
 
 var map MyMap_enum :: Color returns string {
-    .Red is "red",
-    .Green is "green",
-    .Blue is "blue",
+    .Red then "red",
+    .Green then "green",
+    .Blue then "blue",
 }
 
 MyMap_enum[.Red]? // red
 MyMap_enum[.Blue]? // blue
 
 var map MyMap_struct {
-    1 is mike,
+    1 then mike,
 }
 
 MyMap_struct[1].person.name? // Mike

@@ -22,9 +22,9 @@ var dog is Animal {
 }
 
 var map mapping {
-    1 is "one",
-    2 is "two",
-    3 is "three",
+    1 then "one",
+    2 then "two",
+    3 then "three",
 }
 
 /////
