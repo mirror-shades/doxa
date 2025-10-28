@@ -1,0 +1,6 @@
+enum Species {
+    DOG,
+    CAT,
+}
+
+@type(Species.DOG)?

@@ -276,6 +276,22 @@ pub const TypeSystem = struct {
                 if (obj_type == .Struct) return .Unknown;
                 return .Unknown;
             },
+            .EnumMember => |member| {
+                // For enum members, try to find the parent enum type
+                var enum_type_iter = self.custom_types.iterator();
+                while (enum_type_iter.next()) |entry| {
+                    if (entry.value_ptr.kind == .Enum) {
+                        if (entry.value_ptr.enum_variants) |variants| {
+                            for (variants) |variant| {
+                                if (std.mem.eql(u8, variant.name, member.lexeme)) {
+                                    return HIRType{ .Enum = 0 };
+                                }
+                            }
+                        }
+                    }
+                }
+                return .Unknown;
+            },
             .Binary => |binary| {
                 const left_type = self.inferTypeFromExpression(binary.left.?, symbol_table);
                 const right_type = self.inferTypeFromExpression(binary.right.?, symbol_table);

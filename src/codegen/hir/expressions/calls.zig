@@ -260,7 +260,38 @@ pub const CallsHandler = struct {
         if (std.mem.eql(u8, name, "type")) {
             if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
             const arg = builtin_data.arguments[0];
+
+            // For FieldAccess and EnumMember expressions, try to get the custom type name
             const inferred_type = self.generator.inferTypeFromExpression(arg);
+            var custom_type_name: ?[]const u8 = null;
+            
+            if (arg.data == .FieldAccess) {
+                if (self.generator.type_system.resolveFieldAccessType(arg, &self.generator.symbol_table)) |resolve_result| {
+                    custom_type_name = resolve_result.custom_type_name;
+                }
+            } else if (arg.data == .EnumMember) {
+                // For enum members, we need to find the parent enum type
+                // This is a bit tricky because we don't have direct access to the parent enum name
+                // We'll need to infer it from the context or use a different approach
+                // For now, let's try to infer it from the inferred type
+                if (inferred_type == .Enum) {
+                    // Try to find the enum type that contains this variant
+                    var enum_type_iter = self.generator.type_system.custom_types.iterator();
+                    while (enum_type_iter.next()) |entry| {
+                        if (entry.value_ptr.kind == .Enum) {
+                            if (entry.value_ptr.enum_variants) |variants| {
+                                for (variants) |variant| {
+                                    if (std.mem.eql(u8, variant.name, arg.data.EnumMember.lexeme)) {
+                                        custom_type_name = entry.key_ptr.*;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             const type_name = switch (inferred_type) {
                 .Int => "int",
                 .Float => "float",
@@ -277,8 +308,8 @@ pub const CallsHandler = struct {
                         if (self.generator.isCustomType(var_name)) |custom_type| {
                             if (custom_type.kind == .Struct) break :blk "struct";
                         }
-                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_type_name| {
-                            break :blk custom_type_name;
+                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |var_custom_type_name| {
+                            break :blk var_custom_type_name;
                         }
                     }
                     if (arg.data == .FieldAccess) {
@@ -322,12 +353,13 @@ pub const CallsHandler = struct {
                 },
                 .Map => "map",
                 .Enum => blk: {
+                    if (custom_type_name) |ctn| break :blk ctn;
                     if (arg.data == .Variable) {
                         const var_name = arg.data.Variable.lexeme;
                         if (self.generator.isCustomType(var_name)) |custom_type| {
                             if (custom_type.kind == .Enum) break :blk var_name;
                         }
-                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_type_name| break :blk custom_type_name;
+                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |var_custom_type_name| break :blk var_custom_type_name;
                     }
                     if (arg.data == .FieldAccess) {
                         const field_access = arg.data.FieldAccess;
