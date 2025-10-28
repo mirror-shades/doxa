@@ -475,6 +475,8 @@ const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "8" },
     .{ .type = "int", .value = "-1" },
     .{ .type = "int", .value = "3" },
+    .{ .type = "int", .value = "15" },
+    .{ .type = "int", .value = "27" },
     .{ .type = "tetra", .value = "true" },
     .{ .type = "tetra", .value = "false" },
     .{ .type = "tetra", .value = "both" },

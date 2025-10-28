@@ -1903,17 +1903,15 @@ pub const SemanticAnalyzer = struct {
                     if (expr) |expression| {
                         // Special handling for Loop expressions
                         if (expression.data == .Loop) {
-                            // Check if the loop body contains break statements
-                            const loop_has_breaks = try self.checkLoopHasBreaks(expression);
-                            if (loop_has_breaks) {
-                                // If the loop has breaks, the code after the loop is reachable
-                                // Continue analyzing subsequent statements
-                                continue;
-                            } else {
-                                // If the loop has no breaks, it's an infinite loop
-                                // The code after the loop is unreachable
-                                break;
+                            // Check if this is an 'each' loop (desugared from ForEach)
+                            // Each loops always execute their body, so we should check for returns
+                            if (try self.checkExpressionHasReturns(expression)) {
+                                has_explicit_return = true;
                             }
+
+                            // For each loops, we should continue processing subsequent statements
+                            // because each loops always execute their body, so the code after is reachable
+                            continue;
                         }
 
                         // Check for return statements inside expressions (like if statements)
@@ -2390,6 +2388,21 @@ pub const SemanticAnalyzer = struct {
                             if (terminating_return_type.* != null) {
                                 return;
                             }
+                        } else if (expression.data == .Loop) {
+                            // Handle each loops - check if they contain terminating returns
+                            const loop_expr = expression.data.Loop;
+                            if (loop_expr.body.data == .Block) {
+                                try self.findTerminatingReturns(loop_expr.body.data.Block.statements, terminating_return_type, all_return_types);
+                            } else {
+                                // Single expression loop body
+                                const loop_stmt = ast.Stmt{ .data = .{ .Expression = loop_expr.body }, .base = loop_expr.body.base };
+                                var stmts = [_]ast.Stmt{loop_stmt};
+                                try self.findTerminatingReturns(&stmts, terminating_return_type, all_return_types);
+                            }
+                            // For each loops, we should continue processing subsequent statements
+                            // because each loops always execute their body, so the code after is reachable
+                            // Don't return here - continue to process remaining statements
+                            // The function should continue to find the actual terminating return
                         } else if (expression.data == .ReturnExpr) {
                             const return_expr = expression.data.ReturnExpr;
                             if (return_expr.value) |value| {
@@ -2595,6 +2608,14 @@ pub const SemanticAnalyzer = struct {
                 return has_returns;
             },
             .ReturnExpr => return true,
+            .Loop => |loop_data| {
+                // For loops, check if the body contains return statements
+                if (loop_data.body.data == .Block) {
+                    return self.checkStatementsHaveReturns(loop_data.body.data.Block.statements);
+                } else {
+                    return self.checkExpressionHasReturns(loop_data.body);
+                }
+            },
             else => return false,
         }
     }
