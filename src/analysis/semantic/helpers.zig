@@ -323,6 +323,23 @@ pub fn unionContainsNothing(self: *SemanticAnalyzer, union_type_info: ast.TypeIn
 
 /// REWRITE: unifyTypes uses structural checks
 pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
+    // WORKAROUND: If expected is Custom and actual is Union with matching Custom type, allow it
+    if (expected.base == .Custom and actual.base == .Union) {
+        if (actual.union_type) |union_type| {
+            // Check if any union member matches the expected custom type
+            for (union_type.types) |member_type| {
+                if (member_type.base == .Custom and
+                    expected.custom_type != null and
+                    member_type.custom_type != null and
+                    std.mem.eql(u8, expected.custom_type.?, member_type.custom_type.?))
+                {
+                    // Found matching custom type in union, accept it
+                    return;
+                }
+            }
+        }
+    }
+
     // If expected is union, actual must be a member (or a subset if it's a union)
     if (expected.base == .Union) {
         if (expected.union_type) |exp_u| {

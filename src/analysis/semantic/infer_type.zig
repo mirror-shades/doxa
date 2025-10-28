@@ -1682,8 +1682,15 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 },
             }
         },
-        .EnumMember => {
-            type_info.* = .{ .base = .Custom, .custom_type = null };
+        .EnumMember => |member_token| {
+            // Resolve the enum member to its parent enum type
+            const parent_enum_name = self.resolveEnumMemberToParentEnum(member_token.lexeme);
+            if (parent_enum_name) |enum_name| {
+                type_info.* = .{ .base = .Custom, .custom_type = enum_name };
+            } else {
+                // If we can't resolve the enum member, treat it as a generic enum
+                type_info.* = .{ .base = .Enum };
+            }
         },
         .DefaultArgPlaceholder => {
             type_info.* = .{ .base = .Nothing };

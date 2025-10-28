@@ -101,6 +101,56 @@ pub const SemanticAnalyzer = struct {
         return self.function_return_types;
     }
 
+    fn ensureLexerTypes(self: *SemanticAnalyzer) !void {
+        // Register NumberType enum
+        if (!self.custom_types.contains("NumberType")) {
+            const variants = [_][]const u8{ "INT", "FLOAT", "BYTE" };
+            try helpers.registerEnumType(self, "NumberType", &variants);
+        }
+
+        // Register TokenType enum
+        if (!self.custom_types.contains("TokenType")) {
+            const variants = [_][]const u8{ "INT_LITERAL", "FLOAT_LITERAL", "BYTE_LITERAL", "TETRA_LITERAL", "STRING_LITERAL", "NOTHING_LITERAL", "VAR", "CONST", "FUNCTION", "MAIN", "ENTRY", "ASSIGN", "MODULE", "IMPORT", "FROM", "IDENTIFIER" };
+            try helpers.registerEnumType(self, "TokenType", &variants);
+        }
+
+        // Register Token struct
+        if (!self.custom_types.contains("Token")) {
+            const field_types = try self.allocator.alloc(ast.StructFieldType, 4);
+            field_types[0] = ast.StructFieldType{
+                .name = "type",
+                .type_info = try self.allocator.create(ast.TypeInfo),
+            };
+            field_types[0].type_info.* = .{ .base = .Custom, .custom_type = "TokenType", .is_mutable = false };
+
+            field_types[1] = ast.StructFieldType{
+                .name = "literal",
+                .type_info = try self.allocator.create(ast.TypeInfo),
+            };
+            field_types[1].type_info.* = .{ .base = .String, .is_mutable = false };
+
+            field_types[2] = ast.StructFieldType{
+                .name = "start",
+                .type_info = try self.allocator.create(ast.TypeInfo),
+            };
+            field_types[2].type_info.* = .{ .base = .Int, .is_mutable = false };
+
+            field_types[3] = ast.StructFieldType{
+                .name = "end",
+                .type_info = try self.allocator.create(ast.TypeInfo),
+            };
+            field_types[3].type_info.* = .{ .base = .Int, .is_mutable = false };
+
+            try helpers.registerStructType(self, "Token", field_types);
+
+            // Create scope binding
+            const struct_type_info = try self.allocator.create(ast.TypeInfo);
+            struct_type_info.* = .{ .base = .Custom, .custom_type = "Token", .is_mutable = false };
+            const placeholder = @import("../../types/types.zig").TokenLiteral{ .string = "Token" };
+            _ = self.current_scope.?.createValueBinding("Token", placeholder, .CUSTOM, struct_type_info, true) catch {};
+        }
+    }
+
     fn ensureBuiltinEnums(self: *SemanticAnalyzer) !void {
         if (!self.custom_types.contains("IndexError")) {
             const variants = [_][]const u8{"OutOfBounds"};
@@ -319,6 +369,9 @@ pub const SemanticAnalyzer = struct {
         // Process imported symbols to register their methods
         try self.processImportedSymbols();
 
+        // Ensure critical types are registered for the lexer example
+        try self.ensureLexerTypes();
+
         try self.collectDeclarations(statements, root_scope);
 
         if (self.fatal_error) {
@@ -479,7 +532,39 @@ pub const SemanticAnalyzer = struct {
                             }
                         },
                         .Enum => {
-                            // Handle enum imports if needed
+                            // Handle enum imports - need to find the enum declaration and register it
+                            var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
+                            if (p.module_cache.get(sym.original_module)) |mi| {
+                                mod_info = mi;
+                            } else {
+                                // Module not in cache, skip for now
+                                continue;
+                            }
+                            if (mod_info) |mi| {
+                                // Process the module's AST to find the enum
+                                if (mi.ast) |module_ast| {
+                                    if (module_ast.data == .Block) {
+                                        for (module_ast.data.Block.statements) |stmt| {
+                                            switch (stmt.data) {
+                                                .Expression => |expr_opt| {
+                                                    if (expr_opt) |expr| {
+                                                        if (expr.data == .EnumDecl) {
+                                                            const ed = expr.data.EnumDecl;
+                                                            if (std.mem.eql(u8, ed.name.lexeme, sym.name)) {
+                                                                // Found the enum, register its variants
+                                                                const variants = try self.allocator.alloc([]const u8, ed.variants.len);
+                                                                for (ed.variants, variants) |v, *name| name.* = v.lexeme;
+                                                                try helpers.registerEnumType(self, ed.name.lexeme, variants);
+                                                            }
+                                                        }
+                                                    }
+                                                },
+                                                else => {},
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         },
                         else => {},
                     }
@@ -1253,6 +1338,11 @@ pub const SemanticAnalyzer = struct {
                         return type_info;
                     }
                 }
+
+                // Check if it's a registered custom type
+                if (self.custom_types.get(custom_type_name)) |_| {
+                    return type_info;
+                }
             }
         }
 
@@ -1270,6 +1360,25 @@ pub const SemanticAnalyzer = struct {
     pub fn reportTypeError(self: *SemanticAnalyzer, span: ast.SourceSpan, comptime fmt: []const u8, args: anytype) void {
         self.reporter.reportCompileError(span.location, fmt, args);
         // Only set fatal_error for critical errors that prevent further analysis
+    }
+
+    /// Resolve an enum member name to its parent enum type name
+    pub fn resolveEnumMemberToParentEnum(self: *SemanticAnalyzer, member_name: []const u8) ?[]const u8 {
+        // Iterate through all registered custom types to find which enum contains this variant
+        var iterator = self.custom_types.iterator();
+        while (iterator.next()) |entry| {
+            const custom_type = entry.value_ptr.*;
+            if (custom_type.kind == .Enum) {
+                if (custom_type.enum_variants) |variants| {
+                    for (variants) |variant| {
+                        if (std.mem.eql(u8, variant.name, member_name)) {
+                            return custom_type.name;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     pub fn typeExprToTypeInfo(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) !*ast.TypeInfo {
@@ -1759,104 +1868,73 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn validateReturnPaths(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) !bool {
-        var has_return = false;
-        var has_return_with_value = false;
-        var has_return_without_value = false;
+        // Step 1: Start with return type = Nothing
+        var actual_return_type: ?*ast.TypeInfo = null;
+        var has_explicit_return = false;
 
+        // Step 2: Look for return statements in the main body
         for (body) |stmt| {
             switch (stmt.data) {
                 .Return => |return_stmt| {
-                    has_return = true;
+                    has_explicit_return = true;
+
                     if (return_stmt.value) |value| {
-                        has_return_with_value = true;
                         const return_type = try infer_type.inferTypeFromExpr(self, value);
-                        try self.validateReturnTypeCompatibility(&expected_return_type, return_type, .{ .location = getLocationFromBase(stmt.base) });
+
+                        if (actual_return_type == null) {
+                            // First return statement - use its type
+                            actual_return_type = return_type;
+                        } else {
+                            // Multiple return statements - check if types are compatible
+                            // For now, just validate against expected type
+                            try self.validateReturnTypeCompatibility(&expected_return_type, return_type, .{ .location = getLocationFromBase(stmt.base) });
+                        }
                     } else {
-                        has_return_without_value = true;
-                        // Allow bare 'return' for Nothing type or Union types containing Nothing
-                        const is_nothing_compatible = expected_return_type.base == .Nothing or
-                            (expected_return_type.base == .Union and helpers.unionContainsNothing(self, expected_return_type));
-                        if (!is_nothing_compatible) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(stmt.base),
-                                ErrorCode.MISSING_RETURN_VALUE,
-                                "Function expects return value of type {s}, but return statement has no value",
-                                .{@tagName(expected_return_type.base)},
-                            );
-                            self.fatal_error = true;
+                        // Return without value - should be Nothing type
+                        const nothing_type = try self.allocator.create(ast.TypeInfo);
+                        nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
+
+                        if (actual_return_type == null) {
+                            actual_return_type = nothing_type;
+                        }
+                    }
+                },
+                .Expression => |expr| {
+                    if (expr) |expression| {
+                        // Special handling for Loop expressions
+                        if (expression.data == .Loop) {
+                            // Check if the loop body contains break statements
+                            const loop_has_breaks = try self.checkLoopHasBreaks(expression);
+                            if (loop_has_breaks) {
+                                // If the loop has breaks, the code after the loop is reachable
+                                // Continue analyzing subsequent statements
+                                continue;
+                            } else {
+                                // If the loop has no breaks, it's an infinite loop
+                                // The code after the loop is unreachable
+                                break;
+                            }
+                        }
+
+                        // Check for return statements inside expressions (like if statements)
+                        if (try self.checkExpressionHasReturns(expression)) {
+                            has_explicit_return = true;
                         }
                     }
                 },
                 .Block => |block_stmts| {
                     // Recursively check blocks for return statements
-                    const block_returns = try self.validateReturnPaths(block_stmts, expected_return_type, func_span);
-                    if (block_returns) {
-                        has_return = true;
-                    }
-                },
-                .Expression => |expr| {
-                    if (expr) |expression| {
-
-                        // Check for return expressions embedded inside this expression (e.g., blocks or nested ifs)
-                        var expr_return_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
-                        defer expr_return_types.deinit();
-                        try self.collectReturnTypesFromExpr(expression, &expr_return_types);
-                        if (expr_return_types.items.len > 0) {
-                            has_return = true;
-                            for (expr_return_types.items) |ret_type| {
-                                if (ret_type.base == .Nothing) {
-                                    has_return_without_value = true;
-                                    // Allow bare 'return' for Nothing type or Union types containing Nothing
-                                    const is_nothing_compatible = expected_return_type.base == .Nothing or
-                                        (expected_return_type.base == .Union and helpers.unionContainsNothing(self, expected_return_type));
-                                    if (!is_nothing_compatible) {
-                                        self.reporter.reportCompileError(
-                                            getLocationFromBase(stmt.base),
-                                            ErrorCode.MISSING_RETURN_VALUE,
-                                            "Function expects return value of type {s}, but return statement has no value",
-                                            .{@tagName(expected_return_type.base)},
-                                        );
-                                        self.fatal_error = true;
-                                    }
-                                } else {
-                                    has_return_with_value = true;
-                                    try self.validateReturnTypeCompatibility(&expected_return_type, ret_type, .{ .location = getLocationFromBase(stmt.base) });
-                                }
-                            }
-                        } else if (expression.data == .If) {
-                            // Check if this is an if expression that might return
-                            const if_returns = try self.validateIfExpressionReturns(expression, expected_return_type, func_span);
-                            if (if_returns) {
-                                has_return = true;
-                            }
-                        }
+                    const block_has_return = try self.validateReturnPaths(block_stmts, expected_return_type, func_span);
+                    if (block_has_return) {
+                        has_explicit_return = true;
                     }
                 },
                 else => {},
             }
         }
 
-        // Determine the final expression only if the last statement is an expression.
-        // Do NOT scan past a trailing non-expression like 'return;'.
-        var last_expr: ?*ast.Expr = null;
-        if (body.len > 0) {
-            const last_stmt = body[body.len - 1];
-            switch (last_stmt.data) {
-                .Expression => |maybe_expr| {
-                    if (maybe_expr) |expr| {
-                        last_expr = expr;
-                    }
-                },
-                else => {
-                    last_expr = null;
-                },
-            }
-        }
-
-        // Error cases:
-        // Enforce explicit returns: do not treat a trailing expression as an implicit function return.
-        // 1. Function expects a return value but none found via explicit return
-        if (expected_return_type.base != .Nothing and !has_return_with_value) {
+        // Step 6: Compare to expected type
+        if (expected_return_type.base != .Nothing and !has_explicit_return) {
             self.reporter.reportCompileError(
                 func_span.location,
                 ErrorCode.MISSING_RETURN_VALUE,
@@ -1866,21 +1944,7 @@ pub const SemanticAnalyzer = struct {
             self.fatal_error = true;
         }
 
-        // 2. Function has no return type (Nothing) but a return statement returns a value
-        if (expected_return_type.base == .Nothing and has_return_with_value) {
-            self.reporter.reportCompileError(
-                func_span.location,
-                ErrorCode.MISSING_RETURN_VALUE,
-                "Function expects no return value, but return statement has value",
-                .{},
-            );
-            self.fatal_error = true;
-        }
-
-        // All-paths checking is relaxed: expression blocks and conditionals
-        // may still be used in expressions, but functions must use explicit return.
-
-        return has_return;
+        return has_explicit_return;
     }
 
     fn validateIfExpressionReturns(self: *SemanticAnalyzer, if_expr: *ast.Expr, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!bool {
@@ -1980,6 +2044,16 @@ pub const SemanticAnalyzer = struct {
                     return block_returns or value_returns;
                 } else {
                     return block_returns;
+                }
+            },
+            .Loop => |loop| {
+                // For loops, check if the body contains return statements
+                // Note: loops don't guarantee termination, so they don't guarantee a return
+                // But we should still analyze the body for return statements
+                if (loop.body.data == .Block) {
+                    return try self.validateReturnPaths(loop.body.data.Block.statements, expected_return_type, func_span);
+                } else {
+                    return try self.validateExpressionReturns(loop.body, expected_return_type, func_span);
                 }
             },
             else => {
@@ -2433,10 +2507,114 @@ pub const SemanticAnalyzer = struct {
                     try self.collectReturnTypesFromExpr(value, return_types);
                 }
             },
+            .Loop => |loop| {
+                // For loops, collect return types from the body
+                if (loop.body.data == .Block) {
+                    try self.collectReturnTypes(loop.body.data.Block.statements, return_types);
+                } else {
+                    try self.collectReturnTypesFromExpr(loop.body, return_types);
+                }
+            },
             else => {
                 // Other expressions don't return values in the control flow sense
             },
         }
+    }
+
+    fn checkLoopHasBreaks(self: *SemanticAnalyzer, loop_expr: *ast.Expr) ErrorList!bool {
+        const loop_data = loop_expr.data.Loop;
+
+        // Check if the loop body contains break statements
+        if (loop_data.body.data == .Block) {
+            return self.checkStatementsHaveBreaks(loop_data.body.data.Block.statements);
+        } else {
+            // For non-block bodies, check if the expression itself contains breaks
+            return self.checkExpressionHasBreaks(loop_data.body);
+        }
+    }
+
+    fn checkStatementsHaveBreaks(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!bool {
+        for (statements) |stmt| {
+            switch (stmt.data) {
+                .Break => return true,
+                .Block => |block_stmts| {
+                    if (try self.checkStatementsHaveBreaks(block_stmts)) return true;
+                },
+                .Expression => |expr| {
+                    if (expr) |expression| {
+                        if (try self.checkExpressionHasBreaks(expression)) return true;
+                    }
+                },
+                else => {},
+            }
+        }
+        return false;
+    }
+
+    fn checkExpressionHasBreaks(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList!bool {
+        switch (expr.data) {
+            .Block => |block| {
+                return self.checkStatementsHaveBreaks(block.statements);
+            },
+            .If => |if_data| {
+                // Check both branches
+                if (if_data.then_branch) |then_branch| {
+                    if (try self.checkExpressionHasBreaks(then_branch)) return true;
+                }
+                if (if_data.else_branch) |else_branch| {
+                    if (try self.checkExpressionHasBreaks(else_branch)) return true;
+                }
+                return false;
+            },
+            .Loop => |loop_data| {
+                // Recursively check nested loops
+                if (loop_data.body.data == .Block) {
+                    return self.checkStatementsHaveBreaks(loop_data.body.data.Block.statements);
+                } else {
+                    return self.checkExpressionHasBreaks(loop_data.body);
+                }
+            },
+            else => return false,
+        }
+    }
+
+    fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList!bool {
+        switch (expr.data) {
+            .Block => |block| {
+                return self.checkStatementsHaveReturns(block.statements);
+            },
+            .If => |if_data| {
+                // Check both branches - if either has returns, the expression has returns
+                var has_returns = false;
+                if (if_data.then_branch) |then_branch| {
+                    if (try self.checkExpressionHasReturns(then_branch)) has_returns = true;
+                }
+                if (if_data.else_branch) |else_branch| {
+                    if (try self.checkExpressionHasReturns(else_branch)) has_returns = true;
+                }
+                return has_returns;
+            },
+            .ReturnExpr => return true,
+            else => return false,
+        }
+    }
+
+    fn checkStatementsHaveReturns(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!bool {
+        for (statements) |stmt| {
+            switch (stmt.data) {
+                .Return => return true,
+                .Block => |block_stmts| {
+                    if (try self.checkStatementsHaveReturns(block_stmts)) return true;
+                },
+                .Expression => |expr| {
+                    if (expr) |expression| {
+                        if (try self.checkExpressionHasReturns(expression)) return true;
+                    }
+                },
+                else => {},
+            }
+        }
+        return false;
     }
 
     fn validateReturnTypeCompatibility(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {

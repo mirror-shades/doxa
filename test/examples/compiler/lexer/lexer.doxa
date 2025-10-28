@@ -2,6 +2,7 @@ module Helper from "./helper.doxa"
 module SourceManager from "./source_manager.doxa"
 
 import Token, TokenType from "./token.doxa"
+import NumberType from "./types.doxa"
 
 function lex(src :: string) {
     var tokens :: Token[]
@@ -13,54 +14,110 @@ function lex(src :: string) {
             line += 1
             @push(line_breaks, i)
         }
-
         if c == "\"" then {
-            var str :: string
-            for j is i + 1 do j += 1 {
-                const current_char :: string is src[j]
-                if current_char == "\"" then {
-                    i is j
-                    break
-                }
-                str += current_char
-            }
-            const new_token is Token {
-                type is TokenType.STRING_LITERAL
-                literal is str
-            }
+            const new_token is makeString(^src, ^i)
             @push(tokens, new_token)
         }
-
         if Helper.isAlpha(c) then {
-            var word :: string is c
-            for j is i + 1 do j += 1 {
-                const word_char is src[j]
-                if not Helper.isAlpha(word_char) then {
-                    i is j
-                    break
-                }
-                word += word_char
-            }
-            if Helper.isKeyword(word) then {
-                // ERROR here infering mapping as string?
-                const token_type :: TokenType is Helper.LiteralToToken[word]
-                const new_token is Token {
-                    type is token_type
-                    literal is word
-                }
-                @push(tokens, new_token)
-            } else {
-                const new_token is Token {
-                    type is TokenType.IDENTIFIER
-                    literal is word
-                }
-                @push(tokens, new_token)
-            }
+            const new_token is makeAlpha(^src, ^i, c)
+            @push(tokens, new_token)
         } else if Helper.isNumeric(c) {
-
+            const new_token is makeNumeric(^src, ^i)
+            @push(tokens, new_token)
         }
     }
+
+    each t in tokens {
+        @print("{t.type}\n") // THIS LINE CAUSES THE ERRO
+    }
+
     // add to source_manager @print("there are {line_breaks} lines")
+}
+
+function makeString(^src :: string, ^i :: int) returns Token {
+    var str :: string
+    for j is i + 1 do j += 1 {
+        const current_char :: string is src[j]
+        if current_char == "\"" then {
+            i is j
+            break
+        }
+        str += current_char
+    }
+    return Token {
+        type is TokenType.STRING_LITERAL
+        literal is str
+        start is i
+        end is i + @length(str)
+    }
+}
+
+function makeAlpha(^src :: string, ^i :: int, c :: string) returns Token {
+    var word :: string is c
+    for j is i + 1 do j += 1 {
+        const word_char is src[j]
+        if not Helper.isAlpha(word_char) then {
+            if not Helper.isNumeric(word_char) {
+                i is j
+                break
+            }
+        }
+        word += word_char
+    }
+    if Helper.isKeyword(word) then {
+        const token_type :: TokenType is Helper.LiteralToToken[word]
+        return Token {
+            type is token_type
+            literal is word
+            start is i
+            end is i + @length(word)
+        }
+    } else {
+        return Token {
+            type is TokenType.IDENTIFIER
+            literal is word
+            start is i
+            end is i + @length(word)
+        }
+    }
+}
+
+function makeNumeric(^src :: string, ^i :: int) returns Token {
+    var num_type :: NumberType is .INT    
+    var current_num :: string is src[i]
+    if src[i] == "0" and (src[i + 1] == "x" or src[i + 1] == "X") then {
+        num_type is .BYTE
+        current_num is "0x"
+        i is i + 2
+    }
+    for j is i do j += 1 {
+        const current_char is src[j]
+        if not Helper.isNumeric(current_char) then {
+            if current_char != "." {
+                i is j - 1
+                break
+            }
+        }
+        if current_char == "." then {
+            if num_type == .FLOAT {
+                @print("ERROR multiple periods in float\n")
+                break
+            } else if num_type == .BYTE {
+                @print("ERROR period found in byte\n")
+                break
+            } else {
+                num_type is .FLOAT
+            }
+        }
+        current_num += current_char
+    } 
+    const token_type :: TokenType is .INT_LITERAL
+    return Token {
+        type is token_type
+        literal is current_num
+        start is i
+        end is i + @length(current_num)
+    }
 }
 
 entry function main() {
