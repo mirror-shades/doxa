@@ -1,7 +1,0 @@
-enum Species {
-    DOG,
-    CAT,
-}
-
-// Test if Species is recognized as a custom type
-@type(Species)?
