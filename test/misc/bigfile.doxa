@@ -402,6 +402,22 @@ Point.safeSub(10, 2)?
 Point.safeSub(2, 10)?
 point.getDelta()?
 
+struct PubPoint {
+    pub x :: int
+    pub y :: int
+}
+
+function add_points(a :: PubPoint, b :: PubPoint) returns PubPoint {
+    return PubPoint {
+        x is a.x + b.x
+        y is a.y + b.y
+    }
+}
+
+const point_result is add_points(PubPoint { x is 10; y is 20 }, PubPoint { x is 5; y is 7 })
+
+point_result.x?
+point_result.y?
 
 
 /////

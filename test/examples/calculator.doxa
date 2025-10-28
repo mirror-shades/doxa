@@ -33,9 +33,12 @@ function precedence(op :: string) returns int {
 
 function calculate(input :: string) {
     const splitInput is split(input)
+    @print("Split input: {splitInput}\n")
     @assert(verifyParens(splitInput), "parens don't match")
     const tokens is tokenize(splitInput)
+    @print("Tokens: {tokens}\n")
     const rpn is shunt(tokens)
+    @print("RPN: {rpn}\n")
 
     rpn as CalcToken[] then {
         const result is evaluate(rpn)
@@ -53,6 +56,8 @@ function calculate(input :: string) {
 }
 
 function evaluate(rpn :: CalcToken[]) returns int | Error {
+    if @length(rpn) == 0 then return Error.FailedToEvaluate
+    
     var stack :: int[]
     each t in rpn {
         if t.token_type == TokenType.NUMBER then {
@@ -71,6 +76,8 @@ function evaluate(rpn :: CalcToken[]) returns int | Error {
                 @push(stack, result)
             }
             if t.value == "*" then @push(stack, lh * rh)
+        } else {
+            return Error.FailedToEvaluate
         }
     }
     if @length(stack) != 1 then return Error.FailedToEvaluate
@@ -78,6 +85,8 @@ function evaluate(rpn :: CalcToken[]) returns int | Error {
 }
 
 function split(input :: string) returns string[] {
+    if @length(input) == 0 then return []
+    
     var result :: string[]
     var current is ""
 
@@ -120,6 +129,9 @@ function split(input :: string) returns string[] {
         }
         else if c != " " {
             current is current + c
+        } else {
+            // Handle any other characters (shouldn't happen in this context)
+            current is current + c
         }
     }
     if current != "" then @push(result, current)
@@ -136,6 +148,8 @@ function isUnaryMinus(_input :: string) returns tetra {
 }
 
 function verifyParens(input :: string[]) returns tetra {
+    if @length(input) == 0 then return true
+    
     var depth is 0
     var passed :: tetra is true
     each s in input {
@@ -152,6 +166,8 @@ function verifyParens(input :: string[]) returns tetra {
 }
 
 function tokenize(input :: string[]) returns CalcToken[] {
+    if @length(input) == 0 then return []
+    
     var tokens :: CalcToken[]
 
     each token in input {
@@ -185,14 +201,18 @@ function tokenize(input :: string[]) returns CalcToken[] {
 }
 
 function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
+    @print("Shunt input: {tokens}\n")
     var output :: CalcToken[]
     var operators :: CalcToken[]
 
     each t in tokens {
+        @print("Processing token: {t}\n")
         if t.token_type == TokenType.NUMBER then {
+            @print("Adding number to output: {t}\n")
             @push(output, t)
         }
         else if t.token_type == TokenType.OPERATOR then {
+            @print("Processing operator: {t}\n")
 
             while @length(operators) > 0 {
                 const top_op is operators[@length(operators) - 1]
