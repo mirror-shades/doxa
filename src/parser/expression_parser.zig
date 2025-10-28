@@ -794,38 +794,19 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             },
         };
     } else if (type_token.type == .IDENTIFIER) {
-        var is_known_custom = false;
-        if (self.declared_types.contains(type_name)) {
-            is_known_custom = true;
-        } else if (self.imported_symbols) |symbols| {
-            var it = symbols.iterator();
-            while (it.next()) |entry| {
-                const symbol = entry.value_ptr.*;
-                if ((symbol.kind == .Enum or symbol.kind == .Struct or symbol.kind == .Type) and
-                    std.mem.eql(u8, symbol.name, type_name))
-                {
-                    is_known_custom = true;
-                    break;
-                }
-            }
-        }
-
-        if (is_known_custom) {
-            self.advance();
-            consumed_token = true;
-            base_type_expr = try self.allocator.create(ast.TypeExpr);
-            base_type_expr.?.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(type_token),
-                },
-                .data = .{
-                    .Custom = type_token,
-                },
-            };
-        } else {
-            return error.UnknownType;
-        }
+        // Treat all identifiers as custom types - semantic analysis will validate them
+        self.advance();
+        consumed_token = true;
+        base_type_expr = try self.allocator.create(ast.TypeExpr);
+        base_type_expr.?.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(type_token),
+            },
+            .data = .{
+                .Custom = type_token,
+            },
+        };
     } else {
         return error.ExpectedType;
     }

@@ -12,7 +12,7 @@ enum TokenType {
     RPAREN,
 }
 
-struct Token {
+struct CalcToken {
     pub token_type :: TokenType,
     pub value :: string,
 }
@@ -37,7 +37,7 @@ function calculate(input :: string) {
     const tokens is tokenize(splitInput)
     const rpn is shunt(tokens)
 
-    rpn as Token[] then {
+    rpn as CalcToken[] then {
         const result is evaluate(rpn)
         result as int then {
             @print("Output: {result}\n")
@@ -52,7 +52,7 @@ function calculate(input :: string) {
     }
 }
 
-function evaluate(rpn :: Token[]) returns int | Error {
+function evaluate(rpn :: CalcToken[]) returns int | Error {
     var stack :: int[]
     each t in rpn {
         if t.token_type == TokenType.NUMBER then {
@@ -151,30 +151,30 @@ function verifyParens(input :: string[]) returns tetra {
     return passed
 }
 
-function tokenize(input :: string[]) returns Token[] {
-    var tokens :: Token[]
+function tokenize(input :: string[]) returns CalcToken[] {
+    var tokens :: CalcToken[]
 
     each token in input {
         if token == "+" or token == "-" or token == "*" or token == "/" then {
-            @push(tokens, Token {
+            @push(tokens, CalcToken {
                 token_type is .OPERATOR,
                 value is token,
             })
         }
         else if token == "(" then {
-            @push(tokens, Token {
+            @push(tokens, CalcToken {
                 token_type is .LPAREN,
                 value is token,
             })
         }
         else if token == ")" then {
-            @push(tokens, Token {
+            @push(tokens, CalcToken {
                 token_type is .RPAREN,
                 value is token,
             })
         } else {
             if token != "" {
-                @push(tokens, Token {
+                @push(tokens, CalcToken {
                     token_type is .NUMBER,
                     value is token,
                 })
@@ -184,9 +184,9 @@ function tokenize(input :: string[]) returns Token[] {
     return tokens
 }
 
-function shunt(tokens :: Token[]) returns Token[] | Error {
-    var output :: Token[]
-    var operators :: Token[]
+function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
+    var output :: CalcToken[]
+    var operators :: CalcToken[]
 
     each t in tokens {
         if t.token_type == TokenType.NUMBER then {

@@ -829,14 +829,67 @@ pub const Parser = struct {
 
         const current_token = self.peek();
 
-        if (Parser.methodNameToTokenType(current_token.lexeme)) |_| {
-            const loc: Location = .{ .file = self.current_file, .range = .{ .start_line = current_token.line, .start_col = current_token.column, .end_line = current_token.line, .end_col = current_token.column } };
-            self.reporter.reportCompileError(loc, ErrorCode.UNKNOWN_METHOD, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ current_token.lexeme, current_token.lexeme });
-            return error.UnknownFieldOrMethod;
-        }
-
         if (current_token.type != .IDENTIFIER and current_token.type != .FIELD_ACCESS) {
             return error.ExpectedIdentifier;
+        }
+
+        // Check if this is an enum member access
+        if (left != null and left.?.data == .Variable) {
+            const var_name = left.?.data.Variable;
+            if (self.declared_types.contains(var_name.lexeme)) {
+                // Check if this is actually an enum type by looking for enum declarations
+                var is_enum_type = false;
+                var i: usize = 0;
+                while (i < self.tokens.len) : (i += 1) {
+                    if (self.tokens[i].type == .ENUM_TYPE) {
+                        i += 1;
+                        if (i < self.tokens.len and std.mem.eql(u8, self.tokens[i].lexeme, var_name.lexeme)) {
+                            is_enum_type = true;
+                            break;
+                        }
+                    }
+                }
+
+                if (is_enum_type) {
+                    // This is an enum member access
+                    self.advance();
+
+                    var found_valid_variant = false;
+                    var j: usize = 0;
+                    while (j < self.tokens.len) : (j += 1) {
+                        if (self.tokens[j].type == .ENUM_TYPE) {
+                            j += 2;
+
+                            if (self.tokens[j].type != .LEFT_BRACE) continue;
+                            j += 1;
+
+                            while (j < self.tokens.len and self.tokens[j].type != .RIGHT_BRACE) : (j += 1) {
+                                if (self.tokens[j].type == .IDENTIFIER) {
+                                    if (std.mem.eql(u8, self.tokens[j].lexeme, current_token.lexeme)) {
+                                        found_valid_variant = true;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (found_valid_variant) break;
+                        }
+                    }
+
+                    if (found_valid_variant) {
+                        const enum_member = try self.allocator.create(ast.Expr);
+                        enum_member.* = .{
+                            .base = .{
+                                .id = ast.generateNodeId(),
+                                .span = ast.SourceSpan.fromToken(self.peek()),
+                            },
+                            .data = .{
+                                .EnumMember = current_token,
+                            },
+                        };
+                        return enum_member;
+                    }
+                }
+            }
         }
 
         self.advance();
@@ -862,6 +915,12 @@ pub const Parser = struct {
 
         // Check if this field access is followed by parentheses - treat as function call
         if (self.peek().type == .LEFT_PAREN) {
+            // Check if this is a reserved method name
+            if (Parser.methodNameToTokenType(current_token.lexeme)) |_| {
+                const loc: Location = .{ .file = self.current_file, .range = .{ .start_line = current_token.line, .start_col = current_token.column, .end_line = current_token.line, .end_col = current_token.column } };
+                self.reporter.reportCompileError(loc, ErrorCode.UNKNOWN_METHOD, "Unknown field or method '{s}'. If this is a compiler method, use @{s}(...)", .{ current_token.lexeme, current_token.lexeme });
+                return error.UnknownFieldOrMethod;
+            }
             return try self.call(field_access, .CALL);
         }
 
@@ -916,31 +975,6 @@ pub const Parser = struct {
 
         const member = self.peek();
         self.advance();
-
-        var found_valid_variant = false;
-        var i: usize = 0;
-        while (i < self.tokens.len) : (i += 1) {
-            if (self.tokens[i].type == .ENUM_TYPE) {
-                i += 2;
-
-                if (self.tokens[i].type != .LEFT_BRACE) continue;
-                i += 1;
-
-                while (i < self.tokens.len and self.tokens[i].type != .RIGHT_BRACE) : (i += 1) {
-                    if (self.tokens[i].type == .IDENTIFIER) {
-                        if (std.mem.eql(u8, self.tokens[i].lexeme, member.lexeme)) {
-                            found_valid_variant = true;
-                            break;
-                        }
-                    }
-                }
-                if (found_valid_variant) break;
-            }
-        }
-
-        if (!found_valid_variant) {
-            return error.InvalidEnumVariant;
-        }
 
         const enum_member = try self.allocator.create(ast.Expr);
         enum_member.* = .{

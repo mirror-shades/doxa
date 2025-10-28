@@ -325,7 +325,7 @@ pub const CallsHandler = struct {
                     if (arg.data == .Variable) {
                         const var_name = arg.data.Variable.lexeme;
                         if (self.generator.isCustomType(var_name)) |custom_type| {
-                            if (custom_type.kind == .Enum) break :blk "enum";
+                            if (custom_type.kind == .Enum) break :blk var_name;
                         }
                         if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_type_name| break :blk custom_type_name;
                     }
