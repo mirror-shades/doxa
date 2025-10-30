@@ -36,10 +36,6 @@ pub fn build(b: *std.Build) void {
     // Make tests depend on successful compilation
     run_test_run.step.dependOn(&exe.step);
 
-    // Make default step just build the executable
-    const build_step = b.step("default", "Build the Doxa compiler");
-    build_step.dependOn(&exe.step);
-
     // Add run step
     const run_step = b.step("run", "Run the Doxa compiler");
     run_step.dependOn(&run_cmd.step);
