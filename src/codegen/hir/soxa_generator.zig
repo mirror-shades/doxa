@@ -1330,7 +1330,7 @@ pub const HIRGenerator = struct {
         return self.type_system.inferTypeFromLiteral(literal);
     }
 
-    fn resolveFieldAccessType(self: *HIRGenerator, e: *ast.Expr) ?TypeSystem.FieldResolveResult {
+    pub fn resolveFieldAccessType(self: *HIRGenerator, e: *ast.Expr) ?TypeSystem.FieldResolveResult {
         return self.type_system.resolveFieldAccessType(e, &self.symbol_table);
     }
 

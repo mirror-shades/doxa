@@ -33,12 +33,9 @@ function precedence(op :: string) returns int {
 
 function calculate(input :: string) {
     const splitInput is split(input)
-    @print("Split input: {splitInput}\n")
     @assert(verifyParens(splitInput), "parens don't match")
     const tokens is tokenize(splitInput)
-    @print("Tokens: {tokens}\n")
     const rpn is shunt(tokens)
-    @print("RPN: {rpn}\n")
 
     rpn as CalcToken[] then {
         const result is evaluate(rpn)
@@ -63,8 +60,7 @@ function evaluate(rpn :: CalcToken[]) returns int | Error {
         if t.token_type == TokenType.NUMBER then {
             const valid_number is @int(t.value)
             @push(stack, valid_number)
-        }
-        if t.token_type == TokenType.OPERATOR then {
+        } else if t.token_type == TokenType.OPERATOR then {
             if @length(stack) < 2 then return Error.FailedToEvaluate
             const rh is @pop(stack) 
             const lh is @pop(stack) 
@@ -201,19 +197,14 @@ function tokenize(input :: string[]) returns CalcToken[] {
 }
 
 function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
-    @print("Shunt input: {tokens}\n")
     var output :: CalcToken[]
     var operators :: CalcToken[]
 
     each t in tokens {
-        @print("Processing token: {t}\n")
         if t.token_type == TokenType.NUMBER then {
-            @print("Adding number to output: {t}\n")
             @push(output, t)
         }
         else if t.token_type == TokenType.OPERATOR then {
-            @print("Processing operator: {t}\n")
-
             while @length(operators) > 0 {
                 const top_op is operators[@length(operators) - 1]
                 if top_op.token_type != TokenType.OPERATOR then break

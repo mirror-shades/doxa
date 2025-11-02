@@ -247,10 +247,39 @@ pub const BasicExpressionHandler = struct {
                 const const_idx = try self.generator.addConstant(enum_value);
                 try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
             } else {
-                // Fallback to string constant if no enum context
-                const enum_value = HIRValue{ .string = member.lexeme };
-                const const_idx = try self.generator.addConstant(enum_value);
-                try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
+                // Try to resolve uniquely by scanning custom types for a variant match
+                var matched_enum_name: ?[]const u8 = null;
+                var matches: u32 = 0;
+                var it = self.generator.type_system.custom_types.iterator();
+                while (it.next()) |entry| {
+                    if (entry.value_ptr.kind == .Enum) {
+                        if (entry.value_ptr.enum_variants) |variants| {
+                            for (variants) |variant| {
+                                if (std.mem.eql(u8, variant.name, member.lexeme)) {
+                                    matched_enum_name = entry.key_ptr.*;
+                                    matches += 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (matches == 1 and matched_enum_name != null) {
+                    const etype = matched_enum_name.?;
+                    const variant_index = if (self.generator.type_system.custom_types.get(etype)) |custom_type|
+                        custom_type.getEnumVariantIndex(member.lexeme) orelse 0
+                    else
+                        0;
+                    const enum_value = HIRValue{ .enum_variant = HIREnum{ .type_name = etype, .variant_name = member.lexeme, .variant_index = variant_index, .path = null } };
+                    const const_idx = try self.generator.addConstant(enum_value);
+                    try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
+                } else {
+                    // Fallback to string constant if no enum context
+                    const enum_value = HIRValue{ .string = member.lexeme };
+                    const const_idx = try self.generator.addConstant(enum_value);
+                    try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
+                }
             }
         }
     }
