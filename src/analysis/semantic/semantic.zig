@@ -108,20 +108,21 @@ pub const SemanticAnalyzer = struct {
             try helpers.registerEnumType(self, "NumberType", &variants);
         }
 
-        // Register TokenType enum
-        if (!self.custom_types.contains("TokenType")) {
+        // Register a compiler-internal token enum under a non-conflicting name
+        if (!self.custom_types.contains("LangTokenType")) {
             const variants = [_][]const u8{ "INT_LITERAL", "FLOAT_LITERAL", "BYTE_LITERAL", "TETRA_LITERAL", "STRING_LITERAL", "NOTHING_LITERAL", "VAR", "CONST", "FUNCTION", "MAIN", "ENTRY", "ASSIGN", "MODULE", "IMPORT", "FROM", "IDENTIFIER" };
-            try helpers.registerEnumType(self, "TokenType", &variants);
+            try helpers.registerEnumType(self, "LangTokenType", &variants);
         }
 
-        // Register Token struct
+        // Register Token struct (compiler-internal)
         if (!self.custom_types.contains("Token")) {
             const field_types = try self.allocator.alloc(ast.StructFieldType, 4);
             field_types[0] = ast.StructFieldType{
                 .name = "type",
                 .type_info = try self.allocator.create(ast.TypeInfo),
             };
-            field_types[0].type_info.* = .{ .base = .Custom, .custom_type = "TokenType", .is_mutable = false };
+            // Use the internal enum name to avoid collisions with user-defined TokenType
+            field_types[0].type_info.* = .{ .base = .Custom, .custom_type = "LangTokenType", .is_mutable = false };
 
             field_types[1] = ast.StructFieldType{
                 .name = "literal",
@@ -2639,6 +2640,10 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn validateReturnTypeCompatibility(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
+        // Treat Nothing as a bottom type that is compatible with any expected return type
+        if (actual.base == .Nothing) {
+            return;
+        }
         // Handle union types for return type checking
         if (expected.base == .Union) {
             if (expected.union_type) |union_type| {
@@ -2648,6 +2653,8 @@ pub const SemanticAnalyzer = struct {
                     if (actual.union_type) |actual_union| {
                         // Check that every member of the actual union is compatible with the expected union
                         for (actual_union.types) |actual_member| {
+                            // Skip Nothing members; Nothing is compatible with any expected union
+                            if (actual_member.base == .Nothing) continue;
                             var found_match = false;
                             for (union_type.types) |expected_member| {
                                 if (actual_member.base == expected_member.base) {
@@ -2680,6 +2687,7 @@ pub const SemanticAnalyzer = struct {
                         return; // All members are compatible
                     }
                 } else {
+                    // Single type - early accept for Nothing handled above
                     // Single type - check if it's a member of the expected union
                     var found_match = false;
                     for (union_type.types) |member_type| {

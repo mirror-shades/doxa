@@ -20,8 +20,50 @@ pub const BinaryExpressionHandler = struct {
         const left_type = self.generator.inferTypeFromExpression(bin.left.?);
         const right_type = self.generator.inferTypeFromExpression(bin.right.?);
 
-        try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
-        try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
+        // Special handling for equality/inequality with enum members lacking context.
+        // If one side is an enum-typed expression (or a field whose declared type is an enum),
+        // set enum context while lowering a bare EnumMember (e.g., `.NUMBER`) on the other side.
+        if (bin.operator.type == .EQUALITY or bin.operator.type == .BANG_EQUAL) {
+            var enum_ctx: ?[]const u8 = null;
+
+            // Try to derive enum context from left expression via field resolution
+            if (left_type == .Enum) {
+                if (self.generator.resolveFieldAccessType(bin.left.?)) |res| {
+                    if (res.custom_type_name) |ctn| enum_ctx = ctn;
+                }
+            }
+            // If not found, try right expression
+            if (enum_ctx == null and right_type == .Enum) {
+                if (self.generator.resolveFieldAccessType(bin.right.?)) |res| {
+                    if (res.custom_type_name) |ctn| enum_ctx = ctn;
+                }
+            }
+
+            // Generate left with possible enum context if it is an EnumMember literal
+            if (bin.left.?.data == .EnumMember and enum_ctx != null) {
+                const prev = self.generator.current_enum_type;
+                const ctx = enum_ctx.?;
+                self.generator.current_enum_type = ctx;
+                try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
+                self.generator.current_enum_type = prev;
+            } else {
+                try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
+            }
+
+            // Generate right with possible enum context if it is an EnumMember literal
+            if (bin.right.?.data == .EnumMember and enum_ctx != null) {
+                const prev2 = self.generator.current_enum_type;
+                const ctx2 = enum_ctx.?;
+                self.generator.current_enum_type = ctx2;
+                try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
+                self.generator.current_enum_type = prev2;
+            } else {
+                try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
+            }
+        } else {
+            try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
+            try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
+        }
 
         switch (bin.operator.type) {
             .PLUS => try self.handlePlusOperator(left_type, right_type, bin),

@@ -10,6 +10,8 @@ pub fn exec(vm: anytype, c: anytype) !void {
     const b = try vm.stack.pop();
     const a_val = try vm.stack.pop();
 
+    // debug print removed
+
     const result = switch (c.op) {
         .Eq => try compareEqual(vm, a_val, b),
         .Ne => !(try compareEqual(vm, a_val, b)),
