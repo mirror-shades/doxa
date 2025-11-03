@@ -71,6 +71,11 @@ const FunctionSymbol = struct {
     return_type: LLVMTypes.LLVMTypeRef,
 };
 
+const LoopContext = struct {
+    break_block: LLVMTypes.LLVMBasicBlockRef,
+    continue_block: LLVMTypes.LLVMBasicBlockRef,
+};
+
 pub const LLVMGenerator = struct {
     context: LLVMTypes.LLVMContextRef,
     module: LLVMTypes.LLVMModuleRef,
@@ -87,6 +92,9 @@ pub const LLVMGenerator = struct {
 
     // Current function being generated
     current_function: ?LLVMTypes.LLVMValueRef,
+
+    // Loop context stack for break/continue
+    loop_stack: std.ArrayList(LoopContext),
 
     // Debug/opt controls
     debug_peek: bool,
@@ -194,6 +202,7 @@ pub const LLVMGenerator = struct {
             .externs = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
             .functions = std.StringHashMap(FunctionSymbol).init(allocator),
             .string_literals = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
+            .loop_stack = std.ArrayList(LoopContext).init(allocator),
             .allocator = allocator,
             .current_function = null,
             .debug_peek = false,
@@ -218,6 +227,7 @@ pub const LLVMGenerator = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.string_literals.deinit();
+        self.loop_stack.deinit();
         LLVMCore.LLVMDisposeBuilder(self.builder);
         LLVMCore.LLVMDisposeModule(self.module);
         LLVMCore.LLVMContextDispose(self.context);
@@ -908,6 +918,90 @@ pub const LLVMGenerator = struct {
                 }
             },
 
+            .Loop => |loop| {
+                // Create basic blocks for the loop
+                const loop_header = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "loop.header");
+                const loop_body = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "loop.body");
+                const loop_latch = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "loop.latch");
+                const loop_exit = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "loop.exit");
+
+                // Push loop context for break/continue
+                try self.loop_stack.append(.{
+                    .break_block = loop_exit,
+                    .continue_block = loop_latch,
+                });
+
+                // Generate initializer if present
+                if (loop.var_decl) |var_decl| {
+                    try self.generateStmt(var_decl.*);
+                }
+
+                // Jump to header for condition check
+                _ = LLVMCore.LLVMBuildBr(self.builder, loop_header);
+
+                // Loop header - condition check
+                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, loop_header);
+                if (loop.condition) |condition| {
+                    const cond_val = try self.generateExpr(condition);
+                    const cond_bool = try self.toBoolI1(cond_val);
+                    _ = LLVMCore.LLVMBuildCondBr(self.builder, cond_bool, loop_body, loop_exit);
+                } else {
+                    // No condition = infinite loop, always enter body
+                    _ = LLVMCore.LLVMBuildBr(self.builder, loop_body);
+                }
+
+                // Loop body
+                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, loop_body);
+                _ = try self.generateExpr(loop.body);
+                _ = LLVMCore.LLVMBuildBr(self.builder, loop_latch);
+
+                // Loop latch - step and jump back to header
+                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, loop_latch);
+                if (loop.step) |step| {
+                    _ = try self.generateExpr(step);
+                }
+                _ = LLVMCore.LLVMBuildBr(self.builder, loop_header);
+
+                // Loop exit - continue execution after loop
+                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, loop_exit);
+
+                // Pop loop context
+                _ = self.loop_stack.pop();
+
+                // Loops don't produce values, return null
+                return null;
+            },
+
+            .Array => |elements| {
+                // For now, create an empty array - proper array literal support needs more work
+                // TODO: Implement proper array literal initialization
+                const externs = @import("common/externs.zig");
+                const array_new_fn = externs.getOrCreateArrayNew(self);
+                const elem_size = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), 8, @intFromBool(false)); // Assume i64 for now
+                const elem_tag = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), 0, @intFromBool(false)); // Int tag
+                const size = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), @intCast(elements.len), @intFromBool(false));
+
+                var args = [_]LLVMTypes.LLVMValueRef{ elem_size, elem_tag, size };
+                const array_ptr = LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(array_new_fn)), array_new_fn, &args, args.len, "array.new");
+
+                // TODO: Initialize array elements
+                // For now, just return the array pointer
+                return array_ptr;
+            },
+
+            .Index => |index_expr| {
+                // Array indexing: array[index]
+                const array_val = try self.generateExpr(index_expr.array);
+                const index_val = try self.generateExpr(index_expr.index);
+
+                // For now, assume i64 arrays
+                const externs = @import("common/externs.zig");
+                const array_get_fn = externs.getOrCreateArrayGetI64(self);
+
+                var args = [_]LLVMTypes.LLVMValueRef{ array_val, index_val };
+                return LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(array_get_fn)), array_get_fn, &args, args.len, "array.get");
+            },
+
             else => return error.UnsupportedExpressionType,
         }
     }
@@ -945,6 +1039,22 @@ pub const LLVMGenerator = struct {
                 } else {
                     _ = LLVMCore.LLVMBuildRetVoid(self.builder);
                 }
+            },
+
+            .Break => {
+                if (self.loop_stack.items.len == 0) {
+                    return LLVMGenError.UnsupportedStatementType; // break outside loop
+                }
+                const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
+                _ = LLVMCore.LLVMBuildBr(self.builder, loop_ctx.break_block);
+            },
+
+            .Continue => {
+                if (self.loop_stack.items.len == 0) {
+                    return LLVMGenError.UnsupportedStatementType; // continue outside loop
+                }
+                const loop_ctx = self.loop_stack.items[self.loop_stack.items.len - 1];
+                _ = LLVMCore.LLVMBuildBr(self.builder, loop_ctx.continue_block);
             },
 
             else => return error.UnsupportedStatementType,
