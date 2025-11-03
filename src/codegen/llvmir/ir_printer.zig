@@ -269,6 +269,8 @@ pub const IRPrinter = struct {
         try w.writeAll("declare void @doxa_print_f64(double)\n");
         try w.writeAll("declare void @doxa_print_enum(ptr, i64)\n");
         try w.writeAll("declare void @doxa_debug_peek(ptr)\n");
+        // Array printing helper (runtime)
+        try w.writeAll("declare void @doxa_print_array_hdr(ptr)\n");
         try w.writeAll("declare i1 @doxa_str_eq(ptr, ptr)\n");
         try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
         try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
@@ -329,8 +331,19 @@ pub const IRPrinter = struct {
         var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
         defer peek_state.deinit();
 
-        // Process main program (instructions before functions)
-        try self.writeMainProgram(hir, w, functions_start_idx, &peek_state);
+        // If there is a user-declared entry function named 'main', do not emit a wrapper 'main'
+        var has_user_main: bool = false;
+        for (hir.function_table) |f| {
+            if (f.is_entry and std.mem.eql(u8, f.qualified_name, "main")) {
+                has_user_main = true;
+                break;
+            }
+        }
+
+        // Process main program (instructions before functions) only if no user 'main'
+        if (!has_user_main) {
+            try self.writeMainProgram(hir, w, functions_start_idx, &peek_state);
+        }
 
         // Emit discovered globals after scanning main program
         if (self.defined_globals.count() > 0) {
@@ -352,6 +365,15 @@ pub const IRPrinter = struct {
         // Process each function
         for (hir.function_table) |func| {
             try self.writeFunction(hir, w, func, &func_start_labels, &peek_state);
+        }
+
+        // If there is a user-declared main, emit a C-compatible wrapper `i32 @main()`
+        if (has_user_main) {
+            try w.writeAll("define i32 @main() {\n");
+            try w.writeAll("entry:\n");
+            try w.writeAll("  call void @doxa_user_main()\n");
+            try w.writeAll("  ret i32 0\n");
+            try w.writeAll("}\n");
         }
 
         if (peek_state.globals.items.len > 0) {
@@ -380,8 +402,8 @@ pub const IRPrinter = struct {
         functions_start_idx: usize,
         peek_state: *PeekEmitState,
     ) !void {
-        // Main function
-        try w.writeAll("define void @main() {\n");
+        // Main function - use C-compatible signature so Windows links a console subsystem
+        try w.writeAll("define i32 @main() {\n");
         try w.writeAll("entry:\n");
 
         var id: usize = 0;
@@ -407,6 +429,8 @@ pub const IRPrinter = struct {
             }
             variables.deinit();
         }
+
+        var had_return: bool = false;
 
         for (hir.instructions[0..functions_start_idx]) |inst| {
             switch (inst) {
@@ -484,6 +508,7 @@ pub const IRPrinter = struct {
                 .ArrayGet => |_| try self.emitArrayGet(w, &stack, &id),
                 .ArrayLen => try self.emitArrayLen(w, &stack, &id),
                 .ArrayPop => try self.emitArrayPop(w, &stack, &id),
+                .Range => |r| try self.emitRange(w, &stack, &id, r),
                 .Dup => {
                     if (stack.items.len < 1) continue;
                     const top = stack.items[stack.items.len - 1];
@@ -641,9 +666,15 @@ pub const IRPrinter = struct {
                     stack.items.len -= 1;
                     switch (v.ty) {
                         .PTR => {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
-                            defer self.allocator.free(call_line);
-                            try w.writeAll(call_line);
+                            if (v.array_type) |_| {
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            } else {
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            }
                         },
                         .I64 => {
                             const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
@@ -716,9 +747,15 @@ pub const IRPrinter = struct {
                             try w.writeAll(line);
                         },
                         .PTR => {
-                            const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
+                            if (v.array_type) |_| {
+                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(line);
+                                try w.writeAll(line);
+                            } else {
+                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(line);
+                                try w.writeAll(line);
+                            }
                         },
                         else => {},
                     }
@@ -759,36 +796,42 @@ pub const IRPrinter = struct {
                             try w.writeAll(call_line);
                         },
                         .PTR => {
-                            // Print quoted string
-                            const quote_info = try internPeekString(
-                                self.allocator,
-                                &peek_state.string_map,
-                                &peek_state.strings,
-                                peek_state.next_id_ptr,
-                                &peek_state.globals,
-                                "\"",
-                            );
+                            if (v.array_type) |_| {
+                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(line);
+                                try w.writeAll(line);
+                            } else {
+                                // Print quoted string
+                                const quote_info = try internPeekString(
+                                    self.allocator,
+                                    &peek_state.string_map,
+                                    &peek_state.strings,
+                                    peek_state.next_id_ptr,
+                                    &peek_state.globals,
+                                    "\"",
+                                );
 
-                            const qptr = try self.nextTemp(&id);
-                            const qgep = try std.fmt.allocPrint(
-                                self.allocator,
-                                "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-                                .{ qptr, quote_info.length, quote_info.name },
-                            );
-                            defer self.allocator.free(qgep);
-                            try w.writeAll(qgep);
+                                const qptr = try self.nextTemp(&id);
+                                const qgep = try std.fmt.allocPrint(
+                                    self.allocator,
+                                    "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                                    .{ qptr, quote_info.length, quote_info.name },
+                                );
+                                defer self.allocator.free(qgep);
+                                try w.writeAll(qgep);
 
-                            const call_q1 = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{qptr});
-                            defer self.allocator.free(call_q1);
-                            try w.writeAll(call_q1);
+                                const call_q1 = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{qptr});
+                                defer self.allocator.free(call_q1);
+                                try w.writeAll(call_q1);
 
-                            const call_val = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
-                            defer self.allocator.free(call_val);
-                            try w.writeAll(call_val);
+                                const call_val = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(call_val);
+                                try w.writeAll(call_val);
 
-                            const call_q2 = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{qptr});
-                            defer self.allocator.free(call_q2);
-                            try w.writeAll(call_q2);
+                                const call_q2 = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{qptr});
+                                defer self.allocator.free(call_q2);
+                                try w.writeAll(call_q2);
+                            }
                         },
                         .I2 => {
                             // tetra: print true for non-zero, false otherwise
@@ -863,7 +906,8 @@ pub const IRPrinter = struct {
                     stack.items.len = 0;
                 },
                 .Halt => {
-                    try w.writeAll("  ret void\n");
+                    try w.writeAll("  ret i32 0\n");
+                    had_return = true;
                 },
                 .Call => |c| {
                     const argc: usize = @intCast(c.arg_count);
@@ -1137,17 +1181,26 @@ pub const IRPrinter = struct {
                                 const line = try std.fmt.allocPrint(self.allocator, "  ret i32 {s}\n", .{v.name});
                                 defer self.allocator.free(line);
                                 try w.writeAll(line);
+                                had_return = true;
                             },
                             else => {
-                                try w.writeAll("  ret void\n");
+                                // Non-int returns at top-level: fall back to success exit code
+                                try w.writeAll("  ret i32 0\n");
+                                had_return = true;
                             },
                         }
                     } else {
-                        try w.writeAll("  ret void\n");
+                        try w.writeAll("  ret i32 0\n");
+                        had_return = true;
                     }
                 },
                 else => {},
             }
+        }
+
+        // Ensure a valid exit if control falls through
+        if (!had_return) {
+            try w.writeAll("  ret i32 0\n");
         }
 
         try w.writeAll("}\n");
@@ -1201,7 +1254,12 @@ pub const IRPrinter = struct {
                 .StoreDecl => |sd| {
                     if (variables_to_allocate.get(sd.var_name) == null) {
                         const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sd.var_name});
-                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = .I64, .array_type = null };
+                        const declared_stack_type = self.hirTypeToStackType(sd.declared_type);
+                        const array_hint: ?HIR.HIRType = switch (sd.declared_type) {
+                            .Array => |inner| inner.*,
+                            else => null,
+                        };
+                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = declared_stack_type, .array_type = array_hint };
                         try variables_to_allocate.put(sd.var_name, info);
                     }
                 },
@@ -1263,7 +1321,13 @@ pub const IRPrinter = struct {
         const params_str = if (param_strs.items.len == 0) "" else try std.mem.join(self.allocator, ", ", param_strs.items);
         defer if (param_strs.items.len > 0) self.allocator.free(params_str);
 
-        const func_decl = try std.fmt.allocPrint(self.allocator, "define {s} @{s}({s}) {{\n", .{ return_type_str, func.qualified_name, params_str });
+        // Rename user entry `main` so we can emit a proper C wrapper `@main`
+        const emitted_name = if (func.is_entry and std.mem.eql(u8, func.qualified_name, "main"))
+            "doxa_user_main"
+        else
+            func.qualified_name;
+
+        const func_decl = try std.fmt.allocPrint(self.allocator, "define {s} @{s}({s}) {{\n", .{ return_type_str, emitted_name, params_str });
         defer self.allocator.free(func_decl);
         try w.writeAll(func_decl);
 
@@ -1589,6 +1653,10 @@ pub const IRPrinter = struct {
                 },
                 .ArrayPop => {
                     try self.emitArrayPop(w, &stack, &id);
+                    last_instruction_was_terminator = false;
+                },
+                .Range => |r| {
+                    try self.emitRange(w, &stack, &id, r);
                     last_instruction_was_terminator = false;
                 },
                 .Dup => {
@@ -2017,9 +2085,15 @@ pub const IRPrinter = struct {
                             try w.writeAll(call_line);
                         },
                         .PTR => {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
-                            defer self.allocator.free(call_line);
-                            try w.writeAll(call_line);
+                            if (v.array_type) |_| {
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            } else {
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                            }
                         },
                         else => {},
                     }
@@ -2391,7 +2465,7 @@ pub const IRPrinter = struct {
             const alloca_line = try std.fmt.allocPrint(
                 self.allocator,
                 "  {s} = alloca [2 x i8]\n",
-                .{ buf_ptr },
+                .{buf_ptr},
             );
             defer self.allocator.free(alloca_line);
             try w.writeAll(alloca_line);
@@ -2427,7 +2501,7 @@ pub const IRPrinter = struct {
             const store_nul = try std.fmt.allocPrint(
                 self.allocator,
                 "  store i8 0, ptr {s}\n",
-                .{ dst1_ptr },
+                .{dst1_ptr},
             );
             defer self.allocator.free(store_nul);
             try w.writeAll(store_nul);
@@ -2485,6 +2559,145 @@ pub const IRPrinter = struct {
 
         try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = len_info.array.array_type });
         try stack.append(actual);
+    }
+
+    fn emitRange(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+        inst: std.meta.TagPayload(HIRInstruction, .Range),
+    ) !void {
+        _ = inst;
+
+        if (stack.items.len < 2) return;
+        const end_val = stack.items[stack.items.len - 1];
+        const start_val = stack.items[stack.items.len - 2];
+        stack.items.len -= 2;
+
+        const start_i64 = try self.ensureI64(w, start_val, id);
+        const end_i64 = try self.ensureI64(w, end_val, id);
+
+        const one = try self.nextTemp(id);
+        const one_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 1\n", .{one});
+        defer self.allocator.free(one_line);
+        try w.writeAll(one_line);
+
+        const diff = try self.nextTemp(id);
+        const diff_line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ diff, end_i64.name, start_i64.name });
+        defer self.allocator.free(diff_line);
+        try w.writeAll(diff_line);
+
+        const len_raw = try self.nextTemp(id);
+        const len_raw_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ len_raw, diff, one });
+        defer self.allocator.free(len_raw_line);
+        try w.writeAll(len_raw_line);
+
+        const cmp = try self.nextTemp(id);
+        const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp sge i64 {s}, {s}\n", .{ cmp, end_i64.name, start_i64.name });
+        defer self.allocator.free(cmp_line);
+        try w.writeAll(cmp_line);
+
+        const zero = try self.nextTemp(id);
+        const zero_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{zero});
+        defer self.allocator.free(zero_line);
+        try w.writeAll(zero_line);
+
+        const size = try self.nextTemp(id);
+        const sel_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ size, cmp, len_raw, zero });
+        defer self.allocator.free(sel_line);
+        try w.writeAll(sel_line);
+
+        const ah = try self.nextTemp(id);
+        const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_new(i64 8, i64 0, i64 {s})\n", .{ ah, size });
+        defer self.allocator.free(new_line);
+        try w.writeAll(new_line);
+
+        const is_empty = try self.nextTemp(id);
+        const empty_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 0\n", .{ is_empty, size });
+        defer self.allocator.free(empty_line);
+        try w.writeAll(empty_line);
+
+        const lbl_after = try std.fmt.allocPrint(self.allocator, "range.after.{d}", .{id.*});
+        defer self.allocator.free(lbl_after);
+        const lbl_cond = try std.fmt.allocPrint(self.allocator, "range.cond.{d}", .{id.*});
+        defer self.allocator.free(lbl_cond);
+        const lbl_body = try std.fmt.allocPrint(self.allocator, "range.body.{d}", .{id.*});
+        defer self.allocator.free(lbl_body);
+        const lbl_step = try std.fmt.allocPrint(self.allocator, "range.step.{d}", .{id.*});
+        defer self.allocator.free(lbl_step);
+
+        const br0 = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ is_empty, lbl_after, lbl_cond });
+        defer self.allocator.free(br0);
+        try w.writeAll(br0);
+
+        // Start of the range condition block
+        const cond_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl_cond});
+        defer self.allocator.free(cond_label_line);
+        try w.writeAll(cond_label_line);
+
+        // Allocate and initialize the loop index in the condition block
+        const i_ptr = try self.nextTemp(id);
+        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{i_ptr});
+        defer self.allocator.free(alloca_line);
+        try w.writeAll(alloca_line);
+        const st0 = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{i_ptr});
+        defer self.allocator.free(st0);
+        try w.writeAll(st0);
+
+        const i_cur = try self.nextTemp(id);
+        const ld_i = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ i_cur, i_ptr });
+        defer self.allocator.free(ld_i);
+        try w.writeAll(ld_i);
+
+        const cmp2 = try self.nextTemp(id);
+        const cmp2_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, {s}\n", .{ cmp2, i_cur, size });
+        defer self.allocator.free(cmp2_line);
+        try w.writeAll(cmp2_line);
+
+        const br1 = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ cmp2, lbl_body, lbl_after });
+        defer self.allocator.free(br1);
+        try w.writeAll(br1);
+
+        const body_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl_body});
+        defer self.allocator.free(body_label_line);
+        try w.writeAll(body_label_line);
+
+        const val = try self.nextTemp(id);
+        const val_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ val, start_i64.name, i_cur });
+        defer self.allocator.free(val_line);
+        try w.writeAll(val_line);
+
+        const set_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_array_set_i64(ptr {s}, i64 {s}, i64 {s})\n", .{ ah, i_cur, val });
+        defer self.allocator.free(set_line);
+        try w.writeAll(set_line);
+
+        const br2 = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{lbl_step});
+        defer self.allocator.free(br2);
+        try w.writeAll(br2);
+
+        const step_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl_step});
+        defer self.allocator.free(step_label_line);
+        try w.writeAll(step_label_line);
+
+        const next_i = try self.nextTemp(id);
+        const add1 = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, 1\n", .{ next_i, i_cur });
+        defer self.allocator.free(add1);
+        try w.writeAll(add1);
+
+        const st_next = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ next_i, i_ptr });
+        defer self.allocator.free(st_next);
+        try w.writeAll(st_next);
+
+        const br3 = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{lbl_cond});
+        defer self.allocator.free(br3);
+        try w.writeAll(br3);
+
+        const after_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl_after});
+        defer self.allocator.free(after_label_line);
+        try w.writeAll(after_label_line);
+
+        try stack.append(.{ .name = ah, .ty = .PTR, .array_type = .Int });
     }
 
     fn ensureBool(
@@ -2630,7 +2843,7 @@ pub const IRPrinter = struct {
                         },
                         else => {
                             result_name = try self.nextTemp(id);
-                            const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{ result_name });
+                            const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
                             break :blk false_line;
                         },
                     }
@@ -2667,7 +2880,7 @@ pub const IRPrinter = struct {
         else switch (value.ty) {
             .I64 => "int",
             .F64 => "float",
-            .PTR => "string",
+            .PTR => if (value.array_type != null) "array" else "string",
             .I8 => "value",
             .I1 => "value",
             .I2 => "tetra",

@@ -16,39 +16,39 @@ fn writeStdout(slice: []const u8) void {
     _ = stdout.flush() catch return;
 }
 
-pub export fn doxa_write_cstr(ptr: ?[*:0]const u8) void {
+pub export fn doxa_write_cstr(ptr: ?[*:0]const u8) callconv(.c) void {
     if (ptr) |p| {
         const slice = std.mem.span(p);
         writeStdout(slice);
     }
 }
 
-pub export fn doxa_str_eq(a: ?[*:0]const u8, b: ?[*:0]const u8) bool {
+pub export fn doxa_str_eq(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) bool {
     if (a == null or b == null) return false;
     const as = std.mem.span(a.?);
     const bs = std.mem.span(b.?);
     return std.mem.eql(u8, as, bs);
 }
 
-pub export fn doxa_print_i64(value: i64) void {
+pub export fn doxa_print_i64(value: i64) callconv(.c) void {
     var buf: [64]u8 = undefined;
     const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
     writeStdout(rendered);
 }
 
-pub export fn doxa_print_u64(value: u64) void {
+pub export fn doxa_print_u64(value: u64) callconv(.c) void {
     var buf: [64]u8 = undefined;
     const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
     writeStdout(rendered);
 }
 
-pub export fn doxa_print_f64(value: f64) void {
+pub export fn doxa_print_f64(value: f64) callconv(.c) void {
     var buf: [64]u8 = undefined;
     const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
     writeStdout(rendered);
 }
 
-pub export fn doxa_print_enum(type_name: ?[*:0]const u8, variant_index: i64) void {
+pub export fn doxa_print_enum(type_name: ?[*:0]const u8, variant_index: i64) callconv(.c) void {
     if (type_name) |tn| {
         const type_str = std.mem.span(tn);
         const variant_name = getEnumVariantName(type_str, variant_index);
@@ -93,7 +93,7 @@ fn getEnumVariantName(type_name: []const u8, variant_index: i64) []const u8 {
 // Built-in functions
 var rng_state: ?std.Random.DefaultPrng = null;
 
-pub export fn doxa_random() f64 {
+pub export fn doxa_random() callconv(.c) f64 {
     if (rng_state == null) {
         const seed = @as(u64, @intCast(std.time.timestamp()));
         rng_state = std.Random.DefaultPrng.init(seed);
@@ -102,7 +102,7 @@ pub export fn doxa_random() f64 {
 }
 
 // Fast integer-only random number generator for dice rolls
-pub export fn doxa_random_int() i64 {
+pub export fn doxa_random_int() callconv(.c) i64 {
     if (rng_state == null) {
         const seed = @as(u64, @intCast(std.time.timestamp()));
         rng_state = std.Random.DefaultPrng.init(seed);
@@ -111,7 +111,7 @@ pub export fn doxa_random_int() i64 {
 }
 
 // Ultra-fast dice roll - single function call, no floating point
-pub export fn doxa_dice_roll() i64 {
+pub export fn doxa_dice_roll() callconv(.c) i64 {
     if (rng_state == null) {
         const seed = @as(u64, @intCast(std.time.timestamp()));
         rng_state = std.Random.DefaultPrng.init(seed);
@@ -119,11 +119,11 @@ pub export fn doxa_dice_roll() i64 {
     return rng_state.?.random().intRangeAtMost(i64, 1, 6);
 }
 
-pub export fn doxa_int(value: f64) i64 {
+pub export fn doxa_int(value: f64) callconv(.c) i64 {
     return @intFromFloat(value);
 }
 
-pub export fn doxa_tick() i64 {
+pub export fn doxa_tick() callconv(.c) i64 {
     return @intCast(std.time.nanoTimestamp());
 }
 
@@ -139,7 +139,7 @@ pub const DoxaPeekInfo = extern struct {
     column: u32,
 };
 
-pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) void {
+pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void {
     const info = info_ptr orelse return;
 
     if (info.has_location != 0) {
@@ -223,12 +223,26 @@ fn clampMin(a: u64, b: u64) u64 {
 /// Allocate an ArrayHeader and backing buffer. elem_tag values mirror the
 /// compiler's mapping:
 /// 0=int(i64), 1=byte(u8), 2=float(f64), 3=string(i8*), 4=tetra(u8 lower 2 bits)
-pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) *ArrayHeader {
+pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *ArrayHeader {
     const cap = clampMin(init_len, 8);
     const hdr_ptr = std.heap.page_allocator.create(ArrayHeader) catch @panic("oom allocating ArrayHeader");
     const data_bytes: usize = @intCast(elem_size * cap);
-    const data_buf: ?[]u8 = if (data_bytes == 0) null else std.heap.page_allocator.alloc(u8, data_bytes) catch null;
-    const data_ptr: ?*anyopaque = if (data_buf) |buf| @ptrCast(buf.ptr) else null;
+    var data_ptr: ?*anyopaque = null;
+    if (data_bytes != 0) {
+        if (elem_size == 8) {
+            const slice = std.heap.page_allocator.alloc(i64, @intCast(cap)) catch null;
+            if (slice) |s| {
+                @memset(s, 0);
+                data_ptr = @ptrCast(s.ptr);
+            }
+        } else {
+            const buf = std.heap.page_allocator.alloc(u8, data_bytes) catch null;
+            if (buf) |b| {
+                @memset(b, 0);
+                data_ptr = @ptrCast(b.ptr);
+            }
+        }
+    }
     hdr_ptr.* = ArrayHeader{
         .data = data_ptr,
         .len = init_len,
@@ -236,15 +250,14 @@ pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) *Arra
         .elem_size = elem_size,
         .elem_tag = elem_tag,
     };
-    if (data_buf) |buf| @memset(buf, 0);
     return hdr_ptr;
 }
 
-pub export fn doxa_array_len(hdr: *ArrayHeader) u64 {
+pub export fn doxa_array_len(hdr: *ArrayHeader) callconv(.c) u64 {
     return hdr.len;
 }
 
-pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) i64 {
+pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
     if (hdr.data == null or idx >= hdr.len) return 0;
     const base: [*]const u8 = @ptrCast(@alignCast(hdr.data.?));
     const off: usize = @intCast(idx * hdr.elem_size);
@@ -253,7 +266,7 @@ pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) i64 {
     return ip.*;
 }
 
-pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) void {
+pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callconv(.c) void {
     if (hdr.data == null) return;
     if (idx >= hdr.cap) return; // no resize in minimal runtime
     if (idx >= hdr.len) hdr.len = idx + 1;
@@ -264,7 +277,7 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) void {
     ip.* = value;
 }
 
-pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) void {
+pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
     var out_buf: [1024]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&out_buf);
     const out = &stdout_writer.interface;
