@@ -82,7 +82,7 @@ fn internPeekString(
     const global_line = try std.fmt.allocPrint(
         allocator,
         "{s} = private unnamed_addr constant [{d} x i8] c\"{s}\\00\"\n",
-        .{ global_name, escaped.len + 1, escaped },
+        .{ global_name, value.len + 1, escaped },
     );
     errdefer allocator.free(global_line);
 
@@ -90,7 +90,7 @@ fn internPeekString(
 
     const info = PeekStringInfo{
         .name = global_name,
-        .length = escaped.len + 1,
+        .length = value.len + 1,
     };
     try strings.append(info);
     try map.put(key_copy, strings.items.len - 1);
@@ -104,6 +104,7 @@ pub const IRPrinter = struct {
     global_types: std.StringHashMap(StackType),
     global_enum_types: std.StringHashMap([]const u8), // Store enum type names for global variables
     defined_globals: std.StringHashMap(bool),
+    last_emitted_enum_value: ?u64 = null,
 
     const StackType = enum { I64, F64, I8, I1, I2, PTR, Nothing };
     const StackVal = struct {
@@ -186,7 +187,7 @@ pub const IRPrinter = struct {
                     continue;
                 }
 
-                const phi_name = try self.nextTemp(id);
+                const phi_name = try self.nextTempText(id);
                 const type_str = self.stackTypeToLLVMType(slot.items[0].value.ty);
 
                 var incoming = std.array_list.Managed([]const u8).init(self.allocator);
@@ -196,7 +197,8 @@ pub const IRPrinter = struct {
                 }
 
                 for (slot.items) |incoming_val| {
-                    const pair = try std.fmt.allocPrint(self.allocator, "[ {s}, %{s} ]", .{ incoming_val.value.name, incoming_val.block });
+                    const blk_name: []const u8 = if (std.mem.startsWith(u8, incoming_val.block, "func_")) "entry" else incoming_val.block;
+                    const pair = try std.fmt.allocPrint(self.allocator, "[ {s}, %{s} ]", .{ incoming_val.value.name, blk_name });
                     try incoming.append(pair);
                 }
 
@@ -223,6 +225,7 @@ pub const IRPrinter = struct {
             .global_types = std.StringHashMap(StackType).init(allocator),
             .global_enum_types = std.StringHashMap([]const u8).init(allocator),
             .defined_globals = std.StringHashMap(bool).init(allocator),
+            .last_emitted_enum_value = null,
         };
     }
 
@@ -266,6 +269,7 @@ pub const IRPrinter = struct {
         try w.writeAll("declare void @doxa_print_f64(double)\n");
         try w.writeAll("declare void @doxa_print_enum(ptr, i64)\n");
         try w.writeAll("declare void @doxa_debug_peek(ptr)\n");
+        try w.writeAll("declare i1 @doxa_str_eq(ptr, ptr)\n");
         try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
         try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
         try w.writeAll("declare i64 @doxa_array_get_i64(ptr, i64)\n");
@@ -274,7 +278,6 @@ pub const IRPrinter = struct {
         try w.writeAll("declare double @doxa_random()\n");
         try w.writeAll("declare i64 @doxa_int(double)\n");
         try w.writeAll("declare i64 @doxa_tick()\n");
-        try w.writeAll("declare i64 @doxa_dice_roll()\n\n");
 
         // String pool globals
         for (hir.string_pool, 0..) |s, idx| {
@@ -468,6 +471,7 @@ pub const IRPrinter = struct {
                             // Store enum type name as a global string constant for later use
                             const type_name_global = try self.createEnumTypeNameGlobal(ev.type_name, &id);
                             try stack.append(.{ .name = name, .ty = .I64, .enum_type_name = type_name_global });
+                            self.last_emitted_enum_value = ev.variant_index;
                         },
                         .nothing => {
                             // nothing type - don't push anything to stack (zero-sized type)
@@ -477,6 +481,7 @@ pub const IRPrinter = struct {
                 },
                 .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
                 .ArraySet => |_| try self.emitArraySet(w, &stack, &id),
+                .ArrayGet => |_| try self.emitArrayGet(w, &stack, &id),
                 .ArrayLen => try self.emitArrayLen(w, &stack, &id),
                 .ArrayPop => try self.emitArrayPop(w, &stack, &id),
                 .Dup => {
@@ -754,7 +759,76 @@ pub const IRPrinter = struct {
                             try w.writeAll(call_line);
                         },
                         .PTR => {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                            // Print quoted string
+                            const quote_info = try internPeekString(
+                                self.allocator,
+                                &peek_state.string_map,
+                                &peek_state.strings,
+                                peek_state.next_id_ptr,
+                                &peek_state.globals,
+                                "\"",
+                            );
+
+                            const qptr = try self.nextTemp(&id);
+                            const qgep = try std.fmt.allocPrint(
+                                self.allocator,
+                                "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                                .{ qptr, quote_info.length, quote_info.name },
+                            );
+                            defer self.allocator.free(qgep);
+                            try w.writeAll(qgep);
+
+                            const call_q1 = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{qptr});
+                            defer self.allocator.free(call_q1);
+                            try w.writeAll(call_q1);
+
+                            const call_val = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                            defer self.allocator.free(call_val);
+                            try w.writeAll(call_val);
+
+                            const call_q2 = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{qptr});
+                            defer self.allocator.free(call_q2);
+                            try w.writeAll(call_q2);
+                        },
+                        .I2 => {
+                            // tetra: print true for non-zero, false otherwise
+                            const is_true = try self.nextTemp(&id);
+                            const icmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i2 {s}, 0\n", .{ is_true, v.name });
+                            defer self.allocator.free(icmp_line);
+                            try w.writeAll(icmp_line);
+
+                            const true_info = try internPeekString(
+                                self.allocator,
+                                &peek_state.string_map,
+                                &peek_state.strings,
+                                peek_state.next_id_ptr,
+                                &peek_state.globals,
+                                "true",
+                            );
+                            const false_info = try internPeekString(
+                                self.allocator,
+                                &peek_state.string_map,
+                                &peek_state.strings,
+                                peek_state.next_id_ptr,
+                                &peek_state.globals,
+                                "false",
+                            );
+
+                            const tptr = try self.nextTemp(&id);
+                            const fptr = try self.nextTemp(&id);
+                            const tgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ tptr, true_info.length, true_info.name });
+                            const fgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ fptr, false_info.length, false_info.name });
+                            defer self.allocator.free(tgep);
+                            defer self.allocator.free(fgep);
+                            try w.writeAll(tgep);
+                            try w.writeAll(fgep);
+
+                            const sel = try self.nextTemp(&id);
+                            const sel_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel, is_true, tptr, fptr });
+                            defer self.allocator.free(sel_line);
+                            try w.writeAll(sel_line);
+
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{sel});
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
                         },
@@ -1009,26 +1083,22 @@ pub const IRPrinter = struct {
                 .StoreConst => |sc| {
                     if (stack.items.len < 1) continue;
                     const value = stack.items[stack.items.len - 1];
-
-                    // Skip if value.name appears to be corrupted (safe check)
-                    if (value.name.len > 1000) {
-                        // For corrupted values, emit a fallback store instruction
-                        if (sc.scope_kind == .GlobalLocal) {
-                            _ = try self.global_types.put(sc.var_name, .I64); // Default to i64
+                    // If name looks corrupted/huge, fall back to last enum value (when available)
+                    if (value.name.len > 1000 and sc.scope_kind == .GlobalLocal) {
+                        if (self.last_emitted_enum_value) |enum_idx| {
+                            _ = try self.global_types.put(sc.var_name, .I64);
                             _ = try self.defined_globals.put(sc.var_name, true);
                             const gptr = try self.mangleGlobalName(sc.var_name);
                             defer self.allocator.free(gptr);
-                            // Emit a fallback store with the enum value that was created earlier
-                            // This is a hack to work around the stack corruption issue
-                            const fallback_line = try std.fmt.allocPrint(self.allocator, "  store i64 2, ptr {s}\n", .{gptr});
-                            defer self.allocator.free(fallback_line);
-                            try w.writeAll(fallback_line);
+                            const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ enum_idx, gptr });
+                            defer self.allocator.free(store_line);
+                            try w.writeAll(store_line);
+                            stack.items.len -= 1;
+                            continue;
                         }
-                        continue;
                     }
 
-                    stack.items.len -= 1; // Pop AFTER validation
-
+                    stack.items.len -= 1;
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     if (sc.scope_kind == .GlobalLocal) {
                         _ = try self.global_types.put(sc.var_name, value.ty);
@@ -1339,6 +1409,7 @@ pub const IRPrinter = struct {
                             const type_name_global = try self.createEnumTypeNameGlobal(ev.type_name, &id);
                             try stack.append(.{ .name = name, .ty = .I64, .enum_type_name = type_name_global });
                             last_instruction_was_terminator = false;
+                            self.last_emitted_enum_value = ev.variant_index;
                         },
                         .nothing => {
                             // nothing type - don't push anything to stack
@@ -1375,6 +1446,7 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = true;
                 },
                 .Jump => |j| {
+                    if (last_instruction_was_terminator) continue;
                     try self.recordStackForLabel(&merge_map, j.label, stack.items, current_block);
                     const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{j.label});
                     defer self.allocator.free(br_line);
@@ -1504,6 +1576,11 @@ pub const IRPrinter = struct {
                 },
                 .ArraySet => |_| {
                     try self.emitArraySet(w, &stack, &id);
+                    last_instruction_was_terminator = false;
+                },
+                .ArrayGet => |ag| {
+                    _ = ag; // bounds_check not implemented yet
+                    try self.emitArrayGet(w, &stack, &id);
                     last_instruction_was_terminator = false;
                 },
                 .ArrayLen => {
@@ -1963,6 +2040,12 @@ pub const IRPrinter = struct {
         return name;
     }
 
+    fn nextTempText(self: *IRPrinter, id: *usize) ![]const u8 {
+        const name = try std.fmt.allocPrint(self.allocator, "%t{d}", .{id.*});
+        id.* += 1;
+        return name;
+    }
+
     fn createEnumTypeNameGlobal(self: *IRPrinter, type_name: []const u8, _: *usize) ![]const u8 {
         // For now, just return the type name directly
         // In a full implementation, we'd create proper global string constants
@@ -2250,6 +2333,110 @@ pub const IRPrinter = struct {
         try stack.append(.{ .name = arr_ptr.name, .ty = .PTR, .array_type = arr_ptr.array_type });
     }
 
+    fn emitArrayGet(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+    ) !void {
+        if (stack.items.len < 2) return;
+        const idx_val = stack.items[stack.items.len - 1];
+        const hdr_val = stack.items[stack.items.len - 2];
+        stack.items.len -= 2;
+
+        var arr_ptr = hdr_val;
+        if (arr_ptr.ty != .PTR) {
+            arr_ptr = try self.ensurePointer(w, arr_ptr, id);
+        }
+        const idx_i64 = try self.ensureI64(w, idx_val, id);
+
+        // If we know the array element type, use runtime array get; otherwise treat as string/byte buffer
+        if (arr_ptr.array_type) |element_type| {
+            const elem_reg = try self.nextTemp(id);
+            const call_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = call i64 @doxa_array_get_i64(ptr {s}, i64 {s})\n",
+                .{ elem_reg, arr_ptr.name, idx_i64.name },
+            );
+            defer self.allocator.free(call_line);
+            try w.writeAll(call_line);
+
+            const stored = StackVal{ .name = elem_reg, .ty = .I64 };
+            const actual = try self.convertArrayStorageToValue(w, stored, element_type, id);
+            try stack.append(actual);
+        } else {
+            // Treat as string (C string). Build a 1-char C string for the indexed character.
+            // Compute pointer to source character
+            const src_gep = try self.nextTemp(id);
+            const src_gep_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds i8, ptr {s}, i64 {s}\n",
+                .{ src_gep, arr_ptr.name, idx_i64.name },
+            );
+            defer self.allocator.free(src_gep_line);
+            try w.writeAll(src_gep_line);
+
+            // Load the character byte
+            const ch_val = try self.nextTemp(id);
+            const load_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = load i8, ptr {s}\n",
+                .{ ch_val, src_gep },
+            );
+            defer self.allocator.free(load_line);
+            try w.writeAll(load_line);
+
+            // Allocate a 2-byte buffer on the stack: [char, 0]
+            const buf_ptr = try self.nextTemp(id);
+            const alloca_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = alloca [2 x i8]\n",
+                .{ buf_ptr },
+            );
+            defer self.allocator.free(alloca_line);
+            try w.writeAll(alloca_line);
+
+            // Store the character at index 0
+            const dst0_ptr = try self.nextTemp(id);
+            const dst0_gep = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds [2 x i8], ptr {s}, i64 0, i64 0\n",
+                .{ dst0_ptr, buf_ptr },
+            );
+            defer self.allocator.free(dst0_gep);
+            try w.writeAll(dst0_gep);
+
+            const store_ch = try std.fmt.allocPrint(
+                self.allocator,
+                "  store i8 {s}, ptr {s}\n",
+                .{ ch_val, dst0_ptr },
+            );
+            defer self.allocator.free(store_ch);
+            try w.writeAll(store_ch);
+
+            // Store null terminator at index 1
+            const dst1_ptr = try self.nextTemp(id);
+            const dst1_gep = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds [2 x i8], ptr {s}, i64 0, i64 1\n",
+                .{ dst1_ptr, buf_ptr },
+            );
+            defer self.allocator.free(dst1_gep);
+            try w.writeAll(dst1_gep);
+
+            const store_nul = try std.fmt.allocPrint(
+                self.allocator,
+                "  store i8 0, ptr {s}\n",
+                .{ dst1_ptr },
+            );
+            defer self.allocator.free(store_nul);
+            try w.writeAll(store_nul);
+
+            // Return pointer to start of temporary C string
+            try stack.append(.{ .name = dst0_ptr, .ty = .PTR });
+        }
+    }
+
     fn emitArrayLen(
         self: *IRPrinter,
         w: anytype,
@@ -2366,6 +2553,14 @@ pub const IRPrinter = struct {
         rhs: StackVal,
         id: *usize,
     ) !StackVal {
+        // Guard against corrupted operand names causing huge allocations
+        if (lhs.name.len > 1000 or rhs.name.len > 1000) {
+            const result_name = try self.nextTemp(id);
+            const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
+            defer self.allocator.free(false_line);
+            try w.writeAll(false_line);
+            return .{ .name = result_name, .ty = .I1 };
+        }
         var result_name: []const u8 = undefined;
         const line = blk: {
             switch (cmp.operand_type) {
@@ -2418,20 +2613,27 @@ pub const IRPrinter = struct {
                     break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i2 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
                 },
                 .String => {
-                    const pred = switch (cmp.op) {
-                        .Eq => "eq",
-                        .Ne => "ne",
-                        else => null,
-                    };
-                    if (pred) |p| {
-                        const lhs_ptr = try self.ensurePointer(w, lhs, id);
-                        const rhs_ptr = try self.ensurePointer(w, rhs, id);
-                        result_name = try self.nextTemp(id);
-                        break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} ptr {s}, {s}\n", .{ result_name, p, lhs_ptr.name, rhs_ptr.name });
+                    const lhs_ptr = try self.ensurePointer(w, lhs, id);
+                    const rhs_ptr = try self.ensurePointer(w, rhs, id);
+                    switch (cmp.op) {
+                        .Eq => {
+                            result_name = try self.nextTemp(id);
+                            break :blk try std.fmt.allocPrint(self.allocator, "  {s} = call i1 @doxa_str_eq(ptr {s}, ptr {s})\n", .{ result_name, lhs_ptr.name, rhs_ptr.name });
+                        },
+                        .Ne => {
+                            const tmp_name = try self.nextTemp(id);
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call i1 @doxa_str_eq(ptr {s}, ptr {s})\n", .{ tmp_name, lhs_ptr.name, rhs_ptr.name });
+                            defer self.allocator.free(call_line);
+                            try w.writeAll(call_line);
+                            result_name = try self.nextTemp(id);
+                            break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 {s}, 0\n", .{ result_name, tmp_name });
+                        },
+                        else => {
+                            result_name = try self.nextTemp(id);
+                            const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{ result_name });
+                            break :blk false_line;
+                        },
                     }
-                    result_name = try self.nextTemp(id);
-                    const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
-                    break :blk false_line;
                 },
                 else => {
                     result_name = try self.nextTemp(id);
@@ -2466,7 +2668,9 @@ pub const IRPrinter = struct {
             .I64 => "int",
             .F64 => "float",
             .PTR => "string",
-            .I8, .I1, .I2 => "value",
+            .I8 => "value",
+            .I1 => "value",
+            .I2 => "tetra",
             .Nothing => "nothing",
         };
         const type_info = try internPeekString(

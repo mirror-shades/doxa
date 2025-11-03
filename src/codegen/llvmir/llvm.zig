@@ -92,6 +92,11 @@ pub const LLVMGenerator = struct {
     debug_peek: bool,
     opt_level: i32,
 
+    // Track struct field order for field index resolution
+    struct_field_order: std.StringHashMap([]const []const u8),
+    // Track enum variants by enum type name
+    enum_variants: std.StringHashMap([]const []const u8),
+
     pub fn init(allocator: std.mem.Allocator, opt_level: i32) !*LLVMGenerator {
         // Ensure targets are registered before querying triple
         // Initialize native target and also register all targets/printers for portability
@@ -198,6 +203,8 @@ pub const LLVMGenerator = struct {
             .current_function = null,
             .debug_peek = false,
             .opt_level = opt_level,
+            .struct_field_order = std.StringHashMap([]const []const u8).init(allocator),
+            .enum_variants = std.StringHashMap([]const []const u8).init(allocator),
         };
 
         return generator;
@@ -218,6 +225,16 @@ pub const LLVMGenerator = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.string_literals.deinit();
+        var sfo_it = self.struct_field_order.iterator();
+        while (sfo_it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.struct_field_order.deinit();
+        var ev_it = self.enum_variants.iterator();
+        while (ev_it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.enum_variants.deinit();
         LLVMCore.LLVMDisposeBuilder(self.builder);
         LLVMCore.LLVMDisposeModule(self.module);
         LLVMCore.LLVMContextDispose(self.context);
@@ -387,6 +404,26 @@ pub const LLVMGenerator = struct {
                         std.debug.print("Generating byte literal: {}\n", .{b});
                         return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt8TypeInContext(self.context), b, @intFromBool(false));
                     },
+                    .enum_variant => |variant_name| {
+                        // Try to resolve enum variant uniquely across registered enums
+                        var match_count: u32 = 0;
+                        var matched_index: u32 = 0;
+                        var it = self.enum_variants.iterator();
+                        while (it.next()) |entry| {
+                            const variants = entry.value_ptr.*;
+                            for (variants, 0..) |v, i| {
+                                if (std.mem.eql(u8, v, variant_name)) {
+                                    match_count += 1;
+                                    matched_index = @intCast(i);
+                                    break;
+                                }
+                            }
+                        }
+                        if (match_count == 1) {
+                            return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), matched_index, @intFromBool(false));
+                        }
+                        return error.UnsupportedLiteralType;
+                    },
                     else => error.UnsupportedLiteralType,
                 };
             },
@@ -452,7 +489,10 @@ pub const LLVMGenerator = struct {
                 // Short-circuit logical operators with boolean i1 semantics
                 return switch (logical.operator.type) {
                     .AND => blk_and: {
-                        const start_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                        const entry = LLVMCore.LLVMGetEntryBasicBlock(self.current_function.?);
+                        const bool_ty = LLVMCore.LLVMInt1TypeInContext(self.context);
+                        const res_alloca = self.createEntryAlloca(entry, bool_ty, "and.result");
+
                         const lhs_i1 = try self.toBoolI1(lhs);
                         const rhs_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "and.rhs");
                         const end_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "and.end");
@@ -461,19 +501,24 @@ pub const LLVMGenerator = struct {
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, rhs_block);
                         const rhs_val_raw = try self.generateExpr(logical.right);
                         const rhs_i1 = try self.toBoolI1(rhs_val_raw);
+                        _ = LLVMCore.LLVMBuildStore(self.builder, rhs_i1, res_alloca);
                         _ = LLVMCore.LLVMBuildBr(self.builder, end_block);
 
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, end_block);
-                        const bool_ty = LLVMCore.LLVMInt1TypeInContext(self.context);
-                        const phi = LLVMCore.LLVMBuildPhi(self.builder, bool_ty, "and.result");
-                        const false_const = LLVMCore.LLVMConstInt(bool_ty, 0, @intFromBool(false));
-                        var incoming_vals = [_]LLVMTypes.LLVMValueRef{ rhs_i1, false_const };
-                        var incoming_blocks = [_]LLVMTypes.LLVMBasicBlockRef{ rhs_block, start_block };
-                        LLVMCore.LLVMAddIncoming(phi, &incoming_vals, &incoming_blocks, 2);
-                        break :blk_and phi;
+                        // If we arrived here from the false path, store false
+                        const cur_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                        if (cur_block == end_block) {
+                            const false_const = LLVMCore.LLVMConstInt(bool_ty, 0, @intFromBool(false));
+                            // This path only executes for the false edge; safe to overwrite
+                            _ = LLVMCore.LLVMBuildStore(self.builder, false_const, res_alloca);
+                        }
+                        break :blk_and LLVMCore.LLVMBuildLoad2(self.builder, bool_ty, res_alloca, "and.load");
                     },
                     .OR => blk_or: {
-                        const start_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                        const entry = LLVMCore.LLVMGetEntryBasicBlock(self.current_function.?);
+                        const bool_ty = LLVMCore.LLVMInt1TypeInContext(self.context);
+                        const res_alloca = self.createEntryAlloca(entry, bool_ty, "or.result");
+
                         const lhs_i1 = try self.toBoolI1(lhs);
                         const rhs_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "or.rhs");
                         const end_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "or.end");
@@ -482,16 +527,17 @@ pub const LLVMGenerator = struct {
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, rhs_block);
                         const rhs_val_raw = try self.generateExpr(logical.right);
                         const rhs_i1 = try self.toBoolI1(rhs_val_raw);
+                        _ = LLVMCore.LLVMBuildStore(self.builder, rhs_i1, res_alloca);
                         _ = LLVMCore.LLVMBuildBr(self.builder, end_block);
 
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, end_block);
-                        const bool_ty = LLVMCore.LLVMInt1TypeInContext(self.context);
-                        const phi = LLVMCore.LLVMBuildPhi(self.builder, bool_ty, "or.result");
-                        const true_const = LLVMCore.LLVMConstInt(bool_ty, 1, @intFromBool(false));
-                        var incoming_vals = [_]LLVMTypes.LLVMValueRef{ true_const, rhs_i1 };
-                        var incoming_blocks = [_]LLVMTypes.LLVMBasicBlockRef{ start_block, rhs_block };
-                        LLVMCore.LLVMAddIncoming(phi, &incoming_vals, &incoming_blocks, 2);
-                        break :blk_or phi;
+                        // If we arrived here from the true path, store true
+                        const cur_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                        if (cur_block == end_block) {
+                            const true_const = LLVMCore.LLVMConstInt(bool_ty, 1, @intFromBool(false));
+                            _ = LLVMCore.LLVMBuildStore(self.builder, true_const, res_alloca);
+                        }
+                        break :blk_or LLVMCore.LLVMBuildLoad2(self.builder, bool_ty, res_alloca, "or.load");
                     },
                     else => error.UnsupportedLogicalOperator,
                 };
@@ -506,32 +552,54 @@ pub const LLVMGenerator = struct {
                 const else_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "else");
                 const merge_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "merge");
 
-                // Create conditional branch
+                // If both branches produce a value, allocate a result slot at entry
+                var result_alloca: ?LLVMTypes.LLVMValueRef = null;
+                if (if_expr.then_branch != null and if_expr.else_branch != null) {
+                    // Tentatively compute then type to allocate
+                    // We'll coerce else to same type as needed below
+                    const cur_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                    // Temporarily position at then to get type; we will reset
+                    _ = cur_block;
+                    // Allocate after we compute then_value below
+                }
+
+                // Conditional branch
                 _ = LLVMCore.LLVMBuildCondBr(self.builder, condition, then_block, else_block);
 
-                // Generate then branch
+                // Then branch
                 LLVMCore.LLVMPositionBuilderAtEnd(self.builder, then_block);
                 const then_value = try self.generateExpr(if_expr.then_branch.?);
+                if (if_expr.then_branch != null and if_expr.else_branch != null) {
+                    if (result_alloca == null) {
+                        const entry_block = LLVMCore.LLVMGetEntryBasicBlock(self.current_function.?);
+                        result_alloca = self.createEntryAlloca(entry_block, LLVMCore.LLVMTypeOf(then_value), "if.result");
+                    }
+                    _ = LLVMCore.LLVMBuildStore(self.builder, then_value, result_alloca.?);
+                }
                 _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
 
-                // Generate else branch
+                // Else branch
                 LLVMCore.LLVMPositionBuilderAtEnd(self.builder, else_block);
                 const else_value = if (if_expr.else_branch) |else_branch|
                     try self.generateExpr(else_branch)
                 else
                     null;
+                if (result_alloca != null and else_value != null) {
+                    var coerced = else_value.?;
+                    const res_ty = LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(result_alloca.?));
+                    if (LLVMCore.LLVMTypeOf(coerced) != res_ty) {
+                        coerced = try self.coerceValueToType(coerced, res_ty);
+                    }
+                    _ = LLVMCore.LLVMBuildStore(self.builder, coerced, result_alloca.?);
+                }
                 _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
 
-                // Create phi node if needed
+                // Merge
                 LLVMCore.LLVMPositionBuilderAtEnd(self.builder, merge_block);
-                if (then_value != null and else_value != null) {
-                    const phi = LLVMCore.LLVMBuildPhi(self.builder, LLVMCore.LLVMTypeOf(then_value), "if.result");
-                    var values = [_]LLVMTypes.LLVMValueRef{ then_value, else_value.? };
-                    var blocks = [_]LLVMTypes.LLVMBasicBlockRef{ then_block, else_block };
-                    LLVMCore.LLVMAddIncoming(phi, &values, &blocks, 2);
-                    return phi;
+                if (result_alloca != null) {
+                    const res_ty = LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(result_alloca.?));
+                    return LLVMCore.LLVMBuildLoad2(self.builder, res_ty, result_alloca.?, "if.load");
                 }
-
                 return null;
             },
 
@@ -558,12 +626,28 @@ pub const LLVMGenerator = struct {
                         else
                             default_block;
 
-                        // Generate string comparison
-                        const pattern_val = try self.generateExpr(case.pattern);
-                        const cmp_result = LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, cond_val, pattern_val, "str.cmp");
+                        // For each pattern in this case, create a comparison block
+                        var pattern_block = current_block;
+                        for (case.patterns, 0..) |pattern, pattern_idx| {
+                            const pattern_cmp_block = if (pattern_idx < case.patterns.len - 1)
+                                LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.pattern_cmp")
+                            else
+                                next_block;
 
-                        LLVMCore.LLVMPositionBuilderAtEnd(self.builder, current_block);
-                        _ = LLVMCore.LLVMBuildCondBr(self.builder, cmp_result, case_block, next_block);
+                            // Generate string comparison in pattern_block
+                            LLVMCore.LLVMPositionBuilderAtEnd(self.builder, pattern_block);
+                            var pattern_val: LLVMTypes.LLVMValueRef = undefined;
+                            switch (pattern.literal) {
+                                .string => |s| {
+                                    pattern_val = try strings.createStringPtr(self, s, &next_string_id);
+                                },
+                                else => return error.UnsupportedExpressionType,
+                            }
+                            const cmp_result = LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, cond_val, pattern_val, "str.cmp");
+                            _ = LLVMCore.LLVMBuildCondBr(self.builder, cmp_result, case_block, pattern_cmp_block);
+
+                            pattern_block = pattern_cmp_block;
+                        }
 
                         // Generate case body
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case_block);
@@ -583,42 +667,58 @@ pub const LLVMGenerator = struct {
                     LLVMCore.LLVMPositionBuilderAtEnd(self.builder, merge_block);
                     return LLVMCore.LLVMBuildLoad2(self.builder, result_type, result_alloca, "match.load");
                 } else {
-                    // Integer matching - use switch statement
+                    // Integer-like matching - build explicit if-else chain (no PHIs)
                     if (LLVMCore.LLVMGetTypeKind(cond_ty) != LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
                         return error.UnsupportedExpressionType;
                     }
-                    // Normalize to i64 for switch lowering if possible (including i2 tetra)
-                    if (LLVMCore.LLVMGetIntTypeWidth(cond_ty) < 64) {
-                        const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+                    // Normalize to i64
+                    const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+                    const width = LLVMCore.LLVMGetIntTypeWidth(cond_ty);
+                    if (width < 64) {
                         cond_val = LLVMCore.LLVMBuildZExt(self.builder, cond_val, i64_ty, "match.zext");
-                    } else if (LLVMCore.LLVMGetIntTypeWidth(cond_ty) > 64) {
-                        const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+                    } else if (width > 64) {
                         cond_val = LLVMCore.LLVMBuildTrunc(self.builder, cond_val, i64_ty, "match.trunc");
                     }
 
+                    const entry_block = LLVMCore.LLVMGetEntryBasicBlock(self.current_function.?);
                     const default_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.default");
                     const merge_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.merge");
 
-                    // Create a result variable to store the match result
                     const result_type = try self.getLLVMTypeFromTypeInfo(match_expr.type_info);
-                    const result_alloca = self.createEntryAlloca(LLVMCore.LLVMGetInsertBlock(self.builder), result_type, "match.result");
+                    const result_alloca = self.createEntryAlloca(entry_block, result_type, "match.result");
 
-                    const switch_inst = LLVMCore.LLVMBuildSwitch(self.builder, cond_val, default_block, @intCast(match_expr.cases.len));
+                    var current_block = LLVMCore.LLVMGetInsertBlock(self.builder);
 
-                    // Generate code for each case
-                    for (match_expr.cases) |case| {
+                    for (match_expr.cases, 0..) |case, i| {
                         const case_block = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.case");
+                        const next_block = if (i < match_expr.cases.len - 1)
+                            LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.next")
+                        else
+                            default_block;
 
-                        // Generate cases for each pattern in the patterns array
-                        for (case.patterns) |pattern| {
+                        // For each pattern, build comparison chain
+                        var pattern_block = current_block;
+                        for (case.patterns, 0..) |pattern, pattern_idx| {
+                            const pattern_cmp_block = if (pattern_idx < case.patterns.len - 1)
+                                LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "match.pattern_cmp")
+                            else
+                                next_block;
+
+                            LLVMCore.LLVMPositionBuilderAtEnd(self.builder, pattern_block);
                             const pattern_value = try self.generatePatternValue(pattern);
-                            LLVMCore.LLVMAddCase(switch_inst, pattern_value, case_block);
+                            const cmp_result = LLVMCore.LLVMBuildICmp(self.builder, LLVMTypes.LLVMIntPredicate.LLVMIntEQ, cond_val, pattern_value, "int.cmp");
+                            _ = LLVMCore.LLVMBuildCondBr(self.builder, cmp_result, case_block, pattern_cmp_block);
+
+                            pattern_block = pattern_cmp_block;
                         }
 
+                        // Case body
                         LLVMCore.LLVMPositionBuilderAtEnd(self.builder, case_block);
                         const case_result = try self.generateExpr(case.body);
                         _ = LLVMCore.LLVMBuildStore(self.builder, case_result, result_alloca);
                         _ = LLVMCore.LLVMBuildBr(self.builder, merge_block);
+
+                        current_block = next_block;
                     }
 
                     // Default path - store default value
@@ -908,6 +1008,287 @@ pub const LLVMGenerator = struct {
                 }
             },
 
+            .Array => |elements| {
+                // For now, assume all elements are i64
+                const elem_size = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), 8, @intFromBool(false));
+                const elem_tag = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), 0, @intFromBool(false)); // 0 = int
+                const init_len = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), @intCast(elements.len), @intFromBool(false));
+
+                const array_new_fn = externs.getOrCreateDoxaArrayNew(self);
+                var args = [_]LLVMTypes.LLVMValueRef{ elem_size, elem_tag, init_len };
+                const array_header = LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMTypeOf(array_new_fn), array_new_fn, &args, 3, "array_new");
+
+                // Set each element
+                const array_set_fn = externs.getOrCreateDoxaArraySetI64(self);
+                for (elements, 0..) |element, i| {
+                    const idx = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), @intCast(i), @intFromBool(false));
+                    const elem_val = try self.generateExpr(element);
+                    // Convert to i64 if needed
+                    const elem_i64 = try self.coerceValueToType(elem_val, LLVMCore.LLVMInt64TypeInContext(self.context));
+                    var set_args = [_]LLVMTypes.LLVMValueRef{ array_header, idx, elem_i64 };
+                    _ = LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMTypeOf(array_set_fn), array_set_fn, &set_args, 3, "");
+                }
+
+                return array_header;
+            },
+
+            .Index => |index_expr| {
+                const array_val = try self.generateExpr(index_expr.array);
+                const index_val = try self.generateExpr(index_expr.index);
+
+                // For now, assume array contains i64
+                const array_get_fn = externs.getOrCreateDoxaArrayGetI64(self);
+                // Convert index to i64 if needed
+                const index_i64 = try self.coerceValueToType(index_val, LLVMCore.LLVMInt64TypeInContext(self.context));
+                var args = [_]LLVMTypes.LLVMValueRef{ array_val, index_i64 };
+                return LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMTypeOf(array_get_fn), array_get_fn, &args, 2, "array_get");
+            },
+
+            .IndexAssign => |index_assign| {
+                const array_val = try self.generateExpr(index_assign.array);
+                const index_val = try self.generateExpr(index_assign.index);
+                const value_val = try self.generateExpr(index_assign.value);
+
+                // For now, assume array contains i64
+                const array_set_fn = externs.getOrCreateDoxaArraySetI64(self);
+                // Convert index and value to i64 if needed
+                const index_i64 = try self.coerceValueToType(index_val, LLVMCore.LLVMInt64TypeInContext(self.context));
+                const value_i64 = try self.coerceValueToType(value_val, LLVMCore.LLVMInt64TypeInContext(self.context));
+                var args = [_]LLVMTypes.LLVMValueRef{ array_val, index_i64, value_i64 };
+                _ = LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMTypeOf(array_set_fn), array_set_fn, &args, 3, "");
+                return value_i64; // Return the assigned value
+            },
+
+            .Loop => |loop| {
+                // Create basic blocks for the loop
+                const loop_cond_bb = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "loop.cond");
+                const loop_body_bb = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "loop.body");
+                const loop_step_bb = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "loop.step");
+                const loop_end_bb = LLVMCore.LLVMAppendBasicBlockInContext(self.context, self.current_function.?, "loop.end");
+
+                // Variable initialization
+                if (loop.var_decl) |var_decl| {
+                    try self.generateStmt(var_decl);
+                }
+
+                // Jump to condition check
+                _ = LLVMCore.LLVMBuildBr(self.builder, loop_cond_bb);
+
+                // Condition block
+                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, loop_cond_bb);
+                if (loop.condition) |condition| {
+                    const cond_val = try self.generateExpr(condition);
+                    const cond_i1 = try self.toBoolI1(cond_val);
+                    _ = LLVMCore.LLVMBuildCondBr(self.builder, cond_i1, loop_body_bb, loop_end_bb);
+                } else {
+                    // Infinite loop
+                    _ = LLVMCore.LLVMBuildBr(self.builder, loop_body_bb);
+                }
+
+                // Body block
+                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, loop_body_bb);
+                _ = try self.generateExpr(loop.body);
+                _ = LLVMCore.LLVMBuildBr(self.builder, if (loop.step != null) loop_step_bb else loop_cond_bb);
+
+                // Step block
+                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, loop_step_bb);
+                if (loop.step) |step| {
+                    _ = try self.generateExpr(step);
+                }
+                _ = LLVMCore.LLVMBuildBr(self.builder, loop_cond_bb);
+
+                // End block
+                LLVMCore.LLVMPositionBuilderAtEnd(self.builder, loop_end_bb);
+
+                // Loops don't return values
+                return null;
+            },
+
+            .BuiltinCall => |builtin| {
+                if (std.mem.eql(u8, builtin.name, "@length")) {
+                    // @length(array)
+                    if (builtin.arguments.len != 1) return error.UnsupportedExpressionType;
+                    const array_val = try self.generateExpr(builtin.arguments[0]);
+                    const array_len_fn = externs.getOrCreateDoxaArrayLen(self);
+                    var args = [_]LLVMTypes.LLVMValueRef{array_val};
+                    return LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMTypeOf(array_len_fn), array_len_fn, &args, 1, "array_len");
+                } else if (std.mem.eql(u8, builtin.name, "push")) {
+                    // push(array, value)
+                    if (builtin.arguments.len != 2) return error.UnsupportedExpressionType;
+                    _ = try self.generateExpr(builtin.arguments[0]);
+                    const value_val = try self.generateExpr(builtin.arguments[1]);
+                    // For now, assume i64 values
+                    const value_i64 = try self.coerceValueToType(value_val, LLVMCore.LLVMInt64TypeInContext(self.context));
+
+                    // TODO: Need to implement array push in runtime
+                    // For now, just return the value
+                    return value_i64;
+                } else if (std.mem.eql(u8, builtin.name, "pop")) {
+                    // pop(array)
+                    if (builtin.arguments.len != 1) return error.UnsupportedExpressionType;
+                    _ = try self.generateExpr(builtin.arguments[0]);
+
+                    // TODO: Need to implement array pop in runtime
+                    // For now, just return a dummy value
+                    return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), 0, @intFromBool(false));
+                } else {
+                    return error.UnsupportedExpressionType;
+                }
+            },
+
+            .FieldAccess => |fa| {
+                const base_ptr = try self.getPointerForExpr(fa.object);
+                const base_ptr_ty = LLVMCore.LLVMTypeOf(base_ptr);
+                if (LLVMCore.LLVMGetTypeKind(base_ptr_ty) != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) return LLVMGenError.UnsupportedExpressionType;
+                const struct_ty = LLVMCore.LLVMGetElementType(base_ptr_ty);
+                if (LLVMCore.LLVMGetTypeKind(struct_ty) != LLVMTypes.LLVMTypeKind.LLVMStructTypeKind) return LLVMGenError.UnsupportedExpressionType;
+
+                // Resolve index via recorded field order, if available
+                var field_index: u32 = 0;
+                var found: bool = false;
+                // Attempt to get the struct name from the type if named
+                const name_c = LLVMCore.LLVMGetStructName(struct_ty);
+                if (name_c != null) {
+                    const name = std.mem.span(name_c);
+                    if (self.struct_field_order.get(name)) |order| {
+                        for (order, 0..) |fname, i| {
+                            if (std.mem.eql(u8, fname, fa.field.lexeme)) {
+                                field_index = @intCast(i);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!found) return LLVMGenError.UnsupportedExpressionType;
+
+                const field_ptr = LLVMCore.LLVMBuildStructGEP2(self.builder, struct_ty, base_ptr, field_index, "field.ptr");
+                const field_ty = LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(field_ptr));
+                return LLVMCore.LLVMBuildLoad2(self.builder, field_ty, field_ptr, "field.load");
+            },
+
+            .EnumMember => |member_token| {
+                // Resolve enum member by scanning registered enums for a unique match
+                var match_enum_count: u32 = 0;
+                var matched_index: u32 = 0;
+                var it = self.enum_variants.iterator();
+                while (it.next()) |entry| {
+                    const variants = entry.value_ptr.*;
+                    for (variants, 0..) |v, i| {
+                        if (std.mem.eql(u8, v, member_token.lexeme)) {
+                            match_enum_count += 1;
+                            matched_index = @intCast(i);
+                            break;
+                        }
+                    }
+                }
+                if (match_enum_count == 1) {
+                    return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), matched_index, @intFromBool(false));
+                }
+                return LLVMGenError.UnsupportedExpressionType;
+            },
+
+            .FieldAssignment => |fa| {
+                const base_ptr = try self.getPointerForExpr(fa.object);
+                const base_ptr_ty = LLVMCore.LLVMTypeOf(base_ptr);
+                if (LLVMCore.LLVMGetTypeKind(base_ptr_ty) != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) return LLVMGenError.UnsupportedExpressionType;
+                const struct_ty = LLVMCore.LLVMGetElementType(base_ptr_ty);
+                if (LLVMCore.LLVMGetTypeKind(struct_ty) != LLVMTypes.LLVMTypeKind.LLVMStructTypeKind) return LLVMGenError.UnsupportedExpressionType;
+
+                var field_index: u32 = 0;
+                var found: bool = false;
+                const name_c = LLVMCore.LLVMGetStructName(struct_ty);
+                if (name_c != null) {
+                    const name = std.mem.span(name_c);
+                    if (self.struct_field_order.get(name)) |order| {
+                        for (order, 0..) |fname, i| {
+                            if (std.mem.eql(u8, fname, fa.field.lexeme)) {
+                                field_index = @intCast(i);
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!found) return LLVMGenError.UnsupportedExpressionType;
+
+                const value = try self.generateExpr(fa.value);
+                const field_ptr = LLVMCore.LLVMBuildStructGEP2(self.builder, struct_ty, base_ptr, field_index, "field.ptr");
+                const field_ty = LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(field_ptr));
+                var coerced = value;
+                if (LLVMCore.LLVMTypeOf(value) != field_ty) {
+                    coerced = try self.coerceValueToType(value, field_ty);
+                }
+                _ = LLVMCore.LLVMBuildStore(self.builder, coerced, field_ptr);
+                return coerced;
+            },
+
+            .StructDecl => |sd| {
+                // Define named struct type and record field order
+                var name_buf: [256]u8 = undefined;
+                const name_z = std.fmt.bufPrintZ(&name_buf, "{s}", .{sd.name.lexeme}) catch return error.NameTooLong;
+                const named = LLVMCore.LLVMStructCreateNamed(self.context, name_z.ptr);
+
+                // Field LLVM types
+                var field_types = try self.allocator.alloc(LLVMTypes.LLVMTypeRef, sd.fields.len);
+                defer self.allocator.free(field_types);
+                var field_names = try self.allocator.alloc([]const u8, sd.fields.len);
+                errdefer self.allocator.free(field_names);
+
+                for (sd.fields, 0..) |field, i| {
+                    const ti_ptr = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
+                    defer self.allocator.destroy(ti_ptr);
+                    field_types[i] = try self.getLLVMTypeFromTypeInfo(ti_ptr.*);
+                    field_names[i] = field.name.lexeme;
+                }
+
+                _ = LLVMCore.LLVMStructSetBody(named, field_types.ptr, @intCast(field_types.len), @intFromBool(false));
+                try self.types.put(sd.name.lexeme, named);
+                const stored_names = try self.allocator.dupe([]const u8, field_names);
+                try self.struct_field_order.put(sd.name.lexeme, stored_names);
+                return null;
+            },
+
+            .StructLiteral => |sl| {
+                // Create aggregate by allocating, initializing fields, then loading
+                const struct_ty = self.types.get(sl.name.lexeme) orelse return LLVMGenError.UnsupportedType;
+                const entry_block = LLVMCore.LLVMGetInsertBlock(self.builder);
+                var tmp_name: [64]u8 = undefined;
+                const tmp_z = std.fmt.bufPrintZ(&tmp_name, "{s}.tmp", .{sl.name.lexeme}) catch return error.NameTooLong;
+                const alloca = self.createEntryAlloca(entry_block, struct_ty, tmp_z.ptr);
+
+                const order = self.struct_field_order.get(sl.name.lexeme) orelse return LLVMGenError.UnsupportedExpressionType;
+                for (sl.fields) |fld| {
+                    var idx: u32 = 0;
+                    var ok: bool = false;
+                    for (order, 0..) |fname, i| {
+                        if (std.mem.eql(u8, fname, fld.name.lexeme)) {
+                            idx = @intCast(i);
+                            ok = true;
+                            break;
+                        }
+                    }
+                    if (!ok) return LLVMGenError.UnsupportedExpressionType;
+                    const val = try self.generateExpr(fld.value);
+                    const field_ptr = LLVMCore.LLVMBuildStructGEP2(self.builder, struct_ty, alloca, idx, "lit.field.ptr");
+                    const field_ty = LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(field_ptr));
+                    var coerced = val;
+                    if (LLVMCore.LLVMTypeOf(val) != field_ty) coerced = try self.coerceValueToType(val, field_ty);
+                    _ = LLVMCore.LLVMBuildStore(self.builder, coerced, field_ptr);
+                }
+
+                return LLVMCore.LLVMBuildLoad2(self.builder, struct_ty, alloca, "struct.load");
+            },
+
+            .EnumDecl => |decl| {
+                // Register enum variants; expressions of this kind produce no value
+                var names = try self.allocator.alloc([]const u8, decl.variants.len);
+                for (decl.variants, 0..) |tok, i| names[i] = tok.lexeme;
+                const stored = try self.allocator.dupe([]const u8, names);
+                try self.enum_variants.put(decl.name.lexeme, stored);
+                return null;
+            },
+
             else => return error.UnsupportedExpressionType,
         }
     }
@@ -937,6 +1318,14 @@ pub const LLVMGenerator = struct {
             },
 
             .FunctionDecl => |func_decl| try self.generateFunctionDecl(&func_decl),
+
+            .EnumDecl => |decl| {
+                // Register enum variants for name->index resolution
+                var names = try self.allocator.alloc([]const u8, decl.variants.len);
+                for (decl.variants, 0..) |tok, i| names[i] = tok.lexeme;
+                const stored = try self.allocator.dupe([]const u8, names);
+                try self.enum_variants.put(decl.name.lexeme, stored);
+            },
 
             .Return => |ret| {
                 if (ret.value) |value| {
@@ -1083,6 +1472,12 @@ pub const LLVMGenerator = struct {
             .String => LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0),
             .Tetra => LLVMCore.LLVMIntTypeInContext(self.context, 2),
             .Nothing => LLVMCore.LLVMVoidTypeInContext(self.context),
+            .Struct, .Custom => blk: {
+                const name = type_info.custom_type orelse return LLVMGenError.UnsupportedType;
+                if (self.types.get(name)) |ty| break :blk ty;
+                return LLVMGenError.UnsupportedType;
+            },
+            .Enum => LLVMCore.LLVMInt64TypeInContext(self.context),
             else => error.UnsupportedType,
         };
     }
@@ -1214,7 +1609,34 @@ pub const LLVMGenerator = struct {
     }
 
     fn generatePatternValue(self: *LLVMGenerator, pattern: Token) LLVMGenError!LLVMTypes.LLVMValueRef {
-        // For now, assume patterns are just enum variants stored as integers (i64 for consistency)
+        // Prefer resolving enum variant names to their indices if unique
+        if (pattern.lexeme.len > 0) {
+            var match_enum_count: u32 = 0;
+            var matched_index: u32 = 0;
+            var it = self.enum_variants.iterator();
+            while (it.next()) |entry| {
+                const variants = entry.value_ptr.*;
+                for (variants, 0..) |v, i| {
+                    if (std.mem.eql(u8, v, pattern.lexeme)) {
+                        match_enum_count += 1;
+                        matched_index = @intCast(i);
+                        break;
+                    }
+                }
+            }
+            if (match_enum_count == 1) {
+                return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), matched_index, @intFromBool(false));
+            }
+        }
+
+        // Fallback: if literal is an integer, use it directly
+        switch (pattern.literal) {
+            .int => |i| return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), @intCast(i), @intFromBool(true)),
+            .byte => |b| return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), b, @intFromBool(false)),
+            else => {},
+        }
+
+        // Last resort: encode by token type id (not ideal, but preserves previous behavior)
         return LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), @intFromEnum(pattern.type), @intFromBool(false));
     }
 

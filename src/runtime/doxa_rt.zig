@@ -23,6 +23,13 @@ pub export fn doxa_write_cstr(ptr: ?[*:0]const u8) void {
     }
 }
 
+pub export fn doxa_str_eq(a: ?[*:0]const u8, b: ?[*:0]const u8) bool {
+    if (a == null or b == null) return false;
+    const as = std.mem.span(a.?);
+    const bs = std.mem.span(b.?);
+    return std.mem.eql(u8, as, bs);
+}
+
 pub export fn doxa_print_i64(value: i64) void {
     var buf: [64]u8 = undefined;
     const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
