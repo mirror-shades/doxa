@@ -2613,6 +2613,15 @@ pub const IRPrinter = struct {
         defer self.allocator.free(new_line);
         try w.writeAll(new_line);
 
+        // Allocate the loop index before the loop (must be in a dominating block)
+        const i_ptr = try self.nextTemp(id);
+        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{i_ptr});
+        defer self.allocator.free(alloca_line);
+        try w.writeAll(alloca_line);
+        const st0 = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{i_ptr});
+        defer self.allocator.free(st0);
+        try w.writeAll(st0);
+
         const is_empty = try self.nextTemp(id);
         const empty_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 0\n", .{ is_empty, size });
         defer self.allocator.free(empty_line);
@@ -2635,15 +2644,6 @@ pub const IRPrinter = struct {
         const cond_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl_cond});
         defer self.allocator.free(cond_label_line);
         try w.writeAll(cond_label_line);
-
-        // Allocate and initialize the loop index in the condition block
-        const i_ptr = try self.nextTemp(id);
-        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{i_ptr});
-        defer self.allocator.free(alloca_line);
-        try w.writeAll(alloca_line);
-        const st0 = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{i_ptr});
-        defer self.allocator.free(st0);
-        try w.writeAll(st0);
 
         const i_cur = try self.nextTemp(id);
         const ld_i = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ i_cur, i_ptr });
