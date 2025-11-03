@@ -102,6 +102,7 @@ pub const IRPrinter = struct {
     allocator: std.mem.Allocator,
     peek_string_counter: usize,
     global_types: std.StringHashMap(StackType),
+    global_array_types: std.StringHashMap(HIR.HIRType), // Store array element types for global variables
     global_enum_types: std.StringHashMap([]const u8), // Store enum type names for global variables
     defined_globals: std.StringHashMap(bool),
     last_emitted_enum_value: ?u64 = null,
@@ -223,6 +224,7 @@ pub const IRPrinter = struct {
             .allocator = allocator,
             .peek_string_counter = 0,
             .global_types = std.StringHashMap(StackType).init(allocator),
+            .global_array_types = std.StringHashMap(HIR.HIRType).init(allocator),
             .global_enum_types = std.StringHashMap([]const u8).init(allocator),
             .defined_globals = std.StringHashMap(bool).init(allocator),
             .last_emitted_enum_value = null,
@@ -232,6 +234,7 @@ pub const IRPrinter = struct {
     pub fn deinit(self: *IRPrinter) void {
         self.peek_string_counter = 0;
         self.global_types.deinit();
+        self.global_array_types.deinit();
         self.global_enum_types.deinit();
         self.defined_globals.deinit();
     }
@@ -420,6 +423,7 @@ pub const IRPrinter = struct {
         }
 
         var current_block: []const u8 = "entry";
+        var last_instruction_was_terminator = false;
 
         var variables = std.StringHashMap(VariableInfo).init(self.allocator);
         defer {
@@ -880,10 +884,17 @@ pub const IRPrinter = struct {
                     try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
                 },
                 .Label => |lbl| {
+                    if (!last_instruction_was_terminator) {
+                        const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{lbl.name});
+                        defer self.allocator.free(br_line);
+                        try w.writeAll(br_line);
+                        last_instruction_was_terminator = true;
+                    }
                     const line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl.name});
                     defer self.allocator.free(line);
                     try w.writeAll(line);
                     current_block = lbl.name;
+                    last_instruction_was_terminator = false;
                     try self.restoreStackForLabel(&merge_map, lbl.name, &stack, &id, w);
                 },
                 .Jump => |j| {
@@ -892,6 +903,7 @@ pub const IRPrinter = struct {
                     defer self.allocator.free(line);
                     try w.writeAll(line);
                     stack.items.len = 0;
+                    last_instruction_was_terminator = true;
                 },
                 .JumpCond => |jc| {
                     if (stack.items.len < 1) continue;
@@ -904,10 +916,12 @@ pub const IRPrinter = struct {
                     defer self.allocator.free(br_line);
                     try w.writeAll(br_line);
                     stack.items.len = 0;
+                    last_instruction_was_terminator = true;
                 },
                 .Halt => {
                     try w.writeAll("  ret i32 0\n");
                     had_return = true;
+                    last_instruction_was_terminator = true;
                 },
                 .Call => |c| {
                     const argc: usize = @intCast(c.arg_count);
@@ -968,6 +982,7 @@ pub const IRPrinter = struct {
                         defer self.allocator.free(call_line);
                         try w.writeAll(call_line);
                     }
+                    last_instruction_was_terminator = false;
                 },
                 .StringOp => |sop| {
                     if (stack.items.len < 1) continue;
@@ -994,6 +1009,7 @@ pub const IRPrinter = struct {
                             try stack.append(.{ .name = fallback, .ty = .I64 });
                         },
                     }
+                    last_instruction_was_terminator = false;
                 },
                 .LoadVar => |lv| {
                     if (lv.scope_kind == .GlobalLocal) {
@@ -1022,8 +1038,9 @@ pub const IRPrinter = struct {
                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ result_name, llty, gptr });
                         defer self.allocator.free(line);
                         try w.writeAll(line);
+                        const array_type = self.global_array_types.get(gname);
                         const enum_type_name = self.global_enum_types.get(gname);
-                        try stack.append(.{ .name = result_name, .ty = st, .enum_type_name = enum_type_name });
+                        try stack.append(.{ .name = result_name, .ty = st, .array_type = array_type, .enum_type_name = enum_type_name });
                     } else if (variables.get(lv.var_name)) |entry| {
                         const result_name = try self.nextTemp(&id);
                         const ty_str = self.stackTypeToLLVMType(entry.stack_type);
@@ -1043,6 +1060,7 @@ pub const IRPrinter = struct {
                         try w.writeAll(line);
                         try stack.append(.{ .name = fallback, .ty = .I64 });
                     }
+                    last_instruction_was_terminator = false;
                 },
                 .StoreVar => |sv| {
                     if (stack.items.len < 1) continue;
@@ -1053,6 +1071,9 @@ pub const IRPrinter = struct {
                     if (sv.scope_kind == .GlobalLocal) {
                         // Handle global variables
                         _ = try self.global_types.put(sv.var_name, value.ty);
+                        if (value.array_type) |array_type| {
+                            _ = try self.global_array_types.put(sv.var_name, array_type);
+                        }
                         if (value.enum_type_name) |enum_type_name| {
                             _ = try self.global_enum_types.put(sv.var_name, enum_type_name);
                         }
@@ -1082,6 +1103,7 @@ pub const IRPrinter = struct {
                         defer self.allocator.free(store_line);
                         try w.writeAll(store_line);
                     }
+                    last_instruction_was_terminator = false;
                 },
                 .StoreDecl => |sd| {
                     if (stack.items.len < 1) {
@@ -1102,6 +1124,9 @@ pub const IRPrinter = struct {
                     if (sd.scope_kind == .GlobalLocal) {
                         // Record global type and emit store to module-level global
                         _ = try self.global_types.put(sd.var_name, value.ty);
+                        if (value.array_type) |array_type| {
+                            _ = try self.global_array_types.put(sd.var_name, array_type);
+                        }
                         _ = try self.defined_globals.put(sd.var_name, true);
                         const gptr = try self.mangleGlobalName(sd.var_name);
                         defer self.allocator.free(gptr);
@@ -1123,6 +1148,7 @@ pub const IRPrinter = struct {
                         defer self.allocator.free(store_line);
                         try w.writeAll(store_line);
                     }
+                    last_instruction_was_terminator = false;
                 },
                 .StoreConst => |sc| {
                     if (stack.items.len < 1) continue;
@@ -1146,6 +1172,9 @@ pub const IRPrinter = struct {
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     if (sc.scope_kind == .GlobalLocal) {
                         _ = try self.global_types.put(sc.var_name, value.ty);
+                        if (value.array_type) |array_type| {
+                            _ = try self.global_array_types.put(sc.var_name, array_type);
+                        }
                         if (value.enum_type_name) |enum_type_name| {
                             _ = try self.global_enum_types.put(sc.var_name, enum_type_name);
                         }
@@ -1545,8 +1574,9 @@ pub const IRPrinter = struct {
                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ result_name, llty, gptr });
                         defer self.allocator.free(line);
                         try w.writeAll(line);
+                        const array_type = self.global_array_types.get(gname);
                         const enum_type_name = self.global_enum_types.get(gname);
-                        try stack.append(.{ .name = result_name, .ty = st, .enum_type_name = enum_type_name });
+                        try stack.append(.{ .name = result_name, .ty = st, .array_type = array_type, .enum_type_name = enum_type_name });
                     } else if (variables.get(lv.var_name)) |entry| {
                         const result_name = try self.nextTemp(&id);
                         const ty_str = self.stackTypeToLLVMType(entry.stack_type);

@@ -1,0 +1,6 @@
+// Simple loop test
+var sum is 0
+for i is 0 while i < 5 do i += 1 {
+    sum += i
+}
+sum?
