@@ -220,34 +220,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .FunctionCall => |function_call| {
             if (function_call.callee.data == .FieldAccess) {
-                const fa = function_call.callee.data.FieldAccess;
-                if (fa.object.data == .FieldAccess) {
-                    const inner = fa.object.data.FieldAccess;
-                    if (inner.object.data == .Variable) {
-                        const alias = inner.object.data.Variable.lexeme;
-                        if (helpers.isModuleNamespace(self, alias)) {
-                            if (self.parser) |p| {
-                                if (p.module_namespaces.get(alias)) |mi| {
-                                    if (std.mem.eql(u8, mi.name, "graphics") or std.mem.eql(u8, mi.file_path, "graphics")) {
-                                        if (fa.field.lexeme.len >= 2) {
-                                            const submodule = fa.field.lexeme;
-                                            if (std.mem.eql(u8, submodule, "doxa")) {
-                                                if (function_call.arguments.len >= 4) {
-                                                    type_info.* = .{ .base = .Struct, .custom_type = "graphics.App" };
-                                                    return type_info;
-                                                }
-                                            }
-                                        }
-                                        type_info.* = .{ .base = .Int };
-                                        return type_info;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            if (function_call.callee.data == .FieldAccess) {
                 const field_access = function_call.callee.data.FieldAccess;
                 const object_type = try infer_type.inferTypeFromExpr(self, field_access.object);
                 const method_name = field_access.field.lexeme;
@@ -255,17 +227,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (field_access.object.data == .Variable) {
                     const object_name = field_access.object.data.Variable.lexeme;
                     if (helpers.isModuleNamespace(self, object_name)) {
-                        if (std.mem.eql(u8, object_name, "g") or std.mem.eql(u8, object_name, "graphics")) {
-                            if (field_access.object.data == .FieldAccess) {
-                                const inner_fa = field_access.object.data.FieldAccess;
-                                if (std.mem.eql(u8, inner_fa.field.lexeme, "doxa")) {
-                                    if (std.mem.eql(u8, method_name, "Init")) {
-                                        type_info.* = .{ .base = .Struct, .custom_type = "graphics.App" };
-                                        return type_info;
-                                    }
-                                }
-                            }
-                        }
                         // Use proper module field access instead of hardcoded Int
                         return helpers.handleModuleFieldAccess(self, object_name, method_name, .{ .location = getLocationFromBase(expr.base) });
                     }
@@ -349,16 +310,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         var struct_name: ?[]const u8 = null;
                         if (object_type.base == .Custom) {
                             if (object_type.custom_type) |ct_name| {
-                                if (std.mem.startsWith(u8, ct_name, "graphics.")) {
-                                    if (std.mem.eql(u8, ct_name, "graphics.doxa")) {
-                                        if (std.mem.eql(u8, method_name, "Init")) {
-                                            type_info.* = .{ .base = .Struct, .custom_type = "graphics.App" };
-                                            return type_info;
-                                        }
-                                    }
-                                    type_info.* = .{ .base = .Int };
-                                    return type_info;
-                                }
                                 struct_name = ct_name;
                             }
                         } else if (object_type.base == .Struct) {

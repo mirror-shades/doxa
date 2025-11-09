@@ -365,34 +365,12 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                         }
                     }
                 } else if (fa.object.data == .FieldAccess) {
-                    // Nested namespace: graphics.raylib.Func
-                    if (object_type.base == .Custom and object_type.custom_type) |ctn| {
-                        if (std.mem.indexOfScalar(u8, ctn, '.')) |dot_idx| {
-                            const root = ctn[0..dot_idx];
-                            if (helpers.isModuleNamespace(@constCast(ctx), root)) {
-                                type_info.* = .{ .base = .Int };
-                                return type_info;
-                            }
-                        }
-                    }
+                    // Handle nested field access properly through module resolution
                 }
 
                 // Instance method based on receiver type
                 var struct_name: ?[]const u8 = null;
                 if (object_type.base == .Custom and object_type.custom_type) |ctn| {
-                    // If this is a nested graphics namespace (graphics.raylib / graphics.doxa), treat as module function
-                    if (std.mem.startsWith(u8, ctn, "graphics.")) {
-                        // Special handling for graphics.doxa.Init
-                        if (std.mem.eql(u8, ctn, "graphics.doxa")) {
-                            if (std.mem.eql(u8, method_name, "Init")) {
-                                // This is graphics.doxa.Init - return a struct type
-                                type_info.* = .{ .base = .Struct, .custom_type = "graphics.App" };
-                                return type_info;
-                            }
-                        }
-                        type_info.* = .{ .base = .Int };
-                        return type_info;
-                    }
                     struct_name = ctn;
                 } else if (object_type.base == .Struct and object_type.custom_type) |ctn2| {
                     struct_name = ctn2;
