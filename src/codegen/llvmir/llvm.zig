@@ -76,6 +76,20 @@ const LoopContext = struct {
     continue_block: LLVMTypes.LLVMBasicBlockRef,
 };
 
+const StructInfo = struct {
+    llvm_type: LLVMTypes.LLVMTypeRef,
+    field_names: []const []const u8,
+    field_types: []LLVMTypes.LLVMTypeRef,
+    field_indices: std.StringHashMap(u32), // field name -> index
+    allocator: std.mem.Allocator,
+
+    pub fn deinit(self: *StructInfo) void {
+        self.allocator.free(self.field_names);
+        self.allocator.free(self.field_types);
+        self.field_indices.deinit();
+    }
+};
+
 pub const LLVMGenerator = struct {
     context: LLVMTypes.LLVMContextRef,
     module: LLVMTypes.LLVMModuleRef,
@@ -88,6 +102,7 @@ pub const LLVMGenerator = struct {
     externs: std.StringHashMap(LLVMTypes.LLVMValueRef),
     functions: std.StringHashMap(FunctionSymbol),
     string_literals: std.StringHashMap(LLVMTypes.LLVMValueRef),
+    struct_types: std.StringHashMap(*StructInfo), // struct name -> struct info
     allocator: std.mem.Allocator,
 
     // Current function being generated
@@ -202,6 +217,7 @@ pub const LLVMGenerator = struct {
             .externs = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
             .functions = std.StringHashMap(FunctionSymbol).init(allocator),
             .string_literals = std.StringHashMap(LLVMTypes.LLVMValueRef).init(allocator),
+            .struct_types = std.StringHashMap(*StructInfo).init(allocator),
             .loop_stack = std.ArrayList(LoopContext).init(allocator),
             .allocator = allocator,
             .current_function = null,
@@ -227,6 +243,12 @@ pub const LLVMGenerator = struct {
             self.allocator.free(entry.key_ptr.*);
         }
         self.string_literals.deinit();
+        var struct_it = self.struct_types.iterator();
+        while (struct_it.next()) |entry| {
+            entry.value_ptr.deinit();
+            self.allocator.destroy(entry.value_ptr);
+        }
+        self.struct_types.deinit();
         self.loop_stack.deinit();
         LLVMCore.LLVMDisposeBuilder(self.builder);
         LLVMCore.LLVMDisposeModule(self.module);
@@ -975,8 +997,8 @@ pub const LLVMGenerator = struct {
             .Array => |elements| {
                 // For now, create an empty array - proper array literal support needs more work
                 // TODO: Implement proper array literal initialization
-                const externs = @import("common/externs.zig");
-                const array_new_fn = externs.getOrCreateArrayNew(self);
+                const externs_module = @import("common/externs.zig");
+                const array_new_fn = externs_module.getOrCreateArrayNew(self);
                 const elem_size = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), 8, @intFromBool(false)); // Assume i64 for now
                 const elem_tag = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), 0, @intFromBool(false)); // Int tag
                 const size = LLVMCore.LLVMConstInt(LLVMCore.LLVMInt64TypeInContext(self.context), @intCast(elements.len), @intFromBool(false));
@@ -995,11 +1017,29 @@ pub const LLVMGenerator = struct {
                 const index_val = try self.generateExpr(index_expr.index);
 
                 // For now, assume i64 arrays
-                const externs = @import("common/externs.zig");
-                const array_get_fn = externs.getOrCreateArrayGetI64(self);
+                const externs_module = @import("common/externs.zig");
+                const array_get_fn = externs_module.getOrCreateArrayGetI64(self);
 
                 var args = [_]LLVMTypes.LLVMValueRef{ array_val, index_val };
                 return LLVMCore.LLVMBuildCall2(self.builder, LLVMCore.LLVMGetElementType(LLVMCore.LLVMTypeOf(array_get_fn)), array_get_fn, &args, args.len, "array.get");
+            },
+
+            .StructDecl => |struct_decl| {
+                // Register struct type - no runtime code generation
+                try self.registerStructType(struct_decl);
+                return null;
+            },
+
+            .StructLiteral => |struct_lit| {
+                return try self.generateStructLiteral(struct_lit);
+            },
+
+            .FieldAccess => |field_access| {
+                return try self.generateFieldAccess(field_access);
+            },
+
+            .FieldAssignment => |field_assign| {
+                return try self.generateFieldAssignment(field_assign);
             },
 
             else => return error.UnsupportedExpressionType,
@@ -1193,6 +1233,26 @@ pub const LLVMGenerator = struct {
             .String => LLVMCore.LLVMPointerType(LLVMCore.LLVMInt8TypeInContext(self.context), 0),
             .Tetra => LLVMCore.LLVMIntTypeInContext(self.context, 2),
             .Nothing => LLVMCore.LLVMVoidTypeInContext(self.context),
+            .Struct => {
+                if (type_info.custom_type) |struct_name| {
+                    if (self.struct_types.get(struct_name)) |struct_info| {
+                        // Return pointer to struct type
+                        return LLVMCore.LLVMPointerType(struct_info.llvm_type, 0);
+                    }
+                }
+                // If struct type not found, return a generic pointer type
+                // This should not happen if structs are registered properly
+                return error.UnsupportedType;
+            },
+            .Custom => {
+                if (type_info.custom_type) |type_name| {
+                    // Check if it's a registered struct type
+                    if (self.struct_types.get(type_name)) |struct_info| {
+                        return LLVMCore.LLVMPointerType(struct_info.llvm_type, 0);
+                    }
+                }
+                return error.UnsupportedType;
+            },
             else => error.UnsupportedType,
         };
     }
@@ -1408,4 +1468,197 @@ pub const LLVMGenerator = struct {
     }
 
     // createStringConstant removed in favor of common/strings.createStringPtr
+
+    fn registerStructType(self: *LLVMGenerator, struct_decl: ast.StructDecl) LLVMGenError!void {
+        const struct_name = struct_decl.name.lexeme;
+
+        // Check if already registered
+        if (self.struct_types.contains(struct_name)) {
+            return; // Already registered
+        }
+
+        // Build field types array
+        var field_types = try self.allocator.alloc(LLVMTypes.LLVMTypeRef, struct_decl.fields.len);
+        errdefer self.allocator.free(field_types);
+        var field_names = try self.allocator.alloc([]const u8, struct_decl.fields.len);
+        errdefer self.allocator.free(field_names);
+
+        for (struct_decl.fields, 0..) |field, i| {
+            const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
+            defer self.allocator.destroy(field_type_info);
+            field_types[i] = try self.getLLVMTypeFromTypeInfo(field_type_info.*);
+            field_names[i] = field.name.lexeme;
+        }
+
+        // Create LLVM struct type
+        var name_buffer: [256]u8 = undefined;
+        const struct_type_name = std.fmt.bufPrintZ(&name_buffer, "struct.{s}", .{struct_name}) catch return error.NameTooLong;
+        const llvm_struct_type = LLVMCore.LLVMStructCreateNamed(self.context, struct_type_name.ptr);
+
+        // Set struct body with field types
+        LLVMCore.LLVMStructSetBody(llvm_struct_type, field_types.ptr, @intCast(field_types.len), 0);
+
+        // Create field index map
+        var field_indices = std.StringHashMap(u32).init(self.allocator);
+        for (field_names, 0..) |name, i| {
+            try field_indices.put(name, @intCast(i));
+        }
+
+        // Create and store StructInfo
+        const struct_info = try self.allocator.create(StructInfo);
+        struct_info.* = .{
+            .llvm_type = llvm_struct_type,
+            .field_names = field_names,
+            .field_types = field_types,
+            .field_indices = field_indices,
+            .allocator = self.allocator,
+        };
+
+        try self.struct_types.put(struct_name, struct_info);
+    }
+
+    fn generateStructLiteral(self: *LLVMGenerator, struct_lit: struct {
+        name: Token,
+        fields: []const *ast.StructInstanceField,
+    }) LLVMGenError!LLVMTypes.LLVMValueRef {
+        const struct_name = struct_lit.name.lexeme;
+        const struct_info = self.struct_types.get(struct_name) orelse return error.UnsupportedType;
+
+        // Allocate struct on stack
+        const alloca = self.createEntryAlloca(LLVMCore.LLVMGetInsertBlock(self.builder), struct_info.llvm_type, "struct.tmp");
+
+        // Generate field values and store them in the struct
+        for (struct_lit.fields) |field| {
+            const field_index = struct_info.field_indices.get(field.name.lexeme) orelse return error.UnsupportedType;
+            const field_value = try self.generateExpr(field.value);
+            const field_gep = LLVMCore.LLVMBuildStructGEP2(
+                self.builder,
+                struct_info.llvm_type,
+                alloca,
+                field_index,
+                field.name.lexeme.ptr,
+            );
+            _ = LLVMCore.LLVMBuildStore(self.builder, field_value, field_gep);
+        }
+
+        return alloca;
+    }
+
+    fn generateFieldAccess(self: *LLVMGenerator, field_access: ast.FieldAccess) LLVMGenError!LLVMTypes.LLVMValueRef {
+        // Generate object expression
+        const object_val = try self.generateExpr(field_access.object);
+
+        // Get struct type from the object
+        // Try to infer struct type from expression
+        var struct_name: ?[]const u8 = null;
+        if (field_access.object.data == .Variable) {
+            // Could check variable type, but for now we'll try to get it from the pointer type
+            const obj_type = LLVMCore.LLVMTypeOf(object_val);
+            if (LLVMCore.LLVMGetTypeKind(obj_type) == LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+                const pointee_type = LLVMCore.LLVMGetElementType(obj_type);
+                if (LLVMCore.LLVMGetTypeKind(pointee_type) == LLVMTypes.LLVMTypeKind.LLVMStructTypeKind) {
+                    // Try to find struct by type
+                    var struct_it = self.struct_types.iterator();
+                    while (struct_it.next()) |entry| {
+                        if (entry.value_ptr.llvm_type == pointee_type) {
+                            struct_name = entry.key_ptr.*;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // If we couldn't infer from object, we need another way
+        // For now, assume the object is a struct pointer
+        const obj_type = LLVMCore.LLVMTypeOf(object_val);
+        if (LLVMCore.LLVMGetTypeKind(obj_type) != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+            return error.UnsupportedType;
+        }
+
+        const pointee_type = LLVMCore.LLVMGetElementType(obj_type);
+        if (LLVMCore.LLVMGetTypeKind(pointee_type) != LLVMTypes.LLVMTypeKind.LLVMStructTypeKind) {
+            return error.UnsupportedType;
+        }
+
+        // Find which struct this type belongs to
+        var target_struct_info: ?*StructInfo = null;
+        var struct_it = self.struct_types.iterator();
+        while (struct_it.next()) |entry| {
+            if (entry.value_ptr.llvm_type == pointee_type) {
+                target_struct_info = entry.value_ptr;
+                break;
+            }
+        }
+
+        const struct_info = target_struct_info orelse return error.UnsupportedType;
+
+        // Get field index
+        const field_index = struct_info.field_indices.get(field_access.field.lexeme) orelse return error.UnsupportedType;
+
+        // Generate GEP to get field pointer
+        const field_gep = LLVMCore.LLVMBuildStructGEP2(
+            self.builder,
+            pointee_type,
+            object_val,
+            field_index,
+            field_access.field.lexeme.ptr,
+        );
+
+        // Load field value
+        const field_type = struct_info.field_types[field_index];
+        return LLVMCore.LLVMBuildLoad2(self.builder, field_type, field_gep, "field.load");
+    }
+
+    fn generateFieldAssignment(self: *LLVMGenerator, field_assign: struct {
+        object: *ast.Expr,
+        field: Token,
+        value: *ast.Expr,
+    }) LLVMGenError!LLVMTypes.LLVMValueRef {
+        // Generate object expression
+        const object_val = try self.generateExpr(field_assign.object);
+
+        // Get struct type
+        const obj_type = LLVMCore.LLVMTypeOf(object_val);
+        if (LLVMCore.LLVMGetTypeKind(obj_type) != LLVMTypes.LLVMTypeKind.LLVMPointerTypeKind) {
+            return error.UnsupportedType;
+        }
+
+        const pointee_type = LLVMCore.LLVMGetElementType(obj_type);
+        if (LLVMCore.LLVMGetTypeKind(pointee_type) != LLVMTypes.LLVMTypeKind.LLVMStructTypeKind) {
+            return error.UnsupportedType;
+        }
+
+        // Find struct info
+        var target_struct_info: ?*StructInfo = null;
+        var struct_it = self.struct_types.iterator();
+        while (struct_it.next()) |entry| {
+            if (entry.value_ptr.llvm_type == pointee_type) {
+                target_struct_info = entry.value_ptr;
+                break;
+            }
+        }
+
+        const struct_info = target_struct_info orelse return error.UnsupportedType;
+
+        // Get field index
+        const field_index = struct_info.field_indices.get(field_assign.field.lexeme) orelse return error.UnsupportedType;
+
+        // Generate value expression
+        const value_val = try self.generateExpr(field_assign.value);
+
+        // Generate GEP to get field pointer
+        const field_gep = LLVMCore.LLVMBuildStructGEP2(
+            self.builder,
+            pointee_type,
+            object_val,
+            field_index,
+            field_assign.field.lexeme.ptr,
+        );
+
+        // Store value to field
+        _ = LLVMCore.LLVMBuildStore(self.builder, value_val, field_gep);
+
+        return value_val;
+    }
 };

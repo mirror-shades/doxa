@@ -77,6 +77,38 @@ pub const StructsHandler = struct {
         // Result is on the stack
     }
 
+    /// Helper function to resolve field index and struct name from struct type and field name
+    fn resolveFieldIndexAndStructName(self: *StructsHandler, object_expr: *ast.Expr, field_name: []const u8) struct { field_index: u32, struct_name: ?[]const u8 } {
+        // First resolve the object's type to get the container struct name
+        if (self.generator.type_system.resolveFieldAccessType(object_expr, &self.generator.symbol_table)) |resolve_result| {
+            if (resolve_result.custom_type_name) |container_struct_name| {
+                if (self.generator.type_system.custom_types.get(container_struct_name)) |custom_type| {
+                    if (custom_type.kind == .Struct) {
+                        if (custom_type.getStructFieldIndex(field_name)) |resolved_index| {
+                            // Get the field's custom type name if it's a struct
+                            var field_struct_name: ?[]const u8 = null;
+                            if (custom_type.struct_fields) |fields| {
+                                for (fields) |f| {
+                                    if (std.mem.eql(u8, f.name, field_name)) {
+                                        field_struct_name = f.custom_type_name;
+                                        break;
+                                    }
+                                }
+                            }
+                            return .{ .field_index = resolved_index, .struct_name = field_struct_name };
+                        }
+                    }
+                }
+            }
+        }
+        return .{ .field_index = 0, .struct_name = null }; // Fallback to 0 if resolution fails
+    }
+
+    /// Helper function to resolve field index from struct type and field name
+    fn resolveFieldIndex(self: *StructsHandler, object_expr: *ast.Expr, field_name: []const u8) u32 {
+        return self.resolveFieldIndexAndStructName(object_expr, field_name).field_index;
+    }
+
     /// Generate HIR for field access expressions
     pub fn generateFieldAccess(self: *StructsHandler, field: ast.FieldAccess) !void {
         // Handle module namespace field access like g.raylib
@@ -178,13 +210,17 @@ pub const StructsHandler = struct {
             // Handle enum member access (e.g., Color.Red)
             try self.generator.generateExpression(field.object, true, false);
 
+            // Resolve the struct type name and field index
+            const resolved = self.resolveFieldIndexAndStructName(field.object, field.field.lexeme);
+
             // Now, the original logic for FieldAccess (non-enum)
             try self.generator.instructions.append(.{
                 .GetField = .{
                     .field_name = field.field.lexeme,
                     .container_type = obj_type, // Use the inferred object type
-                    .field_index = 0, // VM will resolve
+                    .field_index = resolved.field_index, // Resolved from type system
                     .field_for_peek = false, // Default
+                    .field_struct_name = resolved.struct_name, // Struct name if field is a struct
                 },
             });
         }
@@ -212,12 +248,14 @@ pub const StructsHandler = struct {
             try self.generator.generateExpression(outer_field.object, true, false);
 
             // Get the outer field (person)
+            const outer_resolved_get = self.resolveFieldIndexAndStructName(outer_field.object, outer_field.field.lexeme);
             try self.generator.instructions.append(.{
                 .GetField = .{
                     .field_name = outer_field.field.lexeme,
                     .container_type = HIRType{ .Struct = 0 },
-                    .field_index = 0,
+                    .field_index = outer_resolved_get.field_index,
                     .field_for_peek = false,
+                    .field_struct_name = outer_resolved_get.struct_name,
                 },
             });
 
@@ -228,11 +266,51 @@ pub const StructsHandler = struct {
             try self.generator.generateExpression(assign_data.value, true, false);
 
             // Set the inner field (age) on the duplicate
+            // For nested field access, we need to resolve the field index from the outer field's type
+            var inner_field_index: u32 = 0;
+            var inner_field_struct_name: ?[]const u8 = null;
+
+            // Try to resolve from the outer field's type
+            if (self.generator.type_system.resolveFieldAccessType(outer_field.object, &self.generator.symbol_table)) |resolve_result| {
+                if (resolve_result.custom_type_name) |struct_name| {
+                    if (self.generator.type_system.custom_types.get(struct_name)) |custom_type| {
+                        if (custom_type.kind == .Struct) {
+                            if (custom_type.struct_fields) |fields| {
+                                for (fields) |f| {
+                                    if (std.mem.eql(u8, f.name, outer_field.field.lexeme)) {
+                                        if (f.custom_type_name) |inner_struct_name| {
+                                            if (self.generator.type_system.custom_types.get(inner_struct_name)) |inner_custom_type| {
+                                                if (inner_custom_type.kind == .Struct) {
+                                                    if (inner_custom_type.getStructFieldIndex(assign_data.field.lexeme)) |resolved_index| {
+                                                        inner_field_index = resolved_index;
+                                                        // Get the field's custom type name if it's a struct
+                                                        if (inner_custom_type.struct_fields) |inner_fields| {
+                                                            for (inner_fields) |inner_f| {
+                                                                if (std.mem.eql(u8, inner_f.name, assign_data.field.lexeme)) {
+                                                                    inner_field_struct_name = inner_f.custom_type_name;
+                                                                    break;
+                                                                }
+                                                            }
+                                                        }
+                                                        break;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
                     .container_type = HIRType{ .Struct = 0 },
-                    .field_index = 0,
+                    .field_index = inner_field_index,
+                    .field_struct_name = inner_field_struct_name,
                 },
             });
 
@@ -244,11 +322,13 @@ pub const StructsHandler = struct {
             try self.generator.instructions.append(.Swap);
 
             // Set the outer field (person) with the modified struct
+            const outer_resolved_set = self.resolveFieldIndexAndStructName(outer_field.object, outer_field.field.lexeme);
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = outer_field.field.lexeme,
                     .container_type = HIRType{ .Struct = 0 },
-                    .field_index = 0,
+                    .field_index = outer_resolved_set.field_index,
+                    .field_struct_name = outer_resolved_set.struct_name,
                 },
             });
 
@@ -290,12 +370,16 @@ pub const StructsHandler = struct {
             // Generate value expression
             try self.generator.generateExpression(assign_data.value, true, false);
 
+            // Resolve field index and struct name from type system
+            const resolved = self.resolveFieldIndexAndStructName(assign_data.object, assign_data.field.lexeme);
+
             // Generate SetField instruction
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
                     .container_type = HIRType{ .Struct = 0 },
-                    .field_index = 0, // Index will be resolved by VM
+                    .field_index = resolved.field_index,
+                    .field_struct_name = resolved.struct_name,
                 },
             });
 

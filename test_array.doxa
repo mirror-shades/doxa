@@ -1,4 +1,0 @@
-// Simple array test
-var arr is [1, 2, 3, 4, 5]
-var value is arr[2]
-value?

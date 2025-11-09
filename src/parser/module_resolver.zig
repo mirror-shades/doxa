@@ -172,7 +172,11 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
             var file = try std.fs.cwd().openFile(file_path, .{});
             defer file.close();
 
-            const size = try file.getEndPos();
+            const file_size = try file.getEndPos();
+            if (file_size > std.math.maxInt(usize)) {
+                return error.FileTooLarge;
+            }
+            const size: usize = @intCast(file_size);
             const buffer = try alloc.alloc(u8, size);
             errdefer alloc.free(buffer);
 

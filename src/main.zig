@@ -654,6 +654,14 @@ pub fn main() !void {
             try args_ln.append(rt_obj);
             try args_ln.append("-o");
             try args_ln.append(exe_path);
+            if (builtin.os.tag == .windows) {
+                // Ensure the resulting binary is a console subsystem app so stdout is visible
+                if (builtin.abi == .msvc) {
+                    try args_ln.append("-Wl,/SUBSYSTEM:CONSOLE");
+                } else {
+                    try args_ln.append("-Wl,--subsystem,console");
+                }
+            }
             if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
                 try args_ln.append("-target");
                 const arch = cli_options.target_arch orelse "";
