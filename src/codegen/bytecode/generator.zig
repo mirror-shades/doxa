@@ -414,12 +414,7 @@ pub const BytecodeGenerator = struct {
                     try self.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = operand, .type_tag = try module.typeFromHIR(safe_hir_type) } });
                 },
                 .PushStorageId => |payload| {
-                    const operand = self.slotFromCache(payload.var_index) orelse blk: {
-                        switch (payload.scope_kind) {
-                            .Local => break :blk try self.makeSlotOperand(.Local, payload.var_index, null),
-                            .GlobalLocal, .ModuleGlobal, .ImportedModule, .Builtin => return error.MissingModuleContext,
-                        }
-                    };
+                    const operand = self.slotFromCache(payload.var_index) orelse try self.makeSlotOperand(payload.scope_kind, payload.var_index, null);
                     try self.instructions.append(self.allocator, .{ .PushStorageRef = operand });
                 },
                 .StoreParamAlias => |payload| {

@@ -1,4 +1,5 @@
 const std = @import("std");
+const builtin = @import("builtin");
 
 //------------------------------------------------------------------------------
 // DOXA Runtime Support
@@ -9,11 +10,35 @@ const std = @import("std");
 //------------------------------------------------------------------------------
 
 fn writeStdout(slice: []const u8) void {
-    var stdout_buffer: [1024]u8 = undefined;
+    if (builtin.os.tag == .windows) {
+        const win = std.os.windows;
+        const handle = win.kernel32.GetStdHandle(win.STD_OUTPUT_HANDLE);
+        if (handle == win.INVALID_HANDLE_VALUE) return;
+        var written: u32 = 0;
+        _ = win.kernel32.WriteFile(handle.?, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
+        return;
+    }
+    var stdout_buffer: [4096]u8 = undefined;
     var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
     const stdout = &stdout_writer.interface;
     _ = stdout.write(slice) catch return;
     _ = stdout.flush() catch return;
+}
+
+fn writeStderr(slice: []const u8) void {
+    if (builtin.os.tag == .windows) {
+        const win = std.os.windows;
+        const handle = win.kernel32.GetStdHandle(win.STD_ERROR_HANDLE);
+        if (handle == win.INVALID_HANDLE_VALUE) return;
+        var written: u32 = 0;
+        _ = win.kernel32.WriteFile(handle.?, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
+        return;
+    }
+    var stderr_buffer: [1024]u8 = undefined;
+    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    const stderr = &stderr_writer.interface;
+    _ = stderr.write(slice) catch return;
+    _ = stderr.flush() catch return;
 }
 
 pub export fn doxa_write_cstr(ptr: ?[*:0]const u8) callconv(.c) void {
@@ -206,6 +231,14 @@ pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void 
             writeStdout(prefix);
         }
     }
+}
+
+// Return length of a C string (0 if null)
+pub export fn doxa_str_len(ptr: ?[*:0]const u8) callconv(.c) i64 {
+    if (ptr) |p| {
+        return @intCast(std.mem.len(p));
+    }
+    return 0;
 }
 
 pub const ArrayHeader = extern struct {

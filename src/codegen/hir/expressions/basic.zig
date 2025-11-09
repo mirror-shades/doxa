@@ -178,7 +178,30 @@ pub const BasicExpressionHandler = struct {
 
     /// Generate HIR for this keyword
     pub fn generateThis(self: *BasicExpressionHandler) (std.mem.Allocator.Error || ErrorList)!void {
-        // Load implicit receiver 'this' from local variable
+        // Check if 'this' is an alias parameter (which it should be in instance methods)
+        if (self.generator.symbol_table.isAliasParameter("this")) {
+            // For alias parameters, get the correct slot from the slot manager
+            if (self.generator.slot_manager.getAliasSlot("this")) |alias_slot| {
+                try self.generator.instructions.append(.{
+                    .LoadAlias = .{
+                        .var_name = "this",
+                        .slot_index = alias_slot,
+                    },
+                });
+                return;
+            } else {
+                // Fallback to old behavior if alias not found
+                try self.generator.instructions.append(.{
+                    .LoadAlias = .{
+                        .var_name = "this",
+                        .slot_index = 1, // Fallback to hardcoded slot
+                    },
+                });
+                return;
+            }
+        }
+
+        // Fallback: Load 'this' as a regular variable (shouldn't happen in instance methods)
         const this_idx = try self.generator.getOrCreateVariable("this");
         try self.generator.instructions.append(.{ .LoadVar = .{
             .var_index = this_idx,

@@ -107,7 +107,29 @@ pub const CallsHandler = struct {
                                 const qualified_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ struct_name, field_access.field.lexeme });
 
                                 if (!mi.is_static) {
-                                    try self.generator.generateExpression(field_access.object, true, false);
+                                    // For non-static methods, 'this' is an alias parameter
+                                    // We need to push a storage reference, not the value
+                                    if (field_access.object.data == .Variable) {
+                                        const var_token = field_access.object.data.Variable;
+                                        const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
+                                        if (maybe_idx) |var_idx| {
+                                            // Determine scope based on where the variable was found
+                                            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+                                            try self.generator.instructions.append(.{
+                                                .PushStorageId = .{
+                                                    .var_index = var_idx,
+                                                    .var_name = var_token.lexeme,
+                                                    .scope_kind = scope_kind,
+                                                },
+                                            });
+                                        } else {
+                                            // Fallback: generate expression normally
+                                            try self.generator.generateExpression(field_access.object, true, false);
+                                        }
+                                    } else {
+                                        // For non-variable receivers (like field access), generate normally
+                                        try self.generator.generateExpression(field_access.object, true, false);
+                                    }
                                 }
                                 for (call_data.arguments) |arg| {
                                     try self.generator.generateExpression(arg.expr, true, false);
@@ -264,7 +286,7 @@ pub const CallsHandler = struct {
             // For FieldAccess and EnumMember expressions, try to get the custom type name
             const inferred_type = self.generator.inferTypeFromExpression(arg);
             var custom_type_name: ?[]const u8 = null;
-            
+
             if (arg.data == .FieldAccess) {
                 if (self.generator.type_system.resolveFieldAccessType(arg, &self.generator.symbol_table)) |resolve_result| {
                     custom_type_name = resolve_result.custom_type_name;

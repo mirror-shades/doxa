@@ -199,6 +199,23 @@ pub const TypeSystem = struct {
                 }
                 break :blk FieldResolveResult{ .t = symbol_table.getTrackedVariableType(var_token.lexeme) orelse .Unknown, .custom_type_name = null };
             },
+            .This => blk: {
+                // 'this' refers to the current struct type in instance methods
+                // Try to get the struct type from the symbol table's current function context
+                if (symbol_table.current_function) |func_name| {
+                    // Extract struct name from method name (e.g., "Point.getX" -> "Point")
+                    if (std.mem.indexOfScalar(u8, func_name, '.')) |dot_idx| {
+                        const struct_name = func_name[0..dot_idx];
+                        if (self.isCustomType(struct_name)) |ct| {
+                            if (ct.kind == .Struct) {
+                                break :blk FieldResolveResult{ .t = HIRType{ .Struct = 0 }, .custom_type_name = struct_name };
+                            }
+                        }
+                    }
+                }
+                // Fallback: return generic struct type
+                break :blk FieldResolveResult{ .t = HIRType{ .Struct = 0 }, .custom_type_name = null };
+            },
             .FieldAccess => |fa| blk: {
                 if (fa.object.data == .Variable) {
                     const base_name = fa.object.data.Variable.lexeme;

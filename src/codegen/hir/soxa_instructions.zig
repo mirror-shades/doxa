@@ -295,6 +295,7 @@ pub const HIRInstruction = union(enum) {
         container_type: HIRType,
         field_index: u32, // Pre-resolved for efficiency
         field_for_peek: bool = false,
+        field_struct_name: ?[]const u8 = null, // If field is a struct, its type name
     },
 
     /// Array/struct field assignment
@@ -304,6 +305,7 @@ pub const HIRInstruction = union(enum) {
         field_name: []const u8,
         container_type: HIRType,
         field_index: u32,
+        field_struct_name: ?[]const u8 = null, // If field is a struct, its type name
     },
 
     /// Store field name for struct field

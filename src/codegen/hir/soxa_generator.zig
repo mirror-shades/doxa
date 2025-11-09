@@ -312,22 +312,30 @@ pub const HIRGenerator = struct {
                                 }
                                 const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified}));
 
-                                var param_is_alias = try self.allocator.alloc(bool, method.params.len);
-                                var param_types = try self.allocator.alloc(HIRType, method.params.len);
-                                for (method.params, 0..) |param, i| {
-                                    param_is_alias[i] = param.is_alias;
-                                    param_types[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
-                                    // Sanitize param types: keep only simple primitives/markers for signature
-                                    param_types[i] = switch (param_types[i]) {
-                                        .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[i],
-                                        .Struct, .Enum => param_types[i],
-                                        .Array, .Map, .Function, .Union => param_types[i],
-                                        else => .Int,
-                                    };
-                                }
-
                                 var arity: u32 = @intCast(method.params.len);
                                 if (!method.is_static) arity += 1;
+
+                                // For non-static methods, prepend 'this' parameter
+                                var param_is_alias = try self.allocator.alloc(bool, arity);
+                                var param_types = try self.allocator.alloc(HIRType, arity);
+                                var param_idx: usize = 0;
+                                if (!method.is_static) {
+                                    param_is_alias[param_idx] = true; // 'this' is an alias
+                                    param_types[param_idx] = HIRType{ .Struct = 0 }; // 'this' is a struct pointer
+                                    param_idx += 1;
+                                }
+                                for (method.params) |param| {
+                                    param_is_alias[param_idx] = param.is_alias;
+                                    param_types[param_idx] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
+                                    // Sanitize param types: keep only simple primitives/markers for signature
+                                    param_types[param_idx] = switch (param_types[param_idx]) {
+                                        .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[param_idx],
+                                        .Struct, .Enum => param_types[param_idx],
+                                        .Array, .Map, .Function, .Union => param_types[param_idx],
+                                        else => .Int,
+                                    };
+                                    param_idx += 1;
+                                }
 
                                 const function_info = FunctionInfo{
                                     .name = qualified,
@@ -625,21 +633,29 @@ pub const HIRGenerator = struct {
                 }
             }
 
+            // Process 'this' parameter for non-static methods (it's pushed first, so popped last)
             if (std.mem.indexOfScalar(u8, function_body.function_info.name, '.')) |dot_idx| {
                 const struct_name = function_body.function_info.name[0..dot_idx];
                 const method_name = function_body.function_info.name[dot_idx + 1 ..];
                 if (self.struct_methods.get(struct_name)) |method_table| {
                     if (method_table.get(method_name)) |mi| {
                         if (!mi.is_static) {
+                            // 'this' is an alias parameter (struct pointer)
                             try self.trackVariableType("this", HIRType{ .Struct = 0 });
-                            const this_idx = try self.getOrCreateVariable("this");
-                            try self.instructions.append(.{ .StoreVar = .{
-                                .var_index = this_idx,
-                                .var_name = "this",
-                                .scope_kind = self.symbol_table.determineVariableScope("this"),
-                                .module_context = null,
-                                .expected_type = HIRType{ .Struct = 0 },
-                            } });
+                            try self.symbol_table.trackAliasParameter("this");
+
+                            const struct_type_name = struct_name;
+                            try self.trackVariableCustomType("this", struct_type_name);
+
+                            const alias_slot = try self.slot_manager.allocateAliasSlot("this", HIRType{ .Struct = 0 });
+
+                            try self.instructions.append(.{
+                                .StoreParamAlias = .{
+                                    .param_name = "this",
+                                    .param_type = HIRType{ .Struct = 0 },
+                                    .var_index = alias_slot,
+                                },
+                            });
                         }
                     }
                 }
