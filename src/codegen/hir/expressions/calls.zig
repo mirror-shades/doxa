@@ -32,16 +32,7 @@ pub const CallsHandler = struct {
                 if (field_access.object.data == .Variable and self.generator.isModuleNamespace(field_access.object.data.Variable.lexeme)) {
                     const object_name = field_access.object.data.Variable.lexeme;
 
-                    if (self.generator.module_namespaces.get(object_name)) |mi| {
-                        const root_name = if (mi.name.len > 0) mi.name else mi.file_path;
-                        if (std.mem.eql(u8, root_name, "graphics.raylib") or std.mem.eql(u8, root_name, "graphics.doxa")) {
-                            function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ root_name, field_access.field.lexeme });
-                        } else {
-                            function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
-                        }
-                    } else {
-                        function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
-                    }
+                    function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
 
                     if (std.mem.eql(u8, function_name, "safeMath.safeAdd")) {
                         call_kind = .ModuleFunction;
@@ -50,17 +41,6 @@ pub const CallsHandler = struct {
                         call_kind = .LocalFunction;
                     } else {
                         call_kind = .ModuleFunction;
-                    }
-                } else if (field_access.object.data == .FieldAccess) {
-                    const inner = field_access.object.data.FieldAccess;
-                    if (inner.object.data == .Variable and self.generator.isModuleNamespace(inner.object.data.Variable.lexeme)) {
-                        const ns_alias = inner.object.data.Variable.lexeme;
-                        if (self.generator.module_namespaces.get(ns_alias)) |mi| {
-                            const root_name = if (mi.name.len > 0) mi.name else mi.file_path;
-                            const sub_ns = inner.field.lexeme; // e.g., "raylib" or "doxa"
-                            function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}.{s}", .{ root_name, sub_ns, field_access.field.lexeme });
-                            call_kind = .ModuleFunction;
-                        }
                     }
                 } else if (field_access.object.data == .Variable) {
                     const type_name = field_access.object.data.Variable.lexeme;

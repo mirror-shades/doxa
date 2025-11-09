@@ -521,15 +521,6 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
     errdefer self.allocator.destroy(type_info);
 
     if (self.parser) |parser| {
-        // Special-case built-in "graphics" virtual submodules
-        // Allow alias-based access like `rl.raylib` and `rl.doxa`, and nested like `graphics.raylib.SKYBLUE`
-        var root_alias: []const u8 = module_name;
-        var subpath: ?[]const u8 = null;
-        if (std.mem.indexOfScalar(u8, module_name, '.')) |dot_idx| {
-            root_alias = module_name[0..dot_idx];
-            subpath = module_name[dot_idx + 1 ..];
-        }
-
         // Look for the field in the module's imported symbols
         if (parser.imported_symbols) |imported_symbols| {
             const full_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name }) catch {

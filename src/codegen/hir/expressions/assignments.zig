@@ -20,36 +20,6 @@ pub const AssignmentsHandler = struct {
 
     /// Generate HIR for assignment expressions
     pub fn generateAssignment(self: *AssignmentsHandler, assign: ast.Assignment, preserve_result: bool) !void {
-        // Special case: namespace aliasing like `const rl is g.raylib`
-        // If RHS is a module namespace field (graphics.raylib / graphics.doxa),
-        // register LHS name as a module namespace alias and emit no runtime code.
-        if (assign.value) |rhs| {
-            if (rhs.data == .FieldAccess) {
-                const fa = rhs.data.FieldAccess;
-                if (fa.object.data == .Variable) {
-                    const root_alias = fa.object.data.Variable.lexeme;
-                    if (self.generator.isModuleNamespace(root_alias)) {
-                        if (std.mem.eql(u8, fa.field.lexeme, "raylib") or std.mem.eql(u8, fa.field.lexeme, "doxa")) {
-                            if (self.generator.module_namespaces.get(root_alias)) |_| {
-                                // Create a minimal nested ModuleInfo to tag this alias as graphics.<sub>
-                                const nested_name = if (std.mem.eql(u8, fa.field.lexeme, "raylib")) "graphics.raylib" else "graphics.doxa";
-                                const nested_info: @import("../../../ast/ast.zig").ModuleInfo = .{
-                                    .name = nested_name,
-                                    .imports = &[_]@import("../../../ast/ast.zig").ImportInfo{},
-                                    .ast = null,
-                                    .file_path = nested_name,
-                                    .symbols = null,
-                                };
-                                try self.generator.module_namespaces.put(assign.name.lexeme, nested_info);
-                                // Do not generate any runtime instructions for this aliasing assignment
-                                return;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Set the current assignment target for enum type inference
         const previous_target = self.generator.current_assignment_target;
         self.generator.current_assignment_target = assign.name.lexeme;

@@ -114,29 +114,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
 
             if (decl.initializer) |init_expr| {
-                if (init_expr.data == .FieldAccess) {
-                    const fa = init_expr.data.FieldAccess;
-                    if (fa.object.data == .Variable) {
-                        const root_alias = fa.object.data.Variable.lexeme;
-                        if (self.isModuleNamespace(root_alias)) {
-                            if (std.mem.eql(u8, fa.field.lexeme, "raylib") or std.mem.eql(u8, fa.field.lexeme, "doxa")) {
-                                if (self.module_namespaces.get(root_alias)) |_| {
-                                    const nested_name = if (std.mem.eql(u8, fa.field.lexeme, "raylib")) "graphics.raylib" else "graphics.doxa";
-                                    const nested_info: ast.ModuleInfo = .{
-                                        .name = nested_name,
-                                        .imports = &[_]ast.ImportInfo{},
-                                        .ast = null,
-                                        .file_path = nested_name,
-                                        .symbols = null,
-                                    };
-                                    try self.module_namespaces.put(decl.name.lexeme, nested_info);
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
-
                 const old_enum_context = self.current_enum_type;
                 if (custom_type_name != null) {
                     self.current_enum_type = custom_type_name;
