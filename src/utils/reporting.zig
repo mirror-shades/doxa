@@ -47,14 +47,35 @@ pub const Location = struct {
     range: Range,
 };
 
+pub const RelatedInformation = struct {
+    message: []const u8,
+    location: Location,
+};
+
 pub const Diagnostic = struct {
     phase: DiagnosticPhase,
     severity: Severity,
     message: []const u8,
     loc: ?Location,
     code: ?[]const u8 = null,
-    related_info: ?[]const u8 = null, // TODO: LSP diagnostics
+    related_info: ?[]RelatedInformation = null,
     source: ?[]const u8 = "DoxVM",
+};
+
+pub const DiagnosticView = struct {
+    allocator: std.mem.Allocator,
+    items: []const *const Diagnostic,
+
+    pub fn empty(allocator: std.mem.Allocator) DiagnosticView {
+        return .{ .allocator = allocator, .items = &[_]*const Diagnostic{} };
+    }
+
+    pub fn deinit(self: *DiagnosticView) void {
+        if (self.items.len > 0) {
+            self.allocator.free(self.items);
+        }
+        self.* = DiagnosticView.empty(self.allocator);
+    }
 };
 
 pub const Reporter = struct {
@@ -95,9 +116,7 @@ pub const Reporter = struct {
     }
 
     pub fn deinit(self: *Reporter) void {
-        for (self.diagnostics.items) |diag| {
-            self.allocator.free(diag.message);
-        }
+        self.clear();
         self.diagnostics.deinit();
         var it = self.file_uri_cache.iterator();
         while (it.next()) |entry| {
@@ -113,6 +132,32 @@ pub const Reporter = struct {
         severity: Severity,
         loc: ?Location,
         code: ?[]const u8,
+        comptime fmt: []const u8,
+        args: anytype,
+    ) void {
+        self.reportWithRelatedInternal(phase, severity, loc, code, null, fmt, args);
+    }
+
+    pub fn reportWithRelated(
+        self: *Reporter,
+        phase: DiagnosticPhase,
+        severity: Severity,
+        loc: ?Location,
+        code: ?[]const u8,
+        related: []const RelatedInformation,
+        comptime fmt: []const u8,
+        args: anytype,
+    ) void {
+        self.reportWithRelatedInternal(phase, severity, loc, code, related, fmt, args);
+    }
+
+    fn reportWithRelatedInternal(
+        self: *Reporter,
+        phase: DiagnosticPhase,
+        severity: Severity,
+        loc: ?Location,
+        code: ?[]const u8,
+        related: ?[]const RelatedInformation,
         comptime fmt: []const u8,
         args: anytype,
     ) void {
@@ -144,13 +189,8 @@ pub const Reporter = struct {
                 .source = "DoxVM",
             };
 
-            self.diagnostics.append(diag) catch {
-                self.allocator.free(msg_copy);
-                return;
-            };
-
+            self.appendDiagnostic(diag);
             std.debug.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), msg_copy });
-
             return;
         };
 
@@ -168,14 +208,12 @@ pub const Reporter = struct {
                 .source = "DoxVM",
             };
 
-            self.diagnostics.append(diag) catch {
-                self.allocator.free(fallback_copy);
-                return;
-            };
-
+            self.appendDiagnostic(diag);
             std.debug.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), fallback_copy });
             return;
         };
+
+        const related_clone = self.cloneRelatedInformation(related) catch null;
 
         const diag = Diagnostic{
             .phase = phase,
@@ -183,57 +221,11 @@ pub const Reporter = struct {
             .message = msg_copy,
             .loc = loc,
             .code = code,
-            .related_info = null,
+            .related_info = related_clone,
             .source = "DoxVM",
         };
 
-        self.diagnostics.append(diag) catch {
-            self.allocator.free(msg_copy);
-            return;
-        };
-
-        var line_buf = std.array_list.Managed(u8).init(self.allocator);
-        defer line_buf.deinit();
-
-        if (loc) |l| {
-            const file = l.file;
-            const sl = l.range.start_line;
-            const sc = l.range.start_col;
-            if (code) |c| {
-                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}][{s}] {s}:{d}:{d}: {s}", .{
-                    @tagName(phase),
-                    @tagName(final_severity),
-                    c,
-                    file,
-                    sl,
-                    sc,
-                    msg_copy,
-                }) catch {};
-            } else {
-                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}] {s}:{d}:{d}: {s}", .{
-                    @tagName(phase),
-                    @tagName(final_severity),
-                    file,
-                    sl,
-                    sc,
-                    msg_copy,
-                }) catch {};
-            }
-        } else {
-            if (code) |c| {
-                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}][{s}] {s}", .{ @tagName(phase), @tagName(final_severity), c, msg_copy }) catch {};
-            } else {
-                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}] {s}", .{ @tagName(phase), @tagName(final_severity), msg_copy }) catch {};
-            }
-        }
-
-        const line = line_buf.items;
-
-        std.debug.print("DoxVM: {s}\n", .{line});
-
-        if (self.options.log_to_file) {
-            self.writeToLog(line) catch {};
-        }
+        self.appendDiagnostic(diag);
     }
 
     fn debugLexer(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
@@ -339,23 +331,78 @@ pub const Reporter = struct {
         return false;
     }
 
+    pub fn clear(self: *Reporter) void {
+        for (self.diagnostics.items) |diag| {
+            self.freeDiagnostic(diag);
+        }
+        self.diagnostics.clearRetainingCapacity();
+    }
+
+    pub fn clearByFile(self: *Reporter, file_or_uri: []const u8) void {
+        if (self.diagnostics.items.len == 0) return;
+        const treat_as_uri = std.mem.startsWith(u8, file_or_uri, "file://");
+
+        var write_index: usize = 0;
+        for (self.diagnostics.items) |diag| {
+            var should_remove = false;
+            if (diag.loc) |location| {
+                should_remove = self.locationMatchesNeedle(location, file_or_uri, treat_as_uri);
+            }
+
+            if (should_remove) {
+                self.freeDiagnostic(diag);
+                continue;
+            }
+
+            self.diagnostics.items[write_index] = diag;
+            write_index += 1;
+        }
+
+        self.diagnostics.shrinkRetainingCapacity(write_index);
+    }
+
     pub fn reportBatch(self: *Reporter, diags: []const Diagnostic) void {
-        _ = self;
-        _ = diags;
+        for (diags) |diag| {
+            if (self.diagnostics.items.len >= self.options.max_diagnostics) break;
+            self.appendDiagnosticClone(&diag);
+        }
     }
 
-    pub fn filterBySeverity(self: *Reporter, severity: Severity) []const Diagnostic {
-        // TODO: return filtered view
-        _ = self;
-        _ = severity;
-        return &[_]Diagnostic{};
+    pub fn filterBySeverity(self: *Reporter, allocator: std.mem.Allocator, severity: Severity) !DiagnosticView {
+        var matches = std.ArrayList(*const Diagnostic).init(allocator);
+        errdefer matches.deinit();
+
+        for (self.diagnostics.items, 0..) |diag, idx| {
+            if (diag.severity == severity) {
+                try matches.append(&self.diagnostics.items[idx]);
+            }
+        }
+
+        const owned = matches.toOwnedSlice() catch {
+            matches.deinit();
+            return error.OutOfMemory;
+        };
+        return .{ .allocator = allocator, .items = owned };
     }
 
-    pub fn filterByFile(self: *Reporter, file: []const u8) []const Diagnostic {
-        // TODO: return filtered view
-        _ = self;
-        _ = file;
-        return &[_]Diagnostic{};
+    pub fn filterByFile(self: *Reporter, allocator: std.mem.Allocator, file_or_uri: []const u8) !DiagnosticView {
+        var matches = std.ArrayList(*const Diagnostic).init(allocator);
+        errdefer matches.deinit();
+
+        const treat_as_uri = std.mem.startsWith(u8, file_or_uri, "file://");
+        for (self.diagnostics.items, 0..) |diag, idx| {
+            if (diag.loc) |location| {
+                if (self.locationMatchesNeedle(location, file_or_uri, treat_as_uri)) {
+                    try matches.append(&self.diagnostics.items[idx]);
+                }
+            }
+        }
+
+        const owned = matches.toOwnedSlice() catch {
+            matches.deinit();
+            return error.OutOfMemory;
+        };
+        return .{ .allocator = allocator, .items = owned };
     }
 
     pub fn toLspDiagnostics(self: *Reporter, allocator: std.mem.Allocator) ![]u8 {
@@ -363,6 +410,146 @@ pub const Reporter = struct {
         _ = self;
         _ = allocator;
         return "[]";
+    }
+
+    fn appendDiagnostic(self: *Reporter, diag: Diagnostic) void {
+        self.diagnostics.append(diag) catch {
+            self.freeDiagnostic(diag);
+            return;
+        };
+        const stored = &self.diagnostics.items[self.diagnostics.items.len - 1];
+        self.logDiagnostic(stored);
+    }
+
+    fn appendDiagnosticClone(self: *Reporter, source: *const Diagnostic) void {
+        const msg_copy = self.allocator.dupe(u8, source.message) catch return;
+        errdefer self.allocator.free(msg_copy);
+
+        const related_source: ?[]const RelatedInformation = source.related_info;
+        const related_clone = self.cloneRelatedInformation(related_source) catch null;
+
+        const diag = Diagnostic{
+            .phase = source.phase,
+            .severity = source.severity,
+            .message = msg_copy,
+            .loc = source.loc,
+            .code = source.code,
+            .related_info = related_clone,
+            .source = source.source,
+        };
+
+        self.appendDiagnostic(diag);
+    }
+
+    fn cloneRelatedInformation(
+        self: *Reporter,
+        maybe_related: ?[]const RelatedInformation,
+    ) !?[]RelatedInformation {
+        const related = maybe_related orelse return null;
+        if (related.len == 0) return null;
+
+        const storage = try self.allocator.alloc(RelatedInformation, related.len);
+        var copied: usize = 0;
+        errdefer {
+            var i: usize = 0;
+            while (i < copied) : (i += 1) {
+                self.allocator.free(storage[i].message);
+            }
+            self.allocator.free(storage);
+        }
+
+        while (copied < related.len) : (copied += 1) {
+            const msg_copy = try self.allocator.dupe(u8, related[copied].message);
+            storage[copied] = .{
+                .message = msg_copy,
+                .location = related[copied].location,
+            };
+        }
+
+        return storage;
+    }
+
+    fn freeRelatedInformation(self: *Reporter, maybe_related: ?[]RelatedInformation) void {
+        if (maybe_related) |related| {
+            for (related) |entry| {
+                self.allocator.free(entry.message);
+            }
+            self.allocator.free(related);
+        }
+    }
+
+    fn freeDiagnostic(self: *Reporter, diag: Diagnostic) void {
+        self.allocator.free(diag.message);
+        self.freeRelatedInformation(diag.related_info);
+    }
+
+    fn logDiagnostic(self: *Reporter, diag: *const Diagnostic) void {
+        var line_buf = std.array_list.Managed(u8).init(self.allocator);
+        defer line_buf.deinit();
+
+        if (diag.loc) |l| {
+            const file = l.file;
+            const sl = l.range.start_line;
+            const sc = l.range.start_col;
+            if (diag.code) |c| {
+                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}][{s}] {s}:{d}:{d}: {s}", .{
+                    @tagName(diag.phase),
+                    @tagName(diag.severity),
+                    c,
+                    file,
+                    sl,
+                    sc,
+                    diag.message,
+                }) catch {};
+            } else {
+                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}] {s}:{d}:{d}: {s}", .{
+                    @tagName(diag.phase),
+                    @tagName(diag.severity),
+                    file,
+                    sl,
+                    sc,
+                    diag.message,
+                }) catch {};
+            }
+        } else {
+            if (diag.code) |c| {
+                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}][{s}] {s}", .{
+                    @tagName(diag.phase),
+                    @tagName(diag.severity),
+                    c,
+                    diag.message,
+                }) catch {};
+            } else {
+                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}] {s}", .{
+                    @tagName(diag.phase),
+                    @tagName(diag.severity),
+                    diag.message,
+                }) catch {};
+            }
+        }
+
+        const line = line_buf.items;
+        std.debug.print("DoxVM: {s}\n", .{line});
+
+        if (self.options.log_to_file) {
+            self.writeToLog(line) catch {};
+        }
+    }
+
+    fn locationMatchesNeedle(self: *Reporter, loc: Location, needle: []const u8, treat_as_uri: bool) bool {
+        _ = self;
+        if (treat_as_uri) {
+            if (loc.file_uri) |uri| {
+                return std.mem.eql(u8, uri, needle);
+            }
+            return false;
+        }
+
+        if (std.mem.eql(u8, loc.file, needle)) return true;
+        if (loc.file_uri) |uri| {
+            return std.mem.eql(u8, uri, needle);
+        }
+        return false;
     }
 
     fn writeToLog(self: *Reporter, line: []const u8) !void {
