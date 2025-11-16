@@ -175,6 +175,7 @@ pub const AssignmentsHandler = struct {
             else => {
                 const location = Location{
                     .file = compound.operator.file,
+                    .file_uri = compound.operator.file_uri,
                     .range = .{
                         .start_line = compound.operator.line,
                         .start_col = compound.operator.column,
@@ -256,6 +257,7 @@ pub const AssignmentsHandler = struct {
         } else {
             const location = Location{
                 .file = name.file,
+                .file_uri = name.file_uri,
                 .range = .{
                     .start_line = name.line,
                     .start_col = name.column,
@@ -283,6 +285,7 @@ pub const AssignmentsHandler = struct {
         } else {
             const location = Location{
                 .file = name.file,
+                .file_uri = name.file_uri,
                 .range = .{
                     .start_line = name.line,
                     .start_col = name.column,
@@ -310,6 +313,7 @@ pub const AssignmentsHandler = struct {
         } else {
             const location = Location{
                 .file = name.file,
+                .file_uri = name.file_uri,
                 .range = .{
                     .start_line = name.line,
                     .start_col = name.column,
@@ -354,6 +358,7 @@ pub const AssignmentsHandler = struct {
         } else {
             const location = Location{
                 .file = name.file,
+                .file_uri = name.file_uri,
                 .range = .{
                     .start_line = name.line,
                     .start_col = name.column,

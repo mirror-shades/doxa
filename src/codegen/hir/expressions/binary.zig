@@ -185,6 +185,7 @@ pub const BinaryExpressionHandler = struct {
             else => {
                 const location = Location{
                     .file = unary.operator.file,
+                    .file_uri = unary.operator.file_uri,
                     .range = .{
                         .start_line = unary.operator.line,
                         .start_col = unary.operator.column,

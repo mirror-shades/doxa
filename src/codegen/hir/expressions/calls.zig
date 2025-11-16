@@ -191,6 +191,7 @@ pub const CallsHandler = struct {
                 } else {
                     const location = if (call_data.callee.base.span) |span| span.location else Location{
                         .file = "",
+                        .file_uri = null,
                         .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
                     };
                     self.generator.reporter.reportCompileError(location, ErrorCode.NO_DEFAULT_VALUE_FOR_PARAMETER, "No default value for parameter {} in function '{s}'", .{ arg_index, function_name });

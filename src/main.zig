@@ -374,7 +374,7 @@ fn stringEndsWith(str: []const u8, suffix: []const u8) bool {
 }
 
 fn lexicAnalysis(memoryManager: *MemoryManager, source: []const u8, path: []const u8, reporter: *Reporter) !std.array_list.Managed(Token) {
-    var lexer = LexicalAnalyzer.init(memoryManager.getAnalysisAllocator(), source, path, reporter);
+    var lexer = try LexicalAnalyzer.init(memoryManager.getAnalysisAllocator(), source, path, reporter);
     try lexer.initKeywords();
     const tokens = try lexer.lexTokens();
     return tokens;
@@ -408,9 +408,12 @@ pub fn main() !void {
 
     const path = cli_options.script_path.?; // Safe to unwrap since we validated it
 
+    const path_uri = try reporter.ensureFileUri(path);
+
     if (!stringEndsWith(path, DOXA_EXTENSION)) {
         const loc = Location{
             .file = path,
+            .file_uri = path_uri,
             .range = .{
                 .start_line = 0,
                 .start_col = 0,
@@ -431,7 +434,7 @@ pub fn main() !void {
     profiler.stopPhase();
 
     profiler.startPhase(Phase.PARSING);
-    var parser = Parser.init(memoryManager.getAnalysisAllocator(), lexedTokens.items, path, &reporter);
+    var parser = Parser.init(memoryManager.getAnalysisAllocator(), lexedTokens.items, path, path_uri, &reporter);
     defer parser.deinit();
     const parsedStatements = try parser.execute();
     profiler.stopPhase();

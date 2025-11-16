@@ -258,7 +258,6 @@ pub const ErrorList = error{
     // modules
     SharingViolation,
     PathAlreadyExists,
-    FileNotFound,
     PipeBusy,
     NameTooLong,
     InvalidUtf8,
@@ -282,6 +281,10 @@ pub const ErrorList = error{
     MissingFromKeyword,
     ExpectedModulePath,
     ExpectedImportSymbol,
+    FileNotFound,
+    NotSupported,
+    FileSystem,
+    UnrecognizedVolume,
 
     // LLVM
     UnsupportedOperator,

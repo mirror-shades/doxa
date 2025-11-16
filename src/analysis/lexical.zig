@@ -28,10 +28,12 @@ pub const LexicalAnalyzer = struct {
     allocated_arrays: std.array_list.Managed([]const TokenLiteral),
     line_start: usize,
     file_path: []const u8,
+    file_uri: []const u8,
     token_line: usize,
     reporter: *Reporter,
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) LexicalAnalyzer {
+    pub fn init(allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) !LexicalAnalyzer {
+        const file_uri = try reporter.ensureFileUri(file_path);
         return .{
             .source = source,
             .start = 0,
@@ -45,6 +47,7 @@ pub const LexicalAnalyzer = struct {
             .allocated_strings = std.array_list.Managed([]const u8).init(allocator),
             .allocated_arrays = std.array_list.Managed([]const TokenLiteral).init(allocator),
             .file_path = file_path,
+            .file_uri = file_uri,
             .token_line = 1,
             .reporter = reporter,
         };
@@ -200,7 +203,7 @@ pub const LexicalAnalyzer = struct {
                         self.advance();
                         if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
                             const tok_line: usize = if (self.line > 0) self.line - 1 else 0;
-                            try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path));
+                            try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path, self.file_uri));
                         }
                     }
                 } else if (self.match('*')) {
@@ -278,7 +281,7 @@ pub const LexicalAnalyzer = struct {
             },
             ';' => {
                 try self.addMinimalToken(.SEMICOLON);
-                try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, self.line, 1, self.file_path));
+                try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, self.line, 1, self.file_path, self.file_uri));
             },
             '%' => try self.addMinimalToken(.MODULO),
             '#' => try self.addMinimalToken(.HASH),
@@ -311,6 +314,7 @@ pub const LexicalAnalyzer = struct {
                 } else if (self.match(' ')) {
                     const location = Location{
                         .file = self.file_path,
+                        .file_uri = self.file_uri,
                         .range = .{
                             .start_line = self.line,
                             .start_col = self.column,
@@ -383,7 +387,7 @@ pub const LexicalAnalyzer = struct {
 
                 if (should_add_newline) {
                     const tok_line: usize = if (self.line > 0) self.line - 1 else 0;
-                    try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path));
+                    try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path, self.file_uri));
                 }
             },
             else => {
@@ -438,7 +442,7 @@ pub const LexicalAnalyzer = struct {
         }
         const token_column = self.start - token_line_start + 1;
 
-        try self.tokens.append(Token.initWithFile(token_type, tracked_lexeme, tracked_literal, token_line, token_column, self.file_path));
+        try self.tokens.append(Token.initWithFile(token_type, tracked_lexeme, tracked_literal, token_line, token_column, self.file_path, self.file_uri));
     }
 
     fn peekAt(self: *LexicalAnalyzer, offset: i32) u8 {

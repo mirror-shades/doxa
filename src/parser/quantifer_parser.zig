@@ -40,6 +40,7 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
                     .line = 0,
                     .column = 0,
                     .file = "",
+                    .file_uri = "",
                 },
             },
         };
@@ -135,6 +136,7 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
                     .line = 0,
                     .column = 0,
                     .file = "",
+                    .file_uri = "",
                 },
             },
         };

@@ -22,6 +22,7 @@ pub const SourceSpan = struct {
         return .{
             .location = .{
                 .file = token.file,
+                .file_uri = token.file_uri,
                 .range = .{
                     .start_line = @intCast(token.line),
                     .start_col = token.column,
@@ -36,6 +37,7 @@ pub const SourceSpan = struct {
         return .{
             .location = .{
                 .file = start.location.file,
+                .file_uri = start.location.file_uri,
                 .range = .{
                     .start_line = start.location.range.start_line,
                     .start_col = start.location.range.start_col,
@@ -190,6 +192,7 @@ pub const Base = struct {
     pub fn location(self: *const Base) Location {
         return if (self.span) |span| span.location else Location{
             .file = "",
+            .file_uri = null,
             .range = .{
                 .start_line = 0,
                 .start_col = 0,

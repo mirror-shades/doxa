@@ -264,14 +264,14 @@ fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!Int
 }
 
 fn parsePlaceholderExpression(self: *Parser, content: []const u8) ErrorList!*ast.Expr {
-    var temp_lexer = LexicalAnalyzer.init(self.allocator, content, self.current_file, self.reporter);
+    var temp_lexer = try LexicalAnalyzer.init(self.allocator, content, self.current_file, self.reporter);
     defer temp_lexer.deinit();
 
     try temp_lexer.initKeywords();
     const tokens = try temp_lexer.lexTokens();
     defer tokens.deinit();
 
-    var temp_parser = Parser.init(self.allocator, tokens.items, self.current_file, self.reporter);
+    var temp_parser = Parser.init(self.allocator, tokens.items, self.current_file, self.current_file_uri, self.reporter);
     defer temp_parser.deinit();
 
     const expr = try expression_parser.parseExpression(&temp_parser) orelse {
@@ -282,6 +282,7 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8) ErrorList!*ast
             .line = 0,
             .column = 0,
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
         };
 
         const var_expr = try self.allocator.create(ast.Expr);
