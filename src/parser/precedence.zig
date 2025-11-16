@@ -387,6 +387,7 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                                     .line = operator.line,
                                     .column = operator.column,
                                     .file = operator.file,
+                                    .file_uri = operator.file_uri,
                                 },
                                 .right = value,
                             } },
@@ -436,6 +437,7 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                                 .operator = .{
                                     .type = binary_op,
                                     .lexeme = operator.lexeme,
+                                    .file_uri = operator.file_uri,
                                     .literal = operator.literal,
                                     .line = operator.line,
                                     .column = operator.column,

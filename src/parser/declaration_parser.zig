@@ -451,6 +451,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     if (self.peek().type == .RETURN) {
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = self.peek().line,
                 .start_col = self.peek().column,
@@ -529,7 +530,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         type_info.base = .Array;
         self.advance();
 
-        const name = token.Token.initWithFile(.IDENTIFIER, "array", .{ .nothing = {} }, 0, 0, self.current_file);
+        const name = token.Token.initWithFile(.IDENTIFIER, "array", .{ .nothing = {} }, 0, 0, self.current_file, self.current_file_uri);
 
         var initializer: ?*ast.Expr = null;
         if (self.peek().type == .ASSIGN) {
@@ -539,6 +540,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
             if (initializer == null) {
                 const location = Reporting.Location{
                     .file = self.current_file,
+                    .file_uri = self.current_file_uri,
                     .range = .{
                         .start_line = self.peek().line,
                         .start_col = self.peek().column,
@@ -646,6 +648,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     if (self.peek().type == .WHERE) {
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = self.peek().line,
                 .start_col = self.peek().column,
@@ -697,6 +700,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     if (is_const and initializer == null) {
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = name.line,
                 .start_col = name.column,
@@ -715,6 +719,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     if (type_info.base == .Nothing and initializer == null) {
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = name.line,
                 .start_col = name.column,

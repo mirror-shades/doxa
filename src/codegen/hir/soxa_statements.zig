@@ -25,6 +25,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             } else {
                 const location = Location{
                     .file = stmt.base.location().file,
+                    .file_uri = stmt.base.location().file_uri,
                     .range = .{
                         .start_line = stmt.base.location().range.start_line,
                         .start_col = stmt.base.location().range.start_col,
@@ -46,6 +47,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             } else {
                 const location = Location{
                     .file = stmt.base.location().file,
+                    .file_uri = stmt.base.location().file_uri,
                     .range = .{
                         .start_line = stmt.base.location().range.start_line,
                         .start_col = stmt.base.location().range.start_col,

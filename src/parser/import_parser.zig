@@ -27,6 +27,7 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
         const current_token = self.peek();
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = current_token.line,
                 .start_col = current_token.column,
@@ -44,6 +45,7 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
         const current_token = self.peek();
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = current_token.line,
                 .start_col = current_token.column,
@@ -60,6 +62,7 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
         const current_token = self.peek();
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = current_token.line,
                 .start_col = current_token.column,
@@ -117,6 +120,7 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
         const current_token = self.peek();
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = current_token.line,
                 .start_col = current_token.column,
@@ -137,6 +141,7 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
             const current_token = self.peek();
             const location = Location{
                 .file = self.current_file,
+                .file_uri = self.current_file_uri,
                 .range = .{
                     .start_line = current_token.line,
                     .start_col = current_token.column,
@@ -155,6 +160,7 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
         const current_token = self.peek();
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = current_token.line,
                 .start_col = current_token.column,
@@ -171,6 +177,7 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
         const current_token = self.peek();
         const location = Location{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .range = .{
                 .start_line = current_token.line,
                 .start_col = current_token.column,

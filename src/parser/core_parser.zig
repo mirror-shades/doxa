@@ -48,6 +48,7 @@ pub const Parser = struct {
     entry_point_name: ?[]const u8 = null,
 
     current_file: []const u8,
+    current_file_uri: []const u8,
     current_module: ?ModuleInfo = null,
     module_cache: std.StringHashMap(ModuleInfo),
     module_namespaces: std.StringHashMap(ModuleInfo),
@@ -61,13 +62,14 @@ pub const Parser = struct {
     module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
     import_stack: std.array_list.Managed(ImportStackEntry),
 
-    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, reporter: *Reporter) Parser {
+    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter) Parser {
         const parser = Parser{
             .allocator = allocator,
             .tokens = tokens,
             .current = 0,
             .reporter = reporter,
             .current_file = current_file,
+            .current_file_uri = current_file_uri,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap([]const u8)).init(allocator),
@@ -309,6 +311,7 @@ pub const Parser = struct {
         if (self.has_entry_point and self.entry_point_name == null) {
             const loc = Location{
                 .file = self.current_file,
+                .file_uri = self.current_file_uri,
                 .range = .{
                     .start_line = self.entry_point_location.?.line,
                     .start_col = self.entry_point_location.?.column,
@@ -401,6 +404,7 @@ pub const Parser = struct {
 
         const empty_prompt = token.Token{
             .file = self.current_file,
+            .file_uri = self.current_file_uri,
             .type = .STRING,
             .lexeme = "",
             .literal = .{ .string = "" },

@@ -424,35 +424,32 @@ pub const LLVMGenerator = struct {
             },
 
             .Binary => |bin| {
-                const lhs = try self.generateExpr(bin.left.?);
-                const rhs = try self.generateExpr(bin.right.?);
+                const lhs_raw = try self.generateExpr(bin.left.?);
+                const rhs_raw = try self.generateExpr(bin.right.?);
+
+                const coerced = try self.normalizeNumericBinaryOperands(lhs_raw, rhs_raw);
 
                 return switch (bin.operator.type) {
-                    .PLUS => blk: {
-                        // Promote operands to common type
-                        const L = try self.toF64(lhs);
-                        const R = try self.toF64(rhs);
-                        break :blk LLVMCore.LLVMBuildFAdd(self.builder, L, R, "fadd");
+                    .PLUS => if (coerced.is_float)
+                        LLVMCore.LLVMBuildFAdd(self.builder, coerced.lhs, coerced.rhs, "fadd")
+                    else
+                        LLVMCore.LLVMBuildAdd(self.builder, coerced.lhs, coerced.rhs, "iadd"),
+                    .MINUS => if (coerced.is_float)
+                        LLVMCore.LLVMBuildFSub(self.builder, coerced.lhs, coerced.rhs, "fsub")
+                    else
+                        LLVMCore.LLVMBuildSub(self.builder, coerced.lhs, coerced.rhs, "isub"),
+                    .ASTERISK => if (coerced.is_float)
+                        LLVMCore.LLVMBuildFMul(self.builder, coerced.lhs, coerced.rhs, "fmul")
+                    else
+                        LLVMCore.LLVMBuildMul(self.builder, coerced.lhs, coerced.rhs, "imul"),
+                    .SLASH => if (coerced.is_float)
+                        LLVMCore.LLVMBuildFDiv(self.builder, coerced.lhs, coerced.rhs, "fdiv")
+                    else
+                        LLVMCore.LLVMBuildSDiv(self.builder, coerced.lhs, coerced.rhs, "idiv"),
+                    .MODULO => blk_mod: {
+                        if (coerced.is_float) break :blk_mod error.UnsupportedBinaryOperator;
+                        break :blk_mod LLVMCore.LLVMBuildSRem(self.builder, coerced.lhs, coerced.rhs, "imod");
                     },
-                    .MINUS => blk: {
-                        // Promote operands to common type
-                        const L = try self.toF64(lhs);
-                        const R = try self.toF64(rhs);
-                        break :blk LLVMCore.LLVMBuildFSub(self.builder, L, R, "fsub");
-                    },
-                    .ASTERISK => blk: {
-                        // Promote both operands to f64; perform floating multiplication
-                        const L = try self.toF64(lhs);
-                        const R = try self.toF64(rhs);
-                        break :blk LLVMCore.LLVMBuildFMul(self.builder, L, R, "fmul");
-                    },
-                    .SLASH => blk: {
-                        // Promote both operands to f64; perform floating division only
-                        const L = try self.toF64(lhs);
-                        const R = try self.toF64(rhs);
-                        break :blk LLVMCore.LLVMBuildFDiv(self.builder, L, R, "fdiv");
-                    },
-                    .MODULO => LLVMCore.LLVMBuildSRem(self.builder, lhs, rhs, "mod"),
                     else => error.UnsupportedBinaryOperator,
                 };
             },
@@ -1312,6 +1309,76 @@ pub const LLVMGenerator = struct {
             LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => return v,
             else => return LLVMGenError.UnsupportedBinaryOperator,
         }
+    }
+
+    fn isFloatLike(kind: LLVMTypes.LLVMTypeKind) bool {
+        return kind == LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind or kind == LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind;
+    }
+
+    fn isIntegerLike(kind: LLVMTypes.LLVMTypeKind, width: u32) bool {
+        return kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind and width != 2;
+    }
+
+    fn castIntToI64(self: *LLVMGenerator, v: LLVMTypes.LLVMValueRef) LLVMGenError!LLVMTypes.LLVMValueRef {
+        const ty = LLVMCore.LLVMTypeOf(v);
+        const width = LLVMCore.LLVMGetIntTypeWidth(ty);
+        if (width == 64) return v;
+        if (width == 2) return LLVMGenError.UnsupportedBinaryOperator; // exclude tetra from numeric ops
+        if (width == 8) {
+            const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+            return LLVMCore.LLVMBuildZExt(self.builder, v, i64_ty, "zext.i8.to.i64");
+        }
+        // Fallback: sign-extend smaller signed ints (shouldn't occur today)
+        const i64_ty = LLVMCore.LLVMInt64TypeInContext(self.context);
+        return LLVMCore.LLVMBuildSExt(self.builder, v, i64_ty, "sext.to.i64");
+    }
+
+    fn toF64Strict(self: *LLVMGenerator, v: LLVMTypes.LLVMValueRef) LLVMGenError!LLVMTypes.LLVMValueRef {
+        const ty = LLVMCore.LLVMTypeOf(v);
+        const kind = LLVMCore.LLVMGetTypeKind(ty);
+        const f64_ty = LLVMCore.LLVMDoubleTypeInContext(self.context);
+        switch (kind) {
+            LLVMTypes.LLVMTypeKind.LLVMDoubleTypeKind => return v,
+            LLVMTypes.LLVMTypeKind.LLVMFloatTypeKind => return LLVMCore.LLVMBuildFPExt(self.builder, v, f64_ty, "to.f64.ext"),
+            LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind => {
+                const width = LLVMCore.LLVMGetIntTypeWidth(ty);
+                if (width == 2) return LLVMGenError.UnsupportedBinaryOperator; // tetra not allowed
+                // Treat integers as signed for promotion; bytes are fine either way (0..255)
+                return LLVMCore.LLVMBuildSIToFP(self.builder, v, f64_ty, "to.f64.si2fp");
+            },
+            else => return LLVMGenError.UnsupportedBinaryOperator,
+        }
+    }
+
+    fn normalizeNumericBinaryOperands(self: *LLVMGenerator, lhs_in: LLVMTypes.LLVMValueRef, rhs_in: LLVMTypes.LLVMValueRef) LLVMGenError!struct {
+        lhs: LLVMTypes.LLVMValueRef,
+        rhs: LLVMTypes.LLVMValueRef,
+        is_float: bool,
+    } {
+        const lhs_ty = LLVMCore.LLVMTypeOf(lhs_in);
+        const rhs_ty = LLVMCore.LLVMTypeOf(rhs_in);
+        const lhs_kind = LLVMCore.LLVMGetTypeKind(lhs_ty);
+        const rhs_kind = LLVMCore.LLVMGetTypeKind(rhs_ty);
+
+        const lhs_is_float = isFloatLike(lhs_kind);
+        const rhs_is_float = isFloatLike(rhs_kind);
+        if (lhs_is_float or rhs_is_float) {
+            // Float math: promote both to f64
+            const L = try self.toF64Strict(lhs_in);
+            const R = try self.toF64Strict(rhs_in);
+            return .{ .lhs = L, .rhs = R, .is_float = true };
+        }
+
+        if (lhs_kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind and rhs_kind == LLVMTypes.LLVMTypeKind.LLVMIntegerTypeKind) {
+            const lhs_w = LLVMCore.LLVMGetIntTypeWidth(lhs_ty);
+            const rhs_w = LLVMCore.LLVMGetIntTypeWidth(rhs_ty);
+            if (lhs_w == 2 or rhs_w == 2) return LLVMGenError.UnsupportedBinaryOperator; // exclude tetra
+            const L = try self.castIntToI64(lhs_in);
+            const R = try self.castIntToI64(rhs_in);
+            return .{ .lhs = L, .rhs = R, .is_float = false };
+        }
+
+        return LLVMGenError.UnsupportedBinaryOperator;
     }
 
     fn createEntryAlloca(self: *LLVMGenerator, current_block: LLVMTypes.LLVMBasicBlockRef, ty: LLVMTypes.LLVMTypeRef, name: [*:0]const u8) LLVMTypes.LLVMValueRef {

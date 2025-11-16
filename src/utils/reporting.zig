@@ -1,4 +1,8 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+const Errors = @import("errors.zig");
+const ErrorList = Errors.ErrorList;
 
 pub const Severity = enum {
     Error,
@@ -39,7 +43,7 @@ pub const Range = struct {
 
 pub const Location = struct {
     file: []const u8,
-    file_uri: ?[]const u8 = null, // TODO: LSP URIs
+    file_uri: ?[]const u8 = null,
     range: Range,
 };
 
@@ -67,6 +71,7 @@ pub const Reporter = struct {
     debug_execution: bool,
     stderr_buffer: [1024]u8,
     stderr_writer: std.fs.File.Writer,
+    file_uri_cache: std.StringHashMap([]const u8),
 
     pub fn init(allocator: std.mem.Allocator, options: ReporterOptions) Reporter {
         var stderr_buffer: [1024]u8 = undefined;
@@ -85,6 +90,7 @@ pub const Reporter = struct {
             .debug_execution = options.debug_execution,
             .stderr_buffer = stderr_buffer,
             .stderr_writer = stderr_writer,
+            .file_uri_cache = std.StringHashMap([]const u8).init(allocator),
         };
     }
 
@@ -93,6 +99,12 @@ pub const Reporter = struct {
             self.allocator.free(diag.message);
         }
         self.diagnostics.deinit();
+        var it = self.file_uri_cache.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.file_uri_cache.deinit();
     }
 
     pub fn report(
@@ -282,6 +294,7 @@ pub const Reporter = struct {
     pub fn reportInternal(self: *Reporter, comptime fmt: []const u8, args: anytype, comptime src: std.builtin.SourceLocation) void {
         const loc = Location{
             .file = src.file,
+            .file_uri = self.ensureFileUri(src.file) catch null,
             .range = .{
                 .start_line = src.line,
                 .start_col = 0,
@@ -371,4 +384,91 @@ pub const Reporter = struct {
         try file.writeAll(line);
         try file.writeAll("\n");
     }
+
+    pub fn ensureFileUri(self: *Reporter, path: []const u8) ![]const u8 {
+        const canonical = canonicalizePath(self.allocator, path) catch |err| switch (err) {
+            error.FileNotFound => return error.FileNotFound,
+            error.AccessDenied => return error.AccessDenied,
+            error.NotDir => return error.NotDir,
+            error.NotSupported => return error.NotSupported,
+            error.FileSystem => return error.FileSystem,
+            error.UnrecognizedVolume => return error.UnrecognizedVolume,
+            else => return error.BadPathName,
+        };
+        errdefer self.allocator.free(canonical);
+
+        if (self.file_uri_cache.get(canonical)) |existing| {
+            self.allocator.free(canonical);
+            return existing;
+        }
+
+        const uri = convertPathToUri(self.allocator, canonical) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.BadPathName,
+        };
+        errdefer self.allocator.free(uri);
+
+        self.file_uri_cache.put(canonical, uri) catch |err| return err;
+        return uri;
+    }
 };
+
+fn canonicalizePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
+    return std.fs.cwd().realpathAlloc(allocator, path) catch |err| switch (err) {
+        error.FileNotFound, error.AccessDenied, error.NotDir => blk: {
+            if (std.fs.path.isAbsolute(path)) {
+                break :blk try allocator.dupe(u8, path);
+            }
+            const cwd = try std.fs.cwd().realpathAlloc(allocator, ".");
+            defer allocator.free(cwd);
+            break :blk try std.fs.path.join(allocator, &.{ cwd, path });
+        },
+        else => return err,
+    };
+}
+
+fn convertPathToUri(allocator: std.mem.Allocator, canonical_path: []const u8) ![]u8 {
+    var path_buf = try allocator.dupe(u8, canonical_path);
+    errdefer allocator.free(path_buf);
+
+    if (builtin.os.tag == .windows) {
+        for (path_buf) |*c| {
+            if (c.* == '\\') c.* = '/';
+        }
+        if (path_buf.len == 0 or path_buf[0] != '/') {
+            const with_slash = try allocator.alloc(u8, path_buf.len + 1);
+            with_slash[0] = '/';
+            @memcpy(with_slash[1..], path_buf);
+            allocator.free(path_buf);
+            path_buf = with_slash;
+        }
+    } else if (path_buf.len == 0 or path_buf[0] != '/') {
+        const with_slash = try allocator.alloc(u8, path_buf.len + 1);
+        with_slash[0] = '/';
+        @memcpy(with_slash[1..], path_buf);
+        allocator.free(path_buf);
+        path_buf = with_slash;
+    }
+
+    var uri = std.Uri{
+        .scheme = "file",
+        .user = null,
+        .password = null,
+        .host = .{ .raw = "" },
+        .port = null,
+        .path = .{ .raw = path_buf },
+        .query = null,
+        .fragment = null,
+    };
+
+    var buffer = std.array_list.Managed(u8).init(allocator);
+    defer buffer.deinit();
+
+    var buf: [1024]u8 = undefined;
+    var stdout_writer = std.fs.File.stdout().writer(&buf);
+    const stdout = &stdout_writer.interface;
+    try uri.format(stdout);
+
+    allocator.free(path_buf);
+    return buffer.toOwnedSlice();
+}

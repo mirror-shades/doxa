@@ -5,6 +5,7 @@ const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const instructions = @import("../../interpreter/instructions.zig");
 const reporting = @import("../../utils/reporting.zig");
 const Reporting = reporting;
+const Location = Reporting.Location;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
@@ -806,10 +807,15 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
                 _ = try reader.readAll(file);
                 const line = try reader.readInt(u32, .little);
                 const column = try reader.readInt(u32, .little);
-                break :blk Reporting.Reporter.Location{
+                break :blk Location{
                     .file = file,
-                    .line = line,
-                    .column = column,
+                    .file_uri = null,
+                    .range = .{
+                        .start_line = line,
+                        .start_col = column,
+                        .end_line = line,
+                        .end_col = column,
+                    },
                 };
             } else null;
 

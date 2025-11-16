@@ -1051,6 +1051,7 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{ .AssertFail = .{
                 .location = location orelse Location{
                     .file = "unknown",
+                    .file_uri = null,
                     .range = .{
                         .start_line = 0,
                         .start_col = 0,
@@ -1138,6 +1139,7 @@ pub const SoxaTextParser = struct {
 
         return Location{
             .file = file,
+            .file_uri = null,
             .range = .{
                 .start_line = line,
                 .start_col = column,

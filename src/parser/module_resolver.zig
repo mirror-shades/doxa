@@ -56,7 +56,7 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
         return err;
     };
 
-    var module_lexer = LexicalAnalyzer.init(self.allocator, module_data.source, module_name, self.reporter);
+    var module_lexer = try LexicalAnalyzer.init(self.allocator, module_data.source, module_data.resolved_path, self.reporter);
     defer module_lexer.deinit();
 
     try module_lexer.initKeywords();
@@ -65,7 +65,8 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
         return err;
     };
 
-    var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, self.reporter);
+    const module_uri = try self.reporter.ensureFileUri(module_data.resolved_path);
+    var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, module_uri, self.reporter);
 
     new_parser.module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(self.allocator);
     var it = self.module_resolution_status.iterator();

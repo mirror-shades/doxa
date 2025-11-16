@@ -362,6 +362,7 @@ pub const CollectionsHandler = struct {
                                 } else {
                                     const location = Location{
                                         .file = var_token.file,
+                                        .file_uri = var_token.file_uri,
                                         .range = .{
                                             .start_line = var_token.line,
                                             .start_col = var_token.column,
@@ -419,6 +420,7 @@ pub const CollectionsHandler = struct {
                                 } else {
                                     const location = Location{
                                         .file = var_token.file,
+                                        .file_uri = var_token.file_uri,
                                         .range = .{
                                             .start_line = var_token.line,
                                             .start_col = var_token.column,
@@ -523,6 +525,7 @@ pub const CollectionsHandler = struct {
                                 } else {
                                     const location = Location{
                                         .file = var_token.file,
+                                        .file_uri = var_token.file_uri,
                                         .range = .{
                                             .start_line = var_token.line,
                                             .start_col = var_token.column,
@@ -580,6 +583,7 @@ pub const CollectionsHandler = struct {
                                 } else {
                                     const location = Location{
                                         .file = var_token.file,
+                                        .file_uri = var_token.file_uri,
                                         .range = .{
                                             .start_line = var_token.line,
                                             .start_col = var_token.column,

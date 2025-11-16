@@ -26,6 +26,7 @@ fn getLocationFromBase(base: ast.Base) Location {
         // Synthetic node - return default location
         return .{
             .file = "",
+            .file_uri = null,
             .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
         };
     }
