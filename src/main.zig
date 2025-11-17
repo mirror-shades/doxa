@@ -31,6 +31,7 @@ const BytecodeGenerator = @import("./codegen/bytecode/generator.zig").BytecodeGe
 const BytecodeWriter = @import("./codegen/bytecode/writer.zig");
 const BytecodeModule = @import("./codegen/bytecode/module.zig").BytecodeModule;
 const StructMethodInfo = @import("./analysis/semantic/semantic.zig").StructMethodInfo;
+const LspServer = @import("./lsp/server.zig");
 
 const EXIT_CODE_USAGE = 64;
 const EXIT_CODE_ERROR = 65;
@@ -58,6 +59,7 @@ const CLI = struct {
     target_os: ?[]const u8,
     target_abi: ?[]const u8,
     opt_level: i32, // -1 for debug-peek, 0..3 for optimization
+    lsp_mode: bool,
 
     pub fn deinit(self: *const CLI, allocator: std.mem.Allocator) void {
         if (self.script_path) |p| allocator.free(p);
@@ -225,7 +227,13 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         .target_os = null,
         .target_abi = null,
         .opt_level = 0,
+        .lsp_mode = false,
     };
+
+    if (stringEquals(args[1], "--lsp")) {
+        options.lsp_mode = true;
+        return options;
+    }
 
     // Handle the mode argument (run or compile)
     if (stringEquals(args[1], "run")) {
@@ -337,6 +345,7 @@ fn printUsage() void {
     std.debug.print("\nUsage:\n", .{});
     std.debug.print("  doxa run [general options] <file.doxa>\n", .{});
     std.debug.print("  doxa compile [general options] <file.doxa> -o <output> [compile options]\n", .{});
+    std.debug.print("  doxa --lsp                      # Start the Language Server Protocol loop\n", .{});
     std.debug.print("\nGeneral options:\n", .{});
     std.debug.print("  --profile                         # Enable profiling\n", .{});
     std.debug.print("  --help, -h                        # Show this help message\n", .{});
@@ -396,6 +405,11 @@ pub fn main() !void {
 
     const cli_options = try parseArgs(gpa.allocator());
     defer cli_options.deinit(gpa.allocator());
+
+    if (cli_options.lsp_mode) {
+        try LspServer.run(gpa.allocator(), cli_options.reporter_options);
+        return;
+    }
 
     var reporter = Reporter.init(gpa.allocator(), cli_options.reporter_options);
     defer reporter.deinit();
