@@ -48,6 +48,7 @@ pub const SemanticAnalyzer = struct {
     current_scope: ?*Scope,
     type_cache: std.AutoHashMap(NodeId, *ast.TypeInfo),
     custom_types: std.StringHashMap(CustomTypeInfo),
+    type_aliases: std.StringHashMap([]const u8),
     struct_methods: std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)),
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
     current_function_returns: std.array_list.Managed(*ast.TypeInfo),
@@ -64,6 +65,7 @@ pub const SemanticAnalyzer = struct {
             .current_scope = null,
             .type_cache = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
+            .type_aliases = std.StringHashMap([]const u8).init(allocator),
             .struct_methods = std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)).init(allocator),
             .function_return_types = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .current_function_returns = std.array_list.Managed(*ast.TypeInfo).init(allocator),
@@ -75,6 +77,14 @@ pub const SemanticAnalyzer = struct {
     pub fn deinit(self: *SemanticAnalyzer) void {
         self.type_cache.deinit();
         self.custom_types.deinit();
+        var alias_it = self.type_aliases.iterator();
+        while (alias_it.next()) |entry| {
+            const alias_key = entry.key_ptr.*;
+            const alias_target = entry.value_ptr.*;
+            self.allocator.free(@constCast(alias_key));
+            self.allocator.free(@constCast(alias_target));
+        }
+        self.type_aliases.deinit();
         var methods_it = self.struct_methods.valueIterator();
         while (methods_it.next()) |tbl| tbl.*.deinit();
         self.struct_methods.deinit();
@@ -101,48 +111,35 @@ pub const SemanticAnalyzer = struct {
         return self.function_return_types;
     }
 
-    fn ensureLexerTypes(self: *SemanticAnalyzer) !void {
-        // Register NumberType enum
-        if (!self.custom_types.contains("NumberType")) {
-            const variants = [_][]const u8{ "INT", "FLOAT", "BYTE" };
-            try helpers.registerEnumType(self, "NumberType", &variants);
+    fn markInternalType(self: *SemanticAnalyzer, type_name: []const u8) void {
+        if (self.custom_types.getPtr(type_name)) |entry| {
+            entry.*.is_internal = true;
         }
+    }
 
-        // Register a compiler-internal token enum under a non-conflicting name
-        if (!self.custom_types.contains("LangTokenType")) {
-            const variants = [_][]const u8{ "INT_LITERAL", "FLOAT_LITERAL", "BYTE_LITERAL", "TETRA_LITERAL", "STRING_LITERAL", "NOTHING_LITERAL", "VAR", "CONST", "FUNCTION", "MAIN", "ENTRY", "ASSIGN", "MODULE", "IMPORT", "FROM", "IDENTIFIER" };
-            try helpers.registerEnumType(self, "LangTokenType", &variants);
+    fn registerTypeAlias(self: *SemanticAnalyzer, alias_name: []const u8, target_type: []const u8) !void {
+        if (self.type_aliases.contains(alias_name)) return;
+        const alias_copy = try self.allocator.dupe(u8, alias_name);
+        errdefer self.allocator.free(alias_copy);
+        const target_copy = try self.allocator.dupe(u8, target_type);
+        errdefer self.allocator.free(target_copy);
+        try self.type_aliases.put(alias_copy, target_copy);
+    }
+
+    pub fn resolveTypeAlias(self: *const SemanticAnalyzer, type_name: []const u8) []const u8 {
+        var current = type_name;
+        var guard: usize = 0;
+        while (self.type_aliases.get(current)) |target| {
+            current = target;
+            guard += 1;
+            if (guard > 32) break;
         }
+        return current;
+    }
 
-        // Register Token struct (compiler-internal)
-        if (!self.custom_types.contains("Token")) {
-            const field_types = try self.allocator.alloc(ast.StructFieldType, 4);
-            field_types[0] = ast.StructFieldType{
-                .name = "type",
-                .type_info = try self.allocator.create(ast.TypeInfo),
-            };
-            // Use the internal enum name to avoid collisions with user-defined TokenType
-            field_types[0].type_info.* = .{ .base = .Custom, .custom_type = "LangTokenType", .is_mutable = false };
-
-            field_types[1] = ast.StructFieldType{
-                .name = "literal",
-                .type_info = try self.allocator.create(ast.TypeInfo),
-            };
-            field_types[1].type_info.* = .{ .base = .String, .is_mutable = false };
-
-            field_types[2] = ast.StructFieldType{
-                .name = "start",
-                .type_info = try self.allocator.create(ast.TypeInfo),
-            };
-            field_types[2].type_info.* = .{ .base = .Int, .is_mutable = false };
-
-            field_types[3] = ast.StructFieldType{
-                .name = "end",
-                .type_info = try self.allocator.create(ast.TypeInfo),
-            };
-            field_types[3].type_info.* = .{ .base = .Int, .is_mutable = false };
-
-            try helpers.registerStructType(self, "Token", field_types);
+    fn ensureLegacyAliases(self: *SemanticAnalyzer) !void {
+        if (!self.type_aliases.contains("LangTokenType")) {
+            try self.registerTypeAlias("LangTokenType", "TokenType");
         }
     }
 
@@ -150,10 +147,12 @@ pub const SemanticAnalyzer = struct {
         if (!self.custom_types.contains("IndexError")) {
             const variants = [_][]const u8{"OutOfBounds"};
             try helpers.registerEnumType(self, "IndexError", &variants);
+            self.markInternalType("IndexError");
         }
         if (!self.custom_types.contains("ValueError")) {
             const variants = [_][]const u8{ "ParseFailed", "OutOfBounds", "Overflow", "Underflow" };
             try helpers.registerEnumType(self, "ValueError", &variants);
+            self.markInternalType("ValueError");
         }
     }
 
@@ -162,6 +161,7 @@ pub const SemanticAnalyzer = struct {
         kind: CustomTypeKind,
         enum_variants: ?[]EnumVariant = null,
         struct_fields: ?[]StructField = null,
+        is_internal: bool = false,
 
         pub const CustomTypeKind = enum {
             Struct,
@@ -357,15 +357,13 @@ pub const SemanticAnalyzer = struct {
         const root_scope = try self.memory.scope_manager.createScope(null, self.memory);
         self.memory.scope_manager.root_scope = root_scope;
         self.current_scope = root_scope;
+        try self.ensureLegacyAliases();
 
         // Inject compiler-provided enums (shared error categories)
         try self.ensureBuiltinEnums();
 
         // Process imported symbols to register their methods
         try self.processImportedSymbols();
-
-        // Ensure critical types are registered for the lexer example
-        try self.ensureLexerTypes();
 
         try self.collectDeclarations(statements, root_scope);
 
@@ -1360,20 +1358,49 @@ pub const SemanticAnalyzer = struct {
     /// Resolve an enum member name to its parent enum type name
     pub fn resolveEnumMemberToParentEnum(self: *SemanticAnalyzer, member_name: []const u8) ?[]const u8 {
         // Iterate through all registered custom types to find which enum contains this variant
+        // We do two passes: first for non-internal enums (user-defined), then for internal enums (compiler-provided)
         var iterator = self.custom_types.iterator();
+
+        // First pass: look for non-internal enums (user-defined types take precedence)
         while (iterator.next()) |entry| {
             const custom_type = entry.value_ptr.*;
-            if (custom_type.kind == .Enum) {
-                if (custom_type.enum_variants) |variants| {
-                    for (variants) |variant| {
-                        if (std.mem.eql(u8, variant.name, member_name)) {
-                            return custom_type.name;
-                        }
-                    }
+            if (custom_type.kind != .Enum) continue;
+            if (custom_type.is_internal) continue; // Skip internal enums in first pass
+            const variants = custom_type.enum_variants orelse continue;
+
+            var matches = false;
+            for (variants) |variant| {
+                if (std.mem.eql(u8, variant.name, member_name)) {
+                    matches = true;
+                    break;
                 }
             }
+            if (matches) {
+                return custom_type.name; // Return immediately when we find a non-internal match
+            }
         }
-        return null;
+
+        // Second pass: look for internal enums (only if no non-internal enum was found)
+        iterator = self.custom_types.iterator();
+        while (iterator.next()) |entry| {
+            const custom_type = entry.value_ptr.*;
+            if (custom_type.kind != .Enum) continue;
+            if (!custom_type.is_internal) continue; // Skip non-internal enums in second pass
+            const variants = custom_type.enum_variants orelse continue;
+
+            var matches = false;
+            for (variants) |variant| {
+                if (std.mem.eql(u8, variant.name, member_name)) {
+                    matches = true;
+                    break;
+                }
+            }
+            if (matches) {
+                return custom_type.name; // Return first internal match found
+            }
+        }
+
+        return null; // No match found
     }
 
     pub fn typeExprToTypeInfo(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) !*ast.TypeInfo {
@@ -1392,7 +1419,8 @@ pub const SemanticAnalyzer = struct {
                 } };
             },
             .Custom => |custom| {
-                type_info.* = .{ .base = .Custom, .custom_type = custom.lexeme };
+                const canonical_name = self.resolveTypeAlias(custom.lexeme);
+                type_info.* = .{ .base = .Custom, .custom_type = canonical_name };
             },
             .Array => |array| {
                 const element_type = try self.typeExprToTypeInfo(array.element_type);

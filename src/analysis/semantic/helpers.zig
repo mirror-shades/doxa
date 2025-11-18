@@ -13,7 +13,7 @@ const HIRType = @import("../../codegen/hir/soxa_types.zig").HIRType;
 const HIREnum = @import("../../codegen/hir/soxa_types.zig").HIREnum;
 
 /// Helper: structural equality for TypeInfo (avoid collapsing by .base only)
-fn typesEqual(a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
+fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
     if (a.base != b.base) return false;
 
     switch (a.base) {
@@ -22,19 +22,25 @@ fn typesEqual(a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
         .Enum => {
             // For now, just compare custom type names if available
             if (a.custom_type == null or b.custom_type == null) return false;
-            return std.mem.eql(u8, a.custom_type.?, b.custom_type.?);
+            const a_name = self.resolveTypeAlias(a.custom_type.?);
+            const b_name = self.resolveTypeAlias(b.custom_type.?);
+            return std.mem.eql(u8, a_name, b_name);
         },
 
         .Struct => {
             // For now, just compare custom type names if available
             if (a.custom_type == null or b.custom_type == null) return false;
-            return std.mem.eql(u8, a.custom_type.?, b.custom_type.?);
+            const a_name = self.resolveTypeAlias(a.custom_type.?);
+            const b_name = self.resolveTypeAlias(b.custom_type.?);
+            return std.mem.eql(u8, a_name, b_name);
         },
 
         .Custom => {
             // If both have custom_type, they must match
             if (a.custom_type != null and b.custom_type != null) {
-                return std.mem.eql(u8, a.custom_type.?, b.custom_type.?);
+                const a_name = self.resolveTypeAlias(a.custom_type.?);
+                const b_name = self.resolveTypeAlias(b.custom_type.?);
+                return std.mem.eql(u8, a_name, b_name);
             }
             // If one has custom_type and the other doesn't, allow it for enum literals
             // This handles cases like Color (enum type) vs .Blue (enum literal)
@@ -44,7 +50,7 @@ fn typesEqual(a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
         .Array => {
             // If both have array_type, they must match
             if (a.array_type != null and b.array_type != null) {
-                return typesEqual(a.array_type.?, b.array_type.?);
+                return typesEqual(self, a.array_type.?, b.array_type.?);
             }
             // If one or both don't have array_type, allow it for array literals
             // This handles cases where array literals don't have element type info
@@ -53,7 +59,7 @@ fn typesEqual(a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
 
         .Map => {
             if (a.map_key_type == null or b.map_key_type == null or a.map_value_type == null or b.map_value_type == null) return false;
-            return typesEqual(a.map_key_type.?, b.map_key_type.?) and typesEqual(a.map_value_type.?, b.map_value_type.?);
+            return typesEqual(self, a.map_key_type.?, b.map_key_type.?) and typesEqual(self, a.map_value_type.?, b.map_value_type.?);
         },
 
         .Function => {
@@ -62,9 +68,9 @@ fn typesEqual(a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
             const bf = b.function_type.?;
             if (af.params.len != bf.params.len) return false;
             for (af.params, bf.params) |ap, bp| {
-                if (!typesEqual(&ap, &bp)) return false;
+                if (!typesEqual(self, &ap, &bp)) return false;
             }
-            return typesEqual(af.return_type, bf.return_type);
+            return typesEqual(self, af.return_type, bf.return_type);
         },
 
         .Union => {
@@ -79,7 +85,7 @@ fn typesEqual(a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
             for (au.types) |amt| {
                 var found = false;
                 for (bu.types) |bmt| {
-                    if (typesEqual(amt, bmt)) {
+                    if (typesEqual(self, amt, bmt)) {
                         found = true;
                         break;
                     }
@@ -91,8 +97,16 @@ fn typesEqual(a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
     }
 }
 
+fn typeLabel(type_info: *const ast.TypeInfo) []const u8 {
+    if (type_info.custom_type) |name| {
+        return name;
+    }
+    return @tagName(type_info.base);
+}
+
 /// Helper: canonicalize a slice of *TypeInfo (dedup + stable order)
 fn canonicalizeUnion(
+    self: *const SemanticAnalyzer,
     allocator: std.mem.Allocator,
     members: []const *ast.TypeInfo,
 ) ![]*ast.TypeInfo {
@@ -101,7 +115,7 @@ fn canonicalizeUnion(
 
     // dedup (structural)
     outer: for (members) |m| {
-        for (list.items) |e| if (typesEqual(e, m)) continue :outer;
+        for (list.items) |e| if (typesEqual(self, e, m)) continue :outer;
         try list.append(allocator, m);
     }
 
@@ -267,7 +281,7 @@ pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*a
     }
 
     // Canonicalize (structural dedup + stable order)
-    const unique = try canonicalizeUnion(self.allocator, scratch.items);
+    const unique = try canonicalizeUnion(self, self.allocator, scratch.items);
 
     const flattened = try self.allocator.create(ast.UnionType);
     flattened.* = .{
@@ -296,7 +310,7 @@ pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.Ty
         }
     }
 
-    const unique = try canonicalizeUnion(self.allocator, flat.items);
+    const unique = try canonicalizeUnion(self, self.allocator, flat.items);
 
     if (unique.len == 1) {
         // Single type → not a union
@@ -349,7 +363,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
                     for (act_u.types) |act_m| {
                         var allowed = false;
                         for (exp_u.types) |exp_m| {
-                            if (typesEqual(exp_m, act_m)) {
+                            if (typesEqual(self, exp_m, act_m)) {
                                 allowed = true;
                                 break;
                             }
@@ -360,13 +374,13 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
                             defer list.deinit(self.allocator);
                             for (exp_u.types, 0..) |m, i| {
                                 if (i > 0) list.appendSlice(self.allocator, " | ") catch {};
-                                list.appendSlice(self.allocator, @tagName(m.base)) catch {};
+                                list.appendSlice(self.allocator, typeLabel(m)) catch {};
                             }
                             self.reporter.reportCompileError(
                                 span.location,
                                 ErrorCode.TYPE_MISMATCH,
                                 "Type mismatch: expected union ({s}), got member of kind {s}",
-                                .{ list.items, @tagName(act_m.base) },
+                                .{ list.items, typeLabel(act_m) },
                             );
                             self.fatal_error = true;
                             return;
@@ -378,19 +392,19 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
             } else {
                 // Non-union actual must match one member structurally
                 for (exp_u.types) |m| {
-                    if (typesEqual(m, actual)) return;
+                    if (typesEqual(self, m, actual)) return;
                 }
                 var list = std.ArrayListUnmanaged(u8){};
                 defer list.deinit(self.allocator);
                 for (exp_u.types, 0..) |m, i| {
                     if (i > 0) list.appendSlice(self.allocator, " | ") catch {};
-                    list.appendSlice(self.allocator, @tagName(m.base)) catch {};
+                    list.appendSlice(self.allocator, typeLabel(m)) catch {};
                 }
                 self.reporter.reportCompileError(
                     span.location,
                     ErrorCode.TYPE_MISMATCH,
                     "Type mismatch: expected union ({s}), got {s}",
-                    .{ list.items, @tagName(actual.base) },
+                    .{ list.items, typeLabel(actual) },
                 );
                 self.fatal_error = true;
                 return;
@@ -399,7 +413,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
     }
 
     // Non-union expected: structural equality or permitted implicit conversions
-    if (!typesEqual(expected, actual)) {
+    if (!typesEqual(self, expected, actual)) {
         // Implicit conversions (adjust to taste)
         if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) return;
         if (expected.base == .Byte and actual.base == .Int) return;
@@ -413,14 +427,17 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
         // Allow custom/struct compatibility by name (if both named)
         if ((expected.base == .Custom and actual.base == .Custom) and
             expected.custom_type != null and actual.custom_type != null and
-            std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?)) return;
+            std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?))
+        {
+            return;
+        }
 
         // Otherwise mismatch
         self.reporter.reportCompileError(
             span.location,
             ErrorCode.TYPE_MISMATCH,
             "Type mismatch: expected {s}, got {s}",
-            .{ @tagName(expected.base), @tagName(actual.base) },
+            .{ typeLabel(expected), typeLabel(actual) },
         );
         self.fatal_error = true;
         return;
