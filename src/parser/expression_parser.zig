@@ -1567,6 +1567,10 @@ pub fn identifierOrStructLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) Er
     return variable(self, null, .NONE);
 }
 
+pub fn structLiteralExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    return Parser.parseStructInit(self);
+}
+
 pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (self.peek().type != .IDENTIFIER) {
         return null;
@@ -1722,7 +1726,11 @@ pub fn parseStructOrMatch(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList
         return match_expr;
     } else if (first_token_after_brace.type == .IDENTIFIER and self.peekAhead(1).type == .ASSIGN) {
         self.current = start_pos;
-        return Parser.parseStructInit(self);
+        if (try Parser.parseStructInit(self)) |struct_init| {
+            return struct_init;
+        }
+        self.current = start_pos;
+        return variable(self, null, .NONE);
     } else {
         self.current = start_pos;
         return variable(self, null, .NONE);

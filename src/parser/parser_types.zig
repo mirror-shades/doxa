@@ -543,100 +543,38 @@ pub const Parser = struct {
     }
 
     pub fn parseStructInit(self: *Parser) ErrorList!?*ast.Expr {
-        const struct_name = self.peek();
-        const start_pos = self.current;
+        if (self.peek().type != .STRUCT_INSTANCE) {
+            return null;
+        }
+
+        self.advance();
+
+        if (self.peek().type != .IDENTIFIER) {
+            return error.ExpectedIdentifier;
+        }
+
+        var struct_name = self.peek();
         self.advance();
 
         if (self.peek().type == .DOT) {
             const namespace = struct_name.lexeme;
 
-            if (self.module_namespaces.contains(namespace)) {
-                self.advance();
-
-                if (self.peek().type != .IDENTIFIER) {
-                    self.current = start_pos;
-                    return null;
-                }
-
-                const type_name = self.peek();
-                self.advance();
-
-                if (self.peek().type != .LEFT_BRACE) {
-                    self.current = start_pos;
-                    return null;
-                }
-
-                self.advance();
-
-                var fields = std.array_list.Managed(*ast.StructInstanceField).init(self.allocator);
-                errdefer {
-                    for (fields.items) |field| {
-                        field.deinit(self.allocator);
-                        self.allocator.destroy(field);
-                    }
-                    fields.deinit();
-                }
-
-                while (self.peek().type != .RIGHT_BRACE) {
-                    while (self.peek().type == .NEWLINE) self.advance();
-
-                    if (self.peek().type != .IDENTIFIER) {
-                        return error.ExpectedIdentifier;
-                    }
-                    const field_name = self.peek();
-                    self.advance();
-
-                    if (self.peek().type != .ASSIGN) {
-                        return error.ExpectedAssignmentOperator;
-                    }
-                    self.advance();
-
-                    var value: *ast.Expr = undefined;
-                    if (self.peek().type == .IDENTIFIER) {
-                        if (try parseStructInit(self)) |struct_init| {
-                            value = struct_init;
-                        } else {
-                            value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-                        }
-                    } else {
-                        value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-                    }
-
-                    const field = try self.allocator.create(ast.StructInstanceField);
-                    field.* = .{
-                        .name = field_name,
-                        .value = value,
-                    };
-                    try fields.append(field);
-
-                    if (self.peek().type == .COMMA) {
-                        self.advance();
-                    }
-                    while (self.peek().type == .NEWLINE) self.advance();
-                }
-
-                self.advance();
-
-                const struct_init = try self.allocator.create(ast.Expr);
-                struct_init.* = .{
-                    .base = .{
-                        .id = ast.generateNodeId(),
-                        .span = ast.SourceSpan.fromToken(self.peek()),
-                    },
-                    .data = .{
-                        .StructLiteral = .{
-                            .name = type_name,
-                            .fields = try fields.toOwnedSlice(),
-                        },
-                    },
-                };
-                return struct_init;
+            if (!self.module_namespaces.contains(namespace)) {
+                return error.ExpectedIdentifier;
             }
+
+            self.advance();
+
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
+            }
+
+            struct_name = self.peek();
+            self.advance();
         }
 
         if (self.peek().type != .LEFT_BRACE) {
-            self.current = start_pos;
-            return null;
+            return error.ExpectedLeftBrace;
         }
         self.advance();
 
@@ -664,7 +602,7 @@ pub const Parser = struct {
             self.advance();
 
             var value: *ast.Expr = undefined;
-            if (self.peek().type == .IDENTIFIER) {
+            if (self.peek().type == .STRUCT_INSTANCE) {
                 if (try parseStructInit(self)) |struct_init| {
                     value = struct_init;
                 } else {
@@ -704,7 +642,6 @@ pub const Parser = struct {
         };
         return struct_init;
     }
-
     pub fn index(self: *Parser, array_expr: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         if (self.peek().type == .LEFT_BRACKET) {
             self.advance();

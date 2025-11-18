@@ -44,7 +44,7 @@ function makeString(^src :: string, ^i :: int) returns Token {
         }
         str += current_char
     }
-    return Token {
+    return $Token {
         type is TokenType.STRING_LITERAL
         literal is str
         start is i
@@ -66,14 +66,14 @@ function makeAlpha(^src :: string, ^i :: int, c :: string) returns Token {
     }
     if Helper.isKeyword(word) then {
         const token_type :: TokenType is Helper.LiteralToToken[word]
-        return Token {
+        return $Token {
             type is token_type
             literal is word
             start is i
             end is i + @length(word)
         }
     } else {
-        return Token {
+        return $Token {
             type is TokenType.IDENTIFIER
             literal is word
             start is i
@@ -112,7 +112,7 @@ function makeNumeric(^src :: string, ^i :: int) returns Token {
         current_num += current_char
     } 
     const token_type :: TokenType is .INT_LITERAL
-    return Token {
+    return $Token {
         type is token_type
         literal is current_num
         start is i

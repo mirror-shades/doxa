@@ -7,7 +7,7 @@ pub struct Context {
     // TODO: add hash :: int for caching
 
     pub function new(_name :: string, _literal :: string, _line_breaks :: int[]) returns Context {
-        return Context {
+        return $Context {
             name is _name
             literal is _literal
             line_breaks is _line_breaks
@@ -19,7 +19,7 @@ pub struct SourceManager {
     var map FileToContext :: string returns Context
 
     pub function new() returns SourceManager {
-        return SourceManager {
+        return $SourceManager {
             FileToContext is {}
         }
     }
@@ -46,7 +46,7 @@ pub struct SourceManager {
         // something to do with inference being done too late
         const prev_line_break :: int is if line_number > 1 then line_break_context[line_number - 2] else 0
         const column is offset - prev_line_break
-        return Pair { a is line_number, b is column }
+        return $Pair { a is line_number, b is column }
     }
 
     pub method hasFile(_name :: string) returns tetra {

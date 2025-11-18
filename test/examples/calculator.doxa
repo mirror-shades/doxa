@@ -168,25 +168,25 @@ function tokenize(input :: string[]) returns CalcToken[] {
 
     each token in input {
         if token == "+" or token == "-" or token == "*" or token == "/" then {
-            @push(tokens, CalcToken {
+            @push(tokens, $CalcToken {
                 token_type is .OPERATOR,
                 value is token,
             })
         }
         else if token == "(" then {
-            @push(tokens, CalcToken {
+            @push(tokens, $CalcToken {
                 token_type is .LPAREN,
                 value is token,
             })
         }
         else if token == ")" then {
-            @push(tokens, CalcToken {
+            @push(tokens, $CalcToken {
                 token_type is .RPAREN,
                 value is token,
             })
         } else {
             if token != "" {
-                @push(tokens, CalcToken {
+                @push(tokens, $CalcToken {
                     token_type is .NUMBER,
                     value is token,
                 })
