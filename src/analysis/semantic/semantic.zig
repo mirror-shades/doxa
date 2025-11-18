@@ -143,12 +143,6 @@ pub const SemanticAnalyzer = struct {
             field_types[3].type_info.* = .{ .base = .Int, .is_mutable = false };
 
             try helpers.registerStructType(self, "Token", field_types);
-
-            // Create scope binding
-            const struct_type_info = try self.allocator.create(ast.TypeInfo);
-            struct_type_info.* = .{ .base = .Custom, .custom_type = "Token", .is_mutable = false };
-            const placeholder = @import("../../types/types.zig").TokenLiteral{ .string = "Token" };
-            _ = self.current_scope.?.createValueBinding("Token", placeholder, .CUSTOM, struct_type_info, true) catch {};
         }
     }
 

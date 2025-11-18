@@ -12,14 +12,125 @@ const Errors = @import("../utils/errors.zig");
 
 const JsonValue = std.json.Value;
 
-pub fn run(allocator: std.mem.Allocator, options: ReporterOptions) !void {
-    var reporter = Reporter.init(allocator, options);
+pub const RunOptions = struct {
+    reporter_options: ReporterOptions,
+    trace_io: bool = false,
+};
+
+pub const DebugHarnessOptions = struct {
+    reporter_options: ReporterOptions,
+    script_path: []const u8,
+};
+
+const HARNESS_MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
+
+const ResponseSink = struct {
+    context: *anyopaque,
+    sendFn: *const fn (context: *anyopaque, payload: []const u8) anyerror!void,
+};
+
+const StdIoSink = struct {
+    allocator: std.mem.Allocator,
+    trace_io: bool,
+
+    fn init(allocator: std.mem.Allocator, trace_io: bool) StdIoSink {
+        return .{
+            .allocator = allocator,
+            .trace_io = trace_io,
+        };
+    }
+
+    fn asResponseSink(self: *StdIoSink) ResponseSink {
+        return .{
+            .context = @ptrCast(self),
+            .sendFn = StdIoSink.send,
+        };
+    }
+
+    fn send(context: *anyopaque, payload: []const u8) !void {
+        const self: *StdIoSink = @ptrCast(@alignCast(context));
+        var stdout_buffer: [4096]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        const writer = &stdout_writer.interface;
+        const framed = try std.fmt.allocPrint(self.allocator, "Content-Length: {d}\r\n\r\n{s}", .{ payload.len, payload });
+        defer self.allocator.free(framed);
+        if (self.trace_io) {
+            std.debug.print("[lsp-io] writing Content-Length: {d}\n", .{payload.len});
+            std.debug.print("[lsp-io] >> {s}\n", .{payload});
+        }
+        try writer.writeAll(framed);
+        try writer.flush();
+    }
+};
+
+const CaptureSink = struct {
+    allocator: std.mem.Allocator,
+    responses: std.array_list.Managed([]u8),
+
+    fn init(allocator: std.mem.Allocator) CaptureSink {
+        return .{
+            .allocator = allocator,
+            .responses = std.array_list.Managed([]u8).init(allocator),
+        };
+    }
+
+    fn deinit(self: *CaptureSink) void {
+        for (self.responses.items) |payload| {
+            self.allocator.free(payload);
+        }
+        self.responses.deinit();
+    }
+
+    fn asResponseSink(self: *CaptureSink) ResponseSink {
+        return .{
+            .context = @ptrCast(self),
+            .sendFn = CaptureSink.send,
+        };
+    }
+
+    fn send(context: *anyopaque, payload: []const u8) !void {
+        const self: *CaptureSink = @ptrCast(@alignCast(context));
+        const copy = try self.allocator.dupe(u8, payload);
+        try self.responses.append(copy);
+    }
+};
+
+pub fn run(allocator: std.mem.Allocator, options: RunOptions) !void {
+    var reporter = Reporter.init(allocator, options.reporter_options);
     defer reporter.deinit();
 
-    var server = Server.init(allocator, &reporter);
+    var sink = StdIoSink.init(allocator, options.trace_io);
+    var server = Server.init(allocator, &reporter, sink.asResponseSink(), options.trace_io);
     defer server.deinit();
 
     try server.loop();
+}
+
+pub fn runDebugHarness(allocator: std.mem.Allocator, options: DebugHarnessOptions) !void {
+    std.debug.print("=== Doxa LSP Debug Harness ===\n", .{});
+    std.debug.print("Target file: {s}\n", .{options.script_path});
+
+    var reporter = Reporter.init(allocator, options.reporter_options);
+    defer reporter.deinit();
+
+    const file_uri = try reporter.ensureFileUri(options.script_path);
+    const document_text = try readFileAlloc(allocator, options.script_path, HARNESS_MAX_FILE_BYTES);
+    defer allocator.free(document_text);
+
+    var sink = CaptureSink.init(allocator);
+    defer sink.deinit();
+
+    var server = Server.init(allocator, &reporter, sink.asResponseSink(), false);
+    defer server.deinit();
+
+    const initialize_request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"processId\":null,\"rootUri\":null,\"capabilities\":{}}}";
+    const initialized_notification = "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}";
+    const did_open_request = try buildDidOpenRequest(allocator, file_uri, document_text);
+    defer allocator.free(did_open_request);
+
+    try runHarnessMessage(allocator, &server, &sink, "initialize", initialize_request);
+    try runHarnessMessage(allocator, &server, &sink, "initialized", initialized_notification);
+    try runHarnessMessage(allocator, &server, &sink, "textDocument/didOpen", did_open_request);
 }
 
 const Document = struct {
@@ -33,14 +144,18 @@ const Server = struct {
     documents: std.StringHashMap(Document),
     shutdown_requested: bool,
     should_exit: bool,
+    sink: ResponseSink,
+    trace_io: bool,
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter) Server {
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, sink: ResponseSink, trace_io: bool) Server {
         return .{
             .allocator = allocator,
             .reporter = reporter,
             .documents = std.StringHashMap(Document).init(allocator),
             .shutdown_requested = false,
             .should_exit = false,
+            .sink = sink,
+            .trace_io = trace_io,
         };
     }
 
@@ -55,13 +170,25 @@ const Server = struct {
     fn loop(self: *Server) !void {
         var stdin_buffer: [4096]u8 = undefined;
         const stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
-        var reader = stdin_reader.interface;
+        const reader = &stdin_reader.interface;
 
         while (!self.should_exit) {
-            const payload = self.readMessage(&reader) catch |err| switch (err) {
-                error.EndOfStream => break,
+            const payload = self.readMessage(reader) catch |err| switch (err) {
+                error.EndOfStream => {
+                    if (self.shutdown_requested) {
+                        return;
+                    } else {
+                        std.Thread.sleep(10 * std.time.ns_per_ms);
+                        continue;
+                    }
+                },
+                error.ReadFailed => {
+                    std.Thread.sleep(10 * std.time.ns_per_ms);
+                    continue;
+                },
                 else => return err,
             };
+
             defer self.allocator.free(payload);
             try self.handlePayload(payload);
         }
@@ -74,8 +201,13 @@ const Server = struct {
         while (true) {
             if (len >= buffer.len) return error.StreamTooLong;
 
-            const byte = std.io.Reader.takeByte(reader) catch |err| switch (err) {
+            const byte = std.io.Reader.takeByte(@constCast(reader)) catch |err| switch (err) {
                 error.EndOfStream => break,
+                error.ReadFailed => {
+                    // Handle pipe communication issues - retry after brief delay
+                    std.Thread.sleep(1 * std.time.ns_per_ms);
+                    continue;
+                },
                 else => return err,
             };
 
@@ -94,19 +226,44 @@ const Server = struct {
             const line = try self.readLineAlloc(reader);
             defer self.allocator.free(line);
 
-            if (line.len == 0) return error.EndOfStream;
+            if (line.len == 0) {
+                if (self.trace_io) {
+                    std.debug.print("[lsp-io] reached EOF while reading headers\n", .{});
+                }
+                return error.EndOfStream;
+            }
             const trimmed = trimLine(line);
-            if (trimmed.len == 0) break;
+            if (self.trace_io) {
+                if (trimmed.len == 0) {
+                    std.debug.print("[lsp-io] header terminator detected\n", .{});
+                } else {
+                    std.debug.print("[lsp-io] header line: '{s}'\n", .{trimmed});
+                }
+            }
+            if (trimmed.len == 0) {
+                break;
+            }
 
             if (std.ascii.startsWithIgnoreCase(trimmed, "content-length:")) {
                 const parts = std.mem.trim(u8, trimmed["content-length:".len..], " \t");
-                content_length = std.fmt.parseInt(usize, parts, 10) catch return error.InvalidMessage;
+                content_length = std.fmt.parseInt(usize, parts, 10) catch {
+                    return error.InvalidMessage;
+                };
+                if (self.trace_io) {
+                    std.debug.print("[lsp-io] parsed Content-Length: {d}\n", .{content_length.?});
+                }
             }
         }
 
         const length = content_length orelse return error.InvalidMessage;
+        if (self.trace_io) {
+            std.debug.print("[lsp-io] reading payload ({d} bytes)\n", .{length});
+        }
         const payload = try self.allocator.alloc(u8, length);
-        _ = try std.io.Reader.readSliceShort(reader, payload);
+        _ = try std.io.Reader.readSliceShort(@constCast(reader), payload);
+        if (self.trace_io) {
+            std.debug.print("[lsp-io] << {s}\n", .{payload});
+        }
         return payload;
     }
 
@@ -138,6 +295,7 @@ const Server = struct {
             const id = obj.get("id");
 
             if (std.mem.eql(u8, method, "initialize")) {
+                std.debug.print("INIT: Received initialize request\n", .{});
                 if (id == null) {
                     try self.sendErrorResponse(null, -32600, "Invalid request");
                     return;
@@ -180,6 +338,7 @@ const Server = struct {
         const payload = try buffer.toOwnedSlice();
         defer self.allocator.free(payload);
         try self.sendMessage(payload);
+        std.debug.print("INIT: Sent initialize response\n", .{});
     }
 
     fn handleShutdown(self: *Server, id: JsonValue) !void {
@@ -299,7 +458,7 @@ const Server = struct {
         self.reporter.clearByFile(uri);
         self.reporter.clearByFile(doc.path);
 
-        _ = self.performAnalysis(doc, uri) catch {};
+        self.performAnalysis(doc, uri) catch {};
 
         try self.publishDiagnostics(uri);
     }
@@ -332,13 +491,7 @@ const Server = struct {
     }
 
     fn sendMessage(self: *Server, payload: []const u8) !void {
-        var stdout_buffer: [4096]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
-        const writer = &stdout_writer.interface;
-        const concatenated = try std.fmt.allocPrint(self.allocator, "Content-Length: {d}\r\n\r\n{s}", .{ payload.len, payload });
-        defer self.allocator.free(concatenated);
-        try writer.writeAll(concatenated);
-        try writer.flush();
+        try self.sink.sendFn(self.sink.context, payload);
     }
 
     fn sendErrorResponse(self: *Server, id: ?JsonValue, code: i64, message: []const u8) !void {
@@ -373,4 +526,73 @@ fn trimLine(line: []const u8) []const u8 {
 
 fn writeJsonValue(writer: anytype, value: anytype) !void {
     try writer.print("{f}", .{std.json.fmt(value, .{})});
+}
+
+fn runHarnessMessage(
+    allocator: std.mem.Allocator,
+    server: *Server,
+    sink: *CaptureSink,
+    label: []const u8,
+    payload: []const u8,
+) !void {
+    std.debug.print("\n[harness] --> {s}\n", .{label});
+    try prettyPrintJson(allocator, payload);
+    try server.handlePayload(payload);
+    try drainCapturedResponses(allocator, sink);
+}
+
+fn drainCapturedResponses(allocator: std.mem.Allocator, sink: *CaptureSink) !void {
+    if (sink.responses.items.len == 0) {
+        std.debug.print("[harness] (no responses)\n", .{});
+        return;
+    }
+
+    for (sink.responses.items) |response| {
+        std.debug.print("[harness] <-- response\n", .{});
+        try prettyPrintJson(allocator, response);
+        sink.allocator.free(response);
+    }
+    sink.responses.clearRetainingCapacity();
+}
+
+fn prettyPrintJson(allocator: std.mem.Allocator, payload: []const u8) !void {
+    const parsed = std.json.parseFromSlice(JsonValue, allocator, payload, .{}) catch {
+        std.debug.print("{s}\n", .{payload});
+        return;
+    };
+    defer parsed.deinit();
+
+    const pretty = jsonStringifyAlloc(allocator, parsed.value, .{ .whitespace = .indent_2 }) catch {
+        std.debug.print("{s}\n", .{payload});
+        return;
+    };
+    defer allocator.free(pretty);
+    std.debug.print("{s}\n", .{pretty});
+}
+
+fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) ![]u8 {
+    var file = try std.fs.cwd().openFile(path, .{});
+    defer file.close();
+    return try file.readToEndAlloc(allocator, max_bytes);
+}
+
+fn buildDidOpenRequest(allocator: std.mem.Allocator, uri: []const u8, text: []const u8) ![]u8 {
+    const encoded_uri = try jsonStringifyAlloc(allocator, uri, .{});
+    defer allocator.free(encoded_uri);
+
+    const encoded_text = try jsonStringifyAlloc(allocator, text, .{});
+    defer allocator.free(encoded_text);
+
+    return try std.fmt.allocPrint(
+        allocator,
+        "{{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{{\"textDocument\":{{\"uri\":{s},\"languageId\":\"doxa\",\"version\":1,\"text\":{s}}}}}}}",
+        .{ encoded_uri, encoded_text },
+    );
+}
+
+fn jsonStringifyAlloc(allocator: std.mem.Allocator, value: anytype, options: std.json.Stringify.Options) ![]u8 {
+    var aw: std.io.Writer.Allocating = .init(allocator);
+    defer aw.deinit();
+    try std.json.Stringify.value(value, options, &aw.writer);
+    return aw.toOwnedSlice();
 }
