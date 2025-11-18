@@ -144,44 +144,44 @@ struct Person {
 }
 
 var explicit_struct_array :: Person[] is [
-    Person { name is "Alice", age is 25 },
-    Person { name is "Bob", age is 30 },
-    Person { name is "Charlie", age is 35 }
+    $Person { name is "Alice", age is 25 },
+    $Person { name is "Bob", age is 30 },
+    $Person { name is "Charlie", age is 35 }
 ];
 var explicit_sized_struct_array :: Person[3] is [
-    Person { name is "David", age is 40 },
-    Person { name is "Eve", age is 45 },
-    Person { name is "Frank", age is 50 }
+    $Person { name is "David", age is 40 },
+    $Person { name is "Eve", age is 45 },
+    $Person { name is "Frank", age is 50 }
 ];
 var implicit_struct_array is [
-    Person { name is "Grace", age is 55 },
-    Person { name is "Henry", age is 60 },
-    Person { name is "Ivy", age is 65 }
+    $Person { name is "Grace", age is 55 },
+    $Person { name is "Henry", age is 60 },
+    $Person { name is "Ivy", age is 65 }
 ];
 var unit_struct_array :: Person[]; // []
 
 const const_explicit_struct_array :: Person[] is [
-    Person { name is "Alice", age is 25 },
-    Person { name is "Bob", age is 30 },
-    Person { name is "Charlie", age is 35 }
+    $Person { name is "Alice", age is 25 },
+    $Person { name is "Bob", age is 30 },
+    $Person { name is "Charlie", age is 35 }
 ];
 const const_explicit_sized_struct_array :: Person[3] is [
-    Person { name is "David", age is 40 },
-    Person { name is "Eve", age is 45 },
-    Person { name is "Frank", age is 50 }
+    $Person { name is "David", age is 40 },
+    $Person { name is "Eve", age is 45 },
+    $Person { name is "Frank", age is 50 }
 ];
 const const_implicit_struct_array is [
-    Person { name is "Grace", age is 55 },
-    Person { name is "Henry", age is 60 },
-    Person { name is "Ivy", age is 65 }
+    $Person { name is "Grace", age is 55 },
+    $Person { name is "Henry", age is 60 },
+    $Person { name is "Ivy", age is 65 }
 ];
 
-var Bob is Person { name is "Bob", age is 25 };
+var Bob is $Person { name is "Bob", age is 25 };
 
 var int_struct_array is [1, 2, Bob.age];
 
 var struct_array is [
-    Person { name is "Grace", age is 55 },
+    $Person { name is "Grace", age is 55 },
     Bob
 ];
 
@@ -193,7 +193,7 @@ var nested_float_array :: float[][] is [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
 var nested_byte_array :: byte[][] is [[0x00, 0x01, 0x02], [0x03, 0x04, 0x05]];
 var nested_enum_array :: Color[][] is [[.Red, .Green], [.Blue, .Red]];
 var nested_struct_array :: Person[][] is [
-    [Person { name is "Grace", age is 55 }, Person { name is "Henry", age is 60 }],
+    [$Person { name is "Grace", age is 55 }, $Person { name is "Henry", age is 60 }],
     [Bob]
 ];
 
@@ -210,7 +210,7 @@ fn foo_min() { return 0; }
 fn foo_no_input() { return 1; }
 fn foo_implicit_output(a :: int, b :: int) { return a + b; }
 fn foo_explicit_output_struct(name :: string, age :: int) -> Person) { 
-    const return_person is Person { name is name, age is age }; 
+    const return_person is $Person { name is name, age is age }; 
     return return_person; 
 }
 fn foo_explicit_input_struct(person :: Person) -> string) { 
@@ -367,7 +367,7 @@ fn enum_to_union_converter(color :: Color) -> int | string {
 
 
 fn union_with_struct() -> Person | nothing {
-    return Person { name is "Alice", age is 25 };
+    return $Person { name is "Alice", age is 25 };
 }
 
 fn union_with_struct_none() -> Person | nothing {

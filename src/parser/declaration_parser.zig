@@ -682,7 +682,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
 
         if (self.peek().type == .INPUT) {
             initializer = try Parser.input(self, null, .NONE);
-        } else if (self.peek().type == .IDENTIFIER) {
+        } else if (self.peek().type == .STRUCT_INSTANCE) {
             if (try Parser.parseStructInit(self)) |struct_init| {
                 initializer = struct_init;
             } else {

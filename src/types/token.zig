@@ -154,6 +154,7 @@ pub const TokenType = enum {
     ARRAY, // array
     ARRAY_TYPE, // array type declaration
     STRUCT_TYPE, // struct type declaration
+    STRUCT_INSTANCE, // struct instance
     ENUM_TYPE, // enum type declaration
     MAP_TYPE, // map type declaration
     UNION_TYPE, // union type declaration

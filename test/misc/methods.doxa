@@ -16,7 +16,7 @@ struct Animal {
     pub species :: Species
 }
 
-var dog is Animal {
+var dog is $Animal {
     name is "Spot",
     species is Species.DOG,
 }

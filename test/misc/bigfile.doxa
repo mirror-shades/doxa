@@ -344,8 +344,8 @@ struct Employee {
     pub salary :: int,
 }
 
-var mike is Employee {
-    person is Person {
+var mike is $Employee {
+    person is $Person {
         name is "Mike",
         age is 25,
     },
@@ -369,7 +369,7 @@ struct Point {
     y :: int,
 
     pub function New(x :: int, y :: int) returns Point {
-        return Point {
+        return $Point {
             x is x,
             y is y,
         }
@@ -408,13 +408,13 @@ struct PubPoint {
 }
 
 function add_points(a :: PubPoint, b :: PubPoint) returns PubPoint {
-    return PubPoint {
+    return $PubPoint {
         x is a.x + b.x
         y is a.y + b.y
     }
 }
 
-const point_result is add_points(PubPoint { x is 10; y is 20 }, PubPoint { x is 5; y is 7 })
+const point_result is add_points($PubPoint { x is 10; y is 20 }, $PubPoint { x is 5; y is 7 })
 
 point_result.x?
 point_result.y?
@@ -527,15 +527,15 @@ struct Animal {
 }
 
 const zoo :: Animal[] is [
-    Animal { 
+    $Animal { 
         animal_type is Species.LION,
         name is "Fluffy",
      },
-    Animal { 
+    $Animal { 
         animal_type is Species.PENGUIN,
         name is "Sam",
      },
-    Animal { 
+    $Animal { 
         animal_type is Species.WHALE,
         name is "Nemo",
      },

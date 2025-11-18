@@ -368,6 +368,10 @@ pub const LexicalAnalyzer = struct {
             '@' => {
                 try self.internalMethod();
             },
+
+            '$' => {
+                try self.structInstance();
+            },
             '0'...'9' => try self.number(),
 
             '"' => try self.string(),
@@ -753,6 +757,10 @@ pub const LexicalAnalyzer = struct {
         } else {
             return error.InvalidInternalMethod;
         }
+    }
+
+    fn structInstance(self: *LexicalAnalyzer) !void {
+        try self.addMinimalToken(.STRUCT_INSTANCE);
     }
 
     fn removeLastToken(self: *LexicalAnalyzer) !void {

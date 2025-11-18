@@ -22,6 +22,7 @@ const fieldAccess = Parser.fieldAccess;
 const print = Parser.print;
 const braceExpr = expr_parser.braceExpr;
 const identifierOrStructLiteral = expr_parser.identifierOrStructLiteral;
+const structLiteralExpr = expr_parser.structLiteralExpr;
 
 const parseStructDecl = decl_parser.parseStructDecl;
 const enumDeclPrefix = decl_parser.enumDeclPrefix;
@@ -140,6 +141,7 @@ pub const rules = blk: {
     r.set(.VAR, .{ .prefix = variable });
     r.set(.CONST, .{ .prefix = variable });
     r.set(.IDENTIFIER, .{ .prefix = identifierOrStructLiteral });
+    r.set(.STRUCT_INSTANCE, .{ .prefix = structLiteralExpr });
     r.set(.THIS, .{ .prefix = variable });
     r.set(.ASSIGN, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.ARRAY_TYPE, .{ .prefix = variable, .infix = fieldAccess });
