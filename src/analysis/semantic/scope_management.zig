@@ -50,7 +50,7 @@ pub fn createModuleNamespaceVariable(
     name: []const u8,
 ) ?*Variable {
     // Create a TypeInfo for the module namespace
-    const type_info = allocator.create(ast.TypeInfo) catch return null;
+    const type_info = ast.TypeInfo.createDefault(allocator) catch return null;
     errdefer allocator.destroy(type_info);
 
     type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = name };
@@ -89,7 +89,7 @@ pub fn handleModuleFieldAccess(
     field_name: []const u8,
     span: ast.SourceSpan,
 ) !*ast.TypeInfo {
-    var type_info = try allocator.create(ast.TypeInfo);
+    var type_info = try ast.TypeInfo.createDefault(allocator);
     errdefer allocator.destroy(type_info);
 
     if (parser) |p| {
@@ -141,7 +141,7 @@ pub fn handleModuleFieldAccess(
                                                     const params_slice = params_list.toOwnedSlice() catch break;
 
                                                     // Use the actual return type from the function declaration
-                                                    const ret_ptr = allocator.create(ast.TypeInfo) catch break;
+                                                    const ret_ptr = ast.TypeInfo.createDefault(allocator) catch break;
                                                     ret_ptr.* = f.return_type_info;
 
                                                     ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr };
@@ -159,7 +159,7 @@ pub fn handleModuleFieldAccess(
 
                         // Fallback if not found: zero params and nothing return (safer than Int)
                         if (found_func_type == null) {
-                            const return_type = allocator.create(ast.TypeInfo) catch return type_info;
+                            const return_type = ast.TypeInfo.createDefault(allocator) catch return type_info;
                             return_type.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
                             const function_type = allocator.create(ast.FunctionType) catch return type_info;
                             function_type.* = ast.FunctionType{ .params = &[_]ast.TypeInfo{}, .return_type = return_type };
@@ -203,13 +203,13 @@ fn createImportedSymbolVariable(
     _ = name; // May be used in the future
 
     // Create appropriate TypeInfo based on symbol kind
-    const type_info = allocator.create(ast.TypeInfo) catch return null;
+    const type_info = ast.TypeInfo.createDefault(allocator) catch return null;
     errdefer allocator.destroy(type_info);
 
     switch (imported_symbol.kind) {
         .Function => {
             // Fallback: zero params and nothing return (safer than Int)
-            const return_type = allocator.create(ast.TypeInfo) catch {
+            const return_type = ast.TypeInfo.createDefault(allocator) catch {
                 allocator.destroy(type_info);
                 return null;
             };

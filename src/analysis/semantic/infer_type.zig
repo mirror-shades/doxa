@@ -14,7 +14,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         return cached;
     }
 
-    var type_info = try self.allocator.create(ast.TypeInfo);
+    var type_info = try ast.TypeInfo.createDefault(self.allocator);
     errdefer self.allocator.destroy(type_info);
 
     switch (expr.data) {
@@ -598,7 +598,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                     .type_info = custom_field.field_type_info,
                                 };
                             }
-                            const resolved_type_info = try self.allocator.create(ast.TypeInfo);
+                            const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
                             resolved_type_info.* = ast.TypeInfo{ .base = .Struct, .custom_type = custom_type_name, .struct_fields = struct_fields, .is_mutable = object_type.is_mutable };
                             resolved_object_type = resolved_type_info;
                         } else {
@@ -719,7 +719,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     const element_type = try infer_type.inferTypeFromExpr(self, element);
                     try helpers.unifyTypes(self, first_type, element_type, .{ .location = getLocationFromBase(expr.base) });
                 }
-                const array_type = try self.allocator.create(ast.TypeInfo);
+                const array_type = try ast.TypeInfo.createDefault(self.allocator);
                 array_type.* = first_type.*;
                 type_info.* = .{ .base = .Array, .array_type = array_type };
             }
@@ -743,7 +743,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (condition_type.function_type) |func_type| {
                     condition_type = func_type.return_type;
                 } else {
-                    condition_type = try self.allocator.create(ast.TypeInfo);
+                    condition_type = try ast.TypeInfo.createDefault(self.allocator);
                     condition_type.* = .{ .base = .Nothing, .is_mutable = false };
                 }
             }
@@ -1072,7 +1072,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     type_info.* = .{ .base = .String };
                 } else if (coll_t.base == .Array) {
                     if (coll_t.array_type) |elem| {
-                        const new_elem = try self.allocator.create(ast.TypeInfo);
+                        const new_elem = try ast.TypeInfo.createDefault(self.allocator);
                         new_elem.* = elem.*;
                         type_info.* = .{ .base = .Array, .array_type = new_elem };
                     } else {
@@ -2126,7 +2126,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                             dup_fields[i] = sf;
                                         }
                                     }
-                                    const narrowed_struct = try self.allocator.create(ast.TypeInfo);
+                                    const narrowed_struct = try ast.TypeInfo.createDefault(self.allocator);
                                     narrowed_struct.* = .{ .base = .Struct, .struct_fields = dup_fields };
                                     _ = then_scope.createValueBinding(
                                         obj_name,
@@ -2147,7 +2147,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             if (cast.else_branch) |else_expr| {
                 else_type = try infer_type.inferTypeFromExpr(self, else_expr);
                 if (else_expr.data == .ReturnExpr) {
-                    const nothing_type = try self.allocator.create(ast.TypeInfo);
+                    const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                     nothing_type.* = .{ .base = .Nothing };
                     else_type = nothing_type;
                 }
@@ -2264,7 +2264,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             }
 
-            const element_type = try self.allocator.create(ast.TypeInfo);
+            const element_type = try ast.TypeInfo.createDefault(self.allocator);
             element_type.* = .{ .base = .Int };
             type_info.* = .{ .base = .Array, .array_type = element_type };
         },
