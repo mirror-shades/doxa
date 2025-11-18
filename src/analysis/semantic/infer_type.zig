@@ -1635,7 +1635,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .EnumMember => |member_token| {
             // Resolve the enum member to its parent enum type
-            const parent_enum_name = self.resolveEnumMemberToParentEnum(member_token.lexeme);
+            const parent_enum_name = try self.resolveEnumMemberToParentEnum(member_token.lexeme);
             if (parent_enum_name) |enum_name| {
                 type_info.* = .{ .base = .Custom, .custom_type = enum_name };
             } else {

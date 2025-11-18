@@ -1356,7 +1356,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     /// Resolve an enum member name to its parent enum type name
-    pub fn resolveEnumMemberToParentEnum(self: *SemanticAnalyzer, member_name: []const u8) ?[]const u8 {
+    pub fn resolveEnumMemberToParentEnum(self: *SemanticAnalyzer, member_name: []const u8) ErrorList!?[]const u8 {
         // Iterate through all registered custom types to find which enum contains this variant
         // We do two passes: first for non-internal enums (user-defined), then for internal enums (compiler-provided)
         var iterator = self.custom_types.iterator();
@@ -1400,7 +1400,133 @@ pub const SemanticAnalyzer = struct {
             }
         }
 
-        return null; // No match found
+        return try self.tryRegisterEnumForVariant(member_name);
+    }
+
+    fn tryRegisterEnumForVariant(self: *SemanticAnalyzer, member_name: []const u8) ErrorList!?[]const u8 {
+        const parser = self.parser orelse return null;
+
+        if (parser.current_module) |module_info| {
+            if (try self.findEnumVariantInModuleInfo(&module_info, member_name)) |enum_name| {
+                return enum_name;
+            }
+        }
+
+        if (try self.findEnumVariantInModuleMap(@constCast(&parser.module_namespaces), member_name)) |enum_name| {
+            return enum_name;
+        }
+
+        if (try self.findEnumVariantInModuleMap(@constCast(&parser.module_cache), member_name)) |enum_name| {
+            return enum_name;
+        }
+
+        return null;
+    }
+
+    fn findEnumVariantInModuleMap(
+        self: *SemanticAnalyzer,
+        module_map: *std.StringHashMap(ast.ModuleInfo),
+        member_name: []const u8,
+    ) ErrorList!?[]const u8 {
+        var it = module_map.iterator();
+        while (it.next()) |entry| {
+            if (try self.findEnumVariantInModuleInfo(entry.value_ptr, member_name)) |enum_name| {
+                return enum_name;
+            }
+        }
+        return null;
+    }
+
+    fn findEnumVariantInModuleInfo(
+        self: *SemanticAnalyzer,
+        module_info: *const ast.ModuleInfo,
+        member_name: []const u8,
+    ) ErrorList!?[]const u8 {
+        const module_ast = module_info.ast orelse return null;
+        return try self.findEnumVariantInBlock(module_ast, member_name);
+    }
+
+    fn findEnumVariantInBlock(
+        self: *SemanticAnalyzer,
+        block_expr: *ast.Expr,
+        member_name: []const u8,
+    ) ErrorList!?[]const u8 {
+        if (block_expr.data != .Block) return null;
+        return try self.findEnumVariantInStatements(block_expr.data.Block.statements, member_name);
+    }
+
+    fn findEnumVariantInStatements(
+        self: *SemanticAnalyzer,
+        statements: []const ast.Stmt,
+        member_name: []const u8,
+    ) ErrorList!?[]const u8 {
+        for (statements) |stmt| {
+            if (try self.findEnumVariantInStmt(stmt, member_name)) |enum_name| {
+                return enum_name;
+            }
+        }
+        return null;
+    }
+
+    fn findEnumVariantInStmt(self: *SemanticAnalyzer, stmt: ast.Stmt, member_name: []const u8) ErrorList!?[]const u8 {
+        switch (stmt.data) {
+            .EnumDecl => |enum_decl| {
+                if (self.enumDeclContainsVariant(enum_decl, member_name)) {
+                    return try self.ensureEnumRegistered(enum_decl);
+                }
+            },
+            .Expression => |maybe_expr| {
+                if (maybe_expr) |expr| {
+                    switch (expr.data) {
+                        .EnumDecl => |enum_decl| {
+                            if (self.enumDeclContainsVariant(enum_decl, member_name)) {
+                                return try self.ensureEnumRegistered(enum_decl);
+                            }
+                        },
+                        .Block => |block_expr| {
+                            if (try self.findEnumVariantInStatements(block_expr.statements, member_name)) |enum_name| {
+                                return enum_name;
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            },
+            .Block => |block_stmts| {
+                if (try self.findEnumVariantInStatements(block_stmts, member_name)) |enum_name| {
+                    return enum_name;
+                }
+            },
+            else => {},
+        }
+
+        return null;
+    }
+
+    fn enumDeclContainsVariant(self: *SemanticAnalyzer, enum_decl: anytype, member_name: []const u8) bool {
+        _ = self;
+        for (enum_decl.variants) |variant| {
+            if (std.mem.eql(u8, variant.lexeme, member_name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fn ensureEnumRegistered(self: *SemanticAnalyzer, enum_decl: anytype) ErrorList![]const u8 {
+        if (!self.custom_types.contains(enum_decl.name.lexeme)) {
+            const variant_names = try self.allocator.alloc([]const u8, enum_decl.variants.len);
+            for (enum_decl.variants, 0..) |variant, i| {
+                variant_names[i] = variant.lexeme;
+            }
+            try helpers.registerEnumType(self, enum_decl.name.lexeme, variant_names);
+        }
+
+        if (self.custom_types.get(enum_decl.name.lexeme)) |entry| {
+            return entry.name;
+        }
+
+        return enum_decl.name.lexeme;
     }
 
     pub fn typeExprToTypeInfo(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) !*ast.TypeInfo {
