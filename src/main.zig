@@ -49,6 +49,12 @@ const Mode = enum {
     COMPILE,
 };
 
+const LspMode = enum {
+    none,
+    stdio,
+    harness,
+};
+
 const CLI = struct {
     mode: Mode,
     reporter_options: ReporterOptions,
@@ -59,7 +65,9 @@ const CLI = struct {
     target_os: ?[]const u8,
     target_abi: ?[]const u8,
     opt_level: i32, // -1 for debug-peek, 0..3 for optimization
-    lsp_mode: bool,
+    lsp_mode: LspMode,
+    lsp_debug_file: ?[]const u8,
+    lsp_io_trace: bool,
 
     pub fn deinit(self: *const CLI, allocator: std.mem.Allocator) void {
         if (self.script_path) |p| allocator.free(p);
@@ -67,6 +75,7 @@ const CLI = struct {
         if (self.target_arch) |p| allocator.free(p);
         if (self.target_os) |p| allocator.free(p);
         if (self.target_abi) |p| allocator.free(p);
+        if (self.lsp_debug_file) |p| allocator.free(p);
     }
 };
 
@@ -227,11 +236,42 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         .target_os = null,
         .target_abi = null,
         .opt_level = 0,
-        .lsp_mode = false,
+        .lsp_mode = .none,
+        .lsp_debug_file = null,
+        .lsp_io_trace = false,
     };
 
     if (stringEquals(args[1], "--lsp")) {
-        options.lsp_mode = true;
+        options.lsp_mode = .stdio;
+        if (args.len > 2) {
+            for (args[2..]) |arg| {
+                if (stringEquals(arg, "--lsp-debug-io")) {
+                    options.lsp_io_trace = true;
+                } else {
+                    std.debug.print("Error: Unknown flag for --lsp: '{s}'\n", .{arg});
+                    printUsage();
+                    std.process.exit(EXIT_CODE_USAGE);
+                }
+            }
+        }
+        return options;
+    } else if (stringEquals(args[1], "--lsp-debug")) {
+        if (args.len < 3) {
+            std.debug.print("Error: Provide a .doxa file for --lsp-debug\n", .{});
+            printUsage();
+            std.process.exit(EXIT_CODE_USAGE);
+        } else if (args.len > 3) {
+            std.debug.print("Error: Unexpected extra arguments for --lsp-debug\n", .{});
+            printUsage();
+            std.process.exit(EXIT_CODE_USAGE);
+        }
+        options.lsp_mode = .harness;
+        if (!stringEndsWith(args[2], DOXA_EXTENSION)) {
+            std.debug.print("Error: '{s}' is not a .doxa file\n", .{args[2]});
+            printUsage();
+            std.process.exit(EXIT_CODE_USAGE);
+        }
+        options.lsp_debug_file = try allocator.dupe(u8, args[2]);
         return options;
     }
 
@@ -345,7 +385,8 @@ fn printUsage() void {
     std.debug.print("\nUsage:\n", .{});
     std.debug.print("  doxa run [general options] <file.doxa>\n", .{});
     std.debug.print("  doxa compile [general options] <file.doxa> -o <output> [compile options]\n", .{});
-    std.debug.print("  doxa --lsp                      # Start the Language Server Protocol loop\n", .{});
+    std.debug.print("  doxa --lsp [--lsp-debug-io]     # Start the Language Server Protocol loop\n", .{});
+    std.debug.print("  doxa --lsp-debug <file.doxa>    # Run the in-process LSP debug harness\n", .{});
     std.debug.print("\nGeneral options:\n", .{});
     std.debug.print("  --profile                         # Enable profiling\n", .{});
     std.debug.print("  --help, -h                        # Show this help message\n", .{});
@@ -359,6 +400,7 @@ fn printUsage() void {
     std.debug.print("  --abi=<abi>                       # Target ABI (optional)\n", .{});
     std.debug.print("  -O-1 | --opt=-1                   # Debug-aware codegen (peek dumps)\n", .{});
     std.debug.print("  -O0..-O3 | --opt=0..3             # LLVM and codegen optimization level\n", .{});
+    std.debug.print("  --lsp-debug-io                    # Trace raw LSP I/O when used with --lsp\n", .{});
     std.debug.print("\nExamples:\n", .{});
     std.debug.print("  doxa run file.doxa\n", .{});
     std.debug.print("  doxa compile file.doxa -o out/myapp\n", .{});
@@ -406,9 +448,23 @@ pub fn main() !void {
     const cli_options = try parseArgs(gpa.allocator());
     defer cli_options.deinit(gpa.allocator());
 
-    if (cli_options.lsp_mode) {
-        try LspServer.run(gpa.allocator(), cli_options.reporter_options);
-        return;
+    switch (cli_options.lsp_mode) {
+        .none => {},
+        .stdio => {
+            try LspServer.run(gpa.allocator(), .{
+                .reporter_options = cli_options.reporter_options,
+                .trace_io = cli_options.lsp_io_trace,
+            });
+            return;
+        },
+        .harness => {
+            const script = cli_options.lsp_debug_file orelse unreachable;
+            try LspServer.runDebugHarness(gpa.allocator(), .{
+                .reporter_options = cli_options.reporter_options,
+                .script_path = script,
+            });
+            return;
+        },
     }
 
     var reporter = Reporter.init(gpa.allocator(), cli_options.reporter_options);

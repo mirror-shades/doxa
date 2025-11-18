@@ -93,6 +93,40 @@ pub const Reporter = struct {
     file_uri_cache: std.StringHashMap([]const u8),
     published_state: std.StringHashMap(PublishedState),
 
+    const FileNeedleContext = struct {
+        treat_as_uri: bool,
+        normalized_uri: ?[]const u8 = null,
+        normalized_path: ?[]const u8 = null,
+        path_storage: ?[]u8 = null,
+
+        pub fn init(reporter: *Reporter, file_or_uri: []const u8) FileNeedleContext {
+            var ctx = FileNeedleContext{
+                .treat_as_uri = std.mem.startsWith(u8, file_or_uri, "file://"),
+            };
+
+            if (ctx.treat_as_uri) {
+                ctx.normalized_uri = file_or_uri;
+                const path = convertUriToPath(reporter.allocator, file_or_uri) catch null;
+                if (path) |p| {
+                    ctx.path_storage = p;
+                    ctx.normalized_path = p;
+                    ctx.normalized_uri = reporter.ensureFileUri(p) catch file_or_uri;
+                }
+            } else {
+                ctx.normalized_path = file_or_uri;
+                ctx.normalized_uri = reporter.ensureFileUri(file_or_uri) catch file_or_uri;
+            }
+
+            return ctx;
+        }
+
+        pub fn deinit(self: *FileNeedleContext, reporter: *Reporter) void {
+            if (self.path_storage) |storage| {
+                reporter.allocator.free(storage);
+            }
+        }
+    };
+
     pub fn init(allocator: std.mem.Allocator, options: ReporterOptions) Reporter {
         return .{
             .diagnostics = std.array_list.Managed(Diagnostic).init(allocator),
@@ -342,13 +376,15 @@ pub const Reporter = struct {
 
     pub fn clearByFile(self: *Reporter, file_or_uri: []const u8) void {
         if (self.diagnostics.items.len == 0) return;
-        const treat_as_uri = std.mem.startsWith(u8, file_or_uri, "file://");
+
+        var needle = FileNeedleContext.init(self, file_or_uri);
+        defer needle.deinit(self);
 
         var write_index: usize = 0;
         for (self.diagnostics.items) |diag| {
             var should_remove = false;
             if (diag.loc) |location| {
-                should_remove = self.locationMatchesNeedle(location, file_or_uri, treat_as_uri);
+                should_remove = self.locationMatchesNeedle(location, &needle);
             }
 
             if (should_remove) {
@@ -391,10 +427,12 @@ pub const Reporter = struct {
         var matches = std.ArrayList(*const Diagnostic).init(allocator);
         errdefer matches.deinit();
 
-        const treat_as_uri = std.mem.startsWith(u8, file_or_uri, "file://");
+        var needle = FileNeedleContext.init(self, file_or_uri);
+        defer needle.deinit(self);
+
         for (self.diagnostics.items, 0..) |diag, idx| {
             if (diag.loc) |location| {
-                if (self.locationMatchesNeedle(location, file_or_uri, treat_as_uri)) {
+                if (self.locationMatchesNeedle(location, &needle)) {
                     try matches.append(&self.diagnostics.items[idx]);
                 }
             }
@@ -414,12 +452,14 @@ pub const Reporter = struct {
         var writer = buffer.writer();
         try writer.writeByte('[');
 
-        const treat_as_uri = std.mem.startsWith(u8, file_or_uri, "file://");
+        var needle = FileNeedleContext.init(self, file_or_uri);
+        defer needle.deinit(self);
+
         var emitted = false;
         for (self.diagnostics.items) |*diag_ptr| {
             const diag = diag_ptr.*;
             const loc = diag.loc orelse continue;
-            if (!self.locationMatchesNeedle(loc, file_or_uri, treat_as_uri)) continue;
+            if (!self.locationMatchesNeedle(loc, &needle)) continue;
 
             if (emitted) try writer.writeByte(',');
             emitted = true;
@@ -678,20 +718,41 @@ pub const Reporter = struct {
         }
     }
 
-    fn locationMatchesNeedle(self: *Reporter, loc: Location, needle: []const u8, treat_as_uri: bool) bool {
+    fn locationMatchesNeedle(self: *Reporter, loc: Location, ctx: *const FileNeedleContext) bool {
         _ = self;
-        if (treat_as_uri) {
-            if (loc.file_uri) |uri| {
-                return std.mem.eql(u8, uri, needle);
+
+        if (ctx.treat_as_uri) {
+            if (ctx.normalized_uri) |needle_uri| {
+                if (loc.file_uri) |uri| {
+                    if (std.mem.eql(u8, uri, needle_uri)) return true;
+                }
             }
+
+            if (ctx.normalized_path) |needle_path| {
+                if (loc.file.len > 0 and pathsEqual(loc.file, needle_path)) return true;
+            }
+
             return false;
         }
 
-        if (std.mem.eql(u8, loc.file, needle)) return true;
-        if (loc.file_uri) |uri| {
-            return std.mem.eql(u8, uri, needle);
+        if (ctx.normalized_path) |needle_path| {
+            if (loc.file.len > 0 and pathsEqual(loc.file, needle_path)) return true;
         }
+
+        if (ctx.normalized_uri) |needle_uri| {
+            if (loc.file_uri) |uri| {
+                if (std.mem.eql(u8, uri, needle_uri)) return true;
+            }
+        }
+
         return false;
+    }
+
+    fn pathsEqual(a: []const u8, b: []const u8) bool {
+        if (builtin.os.tag == .windows) {
+            return std.ascii.eqlIgnoreCase(a, b);
+        }
+        return std.mem.eql(u8, a, b);
     }
 
     fn writeToLog(self: *Reporter, line: []const u8) !void {
@@ -863,11 +924,13 @@ fn hashDiagnostic(hasher: *std.hash.Wyhash, diag: Diagnostic) void {
 
 fn computeFileFingerprint(self: *Reporter, file_or_uri: []const u8) u64 {
     var hasher = std.hash.Wyhash.init(0);
-    const treat_as_uri = std.mem.startsWith(u8, file_or_uri, "file://");
+    var needle = Reporter.FileNeedleContext.init(self, file_or_uri);
+    defer needle.deinit(self);
+
     var matched = false;
     for (self.diagnostics.items) |diag| {
         const loc = diag.loc orelse continue;
-        if (!self.locationMatchesNeedle(loc, file_or_uri, treat_as_uri)) continue;
+        if (!self.locationMatchesNeedle(loc, &needle)) continue;
         matched = true;
         hashDiagnostic(&hasher, diag);
     }

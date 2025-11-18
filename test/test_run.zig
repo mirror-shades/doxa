@@ -13,6 +13,13 @@ const test_results = struct {
 const Mode = enum {
     PEEK,
     PRINT,
+    ERROR,
+};
+
+const error_result = struct {
+    exit_code: ?u8,
+    contains_message: ?[]const u8,
+    error_code: ?[]const u8,
 };
 
 const TestCase = struct {
@@ -22,6 +29,7 @@ const TestCase = struct {
     input: ?[]const u8,
     expected_print: ?[]const print_result,
     expected_peek: ?[]const peek_result,
+    expected_error: ?error_result,
 };
 
 const IOTest = struct {
@@ -569,7 +577,13 @@ const expected_bigfile_results = [_]peek_result{
 var total_passed: usize = 0;
 var total_failed: usize = 0;
 
-fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]const u8) ![]const u8 {
+const CommandResult = struct {
+    stdout: []const u8,
+    stderr: []const u8,
+    exit_code: u8,
+};
+
+fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]const u8) !CommandResult {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const child_allocator = arena.allocator();
@@ -621,14 +635,8 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
     }
     const term = try child.wait();
 
-    switch (term) {
-        .Exited => |exit_code| {
-            if (exit_code != 0) {
-                std.debug.print("Command failed with exit code {}:\n", .{exit_code});
-                std.debug.print("stderr: {s}\n", .{stderr.items});
-                return error.CommandFailed;
-            }
-        },
+    const exit_code = switch (term) {
+        .Exited => |code| code,
         .Signal => |signal| {
             std.debug.print("Command terminated with signal {}:\n", .{signal});
             std.debug.print("stderr: {s}\n", .{stderr.items});
@@ -644,18 +652,81 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
             std.debug.print("stderr: {s}\n", .{stderr.items});
             return error.CommandFailed;
         },
-    }
+    };
 
-    return try allocator.dupe(u8, stdout.items);
+    return CommandResult{
+        .stdout = try allocator.dupe(u8, stdout.items),
+        .stderr = try allocator.dupe(u8, stderr.items),
+        .exit_code = @intCast(exit_code),
+    };
 }
 
 fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    return runDoxaCommandEx(allocator, path, null);
+    const result = try runDoxaCommandEx(allocator, path, null);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) return error.CommandFailed;
+    return allocator.dupe(u8, result.stdout);
 }
 
 //this function will pipe a char to a doxa command and return the output
 fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input: []const u8) ![]const u8 {
-    return runDoxaCommandEx(allocator, path, input);
+    const result = try runDoxaCommandEx(allocator, path, input);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+    if (result.exit_code != 0) return error.CommandFailed;
+    return allocator.dupe(u8, result.stdout);
+}
+
+fn runErrorTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
+    const result = try runDoxaCommandEx(allocator, tc.path, tc.input);
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+
+    const expected = tc.expected_error.?;
+
+    var passed: usize = 0;
+    var failed: usize = 0;
+
+    // Check exit code
+    if (expected.exit_code) |expected_code| {
+        if (result.exit_code == expected_code) {
+            passed += 1;
+        } else {
+            std.debug.print("✗ Error test failed: expected exit code {}, got {}\n", .{ expected_code, result.exit_code });
+            failed += 1;
+        }
+    } else {
+        passed += 1; // No exit code check required
+    }
+
+    // Check if stderr contains expected message
+    if (expected.contains_message) |expected_msg| {
+        if (std.mem.indexOf(u8, result.stderr, expected_msg) != null) {
+            passed += 1;
+        } else {
+            std.debug.print("✗ Error test failed: expected message \"{s}\" not found in stderr\n", .{expected_msg});
+            std.debug.print("stderr: {s}\n", .{result.stderr});
+            failed += 1;
+        }
+    } else {
+        passed += 1; // No message check required
+    }
+
+    // Check error code in stderr
+    if (expected.error_code) |expected_code| {
+        if (std.mem.indexOf(u8, result.stderr, expected_code) != null) {
+            passed += 1;
+        } else {
+            std.debug.print("✗ Error test failed: expected error code \"{s}\" not found in stderr\n", .{expected_code});
+            std.debug.print("stderr: {s}\n", .{result.stderr});
+            failed += 1;
+        }
+    } else {
+        passed += 1; // No error code check required
+    }
+
+    return .{ .passed = passed, .failed = failed, .untested = 0 };
 }
 
 // print test is for tests which use the print operator for output
@@ -762,6 +833,10 @@ fn validatePeekResults(output: []const u8, expected_results: []const peek_result
 }
 
 fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
+    if (tc.mode == .ERROR) {
+        return try runErrorTestCase(allocator, tc);
+    }
+
     var output: []const u8 = undefined;
     if (tc.input) |inp| {
         output = try runDoxaCommandWithInput(allocator, tc.path, inp);
@@ -775,6 +850,7 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     return switch (tc.mode) {
         .PRINT => try validatePrintResults(output, tc.expected_print.?, allocator),
         .PEEK => try validatePeekResults(output, tc.expected_peek.?, allocator),
+        .ERROR => unreachable, // Handled above
     };
 }
 
@@ -790,11 +866,13 @@ test "unified runner" {
     }
 
     const test_cases = [_]TestCase{
-        .{ .name = "big file", .path = "./test/misc/bigfile.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_bigfile_results[0..] },
-        .{ .name = "brainfuck", .path = "./test/examples/brainfuck.doxa", .mode = .PRINT, .input = null, .expected_print = expected_brainfuck_results[0..], .expected_peek = null },
-        .{ .name = "complex print", .path = "./test/misc/complex_print.doxa", .mode = .PRINT, .input = null, .expected_print = expected_complex_print_results[0..], .expected_peek = null },
-        .{ .name = "expressions", .path = "./test/misc/expressions.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_expressions_results[0..] },
-        .{ .name = "methods", .path = "./test/misc/methods.doxa", .mode = .PEEK, .input = "f\n", .expected_print = null, .expected_peek = expected_methods_results[0..] },
+        .{ .name = "big file", .path = "./test/misc/bigfile.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_bigfile_results[0..], .expected_error = null },
+        .{ .name = "brainfuck", .path = "./test/examples/brainfuck.doxa", .mode = .PRINT, .input = null, .expected_print = expected_brainfuck_results[0..], .expected_peek = null, .expected_error = null },
+        .{ .name = "complex print", .path = "./test/misc/complex_print.doxa", .mode = .PRINT, .input = null, .expected_print = expected_complex_print_results[0..], .expected_peek = null, .expected_error = null },
+        .{ .name = "expressions", .path = "./test/misc/expressions.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_expressions_results[0..], .expected_error = null },
+        .{ .name = "methods", .path = "./test/misc/methods.doxa", .mode = .PEEK, .input = "f\n", .expected_print = null, .expected_peek = expected_methods_results[0..], .expected_error = null },
+        .{ .name = "syntax error", .path = "./test.doxa", .mode = .ERROR, .input = null, .expected_print = null, .expected_peek = null, .expected_error = .{ .exit_code = 1, .contains_message = "equals sign '=' is not used for variable declarations", .error_code = "E2004" } },
+        .{ .name = "undefined variable", .path = "./test/misc/error_test.doxa", .mode = .ERROR, .input = null, .expected_print = null, .expected_peek = null, .expected_error = .{ .exit_code = 1, .contains_message = "Undefined variable", .error_code = "E1001" } },
     };
 
     std.debug.print("\n=== Running test suite ===\n", .{});
@@ -806,7 +884,11 @@ test "unified runner" {
         std.debug.print("\n=== Running {s} test ===\n", .{tc.name});
         std.debug.print("Running doxa command with {s}...\n", .{tc.path});
         const result = try runTestCase(allocator, tc);
-        std.debug.print("Parsing output...\n", .{});
+        if (tc.mode == .ERROR) {
+            std.debug.print("Checking error conditions...\n", .{});
+        } else {
+            std.debug.print("Parsing output...\n", .{});
+        }
         if (result.failed == 0 and result.untested == 0) {
             std.debug.print("✓ All {d} test cases passed\n", .{result.passed});
         } else {
