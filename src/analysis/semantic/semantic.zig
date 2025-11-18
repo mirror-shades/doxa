@@ -411,7 +411,7 @@ pub const SemanticAnalyzer = struct {
                     switch (sym.kind) {
                         .Function => {
                             const func_type = try self.allocator.create(ast.FunctionType);
-                            const return_type = try self.allocator.create(ast.TypeInfo);
+                            const return_type = try ast.TypeInfo.createDefault(self.allocator);
                             return_type.* = if (sym.return_type_info) |rti| rti else ast.TypeInfo{ .base = .Nothing };
 
                             // Use stored parameter types if available, otherwise create empty ones
@@ -433,7 +433,7 @@ pub const SemanticAnalyzer = struct {
                                 .return_type = return_type,
                             };
 
-                            const type_info = try self.allocator.create(ast.TypeInfo);
+                            const type_info = try ast.TypeInfo.createDefault(self.allocator);
                             type_info.* = .{ .base = .Function, .function_type = func_type, .is_mutable = false };
 
                             const placeholder = @import("../../types/types.zig").TokenLiteral{ .nothing = {} };
@@ -667,14 +667,14 @@ pub const SemanticAnalyzer = struct {
                     const func_type = try self.allocator.create(ast.FunctionType);
                     func_type.* = .{
                         .params = param_types,
-                        .return_type = try self.allocator.create(ast.TypeInfo),
+                        .return_type = try ast.TypeInfo.createDefault(self.allocator),
                         .param_aliases = param_aliases,
                     };
                     func_type.return_type.* = func.return_type_info; // Use declared type if available
 
                     // Add function to current scope BEFORE inferring return type (for recursive calls)
                     if (scope.lookupVariable(func.name.lexeme) == null) {
-                        const func_type_info = try self.allocator.create(ast.TypeInfo);
+                        const func_type_info = try ast.TypeInfo.createDefault(self.allocator);
                         func_type_info.* = .{ .base = .Function, .function_type = func_type };
 
                         var env = Environment.init(
@@ -706,7 +706,7 @@ pub const SemanticAnalyzer = struct {
             switch (stmt.data) {
                 .VarDecl => |decl| {
                     // Create TypeInfo
-                    const type_info = try self.allocator.create(ast.TypeInfo);
+                    const type_info = try ast.TypeInfo.createDefault(self.allocator);
                     errdefer self.allocator.destroy(type_info);
 
                     // Check if we have an explicit type annotation
@@ -810,7 +810,7 @@ pub const SemanticAnalyzer = struct {
                 },
                 .EnumDecl => |enum_decl| {
                     // Register the enum type in the current scope
-                    const enum_type_info = try self.allocator.create(ast.TypeInfo);
+                    const enum_type_info = try ast.TypeInfo.createDefault(self.allocator);
                     enum_type_info.* = .{ .base = .Custom, .custom_type = enum_decl.name.lexeme, .is_mutable = false };
 
                     // Create a placeholder value for the enum type
@@ -870,7 +870,7 @@ pub const SemanticAnalyzer = struct {
                             }
 
                             // Register the struct type in the current scope
-                            const struct_type_info = try self.allocator.create(ast.TypeInfo);
+                            const struct_type_info = try ast.TypeInfo.createDefault(self.allocator);
                             struct_type_info.* = .{ .base = .Custom, .custom_type = struct_decl.name.lexeme, .struct_fields = struct_fields, .is_mutable = false };
 
                             // Create a placeholder value for the struct type
@@ -929,12 +929,12 @@ pub const SemanticAnalyzer = struct {
                                 // Determine return type: use declared, or default for instance methods to the struct type when missing
                                 var ret_type_ptr: *ast.TypeInfo = undefined;
                                 if (m.return_type_info.base != .Nothing) {
-                                    const rtp = try self.allocator.create(ast.TypeInfo);
+                                    const rtp = try ast.TypeInfo.createDefault(self.allocator);
                                     rtp.* = try self.resolveTypeInfo(m.return_type_info);
                                     ret_type_ptr = rtp;
                                 } else {
                                     // Heuristic: if instance method without explicit return, default to this struct type
-                                    const rtp = try self.allocator.create(ast.TypeInfo);
+                                    const rtp = try ast.TypeInfo.createDefault(self.allocator);
                                     rtp.* = .{ .base = .Struct, .custom_type = struct_decl.name.lexeme, .struct_fields = struct_fields, .is_mutable = false };
                                     ret_type_ptr = rtp;
                                 }
@@ -988,7 +988,7 @@ pub const SemanticAnalyzer = struct {
 
                     if (func.return_type_info.base != .Nothing) {
                         try self.validateReturnTypeCompatibility(&func.return_type_info, inferred, .{ .location = getLocationFromBase(stmt.base) });
-                        const declared_type = try self.allocator.create(ast.TypeInfo);
+                        const declared_type = try ast.TypeInfo.createDefault(self.allocator);
                         declared_type.* = func.return_type_info;
                         inferred_return_type = declared_type;
                     }
@@ -1012,7 +1012,7 @@ pub const SemanticAnalyzer = struct {
                         if (scope.lookupVariable(decl.name.lexeme) == null) {
                             // This is a local variable in a function body that wasn't added during collection
                             // Create TypeInfo for the variable
-                            const type_info = try self.allocator.create(ast.TypeInfo);
+                            const type_info = try ast.TypeInfo.createDefault(self.allocator);
                             errdefer self.allocator.destroy(type_info);
 
                             // Check if we have an explicit type annotation
@@ -1202,7 +1202,7 @@ pub const SemanticAnalyzer = struct {
         switch (type_info.base) {
             .Array => {
                 if (type_info.array_type) |elem| {
-                    const elem_copy = try self.allocator.create(ast.TypeInfo);
+                    const elem_copy = try ast.TypeInfo.createDefault(self.allocator);
                     elem_copy.* = try self.deepCopyTypeInfo(elem.*);
                     copied.array_type = elem_copy;
                 }
@@ -1211,7 +1211,7 @@ pub const SemanticAnalyzer = struct {
                 if (type_info.struct_fields) |fields| {
                     const new_fields = try self.allocator.alloc(ast.StructFieldType, fields.len);
                     for (fields, 0..) |field, i| {
-                        const ti_copy = try self.allocator.create(ast.TypeInfo);
+                        const ti_copy = try ast.TypeInfo.createDefault(self.allocator);
                         ti_copy.* = try self.deepCopyTypeInfo(field.type_info.*);
                         new_fields[i] = .{ .name = field.name, .type_info = ti_copy };
                     }
@@ -1224,7 +1224,7 @@ pub const SemanticAnalyzer = struct {
                     for (fn_type.params, 0..) |p, i| {
                         params_copy[i] = try self.deepCopyTypeInfo(p);
                     }
-                    const ret_copy = try self.allocator.create(ast.TypeInfo);
+                    const ret_copy = try ast.TypeInfo.createDefault(self.allocator);
                     ret_copy.* = try self.deepCopyTypeInfo(fn_type.return_type.*);
                     const fn_copy = try self.allocator.create(ast.FunctionType);
                     fn_copy.* = .{
@@ -1239,7 +1239,7 @@ pub const SemanticAnalyzer = struct {
                 if (type_info.union_type) |u| {
                     const new_types = try self.allocator.alloc(*ast.TypeInfo, u.types.len);
                     for (u.types, 0..) |member, i| {
-                        const m_copy = try self.allocator.create(ast.TypeInfo);
+                        const m_copy = try ast.TypeInfo.createDefault(self.allocator);
                         m_copy.* = try self.deepCopyTypeInfo(member.*);
                         new_types[i] = m_copy;
                     }
@@ -1267,7 +1267,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn deepCopyTypeInfoPtr(self: *SemanticAnalyzer, src: *ast.TypeInfo) !*ast.TypeInfo {
-        const copied = try self.allocator.create(ast.TypeInfo);
+        const copied = try ast.TypeInfo.createDefault(self.allocator);
         copied.* = try self.deepCopyTypeInfo(src.*);
         return copied;
     }
@@ -1285,7 +1285,7 @@ pub const SemanticAnalyzer = struct {
         if (matched_var_name) |name| {
             // Build a narrowed TypeInfo from the patterns (use first pattern for type narrowing)
             if (case.patterns.len > 0) {
-                const narrow_info = try self.allocator.create(ast.TypeInfo);
+                const narrow_info = try ast.TypeInfo.createDefault(self.allocator);
                 const first_pattern = case.patterns[0]; // Use first pattern for type narrowing
                 narrow_info.* = switch (first_pattern.type) {
                     .INT_TYPE, .INT => .{ .base = .Int, .is_mutable = false },
@@ -1530,7 +1530,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     pub fn typeExprToTypeInfo(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) !*ast.TypeInfo {
-        const type_info = try self.allocator.create(ast.TypeInfo);
+        const type_info = try ast.TypeInfo.createDefault(self.allocator);
         errdefer self.allocator.destroy(type_info);
 
         switch (type_expr.data) {
@@ -1971,7 +1971,7 @@ pub const SemanticAnalyzer = struct {
             const param_type_info = if (param.type_expr) |type_expr|
                 try ast.typeInfoFromExpr(self.allocator, type_expr)
             else
-                try self.allocator.create(ast.TypeInfo);
+                try ast.TypeInfo.createDefault(self.allocator);
 
             if (param.type_expr == null) {
                 param_type_info.* = .{ .base = .Nothing }; // Default to nothing if no type specified
@@ -2040,7 +2040,7 @@ pub const SemanticAnalyzer = struct {
                         }
                     } else {
                         // Return without value - should be Nothing type
-                        const nothing_type = try self.allocator.create(ast.TypeInfo);
+                        const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                         nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
 
                         if (actual_return_type == null) {
@@ -2307,11 +2307,11 @@ pub const SemanticAnalyzer = struct {
                                             if (!m.is_public) continue; // only export public methods
                                             var ret_type_ptr: *ast.TypeInfo = undefined;
                                             if (m.return_type_info.base != .Nothing) {
-                                                const rtp = try self.allocator.create(ast.TypeInfo);
+                                                const rtp = try ast.TypeInfo.createDefault(self.allocator);
                                                 rtp.* = try self.resolveTypeInfo(m.return_type_info);
                                                 ret_type_ptr = rtp;
                                             } else {
-                                                const rtp = try self.allocator.create(ast.TypeInfo);
+                                                const rtp = try ast.TypeInfo.createDefault(self.allocator);
                                                 rtp.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
                                                 ret_type_ptr = rtp;
                                             }
@@ -2419,7 +2419,7 @@ pub const SemanticAnalyzer = struct {
             const param_type_info = if (param.type_expr) |type_expr|
                 try ast.typeInfoFromExpr(self.allocator, type_expr)
             else
-                try self.allocator.create(ast.TypeInfo);
+                try ast.TypeInfo.createDefault(self.allocator);
 
             if (param.type_expr == null) {
                 param_type_info.* = .{ .base = .Nothing }; // Default to nothing if no type specified
@@ -2474,7 +2474,7 @@ pub const SemanticAnalyzer = struct {
             }
         } else if (all_return_types.items.len == 0) {
             // No return statements - function returns Nothing
-            const type_info = try self.allocator.create(ast.TypeInfo);
+            const type_info = try ast.TypeInfo.createDefault(self.allocator);
             type_info.* = .{ .base = .Nothing, .is_mutable = false };
             inferred_return_type = type_info;
         } else if (all_return_types.items.len == 1) {
@@ -2501,7 +2501,7 @@ pub const SemanticAnalyzer = struct {
                         try all_return_types.append(return_type);
                     } else {
                         // Return without value - add Nothing type
-                        const nothing_type = try self.allocator.create(ast.TypeInfo);
+                        const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                         nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
                         if (terminating_return_type.* == null) {
                             terminating_return_type.* = nothing_type;
@@ -2561,7 +2561,7 @@ pub const SemanticAnalyzer = struct {
                                 }
                                 try all_return_types.append(return_type);
                             } else {
-                                const nothing_type = try self.allocator.create(ast.TypeInfo);
+                                const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                                 nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
                                 if (terminating_return_type.* == null) {
                                     terminating_return_type.* = nothing_type;
@@ -2596,7 +2596,7 @@ pub const SemanticAnalyzer = struct {
                         try return_types.append(return_type);
                     } else {
                         // Return without value - add Nothing type
-                        const nothing_type = try self.allocator.create(ast.TypeInfo);
+                        const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                         nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
                         try return_types.append(nothing_type);
                     }
@@ -2614,7 +2614,7 @@ pub const SemanticAnalyzer = struct {
                                 try return_types.append(return_type);
                             } else {
                                 // Return without value - add Nothing type
-                                const nothing_type = try self.allocator.create(ast.TypeInfo);
+                                const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                                 nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
                                 try return_types.append(nothing_type);
                             }
@@ -2651,7 +2651,7 @@ pub const SemanticAnalyzer = struct {
                     const return_type = try infer_type.inferTypeFromExpr(self, value);
                     try return_types.append(return_type);
                 } else {
-                    const nothing_type = try self.allocator.create(ast.TypeInfo);
+                    const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                     nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
                     try return_types.append(nothing_type);
                 }

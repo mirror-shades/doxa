@@ -106,7 +106,7 @@ pub fn createUnionType(allocator: std.mem.Allocator, types: []*ast.TypeInfo) !*a
         .current_type_index = 0,
     };
 
-    const type_info = try allocator.create(ast.TypeInfo);
+    const type_info = try ast.TypeInfo.createDefault(allocator);
     type_info.* = .{
         .base = .Union,
         .union_type = union_type,

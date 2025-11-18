@@ -320,7 +320,7 @@ pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.Ty
     const ut = try self.allocator.create(ast.UnionType);
     ut.* = .{ .types = unique, .current_type_index = null };
 
-    const out = try self.allocator.create(ast.TypeInfo);
+    const out = try ast.TypeInfo.createDefault(self.allocator);
     out.* = .{ .base = .Union, .union_type = ut, .is_mutable = false };
     return out;
 }
@@ -436,8 +436,8 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
         self.reporter.reportCompileError(
             span.location,
             ErrorCode.TYPE_MISMATCH,
-            "Type mismatch: expected {s}, got {s}",
-            .{ typeLabel(expected), typeLabel(actual) },
+            "{s} is not assignable to type {s}",
+            .{ typeLabel(actual), typeLabel(expected) },
         );
         self.fatal_error = true;
         return;
@@ -501,7 +501,7 @@ pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
 }
 
 pub fn createModuleNamespaceVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
-    const type_info = self.allocator.create(ast.TypeInfo) catch return null;
+    const type_info = ast.TypeInfo.createDefault(self.allocator) catch return null;
     errdefer self.allocator.destroy(type_info);
 
     type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = name };
@@ -534,7 +534,7 @@ pub fn isModuleNamespace(self: *SemanticAnalyzer, name: []const u8) bool {
 
 /// unchanged domain logic (minor nits left as-is)
 pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8, field_name: []const u8, span: ast.SourceSpan) !*ast.TypeInfo {
-    var type_info = try self.allocator.create(ast.TypeInfo);
+    var type_info = try ast.TypeInfo.createDefault(self.allocator);
     errdefer self.allocator.destroy(type_info);
 
     if (self.parser) |parser| {
@@ -587,7 +587,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                                                 const params_slice = params_list.toOwnedSlice() catch break;
 
                                                 // Use the actual return type from the function declaration
-                                                const ret_ptr = self.allocator.create(ast.TypeInfo) catch break;
+                                                const ret_ptr = ast.TypeInfo.createDefault(self.allocator) catch break;
                                                 ret_ptr.* = f.return_type_info;
 
                                                 ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr };
@@ -604,7 +604,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
 
                         // Fallback if not found: zero params and nothing return (safer than Int)
                         if (found_func_type == null) {
-                            const return_type = self.allocator.create(ast.TypeInfo) catch return type_info;
+                            const return_type = ast.TypeInfo.createDefault(self.allocator) catch return type_info;
                             return_type.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
                             const function_type = self.allocator.create(ast.FunctionType) catch return type_info;
                             function_type.* = ast.FunctionType{ .params = &[_]ast.TypeInfo{}, .return_type = return_type };
@@ -677,7 +677,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
 
 pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, imported_symbol: import_parser.ImportedSymbol) ?*Variable {
     // Create a TypeInfo based on the imported symbol kind
-    const type_info = self.allocator.create(ast.TypeInfo) catch return null;
+    const type_info = ast.TypeInfo.createDefault(self.allocator) catch return null;
     errdefer self.allocator.destroy(type_info);
 
     const ti = switch (imported_symbol.kind) {
@@ -694,7 +694,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
                 if (self.allocator.alloc(ast.TypeInfo, pc) catch null) |params_buf| {
                     // Default parameter types to Nothing when unknown
                     for (params_buf) |*ti| ti.* = ast.TypeInfo{ .base = .Nothing };
-                    if (self.allocator.create(ast.TypeInfo) catch null) |ret_ptr| {
+                    if (ast.TypeInfo.createDefault(self.allocator) catch null) |ret_ptr| {
                         ret_ptr.* = if (maybe_return_info) |ri| ri else ast.TypeInfo{ .base = .Nothing };
                         if (self.allocator.create(ast.FunctionType) catch null) |ft_ptr| {
                             ft_ptr.* = ast.FunctionType{ .params = params_buf, .return_type = ret_ptr };
@@ -728,7 +728,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
                                                 params_list.append(ti) catch break;
                                             }
                                             const params_slice = params_list.toOwnedSlice() catch break;
-                                            const ret_ptr = self.allocator.create(ast.TypeInfo) catch break;
+                                            const ret_ptr = ast.TypeInfo.createDefault(self.allocator) catch break;
                                             ret_ptr.* = f.return_type_info;
                                             ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr };
                                             built_func_type = ft;
@@ -746,7 +746,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
 
             // Fallback if not found: zero params and nothing return (safer than Int)
             if (built_func_type == null) {
-                const return_type = self.allocator.create(ast.TypeInfo) catch return null;
+                const return_type = ast.TypeInfo.createDefault(self.allocator) catch return null;
                 return_type.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
                 const function_type = self.allocator.create(ast.FunctionType) catch return null;
                 function_type.* = ast.FunctionType{ .params = &[_]ast.TypeInfo{}, .return_type = return_type };
@@ -808,7 +808,7 @@ pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fiel
         if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
             custom_type_name = try self.allocator.dupe(u8, field.type_info.custom_type.?);
         }
-        const full_type_info = try self.allocator.create(ast.TypeInfo);
+        const full_type_info = try ast.TypeInfo.createDefault(self.allocator);
         full_type_info.* = field.type_info.*; // NOTE: shallow copy; deep-copy if needed
         struct_fields[index] = CustomTypeInfo.StructField{
             .name = try self.allocator.dupe(u8, field.name),

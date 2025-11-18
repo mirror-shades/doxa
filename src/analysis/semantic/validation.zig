@@ -87,7 +87,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                     if (scope.lookupVariable(decl.name.lexeme) == null) {
                         // This is a local variable in a function body that wasn't added during collection
                         // Create TypeInfo for the variable
-                        const type_info = try ctx.allocator.create(ast.TypeInfo);
+                        const type_info = try ast.TypeInfo.createDefault(ctx.allocator);
                         errdefer ctx.allocator.destroy(type_info);
 
                         // Check if we have an explicit type annotation

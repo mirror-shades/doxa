@@ -204,21 +204,15 @@ pub const Reporter = struct {
             final_severity = .Error;
         }
 
-        var buf = std.array_list.Managed(u8).init(self.allocator);
-        defer buf.deinit();
-
-        std.fmt.format(buf.writer(), fmt, args) catch |err| {
-            const fallback_msg = switch (err) {
-                else => "message formatting failed",
-            };
-            const msg_copy = self.allocator.dupe(u8, fallback_msg) catch {
-                return;
-            };
+        const msg_len = std.fmt.count(fmt, args);
+        const msg_buf = self.allocator.alloc(u8, msg_len) catch {
+            const fallback_msg = "out of memory while formatting diagnostic";
+            const fallback_copy = self.allocator.dupe(u8, fallback_msg) catch return;
 
             const diag = Diagnostic{
                 .phase = phase,
                 .severity = final_severity,
-                .message = msg_copy,
+                .message = fallback_copy,
                 .loc = loc,
                 .code = code,
                 .related_info = null,
@@ -226,12 +220,15 @@ pub const Reporter = struct {
             };
 
             self.appendDiagnostic(diag);
-            std.debug.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), msg_copy });
+            std.debug.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), fallback_copy });
             return;
         };
 
-        const msg_copy = buf.toOwnedSlice() catch {
-            const fallback_msg = "out of memory: diagnostic message lost";
+        const msg_copy = std.fmt.bufPrint(msg_buf, fmt, args) catch |err| {
+            self.allocator.free(msg_buf);
+            const fallback_msg = switch (err) {
+                error.NoSpaceLeft => "message formatting failed",
+            };
             const fallback_copy = self.allocator.dupe(u8, fallback_msg) catch return;
 
             const diag = Diagnostic{

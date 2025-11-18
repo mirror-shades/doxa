@@ -80,7 +80,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
         return cached;
     }
 
-    var type_info = try ctx.allocator.create(ast.TypeInfo);
+    var type_info = try ast.TypeInfo.createDefault(ctx.allocator);
     errdefer ctx.allocator.destroy(type_info);
 
     switch (expr.data) {
@@ -431,7 +431,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                     const element_type = try inferTypeFromExpr(ctx, element);
                     try unifyTypes(ctx, first_type, element_type, .{ .location = getLocationFromBase(expr.base) });
                 }
-                const array_type = try ctx.allocator.create(ast.TypeInfo);
+                const array_type = try ast.TypeInfo.createDefault(ctx.allocator);
                 array_type.* = first_type.*;
                 type_info.* = .{ .base = .Array, .array_type = array_type };
             }
@@ -629,7 +629,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
             }
 
             // Range expressions always produce arrays of integers
-            const element_type = try ctx.allocator.create(ast.TypeInfo);
+            const element_type = try ast.TypeInfo.createDefault(ctx.allocator);
             element_type.* = .{ .base = .Int };
             type_info.* = .{ .base = .Array, .array_type = element_type };
         },
@@ -706,7 +706,7 @@ pub fn deepCopyTypeInfo(ctx: *TypeAnalysisContext, type_info: ast.TypeInfo) std.
         const fn_copy = try ctx.allocator.create(ast.FunctionType);
         fn_copy.* = .{
             .params = try ctx.allocator.dupe(ast.TypeInfo, func_type.params),
-            .return_type = try ctx.allocator.create(ast.TypeInfo),
+            .return_type = try ast.TypeInfo.createDefault(ctx.allocator),
             .param_aliases = if (func_type.param_aliases) |aliases|
                 try ctx.allocator.dupe(bool, aliases)
             else
@@ -728,7 +728,7 @@ pub fn deepCopyTypeInfo(ctx: *TypeAnalysisContext, type_info: ast.TypeInfo) std.
     }
 
     if (type_info.array_type) |array_type| {
-        const array_copy = try ctx.allocator.create(ast.TypeInfo);
+        const array_copy = try ast.TypeInfo.createDefault(ctx.allocator);
         array_copy.* = try deepCopyTypeInfo(ctx, array_type.*);
         copy.array_type = array_copy;
     }
@@ -742,7 +742,7 @@ pub fn deepCopyTypeInfo(ctx: *TypeAnalysisContext, type_info: ast.TypeInfo) std.
 
 /// Deep copy type information pointer
 pub fn deepCopyTypeInfoPtr(ctx: *TypeAnalysisContext, src: *ast.TypeInfo) !*ast.TypeInfo {
-    const copy = try ctx.allocator.create(ast.TypeInfo);
+    const copy = try ast.TypeInfo.createDefault(ctx.allocator);
     copy.* = try deepCopyTypeInfo(ctx, src.*);
     return copy;
 }

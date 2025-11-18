@@ -1004,6 +1004,16 @@ pub const TypeInfo = struct {
             .map => .Map,
         };
     }
+
+    pub fn initDefault(self: *TypeInfo) void {
+        self.* = TypeInfo{ .base = .Nothing };
+    }
+
+    pub fn createDefault(allocator: std.mem.Allocator) !*TypeInfo {
+        const type_info = try allocator.create(TypeInfo);
+        type_info.initDefault();
+        return type_info;
+    }
 };
 
 pub const StructFieldType = struct {

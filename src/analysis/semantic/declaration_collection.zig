@@ -135,14 +135,14 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                 // Set up function type
                 func_type.* = .{
                     .params = param_types,
-                    .return_type = try ctx.allocator.create(ast.TypeInfo),
+                    .return_type = try ast.TypeInfo.createDefault(ctx.allocator),
                     .param_aliases = param_aliases,
                 };
                 func_type.return_type.* = inferred_return_type;
 
                 // Add function to current scope if not already present
                 if (scope.lookupVariable(func.name.lexeme) == null) {
-                    const func_type_info = try ctx.allocator.create(ast.TypeInfo);
+                    const func_type_info = try ast.TypeInfo.createDefault(ctx.allocator);
                     func_type_info.* = .{ .base = .Function, .function_type = func_type };
 
                     _ = Environment.init(
@@ -179,7 +179,7 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
             },
             .VarDecl => |decl| {
                 // Create TypeInfo for the variable
-                const type_info = try ctx.allocator.create(ast.TypeInfo);
+                const type_info = try ast.TypeInfo.createDefault(ctx.allocator);
                 errdefer ctx.allocator.destroy(type_info);
 
                 // Check if we have an explicit type annotation
@@ -339,7 +339,7 @@ fn inferFunctionReturnType(ctx: *type_analysis.TypeAnalysisContext, _func: anyty
     _ = _func;
     // This is a simplified implementation
     // In a full implementation, this would analyze the function body to determine return type
-    const return_type = try ctx.allocator.create(ast.TypeInfo);
+    const return_type = try ast.TypeInfo.createDefault(ctx.allocator);
     return_type.* = .{ .base = .Nothing };
     return return_type;
 }
