@@ -871,7 +871,7 @@ test "unified runner" {
         .{ .name = "complex print", .path = "./test/misc/complex_print.doxa", .mode = .PRINT, .input = null, .expected_print = expected_complex_print_results[0..], .expected_peek = null, .expected_error = null },
         .{ .name = "expressions", .path = "./test/misc/expressions.doxa", .mode = .PEEK, .input = null, .expected_print = null, .expected_peek = expected_expressions_results[0..], .expected_error = null },
         .{ .name = "methods", .path = "./test/misc/methods.doxa", .mode = .PEEK, .input = "f\n", .expected_print = null, .expected_peek = expected_methods_results[0..], .expected_error = null },
-        .{ .name = "syntax error", .path = "./test.doxa", .mode = .ERROR, .input = null, .expected_print = null, .expected_peek = null, .expected_error = .{ .exit_code = 1, .contains_message = "equals sign '=' is not used for variable declarations", .error_code = "E2004" } },
+        .{ .name = "syntax error", .path = "./test/syntax/equals_for_assign.doxa", .mode = .ERROR, .input = null, .expected_print = null, .expected_peek = null, .expected_error = .{ .exit_code = 1, .contains_message = "equals sign '=' is not used for variable declarations", .error_code = "E2004" } },
         .{ .name = "undefined variable", .path = "./test/misc/error_test.doxa", .mode = .ERROR, .input = null, .expected_print = null, .expected_peek = null, .expected_error = .{ .exit_code = 1, .contains_message = "Undefined variable", .error_code = "E1001" } },
     };
 

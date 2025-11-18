@@ -28,7 +28,7 @@ function lex(src :: string) {
     }
 
     each t in tokens {
-        @print("{t.type}\n") // THIS LINE CAUSES THE ERRO
+        @print("{t.type}\n") 
     }
 
     // add to source_manager @print("there are {line_breaks} lines")
