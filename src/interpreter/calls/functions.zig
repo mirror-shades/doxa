@@ -141,6 +141,10 @@ pub const FunctionOps = struct {
             try execBuiltinSleep(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "random")) {
             try execBuiltinRandom(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "clear")) {
+            try execBuiltinClear(vm);
+        } else if (std.mem.eql(u8, c.qualified_name, "find")) {
+            try execBuiltinFind(vm);
         } else {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown built-in function: {s}", .{c.qualified_name});
         }
@@ -303,6 +307,125 @@ pub const FunctionOps = struct {
         };
 
         try vm.stack.push(HIRFrame.initInt(result));
+    }
+
+    fn execBuiltinClear(vm: anytype) !void {
+        const coll = try vm.stack.pop();
+        switch (coll.value) {
+            .array => |arr| {
+                const mutable_arr = arr;
+                for (mutable_arr.elements) |*elem| {
+                    elem.* = HIRValue.nothing;
+                }
+                // Clear modifies in place and returns nothing
+            },
+            .string => |s_val| {
+                // Strings are immutable, so clear on string should report an error
+                return vm.reporter.reportRuntimeError(
+                    null,
+                    ErrorCode.INVALID_ARRAY_TYPE,
+                    "clear: cannot clear string (strings are immutable)",
+                    .{},
+                );
+            },
+            else => return vm.reporter.reportRuntimeError(
+                null,
+                ErrorCode.INVALID_ARRAY_TYPE,
+                "clear: target must be array, got {s}",
+                .{@tagName(coll.value)},
+            ),
+        }
+    }
+
+    fn valuesEqual(a: HIRValue, b: HIRValue) bool {
+        return switch (a) {
+            .int => |av| switch (b) {
+                .int => |bv| av == bv,
+                .byte => |bv| av == bv,
+                .float => |bv| @as(f64, @floatFromInt(av)) == bv,
+                else => false,
+            },
+            .float => |av| switch (b) {
+                .float => |bv| av == bv,
+                .byte => |bv| av == @as(f64, @floatFromInt(bv)),
+                .int => |bv| av == @as(f64, @floatFromInt(bv)),
+                else => false,
+            },
+            .byte => |av| switch (b) {
+                .byte => |bv| av == bv,
+                .int => |bv| av == bv,
+                .float => |bv| @as(f64, @floatFromInt(av)) == bv,
+                else => false,
+            },
+            .tetra => |av| switch (b) {
+                .tetra => |bv| av == bv,
+                else => false,
+            },
+            .string => |av| switch (b) {
+                .string => |bv| std.mem.eql(u8, av, bv),
+                else => false,
+            },
+            .nothing => switch (b) {
+                .nothing => true,
+                else => false,
+            },
+            .enum_variant => |av| switch (b) {
+                .enum_variant => |bv| std.mem.eql(u8, av.variant_name, bv.variant_name) and std.mem.eql(u8, av.type_name, bv.type_name),
+                else => false,
+            },
+            else => false,
+        };
+    }
+
+    fn execBuiltinFind(vm: anytype) !void {
+        const value = try vm.stack.pop();
+        const coll = try vm.stack.pop();
+
+        switch (coll.value) {
+            .array => |arr| {
+                var idx: i64 = 0;
+                for (arr.elements) |elem| {
+                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                    if (valuesEqual(elem, value.value)) {
+                        try vm.stack.push(HIRFrame.initInt(idx));
+                        return;
+                    }
+                    idx += 1;
+                }
+                try vm.stack.push(HIRFrame.initInt(-1));
+            },
+            .string => |s_val| {
+                const needle = switch (value.value) {
+                    .string => |s| s,
+                    else => {
+                        return vm.reporter.reportRuntimeError(
+                            null,
+                            ErrorCode.TYPE_MISMATCH,
+                            "@find on string requires string value, got {s}",
+                            .{@tagName(value.value)},
+                        );
+                    },
+                };
+
+                if (needle.len == 0) {
+                    try vm.stack.push(HIRFrame.initInt(0));
+                    return;
+                }
+
+                const maybe_idx = std.mem.indexOf(u8, s_val, needle);
+                if (maybe_idx) |found| {
+                    try vm.stack.push(HIRFrame.initInt(@intCast(found)));
+                } else {
+                    try vm.stack.push(HIRFrame.initInt(-1));
+                }
+            },
+            else => return vm.reporter.reportRuntimeError(
+                null,
+                ErrorCode.INVALID_ARRAY_TYPE,
+                "@find requires array or string, got {s}",
+                .{@tagName(coll.value)},
+            ),
+        }
     }
 
     fn execBuiltinPower(vm: anytype, function_name: []const u8) !void {

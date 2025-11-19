@@ -206,11 +206,13 @@ pub const rules = blk: {
     r.set(.LENGTH, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.SLICE, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
-    // Array ops
+    // Array / collection ops
     r.set(.PUSH, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.POP, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.INSERT, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.REMOVE, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.CLEAR, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.FIND, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Type conversions
     r.set(.TOSTRING, .{ .prefix = internalCallExpr, .precedence = .CALL });
@@ -219,8 +221,6 @@ pub const rules = blk: {
     r.set(.TOBYTE, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // I/O
-    r.set(.READ, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.WRITE, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.PRINT, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Control flow
@@ -235,6 +235,7 @@ pub const rules = blk: {
     // System information
     r.set(.OS, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.ARCH, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.ABI, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.TIME, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.TICK, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.BUILD, .{ .prefix = internalCallExpr, .precedence = .CALL });

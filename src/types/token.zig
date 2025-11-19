@@ -78,12 +78,13 @@ pub const TokenType = enum {
     UNREACHABLE, // unreachable
 
     // built-in methods
-    // IMPLEMENTED AND TESTED
     TYPE, // @type        - get type name as string
     LENGTH, // @length      - get length of string/array
     PUSH, // @push        - add to end of string/array
     POP, // @pop         - remove from end of string/array
     PRINT, // @print       - print to stdout
+    FIND, // @find        - find first occurrence of substring/element in string/array
+    CLEAR, // @clear       - clear string/array
     TOSTRING, // @string      - convert to string
     TOINT, // @int         - convert to int (panics on failure)
     TOFLOAT, // @float       - convert to float (panics on failure)
@@ -91,25 +92,17 @@ pub const TokenType = enum {
     INSERT, // @insert      - insert into string/array at index
     REMOVE, // @remove      - remove from string/array at index
     SLICE, // @slice       - get substring/subarray
-    // IMPLEMENTED AND MUST BE TESTED SEPERATELY
     ASSERT, // @assert      - assert condition with message
     PANIC, // @panic       - panic with message
     INPUT, // @input       - read from stdin
     OS, // @os     - get operating system
     ARCH, // @arch     - get architecture
+    ABI, // @abi     - get ABI
     TIME, // @time       - get current time (Unix seconds)
     TICK, // @tick      - monotonic high-resolution time in nanoseconds
     EXIT, // @exit     - exit program
     SLEEP, // @sleep       - sleep for a given number of milliseconds
     RANDOM, // @random       - get random number
-    // NOT IMPLEMENTED
-    SPAWN, // @spawn     - spawn OS process
-    KILL, // @kill     - kill process
-    WAIT, // @wait     - wait for process to finish
-    ALIVE, // @alive     - see if process is active
-
-    READ, // @read        - read file
-    WRITE, // @write       - write file
     BUILD, // @build       - compile doxa file to executable
 
     // keywords with alternate tokens

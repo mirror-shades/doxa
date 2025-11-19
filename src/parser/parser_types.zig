@@ -531,10 +531,6 @@ pub const Parser = struct {
         if (std.mem.eql(u8, name, "float")) return .TOFLOAT;
         if (std.mem.eql(u8, name, "byte")) return .TOBYTE;
 
-        // I/O
-        if (std.mem.eql(u8, name, "read")) return .READ;
-        if (std.mem.eql(u8, name, "write")) return .WRITE;
-
         // Control flow
         if (std.mem.eql(u8, name, "panic")) return .PANIC;
         if (std.mem.eql(u8, name, "assert")) return .ASSERT;

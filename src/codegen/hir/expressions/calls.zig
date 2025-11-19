@@ -518,6 +518,51 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(builtin_data.arguments[1], true, false);
             try self.generator.generateExpression(builtin_data.arguments[2], true, false);
             try self.generator.instructions.append(.ArraySlice);
+        } else if (std.mem.eql(u8, name, "clear")) {
+            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            // Evaluate receiver/collection
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            // Call builtin clear(collection) - returns cleared collection for internal use
+            try self.generator.instructions.append(.{
+                .Call = .{
+                    .function_index = 0,
+                    .qualified_name = "clear",
+                    .arg_count = 1,
+                    .call_kind = .BuiltinFunction,
+                    .target_module = null,
+                    .return_type = .Nothing, // But VM returns the cleared collection
+                },
+            });
+            // If called on a variable, store the result back
+            if (builtin_data.arguments[0].data == .Variable) {
+                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+                const var_idx = try self.generator.getOrCreateVariable(var_name);
+                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+            }
+            // @clear returns nothing
+            const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
+            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
+
+            if (!preserve_result) {
+                try self.generator.instructions.append(.Pop);
+            }
+        } else if (std.mem.eql(u8, name, "find")) {
+            if (builtin_data.arguments.len != 2) return error.InvalidArgumentCount;
+            // Evaluate receiver/collection and search value
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
+            try self.generator.instructions.append(.{
+                .Call = .{
+                    .function_index = 0,
+                    .qualified_name = "find",
+                    .arg_count = 2,
+                    .call_kind = .BuiltinFunction,
+                    .target_module = null,
+                    .return_type = .Int,
+                },
+            });
         } else if (std.mem.eql(u8, name, "os")) {
             if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
             try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "os", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .String } });
@@ -550,6 +595,9 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(builtin_data.arguments[3], true, false);
             try self.generator.generateExpression(builtin_data.arguments[4], true, false);
             try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "build", .arg_count = 5, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
+        } else if (std.mem.eql(u8, name, "abi")) {
+            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
+            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "abi", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .String } });
         } else if (std.mem.eql(u8, name, "int")) {
             if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);

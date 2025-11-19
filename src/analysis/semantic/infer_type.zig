@@ -1126,6 +1126,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (bc.arguments.len != 0) return type_info;
                 type_info.* = .{ .base = .String };
                 return type_info;
+            } else if (std.mem.eql(u8, fname, "abi")) {
+                requireArity.check(self, expr, bc.arguments.len, 0, fname);
+                if (bc.arguments.len != 0) return type_info;
+                type_info.* = .{ .base = .String };
+                return type_info;
             } else if (std.mem.eql(u8, fname, "time")) {
                 requireArity.check(self, expr, bc.arguments.len, 0, fname);
                 if (bc.arguments.len != 0) return type_info;
@@ -1249,6 +1254,57 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
                 type_info.* = .{ .base = .Int };
                 return type_info;
+            } else if (std.mem.eql(u8, fname, "clear")) {
+                requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                if (bc.arguments.len != 1) return type_info;
+                const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                if (coll_t.base != .Array and coll_t.base != .String) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(bc.arguments[0].base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
+                        "@clear requires array or string, got {s}",
+                        .{@tagName(coll_t.base)},
+                    );
+                    self.fatal_error = true;
+                    return type_info;
+                }
+                // @clear returns nothing
+                type_info.* = .{ .base = .Nothing };
+                return type_info;
+            } else if (std.mem.eql(u8, fname, "find")) {
+                requireArity.check(self, expr, bc.arguments.len, 2, fname);
+                if (bc.arguments.len != 2) return type_info;
+                const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                if (coll_t.base != .Array and coll_t.base != .String) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(bc.arguments[0].base),
+                        ErrorCode.INVALID_ARRAY_TYPE,
+                        "@find requires array or string, got {s}",
+                        .{@tagName(coll_t.base)},
+                    );
+                    self.fatal_error = true;
+                    return type_info;
+                }
+                type_info.* = .{ .base = .Int };
+                return type_info;
+            } else if (std.mem.eql(u8, fname, "assert")) {
+                requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                if (bc.arguments.len >= 1) {
+                    const cond_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                    if (cond_t.base != .Tetra) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@assert condition must be tetra", .{});
+                        self.fatal_error = true;
+                    }
+                }
+                if (bc.arguments.len >= 2) {
+                    const msg_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
+                    if (msg_t.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.TYPE_MISMATCH, "@assert message must be string", .{});
+                        self.fatal_error = true;
+                    }
+                }
+                type_info.* = .{ .base = .Nothing };
+                return type_info;
             }
 
             self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});
@@ -1310,6 +1366,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 .POP,
                 .INSERT,
                 .REMOVE,
+                .CLEAR,
+                .FIND,
                 .SLICE,
                 => {
                     if (receiver_type.base == .Nothing and method_call.receiver.data == .Variable) {
@@ -1320,7 +1378,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             }
                         }
                     }
-                    const allow_string_for_method = receiver_type.base == .String and (method_call.method.type == .PUSH or method_call.method.type == .POP or method_call.method.type == .INSERT or method_call.method.type == .REMOVE or method_call.method.type == .SLICE);
+                    const allow_string_for_method = receiver_type.base == .String and (method_call.method.type == .PUSH or method_call.method.type == .POP or method_call.method.type == .INSERT or method_call.method.type == .REMOVE or method_call.method.type == .CLEAR or method_call.method.type == .FIND or method_call.method.type == .SLICE);
                     if (receiver_type.base != .Array and !allow_string_for_method) {
                         self.reporter.reportCompileError(
                             getLocationFromBase(method_call.receiver.base),
@@ -1511,6 +1569,67 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
                             return try infer_type.inferTypeFromExpr(self, expr);
                         },
+                        .CLEAR => {
+                            if (method_call.arguments.len != 0) {
+                                self.reporter.reportCompileError(
+                                    getLocationFromBase(method_call.receiver.base),
+                                    ErrorCode.INVALID_ARGUMENT_COUNT,
+                                    "@clear takes no arguments",
+                                    .{},
+                                );
+                                self.fatal_error = true;
+                                type_info.* = .{ .base = .Nothing };
+                                return type_info;
+                            }
+
+                            if (receiver_type.base != .Array and receiver_type.base != .String) {
+                                self.reporter.reportCompileError(
+                                    getLocationFromBase(method_call.receiver.base),
+                                    ErrorCode.TYPE_MISMATCH,
+                                    "@clear requires array or string receiver, got {s}",
+                                    .{@tagName(receiver_type.base)},
+                                );
+                                self.fatal_error = true;
+                                type_info.* = .{ .base = .Nothing };
+                                return type_info;
+                            }
+
+                            var args = try self.allocator.alloc(*ast.Expr, 1);
+                            args[0] = method_call.receiver;
+                            expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                            return try infer_type.inferTypeFromExpr(self, expr);
+                        },
+                        .FIND => {
+                            if (method_call.arguments.len != 1) {
+                                self.reporter.reportCompileError(
+                                    getLocationFromBase(method_call.receiver.base),
+                                    ErrorCode.INVALID_ARGUMENT_COUNT,
+                                    "@find requires exactly one argument",
+                                    .{},
+                                );
+                                self.fatal_error = true;
+                                type_info.* = .{ .base = .Nothing };
+                                return type_info;
+                            }
+
+                            if (receiver_type.base != .Array and receiver_type.base != .String) {
+                                self.reporter.reportCompileError(
+                                    getLocationFromBase(method_call.receiver.base),
+                                    ErrorCode.TYPE_MISMATCH,
+                                    "@find requires array or string receiver, got {s}",
+                                    .{@tagName(receiver_type.base)},
+                                );
+                                self.fatal_error = true;
+                                type_info.* = .{ .base = .Nothing };
+                                return type_info;
+                            }
+
+                            var args = try self.allocator.alloc(*ast.Expr, 2);
+                            args[0] = method_call.receiver;
+                            args[1] = method_call.arguments[0];
+                            expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                            return try infer_type.inferTypeFromExpr(self, expr);
+                        },
 
                         else => {
                             self.reporter.reportCompileError(
@@ -1557,70 +1676,62 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     }
                 },
 
-                .READ,
-                .WRITE,
-                => {
-                    switch (method_call.method.type) {
-                        .READ => {
-                            if (method_call.arguments.len != 1) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.INVALID_ARGUMENT_TYPE,
-                                    "@read requires exactly one string argument (path)",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-                            const path_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[0]);
-                            if (path_type.base != .String) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.arguments[0].base),
-                                    ErrorCode.INVALID_FILE_PATH_TYPE,
-                                    "@read path must be string, got {s}",
-                                    .{@tagName(path_type.base)},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-                            type_info.* = .{ .base = .String };
-                        },
-                        .WRITE => {
-                            if (method_call.arguments.len != 2) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.INVALID_ARGUMENT_TYPE,
-                                    "@write requires two arguments (path, content)",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-                            const path_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[0]);
-                            const content_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[1]);
-                            if (path_type.base != .String or content_type.base != .String) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.arguments[0].base),
-                                    ErrorCode.INVALID_FILE_PATH_TYPE,
-                                    "@write arguments must be strings, got {s} and {s}",
-                                    .{ @tagName(path_type.base), @tagName(content_type.base) },
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-                            type_info.* = .{ .base = .Nothing };
-                        },
-
-                        else => unreachable,
-                    }
-                },
-
-                .OS, .ARCH, .TIME, .TICK => {
+                .OS, .ARCH, .ABI, .TIME, .TICK => {
                     expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = &[_]*ast.Expr{} } };
+                    return try infer_type.inferTypeFromExpr(self, expr);
+                },
+                .ASSERT => {
+                    const argc = method_call.arguments.len;
+                    if (argc < 1 or argc > 2) {
+                        if (argc < 1) {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.TOO_FEW_ARGUMENTS,
+                                "@assert requires at least 1 argument (condition)",
+                                .{},
+                            );
+                        } else {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.TOO_MANY_ARGUMENTS,
+                                "@assert takes at most 2 arguments (condition, message)",
+                                .{},
+                            );
+                        }
+                        self.fatal_error = true;
+                        type_info.* = .{ .base = .Nothing };
+                        return type_info;
+                    }
+
+                    const cond_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[0]);
+                    if (cond_type.base != .Tetra) {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(method_call.arguments[0].base),
+                            ErrorCode.TYPE_MISMATCH,
+                            "@assert condition must be tetra, got {s}",
+                            .{@tagName(cond_type.base)},
+                        );
+                        self.fatal_error = true;
+                        type_info.* = .{ .base = .Nothing };
+                        return type_info;
+                    }
+
+                    if (argc == 2) {
+                        const msg_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[1]);
+                        if (msg_type.base != .String) {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(method_call.arguments[1].base),
+                                ErrorCode.TYPE_MISMATCH,
+                                "@assert message must be string, got {s}",
+                                .{@tagName(msg_type.base)},
+                            );
+                            self.fatal_error = true;
+                            type_info.* = .{ .base = .Nothing };
+                            return type_info;
+                        }
+                    }
+
+                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = method_call.arguments } };
                     return try infer_type.inferTypeFromExpr(self, expr);
                 },
 

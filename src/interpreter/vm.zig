@@ -908,6 +908,46 @@ pub const VM = struct {
         }
     }
 
+    fn valuesEqual(a: HIRValue, b: HIRValue) bool {
+        return switch (a) {
+            .int => |av| switch (b) {
+                .int => |bv| av == bv,
+                .byte => |bv| av == bv,
+                .float => |bv| @as(f64, @floatFromInt(av)) == bv,
+                else => false,
+            },
+            .float => |av| switch (b) {
+                .float => |bv| av == bv,
+                .byte => |bv| av == @as(f64, @floatFromInt(bv)),
+                .int => |bv| av == @as(f64, @floatFromInt(bv)),
+                else => false,
+            },
+            .byte => |av| switch (b) {
+                .byte => |bv| av == bv,
+                .int => |bv| av == bv,
+                .float => |bv| @as(f64, @floatFromInt(av)) == bv,
+                else => false,
+            },
+            .tetra => |av| switch (b) {
+                .tetra => |bv| av == bv,
+                else => false,
+            },
+            .string => |av| switch (b) {
+                .string => |bv| std.mem.eql(u8, av, bv),
+                else => false,
+            },
+            .array => |av| switch (b) {
+                .array => |bv| av.elements.ptr == bv.elements.ptr, // Reference equality for arrays
+                else => false,
+            },
+            .nothing => switch (b) {
+                .nothing => true,
+                else => false,
+            },
+            else => false,
+        };
+    }
+
     fn execBuiltin(self: *VM, name: []const u8, arg_count_raw: u32) VmError!void {
         const arg_count: usize = @intCast(arg_count_raw);
 
@@ -1157,6 +1197,14 @@ pub const VM = struct {
             return;
         }
 
+        if (std.mem.eql(u8, name, "abi")) {
+            if (arg_count != 0) return error.UnimplementedInstruction;
+            const abi_name = @tagName(@import("builtin").abi);
+            const duped = try self.allocator.dupe(u8, abi_name);
+            try self.stack.push(HIRFrame.initString(duped));
+            return;
+        }
+
         if (std.mem.eql(u8, name, "time")) {
             if (arg_count != 0) return error.UnimplementedInstruction;
             const timestamp = std.time.timestamp();
@@ -1172,9 +1220,10 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "build")) {
-            // New signature: @build(src: string, out: string, arch: string, os: string, debug: tetra)
-            if (arg_count != 5) return error.UnimplementedInstruction;
+            // New signature: @build(src: string, out: string, arch: string, os: string, abi: string, debug: tetra)
+            if (arg_count != 6) return error.UnimplementedInstruction;
             const debug_frame = try self.stack.pop();
+            const abi_frame = try self.stack.pop();
             const os_frame = try self.stack.pop();
             const arch_frame = try self.stack.pop();
             const out_path_frame = try self.stack.pop();
@@ -1195,6 +1244,10 @@ pub const VM = struct {
             const os_str = switch (os_frame.value) {
                 .string => |s| s,
                 else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: fourth argument (os) must be string", .{}),
+            };
+            const abi_str = switch (abi_frame.value) {
+                .string => |s| s,
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "build: fifth argument (abi) must be string", .{}),
             };
             const debug_val: u8 = switch (debug_frame.value) {
                 .tetra => |t| t,
@@ -1243,6 +1296,7 @@ pub const VM = struct {
             try args_builder.append(opt_flag);
             if (arch_str.len > 0) try args_builder.append(try std.fmt.allocPrint(a, "--arch={s}", .{arch_str}));
             if (os_str.len > 0) try args_builder.append(try std.fmt.allocPrint(a, "--os={s}", .{os_str}));
+            if (abi_str.len > 0) try args_builder.append(try std.fmt.allocPrint(a, "--abi={s}", .{abi_str}));
 
             var child = std.process.Child.init(args_builder.items, a);
             child.cwd = ".";
@@ -1319,6 +1373,74 @@ pub const VM = struct {
             };
 
             try self.stack.push(HIRFrame.initByte(byte_val));
+            return;
+        }
+
+        if (std.mem.eql(u8, name, "clear")) {
+            if (arg_count != 1) return error.UnimplementedInstruction;
+            const coll = try self.stack.pop();
+            switch (coll.value) {
+                .array => |arr| {
+                    const mutable_arr = arr;
+                    for (mutable_arr.elements) |*elem| {
+                        elem.* = HIRValue.nothing;
+                    }
+                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
+                },
+                .string => |_| {
+                    const empty = "";
+                    try self.stack.push(HIRFrame.initString(empty));
+                },
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARRAY_TYPE, "clear: target must be array or string, got {s}", .{@tagName(coll.value)}),
+            }
+            return;
+        }
+
+        if (std.mem.eql(u8, name, "find")) {
+            if (arg_count != 2) return error.UnimplementedInstruction;
+            const value = try self.stack.pop();
+            const coll = try self.stack.pop();
+
+            switch (coll.value) {
+                .array => |arr| {
+                    var idx: i64 = 0;
+                    for (arr.elements) |elem| {
+                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                        if (valuesEqual(elem, value.value)) {
+                            try self.stack.push(HIRFrame.initInt(idx));
+                            return;
+                        }
+                        idx += 1;
+                    }
+                    try self.stack.push(HIRFrame.initInt(-1));
+                },
+                .string => |s_val| {
+                    const needle = switch (value.value) {
+                        .string => |s| s,
+                        else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@find on string requires string value, got {s}", .{@tagName(value.value)}),
+                    };
+
+                    if (needle.len == 0) {
+                        try self.stack.push(HIRFrame.initInt(0));
+                        return;
+                    }
+
+                    const maybe_idx = std.mem.indexOf(u8, s_val, needle);
+                    if (maybe_idx) |found| {
+                        try self.stack.push(HIRFrame.initInt(@intCast(found)));
+                    } else {
+                        try self.stack.push(HIRFrame.initInt(-1));
+                    }
+                },
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARRAY_TYPE, "@find requires array or string, got {s}", .{@tagName(coll.value)}),
+            }
+            return;
+        }
+
+        if (std.mem.eql(u8, name, "assert")) {
+            // Assert is handled at compile time, but if it reaches here, just pop the condition
+            _ = try self.stack.pop();
+            try self.stack.push(HIRFrame.initNothing());
             return;
         }
 
