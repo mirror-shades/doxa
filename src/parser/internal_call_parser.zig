@@ -450,7 +450,7 @@ pub fn parseBuildMethod(self: *Parser) ErrorList!?*ast.Expr {
     }
     self.advance();
 
-    // Require exactly 5 args: src, out, arch, os, debug
+    // Require exactly 6 args: src, out, arch, os, abi, debug
     const src_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
     if (self.peek().type == .RIGHT_PAREN) return error.TooFewArguments;
@@ -471,17 +471,23 @@ pub fn parseBuildMethod(self: *Parser) ErrorList!?*ast.Expr {
     if (self.peek().type == .RIGHT_PAREN) return error.TooFewArguments;
     if (self.peek().type != .COMMA) return error.ExpectedComma;
     self.advance();
+    const abi_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type == .RIGHT_PAREN) return error.TooFewArguments;
+    if (self.peek().type != .COMMA) return error.ExpectedComma;
+    self.advance();
     const debug_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
     if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
     self.advance();
 
-    const arguments = try self.allocator.alloc(*ast.Expr, 5);
+    const arguments = try self.allocator.alloc(*ast.Expr, 6);
     arguments[0] = src_expr;
     arguments[1] = out_expr;
     arguments[2] = arch_expr;
     arguments[3] = os_expr;
-    arguments[4] = debug_expr;
+    arguments[4] = abi_expr;
+    arguments[5] = debug_expr;
 
     const build_expr = try self.allocator.create(ast.Expr);
     build_expr.* = .{

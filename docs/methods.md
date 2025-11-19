@@ -17,40 +17,36 @@ Note: The standard library is not implemented yet. Names and signatures referenc
 
 | Method   | Return |
 | -------- | ------ |
-| STRING   | string | // KEEP: Core type conversion
-| TYPE     | string | // KEEP: Simple type introspection
-| LENGTH   | int    | // KEEP: Simple array/string length
-| OS       | string | // KEEP: Simple compiler intrinsic
-| ARCH     | string | // KEEP: Simple compiler intrinsic  
-| ABI      | string | // KEEP: Simple compiler intrinsic
-| TIME     | int    | // KEEP: Simple compiler intrinsic
-| TICK     | int    | // KEEP: Simple compiler intrinsic
-| RANDOM   | float  | // KEEP: Simple compiler intrinsic
-| ALIVE    | tetra  | // REMOVE: Process management in stdlib
+| STRING   | string |
+| TYPE     | string |
+| LENGTH   | int    |
+| OS       | string |
+| ARCH     | string |
+| ABI      | string |
+| TIME     | int    |
+| TICK     | int    |
+| RANDOM   | float  |
 
 ### Methods Can Panic
-| Method  | Return       | Panics On               |
-| ------- | ------------ | ----------------------- |
-| PUSH    | nothing      | Array/string corruption | // KEEP: Core array operation
-| POP     | any          | Underflow if empty      | // KEEP: Core array operation
-| INSERT  | nothing      | Array/string corruption | // KEEP: Core array operation
-| REMOVE  | any          | Out of bounds index     | // KEEP: Core array operation
-| ASSERT  | nothing      | False condition         | // KEEP: Simple assertion
-| PANIC   | never        | Always halts            | // KEEP: Simple panic
-| EXIT    | never        | Always terminates       | // REMOVE: Use std.process.exit
-| READ    | string       | I/O failure             | // REMOVE: Use std.fs.cwd().readFileAlloc
-| WRITE   | nothing      | I/O failure             | // REMOVE: Use std.fs.cwd().writeFile
-| INPUT   | string       | I/O/EOF failure         | // REMOVE: Use std.io.getStdIn().readUntilDelimiterAlloc
-| INT     | int          | Parse/overflow          | // KEEP: Core type conversion
-| FLOAT   | float        | Parse                   | // KEEP: Core type conversion
-| BYTE    | byte         | Parse/overflow          | // KEEP: Core type conversion
-| SLICE   | string/array | Index/invalid range     | // KEEP: Core array/string operation
-| SLEEP   | nothing      | Sys failure             | // REMOVE: Use std.time.sleep
-| PRINT   | nothing      | I/O failure             | // REMOVE: Use std.debug.print or std.io.getStdOut().writer()
-| SPAWN   | int          | Sys failure             | // REMOVE: Use std.process.Child.spawn
-| KILL    | nothing      | Sys failure             | // REMOVE: Use std.process.Child.kill
-| WAIT    | int          | Sys failure             | // REMOVE: Use std.process.Child.wait
-| BUILD   | nothing      | Compilation failure     | // KEEP: Core compiler functionality 
+| Method  | Return       | Panics On                    |
+| ------- | ------------ | ---------------------------- |
+| PUSH    | nothing      | Array/string corruption      |
+| POP     | any          | Underflow if empty           |
+| INSERT  | nothing      | Array/string corruption      |
+| REMOVE  | any          | Out of bounds index          |
+| CLEAR   | nothing      | Collection corruption        |
+| FIND    | int          | Collection corruption        |
+| SLICE   | string/array | Index/invalid range          |
+| INT     | int          | Parse/overflow               |
+| FLOAT   | float        | Parse                        |
+| BYTE    | byte         | Parse/overflow               |
+| ASSERT  | nothing      | False condition              |
+| PANIC   | never        | Always halts                 |
+| EXIT    | never        | Always terminates            |
+| INPUT   | string       | I/O/EOF failure              |
+| SLEEP   | nothing      | Sys failure                  |
+| PRINT   | nothing      | I/O failure                  |
+| BUILD   | int          | — (returns non-zero exit code on failure) |
 
 ## Array Methods
 
@@ -103,12 +99,6 @@ Note: The standard library is not implemented yet. Names and signatures referenc
 - Stdlib Output: `string OR array | IndexError`
 - **Example**: `@slice("hello", 1, 3)` → `"ell"`
 
-### @copy
-
-- **Input**: `array | string | map`
-- **Output**: `same type` - shallow copy
-- **Example**: `var copy = @copy(original)`
-
 ## Type Methods
 
 ### @string
@@ -144,76 +134,104 @@ Note: The standard library is not implemented yet. Names and signatures referenc
 - **Output**: `string` - type name
 - **Example**: `@type([1,2])` → `"array"`
 
-### @time
-
-- **Input**: `none`
-- Output: `int` - current timestamp (intrinsic may panic on severe runtime error)
-- **Example**: `var now = @time()`
-
 ### @random
 
 - **Input**: `none`
-- **Output**: `int` - random number, compile-time error if not supported
-- **Example**: `var num = @random()`
+- **Output**: `float` - random number between 0.0 and 1.0, compile-time error if not supported
+- **Example**: `var num = @random()` // returns float like 0.123456
 
-## Process Methods
+## System Methods
 
-### @spawn
+### @os
 
-- **Input**: `string[]` (command and arguments)
-- **Output**: `int | SysError` - PID of spawned process, or error
-- **Example**: `var pid = @spawn(["my_program", "arg1"])`
+- **Input**: `none`
+- **Output**: `string` - operating system name
+- **Example**: `@os()` → `"windows"` or `"linux"`
 
-### @kill
+### @arch
 
-- **Input**: `int` (PID)
-- **Output**: `nothing | SysError` - kills process, or error
-- **Example**: `@kill(pid)`
+- **Input**: `none`
+- **Output**: `string` - CPU architecture name
+- **Example**: `@arch()` → `"x86_64"` or `"aarch64"`
 
-### @wait
+### @abi
 
-- **Input**: `int` (PID)
-- **Output**: `int | Nothing | WaitError` - exit code, or error
-- **Example**: `var exitCode = @wait(pid)`
+- **Input**: `none`
+- **Output**: `string` - ABI (Application Binary Interface) name
+- **Example**: `@abi()` → `"gnu"` or `"msvc"`
 
-### @alive
+### @time
 
-- **Input**: `int` (PID)
-- **Output**: `
+- **Input**: `none`
+- **Output**: `int` - current Unix timestamp in seconds
+- **Example**: `var now = @time()` // seconds since Unix epoch
 
-```
-enum ParseError {        // type conversion failures
-    InvalidFormat,       // e.g., "abc" -> int
-    Overflow,            // too large for target type
-    Underflow,           // too small for target type
-}
+### @tick
 
-enum IndexError {        // array/string/collection bounds issues
-    OutOfBounds,         // index >= length
-    Underflow,           // pop/remove from empty
-    Empty,               // access empty collection
-    InvalidRange         // invalid slice/range
-}
+- **Input**: `none`
+- **Output**: `int` - monotonic high-resolution timestamp in nanoseconds
+- **Example**: `var start = @tick()` // for performance measurement
 
-enum IOError {           // filesystem / I/O issues
-    EOF,                 // end-of-file / input exhausted
-    NotFound,            // file missing
-    PermissionDenied,    // insufficient permissions
-    Failed               // read or write failed
-}
+## I/O Methods
 
-enum SysError {          // system call failures
-    NotFound,            // missing process/resource
-    PermissionDenied,    // lack of privileges
-    Timeout,             // operation timed out
-    Failed               // generic system failure
-}
+### @print
 
-// enum name reserved for future builtins
-enum NetworkError {
-    Unreachable,      // host/server cannot be reached
-    Timeout,          // request timed out
-    PermissionDenied, // lack of privileges to open socket/port
-    Failed            // generic network failure
-}
-```
+- **Input**: `string`
+- **Output**: `nothing` - writes string to stdout followed by newline
+- **Example**: `@print("Hello, World!")`
+
+### @input
+
+- **Input**: `none`
+- **Output**: `string` - reads line from stdin (including newline)
+- **Example**: `var name = @input()` // waits for user input
+
+## Control Flow Methods
+
+### @assert
+
+- **Input**: `bool`, `string?` (optional message)
+- **Output**: `nothing` - panics if condition is false
+- **Example**: `@assert(x > 0, "x must be positive")`
+
+### @panic
+
+- **Input**: `string`
+- **Output**: `never` - immediately terminates with message
+- **Example**: `@panic("Something went terribly wrong")`
+
+### @exit
+
+- **Input**: `int` (optional, defaults to 0)
+- **Output**: `never` - terminates program with exit code
+- **Example**: `@exit(1)` // exit with error code
+
+### @sleep
+
+- **Input**: `int` (milliseconds)
+- **Output**: `nothing` - pauses execution
+- **Example**: `@sleep(1000)` // sleep for 1 second
+
+## Utility Methods
+
+### @build
+
+- **Input**: `string` (source path), `string` (output path), `string` (arch), `string` (os), `abi` (abi), `tetra` (debug)
+- **Output**: `int` - exit code from compilation (0 = success)
+- **Example**: `@build("main.doxa", "output.exe", "x86_64", "windows", "gnu", false)`
+
+---
+
+**Total Methods: 26**
+
+**Array/Collection Methods (8)**: @length, @push, @pop, @insert, @remove, @clear, @find, @slice
+
+**Type Conversion Methods (5)**: @string, @int, @float, @byte, @type
+
+**System Methods (5)**: @os, @arch, @abi, @time, @tick
+
+**I/O Methods (2)**: @print, @input
+
+**Control Flow Methods (4)**: @assert, @panic, @exit, @sleep
+
+**Utility Methods (2)**: @random, @build

@@ -718,6 +718,10 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.INSERT, .nothing);
         } else if (std.mem.eql(u8, method_name, "remove")) {
             try self.addToken(.REMOVE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "clear")) {
+            try self.addToken(.CLEAR, .nothing);
+        } else if (std.mem.eql(u8, method_name, "find")) {
+            try self.addToken(.FIND, .nothing);
         } else if (std.mem.eql(u8, method_name, "string")) {
             try self.addToken(.TOSTRING, .nothing);
         } else if (std.mem.eql(u8, method_name, "int")) {
@@ -726,10 +730,6 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.TOFLOAT, .nothing);
         } else if (std.mem.eql(u8, method_name, "byte")) {
             try self.addToken(.TOBYTE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "read")) {
-            try self.addToken(.READ, .nothing);
-        } else if (std.mem.eql(u8, method_name, "write")) {
-            try self.addToken(.WRITE, .nothing);
         } else if (std.mem.eql(u8, method_name, "print")) {
             try self.addToken(.PRINT, .nothing);
         } else if (std.mem.eql(u8, method_name, "assert")) {
@@ -742,6 +742,8 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.OS, .nothing);
         } else if (std.mem.eql(u8, method_name, "arch")) {
             try self.addToken(.ARCH, .nothing);
+        } else if (std.mem.eql(u8, method_name, "abi")) {
+            try self.addToken(.ABI, .nothing);
         } else if (std.mem.eql(u8, method_name, "time")) {
             try self.addToken(.TIME, .nothing);
         } else if (std.mem.eql(u8, method_name, "tick")) {

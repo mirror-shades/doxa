@@ -9,6 +9,7 @@ const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const Parser = @import("../parser/parser_types.zig").Parser;
 const SemanticAnalyzer = @import("../analysis/semantic/semantic.zig").SemanticAnalyzer;
 const Errors = @import("../utils/errors.zig");
+const InternalMethods = @import("internal_methods.zig");
 
 const JsonValue = std.json.Value;
 
@@ -313,6 +314,18 @@ const Server = struct {
                 try self.handleDidChange(params);
             } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
                 try self.handleDidClose(params);
+            } else if (std.mem.eql(u8, method, "textDocument/completion")) {
+                if (id == null) {
+                    try self.sendErrorResponse(null, -32600, "Invalid request");
+                    return;
+                }
+                try self.handleCompletion(id.?, params);
+            } else if (std.mem.eql(u8, method, "textDocument/hover")) {
+                if (id == null) {
+                    try self.sendErrorResponse(null, -32600, "Invalid request");
+                    return;
+                }
+                try self.handleHover(id.?, params);
             } else if (std.mem.eql(u8, method, "initialized")) {
                 // No-op
             } else if (std.mem.eql(u8, method, "exit")) {
@@ -412,6 +425,19 @@ const Server = struct {
         self.reporter.clearByFile(uri_value.string);
         self.reporter.dropPublishedDiagnostics(uri_value.string);
         try self.publishDiagnostics(uri_value.string);
+    }
+
+    fn handleCompletion(self: *Server, id: JsonValue, params: ?JsonValue) !void {
+        const prefix = computeCompletionPrefix(self, params);
+        const payload = try buildCompletionPayload(self, id, prefix);
+        defer self.allocator.free(payload);
+        try self.sendMessage(payload);
+    }
+
+    fn handleHover(self: *Server, id: JsonValue, params: ?JsonValue) !void {
+        const payload = try buildHoverPayload(self, id, params);
+        defer self.allocator.free(payload);
+        try self.sendMessage(payload);
     }
 
     fn storeDocument(self: *Server, uri: []const u8, text: []const u8) !void {
@@ -517,6 +543,226 @@ const Server = struct {
     }
 };
 
+const DocumentContext = struct {
+    text: []const u8,
+    offset: usize,
+};
+
+const DocumentPosition = struct {
+    line: usize,
+    character: usize,
+};
+
+const MethodRange = struct {
+    start: usize,
+    end: usize,
+};
+
+fn computeCompletionPrefix(self: *Server, params: ?JsonValue) ?[]const u8 {
+    if (params == null) return null;
+    if (extractDocumentContext(self, params)) |ctx| {
+        if (ctx.offset <= ctx.text.len) {
+            return computeMethodPrefix(ctx.text, ctx.offset);
+        }
+    }
+    return null;
+}
+
+fn buildCompletionPayload(self: *Server, id: JsonValue, prefix: ?[]const u8) ![]u8 {
+    var buffer = std.array_list.Managed(u8).init(self.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+
+    try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
+    try writeJsonValue(&writer, id);
+    try writer.writeAll(",\"result\":{\"isIncomplete\":false,\"items\":[");
+
+    if (prefix) |pref| {
+        var first = true;
+        for (InternalMethods.all()) |method| {
+            if (!std.mem.startsWith(u8, method.label, pref)) continue;
+            if (!first) try writer.writeAll(",");
+            first = false;
+
+            try writer.writeAll("{\"label\":");
+            try writeJsonValue(&writer, method.label);
+            try writer.writeAll(",\"kind\":3");
+            try writer.writeAll(",\"detail\":");
+            try writeJsonValue(&writer, method.detail);
+            try writer.writeAll(",\"documentation\":");
+            try writeJsonValue(&writer, method.documentation);
+            try writer.writeAll("}");
+        }
+    }
+
+    try writer.writeAll("]}}");
+    return buffer.toOwnedSlice();
+}
+
+fn buildHoverPayload(self: *Server, id: JsonValue, params: ?JsonValue) ![]u8 {
+    var buffer = std.array_list.Managed(u8).init(self.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+
+    try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
+    try writeJsonValue(&writer, id);
+    try writer.writeAll(",\"result\":");
+
+    if (extractDocumentContext(self, params)) |ctx| {
+        if (findMethodRange(ctx.text, ctx.offset)) |method_range| {
+            const name = ctx.text[method_range.start..method_range.end];
+            if (InternalMethods.find(name)) |info| {
+                const start_pos = offsetToPosition(ctx.text, method_range.start);
+                const end_pos = offsetToPosition(ctx.text, method_range.end);
+
+                try writer.writeAll("{\"contents\":{\"kind\":\"markdown\",\"value\":");
+                try writeJsonValue(&writer, info.documentation);
+                try writer.writeAll("},\"range\":{\"start\":{\"line\":");
+                try writer.print("{d}", .{start_pos.line});
+                try writer.writeAll(",\"character\":");
+                try writer.print("{d}", .{start_pos.character});
+                try writer.writeAll("},\"end\":{\"line\":");
+                try writer.print("{d}", .{end_pos.line});
+                try writer.writeAll(",\"character\":");
+                try writer.print("{d}", .{end_pos.character});
+                try writer.writeAll("}}}");
+
+                const payload = try buffer.toOwnedSlice();
+                return payload;
+            }
+        }
+    }
+
+    try writer.writeAll("null");
+    try writer.writeAll("}");
+    return buffer.toOwnedSlice();
+}
+
+fn extractDocumentContext(self: *Server, params: ?JsonValue) ?DocumentContext {
+    const params_value = params orelse return null;
+    if (params_value != .object) return null;
+    const params_obj = params_value.object;
+
+    const doc_value = params_obj.get("textDocument") orelse return null;
+    if (doc_value != .object) return null;
+    const doc_obj = doc_value.object;
+    const uri_value = doc_obj.get("uri") orelse return null;
+    if (uri_value != .string) return null;
+    const document = self.documents.getPtr(uri_value.string) orelse return null;
+
+    const position_value = params_obj.get("position") orelse return null;
+    if (position_value != .object) return null;
+    const position_obj = position_value.object;
+
+    const line_value = position_obj.get("line") orelse return null;
+    const char_value = position_obj.get("character") orelse return null;
+    const line = parsePositionComponent(self, line_value) orelse return null;
+    const character = parsePositionComponent(self, char_value) orelse return null;
+
+    const offset = computeOffsetFromPosition(document.text, line, character);
+    return DocumentContext{
+        .text = document.text,
+        .offset = offset,
+    };
+}
+
+fn parsePositionComponent(self: *Server, value: JsonValue) ?usize {
+    const repr = jsonStringifyAlloc(self.allocator, value, .{}) catch return null;
+    defer self.allocator.free(repr);
+    const parsed = std.fmt.parseInt(usize, repr, 10) catch return null;
+    return parsed;
+}
+
+fn computeOffsetFromPosition(text: []const u8, line: usize, character: usize) usize {
+    var offset: usize = 0;
+    var current_line: usize = 0;
+    while (offset < text.len and current_line < line) {
+        if (text[offset] == '\n') {
+            current_line += 1;
+        }
+        offset += 1;
+    }
+    var current_character: usize = 0;
+    while (offset < text.len and current_character < character) {
+        const c = text[offset];
+        if (c == '\n') break;
+        if (c == '\r') {
+            offset += 1;
+            if (offset < text.len and text[offset] == '\n') {
+                // Treat CRLF as a single newline.
+            }
+            break;
+        }
+        offset += 1;
+        current_character += 1;
+    }
+    if (offset > text.len) offset = text.len;
+    return offset;
+}
+
+fn computeMethodPrefix(text: []const u8, offset: usize) ?[]const u8 {
+    if (findMethodStart(text, offset)) |start| {
+        const end = if (offset > text.len) text.len else offset;
+        return text[start..end];
+    }
+    return null;
+}
+
+fn findMethodRange(text: []const u8, offset: usize) ?MethodRange {
+    if (findMethodStart(text, offset)) |start| {
+        var end = start;
+        while (end < text.len and isMethodChar(text[end])) {
+            end += 1;
+        }
+        if (end == start) return null;
+        return MethodRange{ .start = start, .end = end };
+    }
+    return null;
+}
+
+fn offsetToPosition(text: []const u8, offset: usize) DocumentPosition {
+    var line: usize = 0;
+    var character: usize = 0;
+    var idx: usize = 0;
+    while (idx < offset and idx < text.len) {
+        const c = text[idx];
+        if (c == '\n') {
+            line += 1;
+            character = 0;
+        } else if (c == '\r') {
+            line += 1;
+            character = 0;
+            if (idx + 1 < text.len and text[idx + 1] == '\n') {
+                idx += 1;
+            }
+        } else {
+            character += 1;
+        }
+        idx += 1;
+    }
+    return DocumentPosition{ .line = line, .character = character };
+}
+
+fn isMethodContinuationChar(c: u8) bool {
+    return std.ascii.isAlphabetic(c) or std.ascii.isDigit(c) or c == '_';
+}
+
+fn isMethodChar(c: u8) bool {
+    return c == '@' or isMethodContinuationChar(c);
+}
+
+fn findMethodStart(text: []const u8, offset: usize) ?usize {
+    if (text.len == 0) return null;
+    var current = if (offset > text.len) text.len else offset;
+    while (current > 0) {
+        const prev = text[current - 1];
+        if (prev == '@') return current - 1;
+        if (!isMethodContinuationChar(prev)) break;
+        current -= 1;
+    }
+    if (current < text.len and text[current] == '@') return current;
+    return null;
+}
 fn trimLine(line: []const u8) []const u8 {
     if (line.len > 0 and line[line.len - 1] == '\r') {
         return line[0 .. line.len - 1];
