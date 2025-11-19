@@ -80,7 +80,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 
 ## Components
 
-![Pipeline](./pipeline.svg)
+![Pipeline](./pipeline.png)
 
 - **Lexer**: Tokenizes source code
 - **Parser**: Builds an AST from tokens

@@ -20,7 +20,6 @@ pub const TokenType = enum {
     //one or two character tokens
     DOT, // .
     DOT_DOT, // ..
-    AMPERSAND, // &
     SLASH, // /
     SLASH_EQUAL, // /=
     ASTERISK, // *
