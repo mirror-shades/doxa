@@ -162,6 +162,9 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 // Generate proper AssertFail bytecode
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_ASSERT_FAIL));
             },
+            .Unreachable => |_| {
+                try bytecode.append(@intFromEnum(instructions.OpCode.OP_UNREACHABLE));
+            },
             .Halt => {
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_HALT));
             },
@@ -182,7 +185,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
         .Const, .LoadVar, .StoreVar, .StoreConst, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
-        .IntArith, .FloatArith, .Convert, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail => 1, // opcode only
+        .IntArith, .FloatArith, .Convert, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail, .Unreachable => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
     };
@@ -1053,6 +1056,9 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .AssertFail => |a| {
             try writer.print("    AssertFail @{s}:{}:{}{s}        ; Assertion failure\n", .{ a.location.file, a.location.range.start_line, a.location.range.start_col, if (a.has_message) " with message" else "" });
+        },
+        .Unreachable => |u| {
+            try writer.print("    Unreachable @{s}:{}:{}         ; Reached unreachable code\n", .{ u.location.file, u.location.range.start_line, u.location.range.start_col });
         },
 
         .Halt => try writer.print("    Halt                        ; Program termination\n", .{}),

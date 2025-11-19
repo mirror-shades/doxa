@@ -94,12 +94,16 @@ res as int then {
             @print("result was too small")
         }
         else { // we know this will never be reached
-            @panic("unreachable")
+            unreachable
         }
     }
 }
 
 ```
+
+### `unreachable`
+
+Use the `unreachable` keyword when a control-flow path should be impossible. It behaves like Zig's `unreachable`: the compiler treats it as a no-return expression for type checking and it traps at runtime with a helpful location if execution ever arrives there.
 
 ## Special Operators
 

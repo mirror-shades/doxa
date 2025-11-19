@@ -944,6 +944,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.* = .{ .base = .Nothing };
             }
         },
+        .Unreachable => {
+            type_info.* = .{ .base = .Nothing };
+        },
         .BuiltinCall => |bc| {
             const fname = bc.function.lexeme;
 
