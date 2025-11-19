@@ -213,7 +213,9 @@ function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
 
                 if top_prec == -1 or current_prec == -1 then return Error.FailedToShunt
 
-                if top_prec > current_prec or (top_prec == current_prec and t.value == top_op.value) then {
+                if top_prec > current_prec or 
+                ...(top_prec == current_prec and 
+                ...t.value == top_op.value) then {
                     const popped is @pop(operators)
                     @push(output, popped)
                 } else {
@@ -243,7 +245,10 @@ function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
 
     while @length(operators) > 0 {
         const popped is @pop(operators)
-        if popped.token_type == TokenType.LPAREN or popped.token_type == TokenType.RPAREN then return Error.MismatchedParentheses
+        if popped.token_type == TokenType.LPAREN or 
+        ...popped.token_type == TokenType.RPAREN then {
+            return Error.MismatchedParentheses
+        }
         @push(output, popped)
     }
 
