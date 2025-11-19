@@ -27,13 +27,9 @@ Core Rules
 
     No escaping — Aliases cannot be returned, stored, or captured by closures.
 
-    No address-of — Taking & of an alias parameter is forbidden.
-
     No async/threads — Aliases are banned in async functions and cannot be passed to concurrent tasks.
 
     Exclusive borrow — Aliases grant exclusive mutable access for the duration of the call no overlapping borrows allowed.
-
-    FFI control — Passing aliases to foreign code requires explicit unsafe or noescape annotation.
 
     Evaluation order — Arguments evaluate left-to-right, but banned alias patterns remain errors.
 
