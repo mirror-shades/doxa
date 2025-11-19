@@ -286,7 +286,6 @@ pub const LexicalAnalyzer = struct {
             },
             '%' => try self.addMinimalToken(.MODULO),
             '#' => try self.addMinimalToken(.HASH),
-            '&' => try self.addMinimalToken(.AMPERSAND),
             '^' => try self.addMinimalToken(.CARET),
             '*' => {
                 if (self.match('*')) {
