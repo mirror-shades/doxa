@@ -1,5 +1,7 @@
 Since Doxa has a tightly limited number of types, structs are useful for modeling more complex data. Structs are based off composition to avoid pitfalls inherent to inheretance. Variables, functions, and methods are all private unless marked pub.
 
+Struct instantiation uses a `$` sigil prefix to diferentiate it from a normal identifier. 
+
 ### Real world example
 
 struct Point {  
@@ -9,7 +11,7 @@ struct Point {
     pub id :: int,
 
     pub function New(x :: int, y :: int) { // fucntions and methods are private unless marked pub as well
-        return Point {
+        return $Point { // note the $ prefix
             x is x,
             y is y,
         }
@@ -22,7 +24,7 @@ struct Point {
     }
 
     pub method get() { // the `method` keyword lets you access 
-        return Point {
+        return $Point {
             this.x,
             this.y
         }
@@ -38,23 +40,25 @@ struct Point {
 
 ```doxa
 struct Animal {
-    name: string
+    name :: string
 }
 
 struct Dog {
     // Composition instead of inheritance
-    animal: Animal,
-    breed: string,
+    animal :: Animal,
+    breed :: string,
 
-    fn bark(self) {
-        print(animal.name + " says woof!")
+    pub method bark() {
+        @print("{this.animal.name} says woof!")
     }
 }
 
-var dog is Dog {
-    animal: Animal {
-        name: "Spot"
+var dog is $Dog {
+    animal is $Animal {
+        name is "Spot"
         },
-    breed: "Labrador"
+    breed is "Labrador"
 }
+
+dog.bark() // Spot says woof!
 ```
