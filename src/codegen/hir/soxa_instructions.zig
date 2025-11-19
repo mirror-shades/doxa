@@ -628,4 +628,7 @@ pub const HIRInstruction = union(enum) {
         location: Reporting.Location,
         has_message: bool,
     },
+    Unreachable: struct {
+        location: Reporting.Location,
+    },
 };

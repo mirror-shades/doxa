@@ -1043,6 +1043,25 @@ pub fn returnExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.E
     return return_expr;
 }
 
+pub fn unreachableExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    const keyword = self.peek();
+    self.advance();
+
+    const expr = try self.allocator.create(ast.Expr);
+    expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(keyword),
+        },
+        .data = .{
+            .Unreachable = .{
+                .keyword = keyword,
+            },
+        },
+    };
+    return expr;
+}
+
 pub fn parseBreakExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance();
 
@@ -1206,6 +1225,22 @@ pub fn unary(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
 pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const name = self.peek();
     self.advance();
+
+    if (name.type == .UNREACHABLE) {
+        const unreachable_expr = try self.allocator.create(ast.Expr);
+        unreachable_expr.* = .{
+            .base = .{
+                .id = ast.generateNodeId(),
+                .span = ast.SourceSpan.fromToken(name),
+            },
+            .data = .{
+                .Unreachable = .{
+                    .keyword = name,
+                },
+            },
+        };
+        return unreachable_expr;
+    }
 
     if (name.type == .THIS) {
         const this_expr = try self.allocator.create(ast.Expr);
@@ -1553,6 +1588,10 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
 }
 
 pub fn identifierOrStructLiteral(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+    if (self.peek().type == .UNREACHABLE) {
+        return try unreachableExpr(self, null, .NONE);
+    }
+
     const start_pos = self.current;
 
     if (self.peek().type != .IDENTIFIER) return null;

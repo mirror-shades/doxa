@@ -69,6 +69,7 @@ const VmError = error{
     MissingModule,
     InvalidAliasReference,
     OutOfMemory,
+    RuntimeTrap,
 } || ErrorList;
 
 pub const VM = struct {
@@ -563,6 +564,15 @@ pub const VM = struct {
                 }
 
                 self.running = false;
+            },
+            .Unreachable => |payload| {
+                const location_str = try std.fmt.allocPrint(self.allocator, "{s}:{}:{}", .{ payload.location.file, payload.location.range.start_line, payload.location.range.start_col });
+                defer self.allocator.free(location_str);
+
+                std.debug.print("Reached unreachable code at {s}\n", .{location_str});
+
+                self.running = false;
+                return VmError.RuntimeTrap;
             },
             .TryBegin => |payload| {
                 try self.execTryBegin(payload);

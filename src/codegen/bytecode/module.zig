@@ -180,6 +180,9 @@ pub const Instruction = union(enum) {
         location: Reporting.Location,
         has_message: bool,
     },
+    Unreachable: struct {
+        location: Reporting.Location,
+    },
     Halt,
     LoadModule: struct { module_name: []const u8 },
     Nop,

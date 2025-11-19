@@ -10,6 +10,7 @@ pub const OpCode = enum(u8) {
 
     // Assertion handling
     OP_ASSERT_FAIL,
+    OP_UNREACHABLE,
 
     // Arithmetic operations
     OP_IADD,

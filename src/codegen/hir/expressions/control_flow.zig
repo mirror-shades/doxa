@@ -462,6 +462,11 @@ pub const ControlFlowHandler = struct {
         try self.generator.instructions.append(.{ .Return = .{ .has_value = return_data.value != null, .return_type = self.generator.current_function_return_type } });
     }
 
+    /// Emit a runtime trap for unreachable expressions
+    pub fn generateUnreachable(self: *ControlFlowHandler, expr: *ast.Expr) !void {
+        try self.generator.instructions.append(.{ .Unreachable = .{ .location = expr.base.location() } });
+    }
+
     /// Generate HIR for cast expressions
     pub fn generateCast(self: *ControlFlowHandler, cast_expr: ast.Expr.Data, preserve_result: bool) !void {
         const cast_data = cast_expr.Cast;

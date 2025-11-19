@@ -588,7 +588,12 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
     defer arena.deinit();
     const child_allocator = arena.allocator();
 
-    const exe_path = try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", "doxa" });
+    const exe_path = blk: {
+        if (process.getEnvVarOwned(allocator, "DOXA_BIN") catch null) |custom| {
+            break :blk custom;
+        }
+        break :blk try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", "doxa" });
+    };
     defer allocator.free(exe_path);
 
     var child = process.Child.init(&[_][]const u8{ exe_path, "run", path }, child_allocator);
@@ -873,6 +878,7 @@ test "unified runner" {
         .{ .name = "methods", .path = "./test/misc/methods.doxa", .mode = .PEEK, .input = "f\n", .expected_print = null, .expected_peek = expected_methods_results[0..], .expected_error = null },
         .{ .name = "syntax error", .path = "./test/syntax/equals_for_assign.doxa", .mode = .ERROR, .input = null, .expected_print = null, .expected_peek = null, .expected_error = .{ .exit_code = 1, .contains_message = "equals sign '=' is not used for variable declarations", .error_code = "E2004" } },
         .{ .name = "undefined variable", .path = "./test/misc/error_test.doxa", .mode = .ERROR, .input = null, .expected_print = null, .expected_peek = null, .expected_error = .{ .exit_code = 1, .contains_message = "Undefined variable", .error_code = "E1001" } },
+        .{ .name = "unreachable keyword", .path = "./test/misc/unreachable.doxa", .mode = .ERROR, .input = null, .expected_print = null, .expected_peek = null, .expected_error = .{ .exit_code = 1, .contains_message = "Reached unreachable code", .error_code = null } },
     };
 
     std.debug.print("\n=== Running test suite ===\n", .{});

@@ -997,6 +997,7 @@ pub const HIRGenerator = struct {
             .Loop => |loop| try control_flow_handler.generateLoop(loop, preserve_result),
             .Block => try control_flow_handler.generateBlock(expr.data, preserve_result),
             .ReturnExpr => try control_flow_handler.generateReturn(expr.data),
+            .Unreachable => try control_flow_handler.generateUnreachable(expr),
             .Cast => try control_flow_handler.generateCast(expr.data, preserve_result),
 
             // Collections
@@ -1116,6 +1117,7 @@ pub const HIRGenerator = struct {
                 }
                 return false;
             },
+            .Unreachable => return true,
             else => return false,
         }
     }

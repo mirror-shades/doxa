@@ -76,6 +76,7 @@ pub const TokenType = enum {
     RANGE, // to
     RETURNS, // returns
     THIS, // this
+    UNREACHABLE, // unreachable
 
     // built-in methods
     // IMPLEMENTED AND TESTED

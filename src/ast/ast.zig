@@ -605,6 +605,9 @@ pub const Expr = struct {
             else_branch: ?*Expr,
         },
         ReturnExpr: struct { value: ?*Expr },
+        Unreachable: struct {
+            keyword: Token,
+        },
         Break: void,
         TypeExpr: *TypeExpr,
         Loop: Loop,
@@ -851,6 +854,7 @@ pub const Expr = struct {
                     allocator.destroy(msg);
                 }
             },
+            .Unreachable => {},
             .ReturnExpr => |*r| {
                 if (r.value) |value| {
                     value.deinit(allocator);

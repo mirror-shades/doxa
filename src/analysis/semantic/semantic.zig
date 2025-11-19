@@ -2178,6 +2178,10 @@ pub const SemanticAnalyzer = struct {
                     return expected_return_type.base == .Nothing;
                 }
             },
+            .Unreachable => {
+                // Explicitly terminates the current control-flow path
+                return true;
+            },
             .If => {
                 return self.validateIfExpressionReturns(expr, expected_return_type, func_span);
             },
@@ -2569,6 +2573,9 @@ pub const SemanticAnalyzer = struct {
                                 try all_return_types.append(nothing_type);
                             }
                             return;
+                        } else if (expression.data == .Unreachable) {
+                            // Hitting unreachable stops execution without contributing a return type
+                            return;
                         } else if (is_last_stmt) {
                             // Only treat the final expression in a function body as a potential implicit return.
                             const return_type = try infer_type.inferTypeFromExpr(self, expression);
@@ -2757,6 +2764,7 @@ pub const SemanticAnalyzer = struct {
                 return has_returns;
             },
             .ReturnExpr => return true,
+            .Unreachable => return true,
             .Loop => |loop_data| {
                 // For loops, check if the body contains return statements
                 if (loop_data.body.data == .Block) {

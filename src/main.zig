@@ -35,6 +35,7 @@ const LspServer = @import("./lsp/server.zig");
 
 const EXIT_CODE_USAGE = 64;
 const EXIT_CODE_ERROR = 65;
+const EXIT_CODE_RUNTIME = 1;
 const MAX_FILE_SIZE = 1024 * 1024;
 const DOXA_EXTENSION = ".doxa";
 const DEFAULT_OUTPUT_FILE = "output.o";
@@ -203,7 +204,10 @@ fn runBytecodeModule(memoryManager: *MemoryManager, bytecode_module: *BytecodeMo
 
     try memoryManager.bridgeTypesToVM(&vm);
 
-    try vm.run();
+    vm.run() catch |err| switch (err) {
+        error.RuntimeTrap => return error.RuntimeTrap,
+        else => return err,
+    };
 }
 
 fn parseArgs(allocator: std.mem.Allocator) !CLI {
@@ -553,7 +557,10 @@ pub fn main() !void {
 
         profiler.startPhase(Phase.EXECUTION);
 
-        try runBytecodeModule(&memoryManager, &bytecode_module, &reporter);
+        runBytecodeModule(&memoryManager, &bytecode_module, &reporter) catch |err| switch (err) {
+            error.RuntimeTrap => std.process.exit(EXIT_CODE_RUNTIME),
+            else => return err,
+        };
 
         profiler.stopPhase();
         try profiler.dump();

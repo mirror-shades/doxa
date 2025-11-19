@@ -126,8 +126,7 @@ function split(input :: string) returns string[] {
         else if c != " " {
             current is current + c
         } else {
-            // Handle any other characters (shouldn't happen in this context)
-            current is current + c
+            unreachable
         }
     }
     if current != "" then @push(result, current)

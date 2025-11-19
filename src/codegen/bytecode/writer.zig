@@ -166,6 +166,7 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .MapGet => |payload| try writer.print("ip[{d}] MapGet key:{s}\n", .{ idx, @tagName(payload.key_type) }),
         .MapSet => |payload| try writer.print("ip[{d}] MapSet key:{s}\n", .{ idx, @tagName(payload.key_type) }),
         .AssertFail => |payload| try writer.print("ip[{d}] AssertFail file:{s} line:{} col:{} message:{}\n", .{ idx, payload.location.file, payload.location.range.start_line, payload.location.range.start_col, payload.has_message }),
+        .Unreachable => |payload| try writer.print("ip[{d}] Unreachable file:{s} line:{} col:{}\n", .{ idx, payload.location.file, payload.location.range.start_line, payload.location.range.start_col }),
         else => try writer.print("ip[{d}] {s}\n", .{ idx, @tagName(inst) }),
     }
 }

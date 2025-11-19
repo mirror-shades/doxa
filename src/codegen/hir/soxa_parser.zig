@@ -1061,6 +1061,27 @@ pub const SoxaTextParser = struct {
                 },
                 .has_message = has_message,
             } });
+        } else if (std.mem.eql(u8, op, "Unreachable")) {
+            const rest_of_line = tokens.rest();
+            var location: ?Location = null;
+
+            if (std.mem.indexOf(u8, rest_of_line, "@")) |at_pos| {
+                const location_part = rest_of_line[at_pos..];
+                location = self.parseLocationString(location_part) catch null;
+            }
+
+            try self.instructions.append(HIRInstruction{ .Unreachable = .{
+                .location = location orelse Location{
+                    .file = "unknown",
+                    .file_uri = null,
+                    .range = .{
+                        .start_line = 0,
+                        .start_col = 0,
+                        .end_line = 0,
+                        .end_col = 0,
+                    },
+                },
+            } });
         }
     }
 
