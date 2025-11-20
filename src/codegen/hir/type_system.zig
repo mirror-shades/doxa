@@ -13,6 +13,7 @@ const ErrorCode = Errors.ErrorCode;
 const Reporting = @import("../../utils/reporting.zig");
 const Location = Reporting.Location;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
+const EnumTable = @import("../../common/enum_table.zig").EnumTable;
 
 pub const TypeSystem = struct {
     custom_types: std.StringHashMap(CustomTypeInfo),
@@ -20,6 +21,7 @@ pub const TypeSystem = struct {
     reporter: *Reporting.Reporter,
     semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
     struct_table: ?*const StructTable = null,
+    enum_table: ?*const EnumTable = null,
 
     pub const CustomTypeInfo = struct {
         name: []const u8,
@@ -94,6 +96,7 @@ pub const TypeSystem = struct {
             .reporter = reporter,
             .semantic_analyzer = semantic_analyzer,
             .struct_table = if (semantic_analyzer) |sa| sa.getStructTable() else null,
+            .enum_table = if (semantic_analyzer) |sa| sa.getEnumTable() else null,
         };
     }
 
@@ -284,20 +287,65 @@ pub const TypeSystem = struct {
                         }
                     }
                 }
-                const base = self.resolveFieldAccessType(fa.object, symbol_table) orelse break :blk null;
-                if (base.custom_type_name) |struct_name| {
-                    if (self.custom_types.get(struct_name)) |ctype| {
-                        if (ctype.kind == .Struct) {
-                            if (ctype.struct_fields) |fields| {
-                                for (fields) |f| {
-                                    if (std.mem.eql(u8, f.name, fa.field.lexeme)) {
-                                        return FieldResolveResult{ .t = f.field_type, .custom_type_name = f.custom_type_name };
+                // First, try to resolve based on the object's custom type name (works
+                // for plain struct variables and nested field access).
+                if (self.resolveFieldAccessType(fa.object, symbol_table)) |base| {
+                    if (base.custom_type_name) |struct_name| {
+                        if (self.custom_types.get(struct_name)) |ctype| {
+                            if (ctype.kind == .Struct) {
+                                if (ctype.struct_fields) |fields| {
+                                    for (fields) |f| {
+                                        if (std.mem.eql(u8, f.name, fa.field.lexeme)) {
+                                            return FieldResolveResult{ .t = f.field_type, .custom_type_name = f.custom_type_name };
+                                        }
                                     }
                                 }
                             }
                         }
                     }
                 }
+
+                // Fallback: if we know the object's HIR type is a struct via the
+                // semantic struct table (e.g., for array-of-struct indexing like
+                // zoo[0].name), use the struct_id and field metadata from there.
+                if (self.struct_table) |const_table| {
+                    const obj_type = self.inferTypeFromExpression(fa.object, symbol_table);
+                    if (obj_type == .Struct) {
+                        const sid: StructId = obj_type.Struct;
+                        if (const_table.fields(sid)) |fields| {
+                            for (fields) |f| {
+                                if (std.mem.eql(u8, f.name, fa.field.lexeme)) {
+                                    // Prefer enum type name when this field is an enum,
+                                    // so that peek on zoo[0].animal_type can report
+                                    // "Species" instead of generic "enum".
+                                    var result_name: ?[]const u8 = null;
+
+                                    // For enum-typed fields, use the AST custom_type
+                                    // when available (e.g., "Species").
+                                    const ti = f.type_info.*;
+                                    if (f.hir_type == .Enum) {
+                                        if (ti.custom_type) |ct_name| {
+                                            result_name = ct_name;
+                                        }
+                                    } else if (f.nested_struct_id) |nested_id| {
+                                        // Otherwise, for nested structs, recover the
+                                        // nested struct's qualified name.
+                                        var table = const_table.*;
+                                        if (table.getEntryById(nested_id)) |nested_entry| {
+                                            result_name = nested_entry.qualified_name;
+                                        }
+                                    }
+
+                                    return FieldResolveResult{
+                                        .t = f.hir_type,
+                                        .custom_type_name = result_name,
+                                    };
+                                }
+                            }
+                        }
+                    }
+                }
+
                 break :blk null;
             },
             else => null,

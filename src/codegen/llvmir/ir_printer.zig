@@ -99,6 +99,13 @@ fn internPeekString(
 }
 
 pub const IRPrinter = struct {
+    /// Lightweight metadata used to render enum values by name in native code.
+    /// Collected once from the constant pool and reused by `emitEnumPrint`.
+    const EnumVariantMeta = struct {
+        index: u32,
+        name: []const u8,
+    };
+
     allocator: std.mem.Allocator,
     peek_string_counter: usize,
     global_types: std.StringHashMap(StackType),
@@ -108,6 +115,7 @@ pub const IRPrinter = struct {
     defined_globals: std.StringHashMap(bool),
     function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
     last_emitted_enum_value: ?u64 = null,
+    enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
 
     const StackType = enum { I64, F64, I8, I1, I2, PTR, Nothing };
     const StackVal = struct {
@@ -266,6 +274,7 @@ pub const IRPrinter = struct {
             .defined_globals = std.StringHashMap(bool).init(allocator),
             .last_emitted_enum_value = null,
             .function_struct_return_fields = std.StringHashMap([]HIR.HIRType).init(allocator),
+            .enum_print_map = std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)).init(allocator),
         };
     }
 
@@ -281,6 +290,13 @@ pub const IRPrinter = struct {
             self.allocator.free(entry.value_ptr.*);
         }
         self.function_struct_return_fields.deinit();
+
+        // Clean up enum print metadata lists
+        var enum_it = self.enum_print_map.iterator();
+        while (enum_it.next()) |entry| {
+            entry.value_ptr.deinit(self.allocator);
+        }
+        self.enum_print_map.deinit();
     }
 
     fn mapBuiltinToRuntime(name: []const u8) []const u8 {
@@ -314,6 +330,9 @@ pub const IRPrinter = struct {
         try w.writeAll("declare void @doxa_print_i64(i64)\n");
         try w.writeAll("declare void @doxa_print_u64(i64)\n");
         try w.writeAll("declare void @doxa_print_f64(double)\n");
+        // NOTE: keep legacy declaration for compatibility even though native
+        // enum printing is now implemented directly in the IR and no longer
+        // calls into the runtime helper.
         try w.writeAll("declare void @doxa_print_enum(ptr, i64)\n");
         try w.writeAll("declare i64 @doxa_str_len(ptr)\n");
         try w.writeAll("declare i64 @doxa_byte_from_cstr(ptr)\n");
@@ -333,6 +352,9 @@ pub const IRPrinter = struct {
         try w.writeAll("declare i8 @doxa_exists_quantifier_eq(ptr, i64)\n");
         try w.writeAll("declare i8 @doxa_forall_quantifier_gt(ptr, i64)\n");
         try w.writeAll("declare i8 @doxa_forall_quantifier_eq(ptr, i64)\n");
+
+        // Build enum metadata used for pretty-printing enum values in native code.
+        try self.buildEnumPrintMap(hir);
 
         // String pool globals
         for (hir.string_pool, 0..) |s, idx| {
@@ -608,6 +630,7 @@ pub const IRPrinter = struct {
                 .ArraySet => |_| try self.emitArraySet(w, &stack, &id),
                 .ArrayGet => |_| try self.emitArrayGet(w, &stack, &id),
                 .ArrayLen => try self.emitArrayLen(w, &stack, &id),
+                .ArrayPush => |_| try self.emitArrayPush(w, &stack, &id),
                 .ArrayPop => try self.emitArrayPop(w, &stack, &id),
                 .Range => |r| try self.emitRange(w, &stack, &id, r),
                 .StructNew => |sn| try self.emitStructNew(w, &stack, &id, sn),
@@ -871,28 +894,59 @@ pub const IRPrinter = struct {
                 .Peek => |pk| {
                     if (stack.items.len < 1) continue;
                     const v = stack.items[stack.items.len - 1];
+                    var val = v;
 
-                    try self.emitPeekInstruction(w, pk, v, &id, peek_state);
+                    try self.emitPeekInstruction(w, pk, val, &id, peek_state);
 
-                    switch (v.ty) {
+                    // Prefer enum-aware printing when we know the enum type,
+                    // falling back to raw integers only when we have no metadata.
+                    if (pk.value_type == .Enum) {
+                        if (pk.enum_type_name) |etype| {
+                            try self.emitEnumPrint(peek_state, w, &id, etype, val.name);
+                            try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
+                            continue;
+                        } else if (val.enum_type_name) |etype2| {
+                            try self.emitEnumPrint(peek_state, w, &id, etype2, val.name);
+                            try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
+                            continue;
+                        }
+                    }
+
+                    // If the HIR Peek type says this is a string, but the value is
+                    // currently an integer (e.g., pointer bits coming from an
+                    // array-of-struct field), reinterpret it as a pointer and
+                    // print it as a quoted string.
+                    if (pk.value_type == .String and val.ty != .PTR) {
+                        const tmp = try self.nextTemp(&id);
+                        const cast_line = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = inttoptr i64 {s} to ptr\n",
+                            .{ tmp, val.name },
+                        );
+                        defer self.allocator.free(cast_line);
+                        try w.writeAll(cast_line);
+                        val = .{ .name = tmp, .ty = .PTR };
+                    }
+
+                    switch (val.ty) {
                         .I64 => {
                             // Check if this is an enum value
-                            if (v.enum_type_name) |type_name| {
-                                try self.emitEnumPrint(peek_state, w, &id, type_name, v.name);
+                            if (val.enum_type_name) |type_name| {
+                                try self.emitEnumPrint(peek_state, w, &id, type_name, val.name);
                             } else {
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{val.name});
                                 defer self.allocator.free(call_line);
                                 try w.writeAll(call_line);
                             }
                         },
                         .F64 => {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{val.name});
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
                         },
                         .PTR => {
-                            if (v.array_type) |_| {
-                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
+                            if (val.array_type) |_| {
+                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{val.name});
                                 defer self.allocator.free(line);
                                 try w.writeAll(line);
                             } else {
@@ -919,7 +973,7 @@ pub const IRPrinter = struct {
                                 defer self.allocator.free(call_q1);
                                 try w.writeAll(call_q1);
 
-                                const call_val = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                                const call_val = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{val.name});
                                 defer self.allocator.free(call_val);
                                 try w.writeAll(call_val);
 
@@ -2024,6 +2078,10 @@ pub const IRPrinter = struct {
                     try self.emitArrayLen(w, &stack, &id);
                     last_instruction_was_terminator = false;
                 },
+                .ArrayPush => {
+                    try self.emitArrayPush(w, &stack, &id);
+                    last_instruction_was_terminator = false;
+                },
                 .ArrayPop => {
                     try self.emitArrayPop(w, &stack, &id);
                     last_instruction_was_terminator = false;
@@ -2572,6 +2630,7 @@ pub const IRPrinter = struct {
                         .value_type = .Struct,
                         .location = ps.location,
                         .union_members = null,
+                        .enum_type_name = null,
                     }, v, &id, peek_state);
 
                     // Print struct (for now, just print as pointer - proper struct printing would require
@@ -2604,6 +2663,35 @@ pub const IRPrinter = struct {
         return name;
     }
 
+    /// Collect enum variant metadata from the constant pool so we can render
+    /// enums by name in native code without needing a dynamic registry at
+    /// runtime.
+    fn buildEnumPrintMap(self: *IRPrinter, hir: *const HIR.HIRProgram) !void {
+        for (hir.constant_pool) |hv| {
+            if (hv == .enum_variant) {
+                const ev = hv.enum_variant;
+
+                // Get or create the variant list for this enum type.
+                var entry = try self.enum_print_map.getOrPut(ev.type_name);
+                if (!entry.found_existing) {
+                    entry.value_ptr.* = std.ArrayListUnmanaged(EnumVariantMeta){};
+                }
+
+                // Avoid duplicating the same (type, index) pair.
+                for (entry.value_ptr.items) |existing| {
+                    if (existing.index == ev.variant_index and std.mem.eql(u8, existing.name, ev.variant_name)) {
+                        break;
+                    }
+                } else {
+                    try entry.value_ptr.append(self.allocator, .{
+                        .index = ev.variant_index,
+                        .name = ev.variant_name,
+                    });
+                }
+            }
+        }
+    }
+
     fn emitEnumPrint(
         self: *IRPrinter,
         peek_state: *PeekEmitState,
@@ -2612,27 +2700,135 @@ pub const IRPrinter = struct {
         type_name: []const u8,
         value_name: []const u8,
     ) !void {
-        const info = try internPeekString(
-            self.allocator,
-            &peek_state.*.string_map,
-            &peek_state.*.strings,
-            peek_state.*.next_id_ptr,
-            &peek_state.*.globals,
-            type_name,
-        );
-        const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-        id.* += 1;
-        const type_ptr_line = try std.fmt.allocPrint(
-            self.allocator,
-            "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-            .{ type_ptr_name, info.length, info.name },
-        );
-        defer self.allocator.free(type_ptr_line);
-        try w.writeAll(type_ptr_line);
+        // Look up known variants for this enum type (derived from constant pool).
+        const meta_opt = self.enum_print_map.get(type_name);
 
-        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, value_name });
-        defer self.allocator.free(call_line);
-        try w.writeAll(call_line);
+        if (meta_opt) |meta_list| {
+            const variants = meta_list.items;
+            if (variants.len == 0) {
+                // No known variants – fall back to older runtime helper.
+                const info = try internPeekString(
+                    self.allocator,
+                    &peek_state.*.string_map,
+                    &peek_state.*.strings,
+                    peek_state.*.next_id_ptr,
+                    &peek_state.*.globals,
+                    type_name,
+                );
+                const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                id.* += 1;
+                const type_ptr_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                    .{ type_ptr_name, info.length, info.name },
+                );
+                defer self.allocator.free(type_ptr_line);
+                try w.writeAll(type_ptr_line);
+
+                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, value_name });
+                defer self.allocator.free(call_line);
+                try w.writeAll(call_line);
+                return;
+            }
+
+            // Default label for unknown enum values.
+            const unknown_info = try internPeekString(
+                self.allocator,
+                &peek_state.*.string_map,
+                &peek_state.*.strings,
+                peek_state.*.next_id_ptr,
+                &peek_state.*.globals,
+                ".Unknown",
+            );
+            const unknown_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+            id.* += 1;
+            const unknown_gep = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                .{ unknown_ptr, unknown_info.length, unknown_info.name },
+            );
+            defer self.allocator.free(unknown_gep);
+            try w.writeAll(unknown_gep);
+
+            var current_ptr = unknown_ptr;
+
+            // Build a chain of selects that chooses the right variant label
+            // based on the integer discriminant.
+            for (variants) |variant_meta| {
+                // Build ".VariantName" string for printing.
+                const dotted_name = try std.fmt.allocPrint(self.allocator, ".{s}", .{variant_meta.name});
+                defer self.allocator.free(dotted_name);
+
+                const v_info = try internPeekString(
+                    self.allocator,
+                    &peek_state.*.string_map,
+                    &peek_state.*.strings,
+                    peek_state.*.next_id_ptr,
+                    &peek_state.*.globals,
+                    dotted_name,
+                );
+
+                const v_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                id.* += 1;
+                const v_gep = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                    .{ v_ptr, v_info.length, v_info.name },
+                );
+                defer self.allocator.free(v_gep);
+                try w.writeAll(v_gep);
+
+                const cmp_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                id.* += 1;
+                const cmp_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = icmp eq i64 {s}, {d}\n",
+                    .{ cmp_name, value_name, variant_meta.index },
+                );
+                defer self.allocator.free(cmp_line);
+                try w.writeAll(cmp_line);
+
+                const sel_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                id.* += 1;
+                const sel_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = select i1 {s}, ptr {s}, ptr {s}\n",
+                    .{ sel_name, cmp_name, v_ptr, current_ptr },
+                );
+                defer self.allocator.free(sel_line);
+                try w.writeAll(sel_line);
+
+                current_ptr = sel_name;
+            }
+
+            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{current_ptr});
+            defer self.allocator.free(call_line);
+            try w.writeAll(call_line);
+        } else {
+            // Fallback for enums that never appeared in the constant pool:
+            // preserve legacy behavior via the runtime helper.
+            const info = try internPeekString(
+                self.allocator,
+                &peek_state.*.string_map,
+                &peek_state.*.strings,
+                peek_state.*.next_id_ptr,
+                &peek_state.*.globals,
+                type_name,
+            );
+            const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+            id.* += 1;
+            const type_ptr_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                .{ type_ptr_name, info.length, info.name },
+            );
+            defer self.allocator.free(type_ptr_line);
+            try w.writeAll(type_ptr_line);
+
+            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, value_name });
+            defer self.allocator.free(call_line);
+            try w.writeAll(call_line);
+        }
     }
 
     fn emitQuantifierWrappers(self: *IRPrinter, w: anytype) !void {
@@ -3046,6 +3242,32 @@ pub const IRPrinter = struct {
         }
     }
 
+    fn emitArrayPush(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+    ) !void {
+        if (stack.items.len < 2) return;
+        const value = stack.items[stack.items.len - 1];
+        const hdr_val = stack.items[stack.items.len - 2];
+        stack.items.len -= 2;
+
+        const len_info = try self.loadArrayLength(w, hdr_val, id);
+        const element_type = len_info.array.array_type orelse HIR.HIRType{ .Int = {} };
+        const stored_val = try self.convertValueToArrayStorage(w, value, element_type, id);
+
+        const set_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  call void @doxa_array_set_i64(ptr {s}, i64 {s}, i64 {s})\n",
+            .{ len_info.array.name, len_info.len_value.name, stored_val.name },
+        );
+        defer self.allocator.free(set_line);
+        try w.writeAll(set_line);
+
+        try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = len_info.array.array_type });
+    }
+
     fn emitArrayLen(
         self: *IRPrinter,
         w: anytype,
@@ -3418,35 +3640,50 @@ pub const IRPrinter = struct {
         id: *usize,
         state: *PeekEmitState,
     ) !void {
-        const type_slice = if (value.enum_type_name) |enum_type_name|
-            enum_type_name
-        else switch (value.ty) {
-            .I64 => "int",
-            .F64 => "float",
-            .PTR => blk: {
-                // Distinguish between arrays, structs, and raw strings
-                if (value.array_type != null) break :blk "array";
+        const type_slice = blk_type: {
+            // 1) Prefer explicit enum type names from HIR Peek (e.g., "Species")
+            if (pk.enum_type_name) |enum_type_name| break :blk_type enum_type_name;
 
-                // If we have struct field type metadata, try to recover the
-                // original struct name so peeks show "Point" instead of "string".
-                if (value.struct_field_types) |fts| {
-                    var it = self.global_struct_field_types.iterator();
-                    while (it.next()) |entry| {
-                        const candidate = entry.value_ptr.*;
-                        if (candidate.ptr == fts.ptr and candidate.len == fts.len) {
-                            break :blk entry.key_ptr.*;
+            // 2) Then prefer enum type names attached to the value (for plain enums)
+            if (value.enum_type_name) |enum_type_name| break :blk_type enum_type_name;
+
+            // 3) Next, prefer the HIR Peek value_type when it carries more precise
+            //    information than the raw stack type.
+            switch (pk.value_type) {
+                .String => break :blk_type "string",
+                .Enum => break :blk_type "enum",
+                else => {},
+            }
+
+            // 4) Fallback to stack type and any attached struct metadata.
+            break :blk_type switch (value.ty) {
+                .I64 => "int",
+                .F64 => "float",
+                .PTR => blk: {
+                    // Distinguish between arrays, structs, and raw strings
+                    if (value.array_type != null) break :blk "array";
+
+                    // If we have struct field type metadata, try to recover the
+                    // original struct name so peeks show "Point" instead of "string".
+                    if (value.struct_field_types) |fts| {
+                        var it = self.global_struct_field_types.iterator();
+                        while (it.next()) |entry| {
+                            const candidate = entry.value_ptr.*;
+                            if (candidate.ptr == fts.ptr and candidate.len == fts.len) {
+                                break :blk entry.key_ptr.*;
+                            }
                         }
+                        // Fallback when we can't find an exact metadata match
+                        break :blk "struct";
                     }
-                    // Fallback when we can't find an exact metadata match
-                    break :blk "struct";
-                }
 
-                break :blk "string";
-            },
-            .I8 => "value",
-            .I1 => "value",
-            .I2 => "tetra",
-            .Nothing => "nothing",
+                    break :blk "string";
+                },
+                .I8 => "value",
+                .I1 => "value",
+                .I2 => "tetra",
+                .Nothing => "nothing",
+            };
         };
         const type_info = try internPeekString(
             self.allocator,
@@ -3920,14 +4157,18 @@ pub const IRPrinter = struct {
         }
         defer if (needs_free) self.allocator.free(struct_type_llvm);
 
-        // Get field type; prefer metadata from the struct value
-        // BUT: if we're accessing a nested struct field, we might need to use the inner struct's field types
+        // Get field type; prefer metadata from the struct value.
+        // If we don't have metadata, fall back to the HIR-provided field_type
+        // instead of blindly treating everything as int. This is critical for
+        // fields like strings/enums coming from arrays of structs (e.g. Animal[]).
         const field_type: HIR.HIRType = if (actual_struct_field_types) |fts|
             fts[@intCast(gf.field_index)]
         else if (struct_val.struct_field_types) |fts|
             fts[@intCast(gf.field_index)]
+        else if (gf.field_type != .Unknown and gf.field_type != .Nothing)
+            gf.field_type
         else switch (gf.container_type) {
-            .Struct => |_| HIR.HIRType{ .Int = {} }, // Fallback to int
+            .Struct => |_| HIR.HIRType{ .Int = {} }, // Final conservative fallback
             else => HIR.HIRType{ .Int = {} },
         };
         const field_stack_type = self.hirTypeToStackType(field_type);
@@ -4010,13 +4251,17 @@ pub const IRPrinter = struct {
         }
         defer if (needs_free_set) self.allocator.free(struct_type_llvm_set);
 
-        // Get field type; prefer metadata from the struct value
+        // Get field type; prefer metadata from the struct value.
+        // If metadata is missing, use the HIR field_type when available so that
+        // we store the correct representation (e.g. ptr for strings).
         const field_type: HIR.HIRType = if (actual_struct_field_types_set) |fts|
             fts[@intCast(sf.field_index)]
         else if (struct_val.struct_field_types) |fts|
             fts[@intCast(sf.field_index)]
+        else if (sf.field_type != .Unknown and sf.field_type != .Nothing)
+            sf.field_type
         else switch (sf.container_type) {
-            .Struct => |_| HIR.HIRType{ .Int = {} }, // Fallback to int
+            .Struct => |_| HIR.HIRType{ .Int = {} }, // Final conservative fallback
             else => HIR.HIRType{ .Int = {} },
         };
         const field_stack_type = self.hirTypeToStackType(field_type);

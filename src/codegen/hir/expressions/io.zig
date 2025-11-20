@@ -186,6 +186,7 @@ pub const IOHandler = struct {
 
         // NEW: Prefer expression inference; refine for array indexing
         var inferred_type: HIRType = self.generator.inferTypeFromExpression(peek.expr);
+        var enum_type_name: ?[]const u8 = null;
         if (peek.expr.data == .Index and peek.expr.data.Index.array.data == .Variable) {
             if (self.generator.getTrackedArrayElementType(peek.expr.data.Index.array.data.Variable.lexeme)) |elem_type| {
                 inferred_type = elem_type;
@@ -193,6 +194,16 @@ pub const IOHandler = struct {
         } else if (peek.expr.data == .Variable) {
             if (self.generator.getTrackedVariableType(peek.expr.data.Variable.lexeme)) |tracked_type| {
                 inferred_type = tracked_type;
+            }
+        } else if (peek.expr.data == .FieldAccess) {
+            // For field accesses, try to recover the concrete enum type name
+            // (e.g., "Species" for zoo[0].animal_type) so the LLVM backend
+            // can print the enum nicely even when the value on the stack is
+            // just an i64 discriminant.
+            if (inferred_type == .Enum) {
+                if (self.generator.resolveFieldAccessType(peek.expr)) |res| {
+                    enum_type_name = res.custom_type_name;
+                }
             }
         }
 
@@ -230,6 +241,7 @@ pub const IOHandler = struct {
             .value_type = inferred_type,
             .location = peek.location,
             .union_members = union_members,
+            .enum_type_name = enum_type_name,
         } });
 
         // IMPORTANT: Peek pops the value, prints, then pushes it back.

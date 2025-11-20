@@ -526,6 +526,10 @@ pub const HIRInstruction = union(enum) {
         value_type: HIRType,
         location: ?Reporting.Location,
         union_members: ?[][]const u8 = null,
+        /// Optional enum type name for enum peeks (e.g., "Species").
+        /// This lets the LLVM backend print enums with their concrete type
+        /// names independent of stack metadata.
+        enum_type_name: ?[]const u8 = null,
     },
 
     /// Prints a struct

@@ -8,6 +8,7 @@ const import_parser = @import("../../parser/import_parser.zig");
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const TokenType = @import("../../types/token.zig").TokenType;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
+const EnumTable = @import("../../common/enum_table.zig").EnumTable;
 const CustomTypeInfo = @import("semantic.zig").SemanticAnalyzer.CustomTypeInfo;
 const Memory = @import("../../utils/memory.zig");
 const HIRTypeModule = @import("../../codegen/hir/soxa_types.zig");
@@ -935,6 +936,14 @@ pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants
         .struct_fields = null,
     };
     try self.memory.registerCustomType(mem_enum);
+
+    // Also mirror into the global EnumTable so later stages (HIR/LLVM/VM)
+    // can refer to enums by ID in a uniform way, just like structs.
+    if (@hasField(@TypeOf(self.*), "enum_table")) {
+        // Ignore errors here; the semantic analyzer already has the
+        // authoritative variant list, and EnumTable is just a helper.
+        _ = self.enum_table.registerEnum(enum_name, variants) catch {};
+    }
 }
 
 /// Helper function to get location from AST base
