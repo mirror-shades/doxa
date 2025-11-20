@@ -335,22 +335,89 @@ pub export fn doxa_array_len(hdr: *ArrayHeader) callconv(.c) u64 {
 
 pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
     if (hdr.data == null or idx >= hdr.len) return 0;
-    const base: [*]const u8 = @ptrCast(@alignCast(hdr.data.?));
+
+    // Treat the backing buffer as raw bytes; decode per element tag to avoid
+    // misaligned @alignCast when elem_size is smaller than 8 (bytes/tetras).
+    const base: [*]const u8 = @ptrCast(hdr.data.?);
     const off: usize = @intCast(idx * hdr.elem_size);
     const p = base + off;
-    const ip: *const i64 = @ptrCast(@alignCast(p));
-    return ip.*;
+
+    return switch (hdr.elem_tag) {
+        0 => blk_int: { // int (i64)
+            const ip: *const i64 = @ptrCast(@alignCast(p));
+            break :blk_int ip.*;
+        },
+        1 => blk_byte: { // byte (u8)
+            const bp: *const u8 = @ptrCast(p);
+            break :blk_byte @as(i64, bp.*);
+        },
+        2 => blk_float: { // float (f64)
+            const fp: *const f64 = @ptrCast(@alignCast(p));
+            const bits: i64 = @bitCast(fp.*);
+            break :blk_float bits;
+        },
+        3 => blk_str: { // string (i8* -> C string pointer encoded as bits)
+            const sp: *const ?[*:0]const u8 = @ptrCast(@alignCast(p));
+            const s_ptr = sp.* orelse null;
+            const addr: u64 = if (s_ptr) |ptr|
+                @intFromPtr(ptr)
+            else
+                0;
+            break :blk_str @bitCast(addr);
+        },
+        4 => blk_tetra: { // tetra (2-bit stored in u8)
+            const tp: *const u8 = @ptrCast(p);
+            const v: u8 = tp.* & 0x3;
+            break :blk_tetra @as(i64, v);
+        },
+        // Treat higher tags (array, struct, enum, unknown) as raw 64-bit slots.
+        else => blk_raw: {
+            const ip: *const i64 = @ptrCast(@alignCast(p));
+            break :blk_raw ip.*;
+        },
+    };
 }
 
 pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callconv(.c) void {
     if (hdr.data == null) return;
     if (idx >= hdr.cap) return; // no resize in minimal runtime
     if (idx >= hdr.len) hdr.len = idx + 1;
-    const base: [*]u8 = @ptrCast(@alignCast(hdr.data.?));
+    const base: [*]u8 = @ptrCast(hdr.data.?);
     const off: usize = @intCast(idx * hdr.elem_size);
     const p = base + off;
-    const ip: *i64 = @ptrCast(@alignCast(p));
-    ip.* = value;
+
+    switch (hdr.elem_tag) {
+        0 => { // int (i64)
+            const ip: *i64 = @ptrCast(@alignCast(p));
+            ip.* = value;
+        },
+        1 => { // byte (u8)
+            const bp: *u8 = @ptrCast(p);
+            bp.* = @intCast(@as(u8, @intCast(value)) & 0xff);
+        },
+        2 => { // float (f64)
+            const fp: *f64 = @ptrCast(@alignCast(p));
+            const f: f64 = @bitCast(value);
+            fp.* = f;
+        },
+        3 => { // string (i8* -> C string pointer encoded as bits)
+            const sp: *?[*:0]const u8 = @ptrCast(@alignCast(p));
+            const addr: u64 = @bitCast(value);
+            sp.* = if (addr == 0)
+                null
+            else
+                @ptrFromInt(@as(usize, addr));
+        },
+        4 => { // tetra (2-bit stored in u8)
+            const tp: *u8 = @ptrCast(p);
+            tp.* = @intCast(@as(u8, @intCast(value)) & 0x3);
+        },
+        // Default: store raw 64-bit payload (pointers/unknown)
+        else => {
+            const ip: *i64 = @ptrCast(@alignCast(p));
+            ip.* = value;
+        },
+    }
 }
 
 pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {

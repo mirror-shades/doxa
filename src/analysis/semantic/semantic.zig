@@ -16,6 +16,7 @@ const Location = Reporting.Location;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
+const EnumTable = @import("../../common/enum_table.zig").EnumTable;
 const StructId = @import("../../codegen/hir/soxa_types.zig").StructId;
 const types = @import("types.zig");
 const ErrorCode = Errors.ErrorCode;
@@ -58,6 +59,7 @@ pub const SemanticAnalyzer = struct {
     current_struct_type: ?[]const u8 = null,
     parser: ?*const Parser = null,
     struct_table: StructTable,
+    enum_table: EnumTable,
 
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager, parser: ?*const Parser) SemanticAnalyzer {
         return .{
@@ -75,6 +77,7 @@ pub const SemanticAnalyzer = struct {
             .current_struct_type = null,
             .parser = parser,
             .struct_table = StructTable.init(allocator),
+            .enum_table = EnumTable.init(allocator),
         };
     }
 
@@ -95,6 +98,7 @@ pub const SemanticAnalyzer = struct {
         self.function_return_types.deinit();
         self.current_function_returns.deinit();
         self.struct_table.deinit();
+        self.enum_table.deinit();
     }
 
     pub const StructMethodInfo = struct {
@@ -114,6 +118,10 @@ pub const SemanticAnalyzer = struct {
 
     pub fn getStructTable(self: *const SemanticAnalyzer) *const StructTable {
         return &self.struct_table;
+    }
+
+    pub fn getEnumTable(self: *const SemanticAnalyzer) *const EnumTable {
+        return &self.enum_table;
     }
 
     pub fn getStructId(self: *SemanticAnalyzer, name: []const u8) ?StructId {

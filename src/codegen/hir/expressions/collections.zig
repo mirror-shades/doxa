@@ -30,7 +30,8 @@ pub const CollectionsHandler = struct {
 
         if (elements.len > 0) {
             // Try to infer type from first element
-            switch (elements[0].data) {
+            const first = elements[0];
+            switch (first.data) {
                 .Literal => |lit| element_type = switch (lit) {
                     .int => .Int,
                     .float => .Float,
@@ -40,24 +41,18 @@ pub const CollectionsHandler = struct {
                     else => .Unknown,
                 },
                 .Array => |nested_elements| {
-                    element_type = .Unknown; // Array type requires element type info
-                    // For nested arrays, determine the nested element type
+                    element_type = .Unknown; // For nested arrays, the top-level element is itself an array
+                    // For nested arrays, determine the nested element type using normal inference
                     if (nested_elements.len > 0) {
-                        nested_element_type = switch (nested_elements[0].data) {
-                            .Literal => |lit| switch (lit) {
-                                .int => .Int,
-                                .float => .Float,
-                                .string => .String,
-                                .tetra => .Tetra,
-                                .byte => .Byte,
-                                else => .Unknown,
-                            },
-                            .Array => .Unknown, // Array type requires element type info
-                            else => .Unknown,
-                        };
+                        nested_element_type = self.generator.inferTypeFromExpression(nested_elements[0]);
                     }
                 },
-                else => element_type = .Unknown,
+                else => {
+                    // Use the general type system to infer the element type.
+                    // This lets us correctly detect structs/enums/functions, so
+                    // arrays like Animal[] carry HIRType.Struct instead of Unknown.
+                    element_type = self.generator.inferTypeFromExpression(first);
+                },
             }
         }
 
