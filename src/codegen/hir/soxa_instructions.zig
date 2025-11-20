@@ -2,6 +2,7 @@ const HIRValue = @import("soxa_values.zig").HIRValue;
 const HIRType = @import("soxa_types.zig").HIRType;
 const HIRMapEntry = @import("soxa_values.zig").HIRMapEntry;
 const ScopeKind = @import("soxa_types.zig").ScopeKind;
+const StructId = @import("soxa_types.zig").StructId;
 pub const CallKind = @import("soxa_types.zig").CallKind;
 const Reporting = @import("../../utils/reporting.zig");
 const Expr = @import("../../ast/ast.zig").Expr;
@@ -293,9 +294,11 @@ pub const HIRInstruction = union(enum) {
     GetField: struct {
         field_name: []const u8,
         container_type: HIRType,
+        struct_id: StructId,
         field_index: u32, // Pre-resolved for efficiency
+        field_type: HIRType,
         field_for_peek: bool = false,
-        field_struct_name: ?[]const u8 = null, // If field is a struct, its type name
+        nested_struct_id: ?StructId = null,
     },
 
     /// Array/struct field assignment
@@ -304,8 +307,10 @@ pub const HIRInstruction = union(enum) {
     SetField: struct {
         field_name: []const u8,
         container_type: HIRType,
+        struct_id: StructId,
         field_index: u32,
-        field_struct_name: ?[]const u8 = null, // If field is a struct, its type name
+        field_type: HIRType,
+        nested_struct_id: ?StructId = null,
     },
 
     /// Store field name for struct field
@@ -489,7 +494,8 @@ pub const HIRInstruction = union(enum) {
     /// VM: Allocate memory, initialize fields
     /// LLVM: LLVMBuildStructGEP for initialization
     StructNew: struct {
-        type_name: []const u8, // Changed from struct_name to type_name
+        type_name: []const u8, // Human-readable struct name
+        struct_id: StructId,
         field_count: u32,
         field_types: []HIRType,
         size_bytes: u32, // Pre-calculated for VM efficiency
@@ -527,6 +533,7 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Generate constant string based on LLVM type
     PeekStruct: struct {
         type_name: []const u8, // Changed from struct_name to type_name
+        struct_id: StructId,
         field_count: u32,
         field_names: [][]const u8,
         field_types: []HIRType,
@@ -579,6 +586,7 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Generate constant string based on LLVM type
     PrintStruct: struct {
         type_name: []const u8, // Changed from struct_name to type_name
+        struct_id: StructId,
         field_count: u32,
         field_names: [][]const u8,
         field_types: []HIRType,

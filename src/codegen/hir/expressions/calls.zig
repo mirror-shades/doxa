@@ -33,14 +33,9 @@ pub const CallsHandler = struct {
                     const object_name = field_access.object.data.Variable.lexeme;
 
                     function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
-
-                    if (std.mem.eql(u8, function_name, "safeMath.safeAdd")) {
-                        call_kind = .ModuleFunction;
-                    } else if (self.generator.getFunctionIndex(function_name)) |idx| {
+                    call_kind = .ModuleFunction;
+                    if (self.generator.getFunctionIndex(function_name)) |idx| {
                         function_index = idx;
-                        call_kind = .LocalFunction;
-                    } else {
-                        call_kind = .ModuleFunction;
                     }
                 } else if (field_access.object.data == .Variable) {
                     const type_name = field_access.object.data.Variable.lexeme;
@@ -202,11 +197,12 @@ pub const CallsHandler = struct {
                         const var_token = arg.expr.data.Variable;
                         const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
                         if (maybe_idx) |var_idx| {
+                            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
                             try self.generator.instructions.append(.{
                                 .PushStorageId = .{
                                     .var_index = var_idx,
                                     .var_name = var_token.lexeme,
-                                    .scope_kind = .Local,
+                                    .scope_kind = scope_kind,
                                 },
                             });
                             arg_emitted_count += 1;
@@ -673,12 +669,15 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
             }
 
-            try self.generator.instructions.append(.{ .StructNew = .{
-                .type_name = type_name,
-                .field_count = @intCast(field_count),
-                .field_types = try self.generator.allocator.dupe(HIRType, field_types),
-                .size_bytes = 0,
-            } });
+            try self.generator.instructions.append(.{
+                .StructNew = .{
+                    .type_name = type_name,
+                    .struct_id = 0, // TODO: look up real StructId from struct table
+                    .field_count = @intCast(field_count),
+                    .field_types = try self.generator.allocator.dupe(HIRType, field_types),
+                    .size_bytes = 0,
+                },
+            });
         }
     }
 

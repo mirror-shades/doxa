@@ -289,8 +289,11 @@ pub const IOHandler = struct {
                     .GetField = .{
                         .field_name = field.field.lexeme,
                         .container_type = HIRType{ .Struct = 0 },
+                        .struct_id = 0,
                         .field_index = 0,
+                        .field_type = .Unknown,
                         .field_for_peek = true,
+                        .nested_struct_id = null,
                     },
                 });
 
@@ -315,6 +318,7 @@ pub const IOHandler = struct {
         // Add the PeekStruct instruction with the gathered info
         try self.generator.instructions.append(.{ .PeekStruct = .{
             .type_name = struct_info.name,
+            .struct_id = 0,
             .field_count = struct_info.field_count,
             .field_names = struct_info.field_names,
             .field_types = struct_info.field_types,

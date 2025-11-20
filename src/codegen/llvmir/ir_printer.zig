@@ -106,6 +106,7 @@ pub const IRPrinter = struct {
     global_enum_types: std.StringHashMap([]const u8), // Store enum type names for global variables
     global_struct_field_types: std.StringHashMap([]HIR.HIRType), // Store struct field types for globals
     defined_globals: std.StringHashMap(bool),
+    function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
     last_emitted_enum_value: ?u64 = null,
 
     const StackType = enum { I64, F64, I8, I1, I2, PTR, Nothing };
@@ -144,6 +145,39 @@ pub const IRPrinter = struct {
             allocator.free(self.slots);
         }
     };
+
+    fn formatFloatLiteral(self: *IRPrinter, value: f64) ![]u8 {
+        const raw = try std.fmt.allocPrint(self.allocator, "{d}", .{value});
+        const has_decimal = std.mem.indexOfScalar(u8, raw, '.') != null or
+            std.mem.indexOfScalar(u8, raw, 'e') != null or
+            std.mem.indexOfScalar(u8, raw, 'E') != null;
+        if (!has_decimal) {
+            const with_fraction = try std.fmt.allocPrint(self.allocator, "{s}.0", .{raw});
+            self.allocator.free(raw);
+            return with_fraction;
+        }
+        return raw;
+    }
+
+    fn paramTypeMatchesStack(_: *IRPrinter, param_type: HIR.HIRType, stack_type: StackType) bool {
+        return switch (stack_type) {
+            .I64 => switch (param_type) {
+                .Int, .Enum, .Union, .Unknown => true,
+                else => false,
+            },
+            .F64 => switch (param_type) {
+                .Float, .Union, .Unknown => true,
+                else => false,
+            },
+            .I8 => param_type == .Byte,
+            .I2 => param_type == .Tetra,
+            .PTR => switch (param_type) {
+                .String, .Struct, .Array, .Map => true,
+                else => false,
+            },
+            else => false,
+        };
+    }
 
     fn recordStackForLabel(
         self: *IRPrinter,
@@ -231,6 +265,7 @@ pub const IRPrinter = struct {
             .global_struct_field_types = std.StringHashMap([]HIR.HIRType).init(allocator),
             .defined_globals = std.StringHashMap(bool).init(allocator),
             .last_emitted_enum_value = null,
+            .function_struct_return_fields = std.StringHashMap([]HIR.HIRType).init(allocator),
         };
     }
 
@@ -241,6 +276,11 @@ pub const IRPrinter = struct {
         self.global_enum_types.deinit();
         self.global_struct_field_types.deinit();
         self.defined_globals.deinit();
+        var ret_it = self.function_struct_return_fields.iterator();
+        while (ret_it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.function_struct_return_fields.deinit();
     }
 
     fn mapBuiltinToRuntime(name: []const u8) []const u8 {
@@ -276,6 +316,7 @@ pub const IRPrinter = struct {
         try w.writeAll("declare void @doxa_print_f64(double)\n");
         try w.writeAll("declare void @doxa_print_enum(ptr, i64)\n");
         try w.writeAll("declare i64 @doxa_str_len(ptr)\n");
+        try w.writeAll("declare i64 @doxa_byte_from_cstr(ptr)\n");
         try w.writeAll("declare void @doxa_debug_peek(ptr)\n");
         // Array printing helper (runtime)
         try w.writeAll("declare void @doxa_print_array_hdr(ptr)\n");
@@ -288,6 +329,10 @@ pub const IRPrinter = struct {
         try w.writeAll("declare double @doxa_random()\n");
         try w.writeAll("declare i64 @doxa_tick()\n");
         try w.writeAll("declare ptr @malloc(i64)\n");
+        try w.writeAll("declare i8 @doxa_exists_quantifier_gt(ptr, i64)\n");
+        try w.writeAll("declare i8 @doxa_exists_quantifier_eq(ptr, i64)\n");
+        try w.writeAll("declare i8 @doxa_forall_quantifier_gt(ptr, i64)\n");
+        try w.writeAll("declare i8 @doxa_forall_quantifier_eq(ptr, i64)\n");
 
         // String pool globals
         for (hir.string_pool, 0..) |s, idx| {
@@ -325,6 +370,7 @@ pub const IRPrinter = struct {
         try w.writeAll("%DoxaPeekInfo = type { ptr, ptr, ptr, ptr, i32, i32, i32, i32, i32 }\n");
         try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64 }\n\n");
         try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n\n");
+        try self.emitQuantifierWrappers(w);
 
         // Find function start labels
         var func_start_labels = std.StringHashMap(bool).init(self.allocator);
@@ -347,6 +393,11 @@ pub const IRPrinter = struct {
                     _ = try self.global_struct_field_types.put(sn.type_name, try self.allocator.dupe(HIR.HIRType, sn.field_types));
                 }
             }
+        }
+
+        // Collect struct return metadata for functions before emitting main program.
+        for (hir.function_table) |func| {
+            try self.collectFunctionStructReturnInfo(hir, func, &func_start_labels);
         }
 
         var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
@@ -453,8 +504,30 @@ pub const IRPrinter = struct {
         }
 
         var had_return: bool = false;
+        var synthetic_labels = std.array_list.Managed([]const u8).init(self.allocator);
+        defer {
+            for (synthetic_labels.items) |lbl| self.allocator.free(lbl);
+            synthetic_labels.deinit();
+        }
+        var dead_block_counter: usize = 0;
 
         for (hir.instructions[0..functions_start_idx]) |inst| {
+            const tag = std.meta.activeTag(inst);
+            const requires_new_block = switch (tag) {
+                .Label, .ExitScope => false,
+                else => true,
+            };
+            if (last_instruction_was_terminator and requires_new_block) {
+                const dead_label = try std.fmt.allocPrint(self.allocator, "dead_block_{d}", .{dead_block_counter});
+                dead_block_counter += 1;
+                try synthetic_labels.append(dead_label);
+                const line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{dead_label});
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                current_block = dead_label;
+                stack.items.len = 0;
+                last_instruction_was_terminator = false;
+            }
             switch (inst) {
                 .Const => |c| {
                     const hv = hir.constant_pool[c.constant_id];
@@ -470,7 +543,9 @@ pub const IRPrinter = struct {
                         .float => |f| {
                             const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double 0.0, {d}\n", .{ name, f });
+                            const literal = try self.formatFloatLiteral(f);
+                            defer self.allocator.free(literal);
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double 0.0, {s}\n", .{ name, literal });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .F64 });
@@ -524,6 +599,10 @@ pub const IRPrinter = struct {
                         },
                         else => {},
                     }
+                },
+                .StoreAlias => |_| {
+                    // Alias handling is only meaningful inside functions
+                    last_instruction_was_terminator = false;
                 },
                 .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
                 .ArraySet => |_| try self.emitArraySet(w, &stack, &id),
@@ -687,9 +766,10 @@ pub const IRPrinter = struct {
                         if (stack.items.len < 1) continue;
                         const v = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
+                        const bool_val = try self.ensureBool(w, v, &id);
                         const t2 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                         id += 1;
-                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ t2, v.name });
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ t2, bool_val.name });
                         defer self.allocator.free(line);
                         try w.writeAll(line);
                         try stack.append(.{ .name = t2, .ty = .I2 });
@@ -757,18 +837,8 @@ pub const IRPrinter = struct {
                     switch (v.ty) {
                         .I64 => {
                             // Check if this is an enum value
-                            if (v.enum_type_name) |_| {
-                                // Use the existing "Color" string constant (@.str.0)
-                                const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                                id += 1;
-                                const type_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [6 x i8], ptr @.str.0, i64 0, i64 0\n", .{type_ptr_name});
-                                defer self.allocator.free(type_ptr_line);
-                                try w.writeAll(type_ptr_line);
-
-                                // Call doxa_print_enum with type name and variant index
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, v.name });
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
+                            if (v.enum_type_name) |type_name| {
+                                try self.emitEnumPrint(peek_state, w, &id, type_name, v.name);
                             } else {
                                 // Regular integer print
                                 const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
@@ -807,18 +877,8 @@ pub const IRPrinter = struct {
                     switch (v.ty) {
                         .I64 => {
                             // Check if this is an enum value
-                            if (v.enum_type_name) |_| {
-                                // Use the existing "Color" string constant (@.str.0)
-                                const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                                id += 1;
-                                const type_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [6 x i8], ptr @.str.0, i64 0, i64 0\n", .{type_ptr_name});
-                                defer self.allocator.free(type_ptr_line);
-                                try w.writeAll(type_ptr_line);
-
-                                // Call doxa_print_enum with type name and variant index
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, v.name });
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
+                            if (v.enum_type_name) |type_name| {
+                                try self.emitEnumPrint(peek_state, w, &id, type_name, v.name);
                             } else {
                                 const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
                                 defer self.allocator.free(call_line);
@@ -981,11 +1041,24 @@ pub const IRPrinter = struct {
                         null;
 
                     for (raw_args.items, 0..) |arg, i| {
+                        var declared_type: ?HIR.HIRType = null;
+                        var is_alias = false;
+                        if (func_info) |info| {
+                            if (i < info.param_types.len) {
+                                declared_type = info.param_types[i];
+                            }
+                            if (i < info.param_is_alias.len) {
+                                is_alias = info.param_is_alias[i];
+                            }
+                        }
                         const llvm_ty = blk: {
-                            if (func_info) |info| {
-                                if (i < info.param_types.len) {
-                                    const is_alias = if (i < info.param_is_alias.len) info.param_is_alias[i] else false;
-                                    break :blk self.hirTypeToLLVMType(info.param_types[i], is_alias);
+                            if (is_alias) {
+                                const ty = declared_type orelse .Int;
+                                break :blk self.hirTypeToLLVMType(ty, true);
+                            }
+                            if (declared_type) |decl| {
+                                if (self.paramTypeMatchesStack(decl, arg.ty)) {
+                                    break :blk self.hirTypeToLLVMType(decl, false);
                                 }
                             }
                             break :blk self.stackTypeToLLVMType(arg.ty);
@@ -1009,7 +1082,13 @@ pub const IRPrinter = struct {
                         defer self.allocator.free(call_line);
                         try w.writeAll(call_line);
                         const stack_ty = self.hirTypeToStackType(actual_return_type);
-                        try stack.append(.{ .name = result_name, .ty = stack_ty });
+                        var pushed = StackVal{ .name = result_name, .ty = stack_ty };
+                        if (stack_ty == .PTR and actual_return_type == .Struct) {
+                            if (self.function_struct_return_fields.get(c.qualified_name)) |fts| {
+                                pushed.struct_field_types = fts;
+                            }
+                        }
+                        try stack.append(pushed);
                     } else {
                         const runtime_name = mapBuiltinToRuntime(c.qualified_name);
                         const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ runtime_name, args_str });
@@ -1064,6 +1143,50 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
                             try stack.append(.{ .name = result_name, .ty = .I64 });
+                        },
+                        .ToByte => {
+                            // Convert C-string to byte using doxa_byte_from_cstr
+                            const ptr_val = blk: {
+                                if (arg.ty == .PTR) {
+                                    break :blk arg.name;
+                                } else if (arg.ty == .I64) {
+                                    const tmp_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                    id += 1;
+                                    const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ tmp_ptr, arg.name });
+                                    defer self.allocator.free(cast_line);
+                                    try w.writeAll(cast_line);
+                                    break :blk tmp_ptr;
+                                } else {
+                                    const zero = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                    id += 1;
+                                    const zero_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{zero});
+                                    defer self.allocator.free(zero_line);
+                                    try w.writeAll(zero_line);
+                                    try stack.append(.{ .name = zero, .ty = .I8 });
+                                    break :blk "";
+                                }
+                            };
+
+                            if (ptr_val.len == 0) {
+                                // Already pushed a zero-byte above
+                            } else {
+                                const as_i64 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const call_line = try std.fmt.allocPrint(
+                                    self.allocator,
+                                    "  {s} = call i64 @doxa_byte_from_cstr(ptr {s})\n",
+                                    .{ as_i64, ptr_val },
+                                );
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+
+                                const as_i8 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i8\n", .{ as_i8, as_i64 });
+                                defer self.allocator.free(trunc_line);
+                                try w.writeAll(trunc_line);
+                                try stack.append(.{ .name = as_i8, .ty = .I8 });
+                            }
                         },
                         else => {
                             // Not implemented yet - push zero
@@ -1291,13 +1414,20 @@ pub const IRPrinter = struct {
 
                     stack.items.len -= 1;
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
-                    if (sc.scope_kind == .GlobalLocal) {
+                    const is_global = switch (sc.scope_kind) {
+                        .GlobalLocal, .ModuleGlobal => true,
+                        else => false,
+                    };
+                    if (is_global) {
                         _ = try self.global_types.put(sc.var_name, value.ty);
                         if (value.array_type) |array_type| {
                             _ = try self.global_array_types.put(sc.var_name, array_type);
                         }
                         if (value.enum_type_name) |enum_type_name| {
                             _ = try self.global_enum_types.put(sc.var_name, enum_type_name);
+                        }
+                        if (value.struct_field_types) |fts| {
+                            _ = try self.global_struct_field_types.put(sc.var_name, fts);
                         }
                         _ = try self.defined_globals.put(sc.var_name, true);
                         const gptr = try self.mangleGlobalName(sc.var_name);
@@ -1343,6 +1473,12 @@ pub const IRPrinter = struct {
                         try w.writeAll("  ret i32 0\n");
                         had_return = true;
                     }
+                    last_instruction_was_terminator = true;
+                },
+                .Unreachable => |_| {
+                    try w.writeAll("  unreachable\n");
+                    stack.items.len = 0;
+                    last_instruction_was_terminator = true;
                 },
                 else => {},
             }
@@ -1356,16 +1492,13 @@ pub const IRPrinter = struct {
         try w.writeAll("}\n");
     }
 
-    fn writeFunction(
+    fn getFunctionRange(
         self: *IRPrinter,
         hir: *const HIR.HIRProgram,
-        w: anytype,
         func: HIR.HIRProgram.HIRFunction,
         func_start_labels: *std.StringHashMap(bool),
-        peek_state: *PeekEmitState,
-    ) !void {
-        // Find function start and end indices
-        const start_idx = self.findLabelIndex(hir, func.start_label) orelse return;
+    ) ?struct { start: usize, end: usize } {
+        const start_idx = self.findLabelIndex(hir, func.start_label) orelse return null;
         var end_idx: usize = hir.instructions.len;
         var i: usize = start_idx + 1;
         while (i < hir.instructions.len) : (i += 1) {
@@ -1378,6 +1511,62 @@ pub const IRPrinter = struct {
                 }
             }
         }
+        return .{ .start = start_idx, .end = end_idx };
+    }
+
+    fn collectFunctionStructReturnInfo(
+        self: *IRPrinter,
+        hir: *const HIR.HIRProgram,
+        func: HIR.HIRProgram.HIRFunction,
+        func_start_labels: *std.StringHashMap(bool),
+    ) !void {
+        const range = self.getFunctionRange(hir, func, func_start_labels) orelse return;
+        var pending_fields: ?[]HIR.HIRType = null;
+        var idx: usize = range.start + 1;
+        while (idx < range.end) : (idx += 1) {
+            const inst = hir.instructions[idx];
+            switch (inst) {
+                .StructNew => |sn| {
+                    if (pending_fields) |existing| {
+                        self.allocator.free(existing);
+                    }
+                    pending_fields = try self.allocator.dupe(HIR.HIRType, sn.field_types);
+                },
+                .Return => |ret| {
+                    if (pending_fields) |fields| {
+                        defer pending_fields = null;
+                        if (ret.has_value and !self.function_struct_return_fields.contains(func.qualified_name)) {
+                            _ = try self.function_struct_return_fields.put(func.qualified_name, fields);
+                        } else {
+                            self.allocator.free(fields);
+                        }
+                    }
+                },
+                .Label => {},
+                else => {
+                    if (pending_fields) |fields| {
+                        self.allocator.free(fields);
+                        pending_fields = null;
+                    }
+                },
+            }
+        }
+        if (pending_fields) |fields| {
+            self.allocator.free(fields);
+        }
+    }
+
+    fn writeFunction(
+        self: *IRPrinter,
+        hir: *const HIR.HIRProgram,
+        w: anytype,
+        func: HIR.HIRProgram.HIRFunction,
+        func_start_labels: *std.StringHashMap(bool),
+        peek_state: *PeekEmitState,
+    ) !void {
+        const range = self.getFunctionRange(hir, func, func_start_labels) orelse return;
+        const start_idx = range.start;
+        const end_idx = range.end;
 
         // First pass: Collect all variables that need allocation
         var variables_to_allocate = std.StringHashMap(VariableInfo).init(self.allocator);
@@ -1388,6 +1577,16 @@ pub const IRPrinter = struct {
             }
             variables_to_allocate.deinit();
         }
+
+        const AliasInfo = struct {
+            ptr_name: []const u8,
+            pointee_type: HIR.HIRType,
+            array_type: ?HIR.HIRType = null,
+            struct_field_types: ?[]HIR.HIRType = null,
+            enum_type_name: ?[]const u8 = null,
+        };
+        var alias_slots = std.AutoHashMap(u32, AliasInfo).init(self.allocator);
+        defer alias_slots.deinit();
 
         // Scan through instructions to find all variables that need allocation
         for (hir.instructions[start_idx..end_idx]) |inst| {
@@ -1450,7 +1649,8 @@ pub const IRPrinter = struct {
         }
 
         for (func.param_types, 0..) |param_type, param_idx| {
-            const param_type_str = switch (param_type) {
+            const is_alias = if (param_idx < func.param_is_alias.len) func.param_is_alias[param_idx] else false;
+            const param_type_str = if (is_alias) "ptr" else switch (param_type) {
                 .Int => "i64",
                 .Float => "double",
                 .Byte => "i8",
@@ -1523,6 +1723,12 @@ pub const IRPrinter = struct {
 
         var last_instruction_was_terminator = false;
         var current_block: []const u8 = "entry";
+        var synthetic_labels = std.array_list.Managed([]const u8).init(self.allocator);
+        defer {
+            for (synthetic_labels.items) |lbl| self.allocator.free(lbl);
+            synthetic_labels.deinit();
+        }
+        var dead_block_counter: usize = 0;
 
         // Add parameters to stack
         for (func.param_types, 0..) |param_type, param_idx| {
@@ -1539,6 +1745,22 @@ pub const IRPrinter = struct {
 
         // Process function body instructions
         for (hir.instructions[start_idx..end_idx]) |inst| {
+            const tag = std.meta.activeTag(inst);
+            const requires_new_block = switch (tag) {
+                .Label, .ExitScope => false,
+                else => true,
+            };
+            if (last_instruction_was_terminator and requires_new_block) {
+                const dead_label = try std.fmt.allocPrint(self.allocator, "dead_block_{d}", .{dead_block_counter});
+                dead_block_counter += 1;
+                try synthetic_labels.append(dead_label);
+                const line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{dead_label});
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                current_block = dead_label;
+                stack.items.len = 0;
+                last_instruction_was_terminator = false;
+            }
             switch (inst) {
                 .Label => |lbl| {
                     // Only process function body labels, skip function start labels and invalid basic block names
@@ -1573,7 +1795,9 @@ pub const IRPrinter = struct {
                         .float => |f| {
                             const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double 0.0, {d}\n", .{ name, f });
+                            const literal = try self.formatFloatLiteral(f);
+                            defer self.allocator.free(literal);
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double 0.0, {s}\n", .{ name, literal });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             try stack.append(.{ .name = name, .ty = .F64 });
@@ -1646,6 +1870,11 @@ pub const IRPrinter = struct {
                         defer self.allocator.free(ret_line);
                         try w.writeAll(ret_line);
                     }
+                    last_instruction_was_terminator = true;
+                },
+                .Unreachable => |_| {
+                    try w.writeAll("  unreachable\n");
+                    stack.items.len = 0;
                     last_instruction_was_terminator = true;
                 },
                 .JumpCond => |jc| {
@@ -1751,18 +1980,8 @@ pub const IRPrinter = struct {
                     switch (v.ty) {
                         .I64 => {
                             // Check if this is an enum value
-                            if (v.enum_type_name) |_| {
-                                // Use the existing "Color" string constant (@.str.0)
-                                const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                                id += 1;
-                                const type_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [6 x i8], ptr @.str.0, i64 0, i64 0\n", .{type_ptr_name});
-                                defer self.allocator.free(type_ptr_line);
-                                try w.writeAll(type_ptr_line);
-
-                                // Call doxa_print_enum with type name and variant index
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, v.name });
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
+                            if (v.enum_type_name) |type_name| {
+                                try self.emitEnumPrint(peek_state, w, &id, type_name, v.name);
                             } else {
                                 // Regular integer print
                                 const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
@@ -2082,7 +2301,13 @@ pub const IRPrinter = struct {
                         defer self.allocator.free(call_line);
                         try w.writeAll(call_line);
                         const stack_ty = self.hirTypeToStackType(c.return_type);
-                        try stack.append(.{ .name = result_name, .ty = stack_ty });
+                        var pushed = StackVal{ .name = result_name, .ty = stack_ty };
+                        if (stack_ty == .PTR and c.return_type == .Struct) {
+                            if (self.function_struct_return_fields.get(c.qualified_name)) |fts| {
+                                pushed.struct_field_types = fts;
+                            }
+                        }
+                        try stack.append(pushed);
                     } else {
                         const runtime_name = mapBuiltinToRuntime(c.qualified_name);
                         const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ runtime_name, args_str });
@@ -2228,19 +2453,8 @@ pub const IRPrinter = struct {
                     // Print the actual value
                     switch (v.ty) {
                         .I64 => {
-                            // Check if this is an enum value
-                            if (v.enum_type_name) |_| {
-                                // Use the existing "Color" string constant (@.str.0)
-                                const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                                id += 1;
-                                const type_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [6 x i8], ptr @.str.0, i64 0, i64 0\n", .{type_ptr_name});
-                                defer self.allocator.free(type_ptr_line);
-                                try w.writeAll(type_ptr_line);
-
-                                // Call doxa_print_enum with type name and variant index
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, v.name });
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
+                            if (v.enum_type_name) |type_name| {
+                                try self.emitEnumPrint(peek_state, w, &id, type_name, v.name);
                             } else {
                                 const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
                                 defer self.allocator.free(call_line);
@@ -2269,51 +2483,69 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .LoadAlias => |la| {
-                    // LoadAlias loads a value from an alias parameter
-                    // For alias parameters (like 'this'), they're passed as pointers
-                    // Alias slots are used in the VM, but in LLVM we need to map them to parameter indices
-                    // For methods, 'this' is always the first parameter (index 0)
-                    // So we assume LoadAlias with any alias slot in a method maps to parameter 0
-                    const param_idx = if (func.param_types.len > 0 and func.param_is_alias.len > 0 and func.param_is_alias[0])
-                        0
-                    else
-                        la.slot_index; // Fallback: try to use slot_index as parameter index
-
-                    if (param_idx < func.param_types.len) {
-                        const param_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{param_idx});
-
-                        // For 'this' in methods, extract struct name and get struct field types
-                        var struct_field_types: ?[]HIR.HIRType = null;
-                        if (std.mem.eql(u8, la.var_name, "this")) {
-                            // Extract struct name from method name (e.g., "Point.getX" -> "Point")
-                            if (std.mem.indexOfScalar(u8, func.qualified_name, '.')) |dot_idx| {
-                                const struct_name = func.qualified_name[0..dot_idx];
-                                if (self.global_struct_field_types.get(struct_name)) |fts| {
-                                    struct_field_types = fts;
-                                }
-                            }
+                    if (alias_slots.get(la.slot_index)) |info| {
+                        const stack_ty = self.hirTypeToStackType(info.pointee_type);
+                        if (stack_ty == .PTR) {
+                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .struct_field_types = info.struct_field_types });
+                        } else {
+                            const result = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
+                            const llvm_ty = self.hirTypeToLLVMType(info.pointee_type, false);
+                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ result, llvm_ty, info.ptr_name });
+                            defer self.allocator.free(load_line);
+                            try w.writeAll(load_line);
+                            try stack.append(.{ .name = result, .ty = stack_ty, .array_type = info.array_type, .struct_field_types = info.struct_field_types });
                         }
-
-                        // Alias parameters are always pointers in LLVM
-                        try stack.append(.{ .name = param_name, .ty = .PTR, .struct_field_types = struct_field_types });
                     } else {
-                        // Fallback: push null pointer
                         const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                         id += 1;
                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{fallback});
                         defer self.allocator.free(line);
                         try w.writeAll(line);
-                        try stack.append(.{ .name = fallback, .ty = .PTR });
+                        try stack.append(.{ .name = fallback, .ty = .I64 });
+                    }
+                    last_instruction_was_terminator = false;
+                },
+                .StoreAlias => |sa| {
+                    if (stack.items.len < 1) continue;
+                    const value = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    if (alias_slots.get(sa.slot_index)) |info| {
+                        const llvm_ty = self.hirTypeToLLVMType(info.pointee_type, false);
+                        const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info.ptr_name });
+                        defer self.allocator.free(store_line);
+                        try w.writeAll(store_line);
                     }
                     last_instruction_was_terminator = false;
                 },
                 .StoreParamAlias => |spa| {
-                    // StoreParamAlias sets up an alias parameter
-                    // In LLVM, alias parameters are already passed as pointers, so this is a no-op
-                    // But we should track that this parameter is an alias for variable allocation
-                    // The parameter is already on the stack (pushed in the parameter loop above)
-                    // So we just need to ensure it's tracked correctly
-                    _ = spa; // No-op for LLVM IR generation
+                    if (stack.items.len < 1) continue;
+                    const ptr_val = stack.items[stack.items.len - 1];
+                    stack.items.len -= 1;
+                    var struct_fields: ?[]HIR.HIRType = null;
+                    if (spa.param_type == .Struct) {
+                        if (std.mem.eql(u8, spa.param_name, "this")) {
+                            if (std.mem.indexOfScalar(u8, func.qualified_name, '.')) |dot_idx| {
+                                const struct_name = func.qualified_name[0..dot_idx];
+                                if (self.global_struct_field_types.get(struct_name)) |fts| {
+                                    struct_fields = fts;
+                                }
+                            }
+                        } else if (self.global_struct_field_types.get(spa.param_name)) |fts| {
+                            struct_fields = fts;
+                        }
+                    }
+                    const array_hint: ?HIR.HIRType = switch (spa.param_type) {
+                        .Array => |inner| inner.*,
+                        else => null,
+                    };
+                    const alias_info = AliasInfo{
+                        .ptr_name = ptr_val.name,
+                        .pointee_type = spa.param_type,
+                        .array_type = array_hint,
+                        .struct_field_types = struct_fields,
+                    };
+                    try alias_slots.put(spa.var_index, alias_info);
                     last_instruction_was_terminator = false;
                 },
                 .GetField => |gf| try self.emitGetField(w, &stack, &id, gf),
@@ -2370,6 +2602,57 @@ pub const IRPrinter = struct {
         const name = try std.fmt.allocPrint(self.allocator, "%t{d}", .{id.*});
         id.* += 1;
         return name;
+    }
+
+    fn emitEnumPrint(
+        self: *IRPrinter,
+        peek_state: *PeekEmitState,
+        w: anytype,
+        id: *usize,
+        type_name: []const u8,
+        value_name: []const u8,
+    ) !void {
+        const info = try internPeekString(
+            self.allocator,
+            &peek_state.*.string_map,
+            &peek_state.*.strings,
+            peek_state.*.next_id_ptr,
+            &peek_state.*.globals,
+            type_name,
+        );
+        const type_ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+        id.* += 1;
+        const type_ptr_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+            .{ type_ptr_name, info.length, info.name },
+        );
+        defer self.allocator.free(type_ptr_line);
+        try w.writeAll(type_ptr_line);
+
+        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_enum(ptr {s}, i64 {s})\n", .{ type_ptr_name, value_name });
+        defer self.allocator.free(call_line);
+        try w.writeAll(call_line);
+    }
+
+    fn emitQuantifierWrappers(self: *IRPrinter, w: anytype) !void {
+        const wrappers = [_]struct { name: []const u8, runtime: []const u8 }{
+            .{ .name = "exists_quantifier_gt", .runtime = "doxa_exists_quantifier_gt" },
+            .{ .name = "exists_quantifier_eq", .runtime = "doxa_exists_quantifier_eq" },
+            .{ .name = "forall_quantifier_gt", .runtime = "doxa_forall_quantifier_gt" },
+            .{ .name = "forall_quantifier_eq", .runtime = "doxa_forall_quantifier_eq" },
+        };
+        for (wrappers) |wrap| {
+            const header = try std.fmt.allocPrint(self.allocator, "define i2 @{s}(ptr %hdr, i64 %value) {{\n", .{wrap.name});
+            defer self.allocator.free(header);
+            try w.writeAll(header);
+            try w.writeAll("entry:\n");
+            const call_line = try std.fmt.allocPrint(self.allocator, "  %res = call i8 @{s}(ptr %hdr, i64 %value)\n", .{wrap.runtime});
+            defer self.allocator.free(call_line);
+            try w.writeAll(call_line);
+            try w.writeAll("  %cast = trunc i8 %res to i2\n");
+            try w.writeAll("  ret i2 %cast\n}\n\n");
+        }
     }
 
     fn createEnumTypeNameGlobal(self: *IRPrinter, type_name: []const u8, _: *usize) ![]const u8 {
@@ -3027,8 +3310,16 @@ pub const IRPrinter = struct {
             return .{ .name = result_name, .ty = .I1 };
         }
         var result_name: []const u8 = undefined;
+        var operand_type = cmp.operand_type;
+        if (operand_type == .Int) {
+            if (lhs.ty == .I2 and rhs.ty == .I2) {
+                operand_type = .Tetra;
+            } else if (lhs.ty == .I8 and rhs.ty == .I8) {
+                operand_type = .Byte;
+            }
+        }
         const line = blk: {
-            switch (cmp.operand_type) {
+            switch (operand_type) {
                 .Int => {
                     result_name = try self.nextTemp(id);
                     const pred = switch (cmp.op) {
@@ -3132,7 +3423,26 @@ pub const IRPrinter = struct {
         else switch (value.ty) {
             .I64 => "int",
             .F64 => "float",
-            .PTR => if (value.array_type != null) "array" else "string",
+            .PTR => blk: {
+                // Distinguish between arrays, structs, and raw strings
+                if (value.array_type != null) break :blk "array";
+
+                // If we have struct field type metadata, try to recover the
+                // original struct name so peeks show "Point" instead of "string".
+                if (value.struct_field_types) |fts| {
+                    var it = self.global_struct_field_types.iterator();
+                    while (it.next()) |entry| {
+                        const candidate = entry.value_ptr.*;
+                        if (candidate.ptr == fts.ptr and candidate.len == fts.len) {
+                            break :blk entry.key_ptr.*;
+                        }
+                    }
+                    // Fallback when we can't find an exact metadata match
+                    break :blk "struct";
+                }
+
+                break :blk "string";
+            },
             .I8 => "value",
             .I1 => "value",
             .I2 => "tetra",
@@ -3586,51 +3896,9 @@ pub const IRPrinter = struct {
         // Rebuild the inline struct type from the source value if available
         // BUT: if we're accessing a nested struct field (e.g., mike.person.age),
         // we need to use the inner struct's type (Person) not the container's type (Employee)
-        var struct_type_llvm: []const u8 = "{ i64 }"; // fallback
+        var struct_type_llvm: []const u8 = undefined;
         var needs_free = false;
-        var actual_struct_field_types: ?[]HIR.HIRType = struct_val.struct_field_types;
-
-        // If struct_field_types is not available on the stack, try to look it up from global_struct_field_types
-        // This happens when we have struct parameters that don't have metadata
-        if (actual_struct_field_types == null) {
-            // Try to find the struct by matching field count
-            // This is a workaround - ideally we'd have the struct name from the HIR
-            var it = self.global_struct_field_types.iterator();
-            var best_match: ?[]HIR.HIRType = null;
-            var best_match_count: usize = 0;
-            while (it.next()) |entry| {
-                const candidate_fts = entry.value_ptr.*;
-                // Prefer structs with more fields (more specific match)
-                if (candidate_fts.len > best_match_count) {
-                    best_match = candidate_fts;
-                    best_match_count = candidate_fts.len;
-                }
-            }
-            if (best_match) |fts| {
-                actual_struct_field_types = fts;
-            }
-        }
-
-        // Get field type first to check if it's a struct
-        const field_type_check: HIR.HIRType = if (actual_struct_field_types) |fts|
-            fts[@intCast(gf.field_index)]
-        else switch (gf.container_type) {
-            .Struct => |_| HIR.HIRType{ .Int = {} },
-            else => HIR.HIRType{ .Int = {} },
-        };
-        const field_stack_type_check = self.hirTypeToStackType(field_type_check);
-
-        // If the field we're accessing is a struct, use its field types instead of the container's
-        // This is for when we're accessing a nested field like mike.person.age
-        // After accessing mike.person, we have a Person pointer, so we need Person's field types
-        if (field_stack_type_check == .PTR and field_type_check == .Struct) {
-            if (gf.field_struct_name) |struct_name| {
-                if (self.global_struct_field_types.get(struct_name)) |inner_fts| {
-                    // Use the inner struct's field types for the GEP
-                    actual_struct_field_types = inner_fts;
-                }
-            }
-        }
+        const actual_struct_field_types: ?[]HIR.HIRType = struct_val.struct_field_types;
 
         if (actual_struct_field_types) |fts| {
             var buf = std.ArrayListUnmanaged(u8){};
@@ -3645,6 +3913,9 @@ pub const IRPrinter = struct {
             }
             try buf.appendSlice(self.allocator, " }");
             struct_type_llvm = try buf.toOwnedSlice(self.allocator);
+            needs_free = true;
+        } else {
+            struct_type_llvm = try self.buildFallbackStructType(gf.field_index);
             needs_free = true;
         }
         defer if (needs_free) self.allocator.free(struct_type_llvm);
@@ -3661,17 +3932,6 @@ pub const IRPrinter = struct {
         };
         const field_stack_type = self.hirTypeToStackType(field_type);
         const field_llvm_type = self.stackTypeToLLVMType(field_stack_type);
-
-        // If field type is a Struct but we don't have struct_field_types metadata,
-        // try to look it up from the struct name
-        var field_struct_field_types: ?[]HIR.HIRType = null;
-        if (field_stack_type == .PTR and field_type == .Struct) {
-            if (gf.field_struct_name) |struct_name| {
-                if (self.global_struct_field_types.get(struct_name)) |fts| {
-                    field_struct_field_types = fts;
-                }
-            }
-        }
 
         // Generate GEP to get field pointer
         // IMPORTANT: If we're accessing a nested struct field (e.g., mike.person.age),
@@ -3705,32 +3965,7 @@ pub const IRPrinter = struct {
         // If the field is a struct pointer, try to preserve the struct field types metadata
         // for subsequent nested field accesses.
         if (field_stack_type == .PTR) {
-            var pushed: StackVal = .{ .name = field_val, .ty = field_stack_type };
-            // If the field type itself is a Struct, try to look up its field types
-            // IMPORTANT: We need to set struct_field_types even if field_type is not .Struct,
-            // because the field might be a pointer to a struct that we need to track
-            if (field_type == .Struct) {
-                // First try to look up by struct name if available
-                if (gf.field_struct_name) |struct_name| {
-                    if (self.global_struct_field_types.get(struct_name)) |field_types| {
-                        pushed.struct_field_types = field_types;
-                    }
-                }
-                // Fallback: if we have field_struct_field_types from earlier lookup, use it
-                if (pushed.struct_field_types == null) {
-                    if (field_struct_field_types) |fts| {
-                        pushed.struct_field_types = fts;
-                    }
-                }
-            } else {
-                // Even if field_type is not .Struct, if we have gf.field_struct_name, it means
-                // the field is a pointer to a struct, so we should look it up
-                if (gf.field_struct_name) |struct_name| {
-                    if (self.global_struct_field_types.get(struct_name)) |field_types| {
-                        pushed.struct_field_types = field_types;
-                    }
-                }
-            }
+            const pushed: StackVal = .{ .name = field_val, .ty = field_stack_type };
             try stack.append(pushed);
         } else {
             try stack.append(.{ .name = field_val, .ty = field_stack_type });
@@ -3751,7 +3986,7 @@ pub const IRPrinter = struct {
 
         // Rebuild the inline struct type from the source value if available
         // The struct_val should have struct_field_types set if it came from a GetField that accessed a struct
-        var struct_type_llvm_set: []const u8 = "{ i64 }"; // fallback
+        var struct_type_llvm_set: []const u8 = undefined;
         var needs_free_set = false;
         const actual_struct_field_types_set: ?[]HIR.HIRType = struct_val.struct_field_types;
 
@@ -3768,6 +4003,9 @@ pub const IRPrinter = struct {
             }
             try buf.appendSlice(self.allocator, " }");
             struct_type_llvm_set = try buf.toOwnedSlice(self.allocator);
+            needs_free_set = true;
+        } else {
+            struct_type_llvm_set = try self.buildFallbackStructType(sf.field_index);
             needs_free_set = true;
         }
         defer if (needs_free_set) self.allocator.free(struct_type_llvm_set);
@@ -3808,6 +4046,20 @@ pub const IRPrinter = struct {
 
         // Push struct pointer back onto stack
         try stack.append(struct_val);
+    }
+
+    fn buildFallbackStructType(self: *IRPrinter, field_index: u32) ![]u8 {
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(self.allocator);
+        const fallback_fields: usize = @intCast(field_index + 1);
+        try buf.appendSlice(self.allocator, "{ ");
+        var i: usize = 0;
+        while (i < fallback_fields) : (i += 1) {
+            try buf.appendSlice(self.allocator, "i64");
+            if (i + 1 < fallback_fields) try buf.appendSlice(self.allocator, ", ");
+        }
+        try buf.appendSlice(self.allocator, " }");
+        return try buf.toOwnedSlice(self.allocator);
     }
 
     fn hirTypeToStackType(self: *IRPrinter, hir_type: HIR.HIRType) StackType {

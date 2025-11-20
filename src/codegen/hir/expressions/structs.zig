@@ -68,6 +68,7 @@ pub const StructsHandler = struct {
         try self.generator.instructions.append(.{
             .StructNew = .{
                 .type_name = struct_data.name.lexeme,
+                .struct_id = 0, // TODO: look up real StructId from struct table
                 .field_count = @intCast(struct_data.fields.len),
                 .field_types = try self.generator.allocator.dupe(HIRType, field_types),
                 .size_bytes = 0, // Size will be calculated by VM
@@ -79,7 +80,7 @@ pub const StructsHandler = struct {
 
     /// Helper function to resolve field index and struct name from struct type and field name
     fn resolveFieldIndexAndStructName(self: *StructsHandler, object_expr: *ast.Expr, field_name: []const u8) struct { field_index: u32, struct_name: ?[]const u8 } {
-        // First resolve the object's type to get the container struct name
+        // First try the precise resolution path using the object's concrete struct type name.
         if (self.generator.type_system.resolveFieldAccessType(object_expr, &self.generator.symbol_table)) |resolve_result| {
             if (resolve_result.custom_type_name) |container_struct_name| {
                 if (self.generator.type_system.custom_types.get(container_struct_name)) |custom_type| {
@@ -101,7 +102,31 @@ pub const StructsHandler = struct {
                 }
             }
         }
-        return .{ .field_index = 0, .struct_name = null }; // Fallback to 0 if resolution fails
+
+        // If we couldn't determine the container struct name (e.g., the variable's type
+        // was inferred and no custom type was tracked), fall back to a best-effort
+        // search across all known struct types. This matches the interpreter's
+        // name-based field lookup more closely and avoids always defaulting to index 0.
+        var it = self.generator.type_system.custom_types.iterator();
+        while (it.next()) |entry| {
+            const ct = entry.value_ptr.*;
+            if (ct.kind != .Struct or ct.struct_fields == null) continue;
+
+            const fields = ct.struct_fields.?;
+            for (fields) |f| {
+                if (std.mem.eql(u8, f.name, field_name)) {
+                    // Use this struct's field index and nested struct name if present.
+                    return .{
+                        .field_index = f.index,
+                        .struct_name = f.custom_type_name,
+                    };
+                }
+            }
+        }
+
+        // Final fallback: index 0 with no struct name. This should be rare after the
+        // above attempts and exists only to keep the compiler from crashing.
+        return .{ .field_index = 0, .struct_name = null };
     }
 
     /// Helper function to resolve field index from struct type and field name
@@ -150,9 +175,11 @@ pub const StructsHandler = struct {
                 .GetField = .{
                     .field_name = field.field.lexeme,
                     .container_type = obj_type, // Use the inferred object type
+                    .struct_id = 0, // TODO: look up real StructId from struct table
                     .field_index = resolved.field_index, // Resolved from type system
+                    .field_type = .Unknown,
                     .field_for_peek = false, // Default
-                    .field_struct_name = resolved.struct_name, // Struct name if field is a struct
+                    .nested_struct_id = null,
                 },
             });
         }
@@ -185,9 +212,11 @@ pub const StructsHandler = struct {
                 .GetField = .{
                     .field_name = outer_field.field.lexeme,
                     .container_type = HIRType{ .Struct = 0 },
+                    .struct_id = 0,
                     .field_index = outer_resolved_get.field_index,
+                    .field_type = .Unknown,
                     .field_for_peek = false,
-                    .field_struct_name = outer_resolved_get.struct_name,
+                    .nested_struct_id = null,
                 },
             });
 
@@ -241,8 +270,10 @@ pub const StructsHandler = struct {
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
                     .container_type = HIRType{ .Struct = 0 },
+                    .struct_id = 0,
                     .field_index = inner_field_index,
-                    .field_struct_name = inner_field_struct_name,
+                    .field_type = .Unknown,
+                    .nested_struct_id = null,
                 },
             });
 
@@ -259,8 +290,10 @@ pub const StructsHandler = struct {
                 .SetField = .{
                     .field_name = outer_field.field.lexeme,
                     .container_type = HIRType{ .Struct = 0 },
+                    .struct_id = 0,
                     .field_index = outer_resolved_set.field_index,
-                    .field_struct_name = outer_resolved_set.struct_name,
+                    .field_type = .Unknown,
+                    .nested_struct_id = null,
                 },
             });
 
@@ -310,8 +343,10 @@ pub const StructsHandler = struct {
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
                     .container_type = HIRType{ .Struct = 0 },
+                    .struct_id = 0,
                     .field_index = resolved.field_index,
-                    .field_struct_name = resolved.struct_name,
+                    .field_type = .Unknown,
+                    .nested_struct_id = null,
                 },
             });
 

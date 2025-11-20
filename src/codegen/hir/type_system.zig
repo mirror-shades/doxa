@@ -12,12 +12,14 @@ const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 const Reporting = @import("../../utils/reporting.zig");
 const Location = Reporting.Location;
+const StructTable = @import("../../common/struct_table.zig").StructTable;
 
 pub const TypeSystem = struct {
     custom_types: std.StringHashMap(CustomTypeInfo),
     allocator: std.mem.Allocator,
     reporter: *Reporting.Reporter,
     semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
+    struct_table: ?*const StructTable = null,
 
     pub const CustomTypeInfo = struct {
         name: []const u8,
@@ -69,12 +71,29 @@ pub const TypeSystem = struct {
 
     pub const FieldResolveResult = struct { t: HIRType, custom_type_name: ?[]const u8 = null };
 
+    fn structTypeForName(self: *TypeSystem, name: []const u8) HIRType {
+        if (self.struct_table) |table| {
+            if (table.getIdByName(name)) |id| {
+                return HIRType{ .Struct = id };
+            }
+        }
+        return HIRType{ .Struct = 0 };
+    }
+
+    fn structTypeFromOptional(self: *TypeSystem, maybe_name: ?[]const u8) HIRType {
+        if (maybe_name) |name| {
+            return self.structTypeForName(name);
+        }
+        return HIRType{ .Struct = 0 };
+    }
+
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporting.Reporter, semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer) TypeSystem {
         return TypeSystem{
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
             .allocator = allocator,
             .reporter = reporter,
             .semantic_analyzer = semantic_analyzer,
+            .struct_table = if (semantic_analyzer) |sa| sa.getStructTable() else null,
         };
     }
 
@@ -168,7 +187,7 @@ pub const TypeSystem = struct {
                 return HIRType{ .Map = .{ .key = key_type, .value = value_type } };
             },
             .Union => .Unknown,
-            .Custom => HIRType{ .Struct = 0 },
+            .Custom => self.structTypeFromOptional(type_info.custom_type),
             else => .Nothing,
         };
     }
@@ -188,16 +207,56 @@ pub const TypeSystem = struct {
     pub fn resolveFieldAccessType(self: *TypeSystem, e: *ast.Expr, symbol_table: *SymbolTable) ?FieldResolveResult {
         return switch (e.data) {
             .Variable => |var_token| blk: {
+                // 1. Prefer explicit custom-type tracking from the HIR symbol table
                 if (symbol_table.getVariableCustomType(var_token.lexeme)) |ctype| {
-                    break :blk FieldResolveResult{ .t = HIRType{ .Struct = 0 }, .custom_type_name = ctype };
+                    break :blk FieldResolveResult{ .t = self.structTypeForName(ctype), .custom_type_name = ctype };
                 }
+
+                // 2. Treat bare type names (e.g. Point) as struct/enum types
                 if (self.isCustomType(var_token.lexeme)) |ct| {
                     switch (ct.kind) {
-                        .Struct => break :blk FieldResolveResult{ .t = HIRType{ .Struct = 0 }, .custom_type_name = var_token.lexeme },
+                        .Struct => break :blk FieldResolveResult{ .t = self.structTypeForName(var_token.lexeme), .custom_type_name = var_token.lexeme },
                         .Enum => break :blk FieldResolveResult{ .t = HIRType{ .Enum = 0 }, .custom_type_name = null },
                     }
                 }
-                break :blk FieldResolveResult{ .t = symbol_table.getTrackedVariableType(var_token.lexeme) orelse .Unknown, .custom_type_name = null };
+
+                // 3. FALLBACK: Ask the semantic analyzer for the precise type, including the
+                //    concrete struct/enum name. This covers cases where the variable's
+                //    type was inferred (e.g. from a function call) and we never called
+                //    trackVariableCustomType in the HIR generator.
+                if (self.semantic_analyzer) |semantic| {
+                    if (semantic.current_scope) |scope| {
+                        if (scope.lookupVariable(var_token.lexeme)) |variable| {
+                            if (semantic.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                                const type_info = storage.type_info.*;
+                                const hir_type = self.convertTypeInfo(type_info);
+
+                                var custom_type_name: ?[]const u8 = null;
+                                switch (type_info.base) {
+                                    .Struct, .Enum, .Custom => {
+                                        if (type_info.custom_type) |ct_name| {
+                                            custom_type_name = ct_name;
+                                        }
+                                    },
+                                    else => {},
+                                }
+
+                                break :blk FieldResolveResult{
+                                    .t = hir_type,
+                                    .custom_type_name = custom_type_name,
+                                };
+                            }
+                        }
+                    }
+                }
+
+                // 4. Last resort: fall back to whatever HIR type tracking we have, but
+                //    with no concrete custom type name. This means downstream code
+                //    must treat the field index as best-effort only.
+                break :blk FieldResolveResult{
+                    .t = symbol_table.getTrackedVariableType(var_token.lexeme) orelse .Unknown,
+                    .custom_type_name = null,
+                };
             },
             .This => blk: {
                 // 'this' refers to the current struct type in instance methods
@@ -208,7 +267,7 @@ pub const TypeSystem = struct {
                         const struct_name = func_name[0..dot_idx];
                         if (self.isCustomType(struct_name)) |ct| {
                             if (ct.kind == .Struct) {
-                                break :blk FieldResolveResult{ .t = HIRType{ .Struct = 0 }, .custom_type_name = struct_name };
+                                break :blk FieldResolveResult{ .t = self.structTypeForName(struct_name), .custom_type_name = struct_name };
                             }
                         }
                     }
@@ -258,7 +317,7 @@ pub const TypeSystem = struct {
             .Variable => |var_token| {
                 if (self.isCustomType(var_token.lexeme)) |custom_type| {
                     return switch (custom_type.kind) {
-                        .Struct => HIRType{ .Struct = 0 },
+                        .Struct => self.structTypeForName(var_token.lexeme),
                         .Enum => HIRType{ .Enum = 0 },
                     };
                 }
@@ -455,6 +514,14 @@ pub const TypeSystem = struct {
                 const element_type = self.allocator.create(HIRType) catch return .Unknown;
                 element_type.* = .Int;
                 return HIRType{ .Array = element_type };
+            },
+            .Cast => |cast| {
+                // For 'as' / cast expressions, the result type is the target type.
+                // Reuse the existing AST -> TypeInfo -> HIRType lowering to stay
+                // consistent with semantic analysis.
+                const type_info_ptr = ast.typeInfoFromExpr(self.allocator, cast.target_type) catch return .Unknown;
+                defer self.allocator.destroy(type_info_ptr);
+                return self.convertTypeInfo(type_info_ptr.*);
             },
             else => .String,
         };

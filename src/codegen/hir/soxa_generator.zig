@@ -622,7 +622,13 @@ pub const HIRGenerator = struct {
 
                     try self.trackVariableType(param.name.lexeme, param_type);
 
-                    const var_idx = try self.getOrCreateVariable(param.name.lexeme);
+                    // Parameters must always be treated as local variables, even if a
+                    // global with the same name exists later in the script. Using
+                    // createVariable here ensures that parameters correctly shadow
+                    // any globals instead of aliasing them (which previously caused
+                    // recursive functions like `fber` to read/write a global `x`
+                    // instead of their own parameter).
+                    const var_idx = try self.symbol_table.createVariable(param.name.lexeme);
                     try self.instructions.append(.{ .StoreVar = .{
                         .var_index = var_idx,
                         .var_name = param.name.lexeme,
@@ -993,7 +999,7 @@ pub const HIRGenerator = struct {
 
             // Control flow
             .If => |if_expr| try control_flow_handler.generateIf(if_expr, preserve_result, should_pop_after_use),
-            .Match => |match_expr| try control_flow_handler.generateMatch(match_expr),
+            .Match => |match_expr| try control_flow_handler.generateMatch(match_expr, preserve_result),
             .Loop => |loop| try control_flow_handler.generateLoop(loop, preserve_result),
             .Block => try control_flow_handler.generateBlock(expr.data, preserve_result),
             .ReturnExpr => try control_flow_handler.generateReturn(expr.data),
@@ -1353,6 +1359,13 @@ pub const HIRGenerator = struct {
     }
 
     pub fn inferTypeFromExpression(self: *HIRGenerator, expr: *ast.Expr) HIRType {
+        var allocated_name: ?[]u8 = null;
+        defer {
+            if (allocated_name) |name| {
+                self.allocator.free(name);
+            }
+        }
+
         switch (expr.data) {
             .Variable => {
                 return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
@@ -1370,8 +1383,15 @@ pub const HIRGenerator = struct {
                     },
                     .FieldAccess => |field_access| {
                         if (field_access.object.data == .Variable) {
-                            function_name = field_access.field.lexeme;
-                            call_kind = .ModuleFunction;
+                            const object_name = field_access.object.data.Variable.lexeme;
+                            if (self.isModuleNamespace(object_name)) {
+                                const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme }) catch return .Unknown;
+                                allocated_name = qualified;
+                                function_name = qualified;
+                                call_kind = .ModuleFunction;
+                            } else {
+                                return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
+                            }
                         } else {
                             return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
                         }
@@ -1655,6 +1675,9 @@ pub const HIRGenerator = struct {
                 return .String;
             },
             .ModuleFunction => {
+                if (self.function_signatures.get(function_name)) |func_info| {
+                    return func_info.return_type;
+                }
                 return .String;
             },
         }

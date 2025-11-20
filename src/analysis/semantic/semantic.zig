@@ -15,6 +15,8 @@ const Location = Reporting.Location;
 
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
+const StructTable = @import("../../common/struct_table.zig").StructTable;
+const StructId = @import("../../codegen/hir/soxa_types.zig").StructId;
 const types = @import("types.zig");
 const ErrorCode = Errors.ErrorCode;
 
@@ -55,6 +57,7 @@ pub const SemanticAnalyzer = struct {
     current_initializing_var: ?[]const u8 = null,
     current_struct_type: ?[]const u8 = null,
     parser: ?*const Parser = null,
+    struct_table: StructTable,
 
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager, parser: ?*const Parser) SemanticAnalyzer {
         return .{
@@ -71,6 +74,7 @@ pub const SemanticAnalyzer = struct {
             .current_function_returns = std.array_list.Managed(*ast.TypeInfo).init(allocator),
             .current_struct_type = null,
             .parser = parser,
+            .struct_table = StructTable.init(allocator),
         };
     }
 
@@ -90,6 +94,7 @@ pub const SemanticAnalyzer = struct {
         self.struct_methods.deinit();
         self.function_return_types.deinit();
         self.current_function_returns.deinit();
+        self.struct_table.deinit();
     }
 
     pub const StructMethodInfo = struct {
@@ -105,6 +110,14 @@ pub const SemanticAnalyzer = struct {
 
     pub fn getStructMethods(self: *SemanticAnalyzer) std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)) {
         return self.struct_methods;
+    }
+
+    pub fn getStructTable(self: *const SemanticAnalyzer) *const StructTable {
+        return &self.struct_table;
+    }
+
+    pub fn getStructId(self: *SemanticAnalyzer, name: []const u8) ?StructId {
+        return self.struct_table.getIdByName(name);
     }
 
     pub fn getFunctionReturnTypes(self: *SemanticAnalyzer) std.AutoHashMap(NodeId, *ast.TypeInfo) {
@@ -250,7 +263,7 @@ pub const SemanticAnalyzer = struct {
         if (semantic_type.struct_fields) |fields| {
             const converted_fields = try allocator.alloc(HIRTypeSystem.TypeSystem.CustomTypeInfo.StructField, fields.len);
             for (fields, 0..) |field, i| {
-                // Map to coarse HIRType here without relying on self
+                // Map to coarse HIRType here without relying on SemanticAnalyzer state
                 const mapped_hir_type: HIRType = switch (field.field_type_info.base) {
                     .Int => .Int,
                     .Byte => .Byte,
@@ -259,29 +272,14 @@ pub const SemanticAnalyzer = struct {
                     .Tetra => .Tetra,
                     .Nothing => .Nothing,
                     .Array => array_blk: {
-                        // Create a simple array type with unknown element type
                         const elem_type = try allocator.create(HIRType);
                         elem_type.* = .Unknown;
                         break :array_blk HIRType{ .Array = elem_type };
                     },
-                    .Struct => HIRType{ .Struct = 0 }, // Unknown struct ID
-                    .Enum => HIRType{ .Enum = 0 }, // Unknown enum ID
-                    .Custom => blk: {
-                        // For custom types, check if it's an enum or struct
-                        if (field.custom_type_name) |custom_type_name| {
-                            // We need to determine if this is an enum or struct
-                            // For now, we'll use a simple heuristic based on the name
-                            // In a real implementation, we'd need access to the type registry
-                            if (std.mem.eql(u8, custom_type_name, "Species")) {
-                                break :blk HIRType{ .Enum = 0 }; // Unknown enum ID
-                            }
-                            // Default to Struct for other custom types
-                            break :blk HIRType{ .Struct = 0 }; // Unknown struct ID
-                        }
-                        break :blk HIRType{ .Struct = 0 }; // Unknown struct ID
-                    },
+                    .Struct => HIRType{ .Struct = 0 },
+                    .Enum => HIRType{ .Enum = 0 },
+                    .Custom => HIRType{ .Struct = 0 },
                     .Map => blk: {
-                        // Create a simple map type with unknown key/value types
                         const key_type = try allocator.create(HIRType);
                         key_type.* = .Unknown;
                         const value_type = try allocator.create(HIRType);
@@ -289,13 +287,11 @@ pub const SemanticAnalyzer = struct {
                         break :blk HIRType{ .Map = .{ .key = key_type, .value = value_type } };
                     },
                     .Function => blk: {
-                        // Create a simple function type with unknown params/return
                         const ret_type = try allocator.create(HIRType);
                         ret_type.* = .Unknown;
                         break :blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type } };
                     },
                     .Union => blk: {
-                        // Convert AST union to HIR union for struct fields
                         if (field.field_type_info.union_type) |ut| {
                             var member_types = try allocator.alloc(*const HIRType, ut.types.len);
                             for (ut.types, 0..) |member, in| {
@@ -308,35 +304,36 @@ pub const SemanticAnalyzer = struct {
                                     .Tetra => .Tetra,
                                     .Nothing => .Nothing,
                                     .Array => array_blk: {
-                                        // Create a simple array type with unknown element type
                                         const elem_type = try allocator.create(HIRType);
                                         elem_type.* = .Unknown;
                                         break :array_blk HIRType{ .Array = elem_type };
                                     },
-                                    .Struct => HIRType{ .Struct = 0 }, // Unknown struct ID
-                                    .Map => array_blk: {
-                                        // Create a simple map type with unknown key/value types
-                                        const key_type = try allocator.create(HIRType);
-                                        key_type.* = .Unknown;
-                                        const value_type = try allocator.create(HIRType);
-                                        value_type.* = .Unknown;
-                                        break :array_blk HIRType{ .Map = .{ .key = key_type, .value = value_type } };
+                                    .Struct => HIRType{ .Struct = 0 },
+                                    .Enum => HIRType{ .Enum = 0 },
+                                    .Custom => HIRType{ .Struct = 0 },
+                                    .Map => blk3: {
+                                        const key_type2 = try allocator.create(HIRType);
+                                        key_type2.* = .Unknown;
+                                        const value_type2 = try allocator.create(HIRType);
+                                        value_type2.* = .Unknown;
+                                        break :blk3 HIRType{ .Map = .{ .key = key_type2, .value = value_type2 } };
                                     },
-                                    .Enum => HIRType{ .Enum = 0 }, // Unknown enum ID
-                                    .Function => array_blk: {
-                                        // Create a simple function type with unknown params/return
-                                        const ret_type = try allocator.create(HIRType);
-                                        ret_type.* = .Unknown;
-                                        break :array_blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type } };
+                                    .Function => blk4: {
+                                        const ret_type2 = try allocator.create(HIRType);
+                                        ret_type2.* = .Unknown;
+                                        break :blk4 HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type2 } };
                                     },
-                                    .Custom => HIRType{ .Struct = 0 }, // Custom types are typically structs
-                                    .Union => .Unknown, // Nested unions not supported in this context
+                                    .Union => blk5: {
+                                        const unknown_type = try allocator.create(HIRType);
+                                        unknown_type.* = .Unknown;
+                                        break :blk5 HIRType{ .Union = &[_]*const HIRType{unknown_type} };
+                                    },
                                 };
                                 member_types[in] = member_type;
                             }
                             break :blk HIRType{ .Union = member_types };
                         } else {
-                            break :blk .Unknown; // Fallback for malformed union
+                            break :blk .Unknown;
                         }
                     },
                 };

@@ -169,7 +169,7 @@ pub const ControlFlowHandler = struct {
     }
 
     /// Generate HIR for match expressions
-    pub fn generateMatch(self: *ControlFlowHandler, match_expr: ast.MatchExpr) ErrorList!void {
+    pub fn generateMatch(self: *ControlFlowHandler, match_expr: ast.MatchExpr, preserve_result: bool) ErrorList!void {
         // Extract enum type context from the match value
         var match_enum_type: ?[]const u8 = null;
         switch (match_expr.value.data) {
@@ -201,10 +201,29 @@ pub const ControlFlowHandler = struct {
             else => {},
         }
 
+        // Track whether any pattern is an explicit else (wildcard) to know if falling through is possible.
+        var has_else_case = false;
+        for (match_expr.cases) |case| {
+            for (case.patterns) |pattern| {
+                const is_else_pattern = pattern.type == .ELSE or
+                    (pattern.type == .IDENTIFIER and std.mem.eql(u8, pattern.lexeme, "else"));
+                if (is_else_pattern) {
+                    has_else_case = true;
+                    break;
+                }
+            }
+            if (has_else_case) break;
+        }
+
         try self.generator.generateExpression(match_expr.value, true, false);
+        const fail_location = match_expr.value.base.location();
 
         // Create labels for each case body and the end
         const end_label = try self.generator.generateLabel("match_end");
+        const fail_label = if (!has_else_case and preserve_result)
+            try self.generator.generateLabel("match_fail")
+        else
+            null;
         var case_labels = std.array_list.Managed([]const u8).init(self.generator.allocator);
         defer case_labels.deinit();
         var check_labels = std.array_list.Managed([]const u8).init(self.generator.allocator);
@@ -310,8 +329,10 @@ pub const ControlFlowHandler = struct {
                         // This is the last pattern for this case
                         const false_label = if (i < match_expr.cases.len - 1)
                             check_labels.items[i] // Jump to next case check
+                        else if (fail_label) |fl|
+                            fl // No else case - jump to fail block
                         else
-                            end_label; // Last case - jump to end if no match
+                            end_label; // Last case with else - jump to end
                         try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .vm_offset = 0, .condition_type = .Tetra } });
                     } else {
                         // Not the last pattern - if this doesn't match, continue to next pattern
@@ -351,6 +372,14 @@ pub const ControlFlowHandler = struct {
             self.generator.current_enum_type = old_enum_context;
 
             try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+        }
+
+        if (preserve_result) {
+            if (fail_label) |fl| {
+                try self.generator.instructions.append(.{ .Label = .{ .name = fl, .vm_address = 0 } });
+                try self.generator.instructions.append(.Pop);
+                try self.generator.instructions.append(.{ .Unreachable = .{ .location = fail_location } });
+            }
         }
 
         // End label - the stack should now contain the result from whichever case was taken
@@ -547,6 +576,11 @@ pub const ControlFlowHandler = struct {
                 try self.generator.instructions.append(.Pop);
             }
         }
+
+        // After the success path, explicitly jump to the common end label so that
+        // the LLVM IR printer sees both branches as predecessors of the merge
+        // point and can correctly PHI-merge the resulting value on the stack.
+        try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
 
         // End merge point
         try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
