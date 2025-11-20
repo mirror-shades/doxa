@@ -7,10 +7,13 @@ const Variable = @import("../../utils/memory.zig").Variable;
 const import_parser = @import("../../parser/import_parser.zig");
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const TokenType = @import("../../types/token.zig").TokenType;
+const StructTable = @import("../../common/struct_table.zig").StructTable;
 const CustomTypeInfo = @import("semantic.zig").SemanticAnalyzer.CustomTypeInfo;
 const Memory = @import("../../utils/memory.zig");
-const HIRType = @import("../../codegen/hir/soxa_types.zig").HIRType;
-const HIREnum = @import("../../codegen/hir/soxa_types.zig").HIREnum;
+const HIRTypeModule = @import("../../codegen/hir/soxa_types.zig");
+const HIRType = HIRTypeModule.HIRType;
+const StructId = HIRTypeModule.StructId;
+const HIREnum = @import("../../codegen/hir/soxa_values.zig").HIREnum;
 
 /// Helper: structural equality for TypeInfo (avoid collapsing by .base only)
 fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
@@ -146,6 +149,27 @@ fn canonicalizeUnion(
     return try list.toOwnedSlice(allocator);
 }
 
+pub fn structIdForName(self: *SemanticAnalyzer, type_name: []const u8) ?StructId {
+    const resolved = self.resolveTypeAlias(type_name);
+    return self.struct_table.getIdByName(resolved);
+}
+
+pub fn structIdFromTypeInfo(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) ?StructId {
+    switch (ti.base) {
+        .Struct, .Custom => {
+            if (ti.custom_type) |name| {
+                const resolved = self.resolveTypeAlias(name);
+                if (self.custom_types.get(resolved)) |ct| {
+                    if (ct.kind != .Struct) return null;
+                }
+                return self.struct_table.getIdByName(resolved);
+            }
+            return null;
+        },
+        else => return null,
+    }
+}
+
 /// Centralized AST→HIR lowering (best-effort; plug IDs if you have them)
 fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType {
     return switch (ti.base) {
@@ -190,28 +214,25 @@ fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType 
         },
 
         .Enum => blk: {
-            // For now, use placeholder enum ID
-            // TODO: Map to real enum ID if available
+            // TODO: Map to real enum ID if/when enum metadata table exists
             break :blk HIRType{ .Enum = 0 };
         },
 
         .Custom => blk: {
-            // Distinguish Struct vs Enum by consulting self.custom_types
             if (ti.custom_type) |name| {
-                if (self.custom_types.get(name)) |ct| {
+                const resolved = self.resolveTypeAlias(name);
+                if (self.custom_types.get(resolved)) |ct| {
                     switch (ct.kind) {
                         .Struct => {
-                            // If you have struct ids, map here: HIRType{ .Struct = sid }
+                            if (structIdForName(self, resolved)) |sid| {
+                                break :blk HIRType{ .Struct = sid };
+                            }
                             break :blk HIRType{ .Struct = 0 };
                         },
-                        .Enum => {
-                            // Map to real enum id if you can
-                            break :blk HIRType{ .Enum = 0 };
-                        },
+                        .Enum => break :blk HIRType{ .Enum = 0 },
                     }
                 }
             }
-            // Unknown custom type → prefer a poison type in HIR if you have one
             break :blk HIRType.Nothing;
         },
 
@@ -238,7 +259,9 @@ fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType 
         },
 
         .Struct => blk: {
-            // If you have struct ids, map here: HIRType{ .Struct = sid }
+            if (structIdFromTypeInfo(self, ti)) |sid| {
+                break :blk HIRType{ .Struct = sid };
+            }
             break :blk HIRType{ .Struct = 0 };
         },
 
@@ -834,6 +857,16 @@ pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fiel
         }
     }
 
+    var table_inputs = try self.allocator.alloc(StructTable.FieldInput, fields.len);
+    defer self.allocator.free(table_inputs);
+    for (fields, 0..) |field, idx| {
+        table_inputs[idx] = .{
+            .name = field.name,
+            .type_info = field.type_info,
+        };
+    }
+    const struct_id = try self.struct_table.registerStruct(struct_name, table_inputs);
+
     // Runtime memory registration with proper HIR lowering
     var mem_fields = try self.allocator.alloc(Memory.CustomTypeInfo.StructField, fields.len);
     for (fields, 0..) |field, i| {
@@ -848,6 +881,10 @@ pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fiel
             .custom_type_name = ctn,
             .index = @intCast(i),
         };
+        self.struct_table.setFieldHIRType(struct_id, @intCast(i), mapped_hir_type);
+        if (structIdFromTypeInfo(self, field.type_info)) |nested_struct_id| {
+            self.struct_table.setNestedStructId(struct_id, @intCast(i), nested_struct_id);
+        }
     }
 
     const mem_struct = Memory.CustomTypeInfo{

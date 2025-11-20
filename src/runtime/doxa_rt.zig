@@ -233,6 +233,49 @@ pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void 
     }
 }
 
+/// Convert a C-string to a byte value, mirroring the VM's @byte(string) semantics
+/// for the common cases used by compiled code (single characters, decimal, hex,
+/// and simple float strings). On invalid input, this returns 0 instead of raising
+/// a runtime error, to keep the native code path simple.
+pub export fn doxa_byte_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
+    if (ptr == null) return 0;
+    const s_val = std.mem.span(ptr.?);
+
+    if (s_val.len == 0) {
+        return 0;
+    }
+
+    // Single ASCII character
+    if (s_val.len == 1) {
+        return @as(i64, @intCast(s_val[0]));
+    }
+
+    // Hex literal of form "0xFF"
+    if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
+        const hex_str = s_val[2..];
+        const parsed_hex_byte = std.fmt.parseInt(u8, hex_str, 16) catch return 0;
+        return @as(i64, @intCast(parsed_hex_byte));
+    }
+
+    // Try decimal integer
+    const parsed_int_opt: ?i64 = std.fmt.parseInt(i64, s_val, 10) catch null;
+    if (parsed_int_opt) |parsed_int| {
+        if (parsed_int >= 0 and parsed_int <= 255) {
+            return parsed_int;
+        }
+        return 0;
+    }
+
+    // Fallback: parse as float and clamp into byte range
+    const parsed_float = std.fmt.parseFloat(f64, s_val) catch return 0;
+    if (!std.math.isFinite(parsed_float)) return 0;
+    const rounded: i64 = @intFromFloat(parsed_float);
+    if (rounded >= 0 and rounded <= 255) {
+        return rounded;
+    }
+    return 0;
+}
+
 // Return length of a C string (0 if null)
 pub export fn doxa_str_len(ptr: ?[*:0]const u8) callconv(.c) i64 {
     if (ptr) |p| {
@@ -368,7 +411,96 @@ pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
             },
         }
     }
-
     _ = out.writeAll("]") catch return;
     _ = out.flush() catch return;
+}
+
+const QuantifierMode = enum { Greater, Equal };
+
+fn asFloat(bits: i64) f64 {
+    return @bitCast(bits);
+}
+
+fn asByte(bits: i64) u8 {
+    const raw: u64 = @bitCast(bits);
+    return @intCast(raw & 0xff);
+}
+
+fn asTetra(bits: i64) u2 {
+    const raw: u64 = @bitCast(bits);
+    return @intCast(raw & 0x3);
+}
+
+fn cStringFromBits(bits: i64) ?[*:0]const u8 {
+    const addr: u64 = @bitCast(bits);
+    if (addr == 0) return null;
+    return @ptrFromInt(@as(usize, addr));
+}
+
+fn satisfiesQuantifier(tag: u64, elem_bits: i64, comparison_bits: i64, mode: QuantifierMode) bool {
+    return switch (tag) {
+        0 => if (mode == .Equal) elem_bits == comparison_bits else elem_bits > comparison_bits,
+        1 => blk: {
+            const lhs = @as(i64, asByte(elem_bits));
+            const rhs = @as(i64, asByte(comparison_bits));
+            break :blk if (mode == .Equal) lhs == rhs else lhs > rhs;
+        },
+        2 => blk_float: {
+            const lhs = asFloat(elem_bits);
+            const rhs = asFloat(comparison_bits);
+            break :blk_float if (mode == .Equal) lhs == rhs else lhs > rhs;
+        },
+        3 => blk_str: {
+            if (mode != .Equal) break :blk_str false;
+            const lhs_ptr = cStringFromBits(elem_bits) orelse break :blk_str false;
+            const rhs_ptr = cStringFromBits(comparison_bits) orelse break :blk_str false;
+            break :blk_str std.mem.eql(u8, std.mem.span(lhs_ptr), std.mem.span(rhs_ptr));
+        },
+        4 => blk_tetra: {
+            const lhs = @as(i64, asTetra(elem_bits));
+            const rhs = @as(i64, asTetra(comparison_bits));
+            break :blk_tetra if (mode == .Equal) lhs == rhs else lhs > rhs;
+        },
+        else => false,
+    };
+}
+
+fn existsQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: QuantifierMode) u8 {
+    const hdr = hdr_opt orelse return 0;
+    var idx: u64 = 0;
+    while (idx < hdr.len) : (idx += 1) {
+        const elem_bits = doxa_array_get_i64(hdr, idx);
+        if (satisfiesQuantifier(hdr.elem_tag, elem_bits, comparison_bits, mode)) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+pub export fn doxa_exists_quantifier_gt(hdr: ?*ArrayHeader, comparison_bits: i64) callconv(.c) u8 {
+    return existsQuantifier(hdr, comparison_bits, .Greater);
+}
+
+pub export fn doxa_exists_quantifier_eq(hdr: ?*ArrayHeader, comparison_bits: i64) callconv(.c) u8 {
+    return existsQuantifier(hdr, comparison_bits, .Equal);
+}
+
+fn forallQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: QuantifierMode) u8 {
+    const hdr = hdr_opt orelse return 1;
+    var idx: u64 = 0;
+    while (idx < hdr.len) : (idx += 1) {
+        const elem_bits = doxa_array_get_i64(hdr, idx);
+        if (!satisfiesQuantifier(hdr.elem_tag, elem_bits, comparison_bits, mode)) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+pub export fn doxa_forall_quantifier_gt(hdr: ?*ArrayHeader, comparison_bits: i64) callconv(.c) u8 {
+    return forallQuantifier(hdr, comparison_bits, .Greater);
+}
+
+pub export fn doxa_forall_quantifier_eq(hdr: ?*ArrayHeader, comparison_bits: i64) callconv(.c) u8 {
+    return forallQuantifier(hdr, comparison_bits, .Equal);
 }

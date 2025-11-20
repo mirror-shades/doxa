@@ -143,11 +143,12 @@ pub const PrintOps = struct {
                             }
                             const nested_peek = HIRInstruction{
                                 .PeekStruct = .{
-                                    .location = i.location,
-                                    .field_names = field_names,
                                     .type_name = nested.type_name,
+                                    .struct_id = 0,
                                     .field_count = @intCast(nested.fields.len),
+                                    .field_names = field_names,
                                     .field_types = field_types,
+                                    .location = i.location,
                                     .should_pop_after_peek = i.should_pop_after_peek,
                                 },
                             };
