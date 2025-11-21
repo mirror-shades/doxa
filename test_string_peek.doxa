@@ -1,6 +1,0 @@
-fn test_string() {
-    string = "Hello"
-    peek string
-}
-
-test_string()

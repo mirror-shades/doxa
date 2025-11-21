@@ -1,6 +1,0 @@
-map MyMap_struct {
-    1 then "test",
-}
-
-MyMap_struct[1]?
-
