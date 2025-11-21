@@ -1,0 +1,5 @@
+var test1 is "It's blue"
+test1?
+
+var test2 is "It's something else"
+test2?

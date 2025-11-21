@@ -68,6 +68,21 @@ pub fn build(b: *std.Build) void {
     const run_test_lsp = b.addRunArtifact(test_lsp);
     run_test_lsp.step.dependOn(&exe.step);
 
+    const test_compile = b.addTest(.{
+        .name = "test_compile",
+        .root_module = blk: {
+            var module = b.createModule(.{
+                .root_source_file = b.path("test/test_compile.zig"),
+                .target = target,
+                .optimize = optimize,
+            });
+            module.addImport("answers", answers_module);
+            break :blk module;
+        },
+    });
+    const run_test_compile = b.addRunArtifact(test_compile);
+    run_test_compile.step.dependOn(&exe.step);
+
     // Custom install behaviour:
     // `zig build install -Dinstall_dir=./path/to/install/dir`
     // will build the executable, then copy everything from `zig-out/bin`
@@ -97,6 +112,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&run_test_run.step);
     test_step.dependOn(&run_test_lsp.step);
+    test_step.dependOn(&run_test_compile.step);
 }
 
 fn copyBinToInstallDir(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {

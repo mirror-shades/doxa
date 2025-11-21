@@ -49,6 +49,25 @@ pub export fn doxa_write_cstr(ptr: ?[*:0]const u8) callconv(.c) void {
     }
 }
 
+pub export fn doxa_write_quoted_string(ptr: ?[*:0]const u8) callconv(.c) void {
+    if (ptr) |p| {
+        const slice = std.mem.span(p);
+        writeStdout("\"");
+        writeStdout(slice);
+        writeStdout("\"");
+    }
+}
+
+// Simple peek function for strings - called by LLVM IR with raw string pointers
+pub export fn doxa_peek_string(ptr: ?[*:0]const u8) callconv(.c) void {
+    if (ptr) |p| {
+        const slice = std.mem.span(p);
+        writeStdout("\"");
+        writeStdout(slice);
+        writeStdout("\"");
+    }
+}
+
 pub export fn doxa_str_eq(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) bool {
     if (a == null or b == null) return false;
     const as = std.mem.span(a.?);
@@ -70,7 +89,18 @@ pub export fn doxa_print_u64(value: u64) callconv(.c) void {
 
 pub export fn doxa_print_f64(value: f64) callconv(.c) void {
     var buf: [64]u8 = undefined;
-    const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
+    const rounded_down = std.math.floor(value);
+    const rendered = if (value - rounded_down == 0)
+        std.fmt.bufPrint(&buf, "{d}.0", .{value}) catch return
+    else
+        std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
+    writeStdout(rendered);
+}
+
+pub export fn doxa_print_byte(value: i64) callconv(.c) void {
+    var buf: [64]u8 = undefined;
+    const byte_val: u8 = @intCast(value & 0xff);
+    const rendered = std.fmt.bufPrint(&buf, "0x{X:0>2}", .{byte_val}) catch return;
     writeStdout(rendered);
 }
 
@@ -158,7 +188,7 @@ pub export fn doxa_tick() callconv(.c) i64 {
 /// For strings: collection is ptr to string, value is ptr to substring
 pub export fn doxa_find(collection: ?*anyopaque, value: i64) callconv(.c) i64 {
     if (collection == null) return -1;
-    
+
     // Try to interpret as ArrayHeader first
     const maybe_hdr = @as(?*ArrayHeader, @ptrCast(@alignCast(collection)));
     if (maybe_hdr) |hdr| {
@@ -172,7 +202,7 @@ pub export fn doxa_find(collection: ?*anyopaque, value: i64) callconv(.c) i64 {
         }
         return -1;
     }
-    
+
     // Try to interpret as string (C string)
     const str_ptr = @as(?[*:0]const u8, @ptrCast(@alignCast(collection)));
     if (str_ptr) |s| {
@@ -187,7 +217,7 @@ pub export fn doxa_find(collection: ?*anyopaque, value: i64) callconv(.c) i64 {
         }
         return -1;
     }
-    
+
     return -1;
 }
 
@@ -479,7 +509,7 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
 /// For strings, this is a no-op since strings are immutable
 pub export fn doxa_clear(collection: ?*anyopaque) callconv(.c) void {
     if (collection == null) return;
-    
+
     // Try to interpret as ArrayHeader first
     const maybe_hdr = @as(?*ArrayHeader, @ptrCast(@alignCast(collection)));
     if (maybe_hdr) |hdr| {
@@ -487,7 +517,7 @@ pub export fn doxa_clear(collection: ?*anyopaque) callconv(.c) void {
         hdr.len = 0;
         return;
     }
-    
+
     // For strings, this is a no-op (strings are immutable)
     // The compiler should prevent calling clear on strings, but if it happens, just return
 }

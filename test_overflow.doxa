@@ -1,0 +1,4 @@
+module safeMath from "./test/misc/safeMath.doxa"
+
+var import2 is safeMath.safeAdd(1000, 2) // "Overflow"
+import2?
