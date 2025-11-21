@@ -80,13 +80,14 @@ pub const StructsHandler = struct {
 
     /// Helper function to resolve field index and struct name from struct type and field name
     fn resolveFieldIndexAndStructName(self: *StructsHandler, object_expr: *ast.Expr, field_name: []const u8) struct { field_index: u32, struct_name: ?[]const u8 } {
-        // First try the precise resolution path using the object's concrete struct type name.
+        // 1) Prefer a precise resolution path using the object's concrete struct name
+        //    when we have one (plain struct variables, `this`, etc.).
         if (self.generator.type_system.resolveFieldAccessType(object_expr, &self.generator.symbol_table)) |resolve_result| {
             if (resolve_result.custom_type_name) |container_struct_name| {
                 if (self.generator.type_system.custom_types.get(container_struct_name)) |custom_type| {
                     if (custom_type.kind == .Struct) {
                         if (custom_type.getStructFieldIndex(field_name)) |resolved_index| {
-                            // Get the field's custom type name if it's a struct
+                            // Get the field's custom type name if it's itself a struct/enum.
                             var field_struct_name: ?[]const u8 = null;
                             if (custom_type.struct_fields) |fields| {
                                 for (fields) |f| {
@@ -103,10 +104,33 @@ pub const StructsHandler = struct {
             }
         }
 
-        // If we couldn't determine the container struct name (e.g., the variable's type
-        // was inferred and no custom type was tracked), fall back to a best-effort
-        // search across all known struct types. This matches the interpreter's
-        // name-based field lookup more closely and avoids always defaulting to index 0.
+        // 2) If we still don't know the container name, try the semantic struct table
+        //    using the *inferred* type of the object expression. This is the key path
+        //    for array-of-struct indexing like `zoo[0].name`, where `zoo[0]` has a
+        //    StructId but no explicit custom-type tracking.
+        if (self.generator.type_system.struct_table) |const_table| {
+            const obj_type = self.generator.inferTypeFromExpression(object_expr);
+            if (obj_type == .Struct) {
+                const sid = obj_type.Struct;
+                if (const_table.fields(sid)) |fields| {
+                    for (fields) |f| {
+                        if (std.mem.eql(u8, f.name, field_name)) {
+                            return .{
+                                .field_index = f.index,
+                                // The semantic struct table does not currently track a
+                                // separate custom type name for nested structs here; the
+                                // HIR type system will recover that when needed.
+                                .struct_name = null,
+                            };
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3) As an absolute last resort, fall back to a best-effort search across all
+        //    known struct types. This keeps us from crashing in obscure cases, but the
+        //    result may be imprecise, so it should be rare after the above attempts.
         var it = self.generator.type_system.custom_types.iterator();
         while (it.next()) |entry| {
             const ct = entry.value_ptr.*;
@@ -115,7 +139,6 @@ pub const StructsHandler = struct {
             const fields = ct.struct_fields.?;
             for (fields) |f| {
                 if (std.mem.eql(u8, f.name, field_name)) {
-                    // Use this struct's field index and nested struct name if present.
                     return .{
                         .field_index = f.index,
                         .struct_name = f.custom_type_name,
@@ -124,8 +147,9 @@ pub const StructsHandler = struct {
             }
         }
 
-        // Final fallback: index 0 with no struct name. This should be rare after the
-        // above attempts and exists only to keep the compiler from crashing.
+        // Final fallback: index 0 with no struct name. This should be extremely rare
+        // after the semantic-table and custom-type lookups, and only exists to keep
+        // the compiler from crashing.
         return .{ .field_index = 0, .struct_name = null };
     }
 
@@ -170,6 +194,48 @@ pub const StructsHandler = struct {
             // Resolve the struct type name and field index
             const resolved = self.resolveFieldIndexAndStructName(field.object, field.field.lexeme);
 
+            // Try to resolve a precise field type for this access so that downstream
+            // stages (LLVM + peek) know, for example, that `zoo[0].name` is a string
+            // and `zoo[0].animal_type` is a concrete enum.
+            var resolved_field_type: HIRType = .Unknown;
+            // Prefer semantic struct-table metadata when the container is a struct;
+            // this path is especially important for array-of-struct indexing where
+            // the base expression is something like `zoo[0]`.
+            if (obj_type == .Struct) {
+                if (self.generator.type_system.struct_table) |const_table| {
+                    const sid = obj_type.Struct;
+                    if (const_table.fields(sid)) |fields| {
+                        // First, trust the resolved.field_index when in range.
+                        if (resolved.field_index < fields.len) {
+                            resolved_field_type = fields[resolved.field_index].hir_type;
+                        } else {
+                            // Fallback: search by name to stay robust if the index
+                            // ever drifts, rather than silently picking the wrong slot.
+                            for (fields) |f| {
+                                if (std.mem.eql(u8, f.name, field.field.lexeme)) {
+                                    resolved_field_type = f.hir_type;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // As a secondary fallback, ask the type system's higher-level resolver
+            // using a synthetic FieldAccess expression. This covers cases where
+            // custom-type tracking (enums/nested structs) provides a more precise
+            // HIRType than the raw struct-table entry alone.
+            if (resolved_field_type == .Unknown) {
+                var fake_expr = ast.Expr{
+                    .base = undefined,
+                    .data = .{ .FieldAccess = .{ .object = field.object, .field = field.field } },
+                };
+                if (self.generator.type_system.resolveFieldAccessType(&fake_expr, &self.generator.symbol_table)) |res| {
+                    resolved_field_type = res.t;
+                }
+            }
+
             // Now, the original logic for FieldAccess (non-enum)
             try self.generator.instructions.append(.{
                 .GetField = .{
@@ -177,7 +243,7 @@ pub const StructsHandler = struct {
                     .container_type = obj_type, // Use the inferred object type
                     .struct_id = 0, // TODO: look up real StructId from struct table
                     .field_index = resolved.field_index, // Resolved from type system
-                    .field_type = .Unknown,
+                    .field_type = resolved_field_type,
                     .field_for_peek = false, // Default
                     .nested_struct_id = null,
                 },

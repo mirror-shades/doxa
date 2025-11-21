@@ -333,6 +333,13 @@ pub const Parser = struct {
                     }
                     try statements.append(enum_decl);
                 },
+                .MAP_TYPE => {
+                    const map_stmt = try declaration_parser.parseMapDecl(self, is_public);
+                    if (is_entry) {
+                        return error.InvalidEntryPoint;
+                    }
+                    try statements.append(map_stmt);
+                },
                 .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH => {
                     if (is_entry) {
                         return error.MisplacedEntryPoint;

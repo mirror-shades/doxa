@@ -127,11 +127,31 @@ pub const CollectionsHandler = struct {
             e.* = HIRMapEntry{ .key = HIRValue.nothing, .value = HIRValue.nothing };
         }
 
+        // Infer key/value types from the first entry when possible so that
+        // downstream stages (LLVM + peek) know what the map actually stores.
+        var inferred_key_type: HIRType = .String;
+        var inferred_value_type: HIRType = .Unknown;
+        if (entries.len > 0) {
+            const first = entries[0];
+            const key_t = self.generator.inferTypeFromExpression(first.key);
+            const val_t = self.generator.inferTypeFromExpression(first.value);
+
+            inferred_key_type = switch (key_t) {
+                // Enums are represented as integer discriminants at runtime.
+                .Enum => .Int,
+                else => key_t,
+            };
+            inferred_value_type = switch (val_t) {
+                .Unknown, .Nothing => .Unknown,
+                else => val_t,
+            };
+        }
+
         const map_instruction = HIRInstruction{
             .Map = .{
                 .entries = dummy_entries,
-                .key_type = .String, // default; VM works with runtime values
-                .value_type = .Unknown,
+                .key_type = inferred_key_type,
+                .value_type = inferred_value_type,
             },
         };
         try self.generator.instructions.append(map_instruction);

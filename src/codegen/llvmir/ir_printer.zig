@@ -344,6 +344,9 @@ pub const IRPrinter = struct {
         try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
         try w.writeAll("declare i64 @doxa_array_get_i64(ptr, i64)\n");
         try w.writeAll("declare void @doxa_array_set_i64(ptr, i64, i64)\n");
+        try w.writeAll("declare ptr @doxa_map_new(i64, i64, i64)\n");
+        try w.writeAll("declare void @doxa_map_set_i64(ptr, i64, i64)\n");
+        try w.writeAll("declare i64 @doxa_map_get_i64(ptr, i64)\n");
         try w.writeAll("declare double @llvm.pow.f64(double, double)\n");
         try w.writeAll("declare double @doxa_random()\n");
         try w.writeAll("declare i64 @doxa_tick()\n");
@@ -632,6 +635,9 @@ pub const IRPrinter = struct {
                 .ArrayLen => try self.emitArrayLen(w, &stack, &id),
                 .ArrayPush => |_| try self.emitArrayPush(w, &stack, &id),
                 .ArrayPop => try self.emitArrayPop(w, &stack, &id),
+                .Map => |m| try self.emitMap(w, &stack, &id, m),
+                .MapGet => |mg| try self.emitMapGet(w, &stack, &id, mg),
+                .MapSet => |ms| try self.emitMapSet(w, &stack, &id, ms),
                 .Range => |r| try self.emitRange(w, &stack, &id, r),
                 .StructNew => |sn| try self.emitStructNew(w, &stack, &id, sn),
                 .GetField => |gf| try self.emitGetField(w, &stack, &id, gf),
@@ -912,11 +918,16 @@ pub const IRPrinter = struct {
                         }
                     }
 
-                    // If the HIR Peek type says this is a string, but the value is
-                    // currently an integer (e.g., pointer bits coming from an
-                    // array-of-struct field), reinterpret it as a pointer and
-                    // print it as a quoted string.
-                    if (pk.value_type == .String and val.ty != .PTR) {
+                    // If the HIR Peek type says this is a string, and the value is a
+                    // raw 64-bit integer (typically pointer bits coming from an
+                    // array-of-struct field), reinterpret it as a pointer and print
+                    // it as a quoted string.
+                    //
+                    // Smaller integer widths (e.g. i1/i2 used for tetra/booleans)
+                    // must *not* go through this path; they have dedicated printing
+                    // logic below (see the .I2 case) and reinterpreting them as
+                    // pointers leads to invalid IR like `inttoptr i64 %i2_val`.
+                    if (pk.value_type == .String and val.ty == .I64) {
                         const tmp = try self.nextTemp(&id);
                         const cast_line = try std.fmt.allocPrint(
                             self.allocator,
@@ -2086,6 +2097,18 @@ pub const IRPrinter = struct {
                     try self.emitArrayPop(w, &stack, &id);
                     last_instruction_was_terminator = false;
                 },
+                .Map => |m| {
+                    try self.emitMap(w, &stack, &id, m);
+                    last_instruction_was_terminator = false;
+                },
+                .MapGet => |mg| {
+                    try self.emitMapGet(w, &stack, &id, mg);
+                    last_instruction_was_terminator = false;
+                },
+                .MapSet => |ms| {
+                    try self.emitMapSet(w, &stack, &id, ms);
+                    last_instruction_was_terminator = false;
+                },
                 .Range => |r| {
                     try self.emitRange(w, &stack, &id, r);
                     last_instruction_was_terminator = false;
@@ -2993,7 +3016,8 @@ pub const IRPrinter = struct {
                 try w.writeAll(line);
                 break :blk StackVal{ .name = tmp, .ty = .I64 };
             },
-            .String, .Array, .Map, .Struct, .Enum, .Function, .Union => blk_ptr: {
+            .Enum => try self.ensureI64(w, value, id),
+            .String, .Array, .Map, .Struct, .Function, .Union => blk_ptr: {
                 var ptr_val = value;
                 if (ptr_val.ty != .PTR) {
                     ptr_val = try self.ensurePointer(w, value, id);
@@ -3105,6 +3129,137 @@ pub const IRPrinter = struct {
         const arr_val = StackVal{ .name = reg, .ty = .PTR, .array_type = inst.element_type };
         try stack.append(arr_val);
         try stack.append(arr_val);
+    }
+
+    fn emitMap(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+        inst: std.meta.TagPayload(HIRInstruction, .Map),
+    ) !void {
+        const entry_count: usize = inst.entries.len;
+        if (entry_count == 0) {
+            // Empty map – still create a header so subsequent MapGet/MapSet work.
+            const key_tag = self.arrayElementTag(inst.key_type);
+            const val_tag = self.arrayElementTag(inst.value_type);
+            const reg = try self.nextTemp(id);
+            const line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = call ptr @doxa_map_new(i64 0, i64 {d}, i64 {d})\n",
+                .{ reg, key_tag, val_tag },
+            );
+            defer self.allocator.free(line);
+            try w.writeAll(line);
+            try stack.append(.{ .name = reg, .ty = .PTR, .array_type = inst.value_type });
+            return;
+        }
+
+        if (stack.items.len < entry_count * 2) return;
+
+        const key_tag = self.arrayElementTag(inst.key_type);
+        const val_tag = self.arrayElementTag(inst.value_type);
+
+        const map_reg = try self.nextTemp(id);
+        const new_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = call ptr @doxa_map_new(i64 {d}, i64 {d}, i64 {d})\n",
+            .{ map_reg, entry_count, key_tag, val_tag },
+        );
+        defer self.allocator.free(new_line);
+        try w.writeAll(new_line);
+
+        var remaining = entry_count;
+        while (remaining > 0) : (remaining -= 1) {
+            if (stack.items.len < 2) break;
+            const value = stack.items[stack.items.len - 1];
+            const key = stack.items[stack.items.len - 2];
+            stack.items.len -= 2;
+
+            const key_storage = try self.convertValueToArrayStorage(w, key, inst.key_type, id);
+            const val_storage = try self.convertValueToArrayStorage(w, value, inst.value_type, id);
+
+            const set_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  call void @doxa_map_set_i64(ptr {s}, i64 {s}, i64 {s})\n",
+                .{ map_reg, key_storage.name, val_storage.name },
+            );
+            defer self.allocator.free(set_line);
+            try w.writeAll(set_line);
+        }
+
+        try stack.append(.{ .name = map_reg, .ty = .PTR, .array_type = inst.value_type });
+    }
+
+    fn emitMapGet(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+        inst: std.meta.TagPayload(HIRInstruction, .MapGet),
+    ) !void {
+        if (stack.items.len < 2) return;
+        const key_val = stack.items[stack.items.len - 1];
+        var map_val = stack.items[stack.items.len - 2];
+        stack.items.len -= 2;
+
+        if (map_val.ty != .PTR) {
+            map_val = try self.ensurePointer(w, map_val, id);
+        }
+
+        const key_storage = try self.convertValueToArrayStorage(w, key_val, inst.key_type, id);
+
+        const res_reg = try self.nextTemp(id);
+        const get_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = call i64 @doxa_map_get_i64(ptr {s}, i64 {s})\n",
+            .{ res_reg, map_val.name, key_storage.name },
+        );
+        defer self.allocator.free(get_line);
+        try w.writeAll(get_line);
+
+        const storage_val = StackVal{ .name = res_reg, .ty = .I64 };
+        const value_type = map_val.array_type orelse HIR.HIRType.Int;
+
+        const actual_val = try self.convertArrayStorageToValue(w, storage_val, value_type, id);
+        try stack.append(actual_val);
+    }
+
+    fn emitMapSet(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+        inst: std.meta.TagPayload(HIRInstruction, .MapSet),
+    ) !void {
+        if (stack.items.len < 3) return;
+        const value = stack.items[stack.items.len - 1];
+        const key_val = stack.items[stack.items.len - 2];
+        var map_val = stack.items[stack.items.len - 3];
+        stack.items.len -= 3;
+
+        if (map_val.ty != .PTR) {
+            map_val = try self.ensurePointer(w, map_val, id);
+        }
+
+        // Infer key type from the map's tracked element type when possible;
+        // fall back to string keys for safety.
+        const key_type: HIR.HIRType = inst.key_type;
+        const key_storage = try self.convertValueToArrayStorage(w, key_val, key_type, id);
+
+        const value_type = map_val.array_type orelse HIR.HIRType.Int;
+        const val_storage = try self.convertValueToArrayStorage(w, value, value_type, id);
+
+        const set_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  call void @doxa_map_set_i64(ptr {s}, i64 {s}, i64 {s})\n",
+            .{ map_val.name, key_storage.name, val_storage.name },
+        );
+        defer self.allocator.free(set_line);
+        try w.writeAll(set_line);
+
+        // Leave the (updated) map on the stack for further use.
+        try stack.append(.{ .name = map_val.name, .ty = .PTR, .array_type = map_val.array_type });
     }
 
     fn emitArraySet(

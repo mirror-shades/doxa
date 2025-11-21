@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const MapRuntime = @import("map_runtime.zig");
 
 //------------------------------------------------------------------------------
 // DOXA Runtime Support
@@ -150,6 +151,22 @@ pub export fn doxa_int(value: f64) callconv(.c) i64 {
 
 pub export fn doxa_tick() callconv(.c) i64 {
     return @intCast(std.time.nanoTimestamp());
+}
+
+//------------------------------------------------------------------------------
+// Map helpers for native (LLVM) backend
+//------------------------------------------------------------------------------
+
+pub export fn doxa_map_new(capacity: i64, key_tag: i64, value_tag: i64) callconv(.c) *MapRuntime.MapHeader {
+    return MapRuntime.mapNew(capacity, key_tag, value_tag);
+}
+
+pub export fn doxa_map_set_i64(map: *MapRuntime.MapHeader, key: i64, value: i64) callconv(.c) void {
+    MapRuntime.mapSetI64(map, key, value);
+}
+
+pub export fn doxa_map_get_i64(map: *MapRuntime.MapHeader, key: i64) callconv(.c) i64 {
+    return MapRuntime.mapGetI64(map, key);
 }
 
 pub const DoxaPeekInfo = extern struct {
