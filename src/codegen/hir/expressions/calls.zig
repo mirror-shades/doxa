@@ -12,6 +12,7 @@ const ArithOp = @import("../soxa_instructions.zig").ArithOp;
 const CallKind = @import("../soxa_instructions.zig").CallKind;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
+const builtin_methods = @import("../../../builtin_methods.zig");
 
 pub const CallsHandler = struct {
     generator: *HIRGenerator,
@@ -252,12 +253,61 @@ pub const CallsHandler = struct {
         });
     }
 
+    /// Helper function to convert AST type to HIR type
+    fn astTypeToHIRType(self: *CallsHandler, ast_type: ast.Type) HIRType {
+        _ = self; // self not used but kept for consistency
+        return switch (ast_type) {
+            .Int => .Int,
+            .Byte => .Byte,
+            .Float => .Float,
+            .String => .String,
+            .Tetra => .Tetra,
+            .Nothing => .Nothing,
+            else => .Unknown,
+        };
+    }
+
+    /// Helper to validate argument count using centralized data structure
+    fn validateBuiltinArgCount(self: *CallsHandler, name: []const u8, arg_count: usize) !void {
+        _ = self; // self not used but kept for consistency
+        if (builtin_methods.getArgCountRangeByName(name)) |range| {
+            if (arg_count < range.min or arg_count > range.max) {
+                return error.InvalidArgumentCount;
+            }
+        }
+    }
+
+    /// Helper to generate simple builtin calls that just need argument validation and a call instruction
+    fn generateSimpleBuiltinCall(self: *CallsHandler, name: []const u8, arguments: []const *ast.Expr) !?HIRType {
+        try self.validateBuiltinArgCount(name, arguments.len);
+
+        // Generate all argument expressions
+        for (arguments) |arg| {
+            try self.generator.generateExpression(arg, true, false);
+        }
+
+        // Get return type from metadata
+        if (builtin_methods.getMethodInfoByName(name)) |info| {
+            const return_type = self.astTypeToHIRType(info.return_type);
+            try self.generator.instructions.append(.{ .Call = .{
+                .function_index = 0,
+                .qualified_name = name,
+                .arg_count = @intCast(arguments.len),
+                .call_kind = .BuiltinFunction,
+                .target_module = null,
+                .return_type = return_type,
+            } });
+            return return_type;
+        }
+        return null;
+    }
+
     pub fn generateBuiltinCall(self: *CallsHandler, bc: ast.Expr.Data, preserve_result: bool) !void {
         const builtin_data = bc.BuiltinCall;
         const name = builtin_data.function.lexeme;
 
         if (std.mem.eql(u8, name, "type")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             const arg = builtin_data.arguments[0];
 
             // For FieldAccess and EnumMember expressions, try to get the custom type name
@@ -391,7 +441,7 @@ pub const CallsHandler = struct {
             const const_idx = try self.generator.addConstant(type_value);
             try self.generator.instructions.append(.{ .Const = .{ .value = type_value, .constant_id = const_idx } });
         } else if (std.mem.eql(u8, name, "length")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             const t = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
             if (t == .String) {
@@ -400,19 +450,19 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.ArrayLen);
             }
         } else if (std.mem.eql(u8, name, "int")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToInt } });
         } else if (std.mem.eql(u8, name, "float")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToFloat } });
         } else if (std.mem.eql(u8, name, "string")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString } });
         } else if (std.mem.eql(u8, name, "byte")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             const t = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
             if (t == .String) {
@@ -421,7 +471,7 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
             }
         } else if (std.mem.eql(u8, name, "push")) {
-            if (builtin_data.arguments.len != 2) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.generateExpression(builtin_data.arguments[1], true, false);
@@ -447,7 +497,7 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Pop);
             }
         } else if (std.mem.eql(u8, name, "pop")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             if (target_type == .String) {
@@ -471,7 +521,7 @@ pub const CallsHandler = struct {
                 }
             }
         } else if (std.mem.eql(u8, name, "insert")) {
-            if (builtin_data.arguments.len != 3) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.generateExpression(builtin_data.arguments[1], true, false);
             try self.generator.generateExpression(builtin_data.arguments[2], true, false);
@@ -491,7 +541,7 @@ pub const CallsHandler = struct {
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx2 } });
             if (!preserve_result) try self.generator.instructions.append(.Pop);
         } else if (std.mem.eql(u8, name, "remove")) {
-            if (builtin_data.arguments.len != 2) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.generateExpression(builtin_data.arguments[1], true, false);
             try self.generator.instructions.append(.ArrayRemove);
@@ -509,13 +559,13 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Pop);
             }
         } else if (std.mem.eql(u8, name, "slice")) {
-            if (builtin_data.arguments.len != 3) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.generateExpression(builtin_data.arguments[1], true, false);
             try self.generator.generateExpression(builtin_data.arguments[2], true, false);
             try self.generator.instructions.append(.ArraySlice);
         } else if (std.mem.eql(u8, name, "clear")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             // Evaluate receiver/collection
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             // Call builtin clear(collection) - returns cleared collection for internal use
@@ -545,7 +595,7 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Pop);
             }
         } else if (std.mem.eql(u8, name, "find")) {
-            if (builtin_data.arguments.len != 2) return error.InvalidArgumentCount;
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             // Evaluate receiver/collection and search value
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.generateExpression(builtin_data.arguments[1], true, false);
@@ -559,45 +609,18 @@ pub const CallsHandler = struct {
                     .return_type = .Int,
                 },
             });
-        } else if (std.mem.eql(u8, name, "os")) {
-            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "os", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .String } });
-        } else if (std.mem.eql(u8, name, "arch")) {
-            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "arch", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .String } });
-        } else if (std.mem.eql(u8, name, "time")) {
-            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "time", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
-        } else if (std.mem.eql(u8, name, "tick")) {
-            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "tick", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
-        } else if (std.mem.eql(u8, name, "exit")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "exit", .arg_count = 1, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Nothing } });
-        } else if (std.mem.eql(u8, name, "sleep")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "sleep", .arg_count = 1, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Nothing } });
-        } else if (std.mem.eql(u8, name, "random")) {
-            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "random", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Float } });
-        } else if (std.mem.eql(u8, name, "build")) {
-            if (builtin_data.arguments.len != 5) return error.InvalidArgumentCount;
-            // Evaluate arguments in order: src, out, arch, os, debug
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[2], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[3], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[4], true, false);
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "build", .arg_count = 5, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .Int } });
-        } else if (std.mem.eql(u8, name, "abi")) {
-            if (builtin_data.arguments.len != 0) return error.InvalidArgumentCount;
-            try self.generator.instructions.append(.{ .Call = .{ .function_index = 0, .qualified_name = "abi", .arg_count = 0, .call_kind = .BuiltinFunction, .target_module = null, .return_type = .String } });
-        } else if (std.mem.eql(u8, name, "int")) {
-            if (builtin_data.arguments.len != 1) return error.InvalidArgumentCount;
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.instructions.append(.{ .Convert = .{ .from_type = .Float, .to_type = .Int } });
+        } else if (std.mem.eql(u8, name, "os") or
+            std.mem.eql(u8, name, "arch") or
+            std.mem.eql(u8, name, "abi") or
+            std.mem.eql(u8, name, "time") or
+            std.mem.eql(u8, name, "tick") or
+            std.mem.eql(u8, name, "random") or
+            std.mem.eql(u8, name, "exit") or
+            std.mem.eql(u8, name, "sleep") or
+            std.mem.eql(u8, name, "build"))
+        {
+            // Use centralized data structure for simple builtin calls
+            _ = try self.generateSimpleBuiltinCall(name, builtin_data.arguments);
         } else {
             return error.NotImplemented;
         }

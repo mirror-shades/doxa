@@ -8,6 +8,7 @@ const unifyTypes = helpers.unifyTypes;
 const getLocationFromBase = helpers.getLocationFromBase;
 const lookupVariable = helpers.lookupVariable;
 const infer_type = @import("./infer_type.zig");
+const builtin_methods = @import("../../builtin_methods.zig");
 
 pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInfo {
     if (self.type_cache.get(expr.base.id)) |cached| {
@@ -952,31 +953,38 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
             type_info.* = .{ .base = .Nothing };
 
-            const requireArity = struct {
-                fn check(sem: *SemanticAnalyzer, e: *ast.Expr, got: usize, expect: usize, name: []const u8) void {
-                    if (got == expect) return;
-                    if (got < expect) {
-                        sem.reporter.reportCompileError(
-                            getLocationFromBase(e.base),
-                            ErrorCode.TOO_FEW_ARGUMENTS,
-                            "Too few arguments to @{s}: expected {d}, got {d}",
-                            .{ name, expect, got },
-                        );
-                    } else {
-                        sem.reporter.reportCompileError(
-                            getLocationFromBase(e.base),
-                            ErrorCode.TOO_MANY_ARGUMENTS,
-                            "Too many arguments to @{s}: expected {d}, got {d}",
-                            .{ name, expect, got },
-                        );
+            // Helper to validate argument count and return early if invalid
+            // Returns true if validation passed, false if we should return early
+            const validateBuiltinArgs = struct {
+                fn check(sem: *SemanticAnalyzer, e: *ast.Expr, name: []const u8, arg_count: usize) bool {
+                    if (builtin_methods.getArgCountRangeByName(name)) |range| {
+                        if (arg_count < range.min or arg_count > range.max) {
+                            if (arg_count < range.min) {
+                                sem.reporter.reportCompileError(
+                                    getLocationFromBase(e.base),
+                                    ErrorCode.TOO_FEW_ARGUMENTS,
+                                    "Too few arguments to @{s}: expected {d}, got {d}",
+                                    .{ name, range.min, arg_count },
+                                );
+                            } else {
+                                sem.reporter.reportCompileError(
+                                    getLocationFromBase(e.base),
+                                    ErrorCode.TOO_MANY_ARGUMENTS,
+                                    "Too many arguments to @{s}: expected {d}, got {d}",
+                                    .{ name, range.max, arg_count },
+                                );
+                            }
+                            sem.fatal_error = true;
+                            return false;
+                        }
+                        return true;
                     }
-                    sem.fatal_error = true;
+                    return true; // If method not found, let it fall through to manual handling
                 }
             };
 
             if (std.mem.eql(u8, fname, "length")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const t0 = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 if (t0.base != .Array and t0.base != .String) {
                     self.reporter.reportCompileError(
@@ -991,8 +999,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.* = .{ .base = .Int };
                 return type_info;
             } else if (std.mem.eql(u8, fname, "push")) {
-                requireArity.check(self, expr, bc.arguments.len, 2, fname);
-                if (bc.arguments.len != 2) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 const val_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
                 if (coll_t.base == .Array) {
@@ -1003,8 +1010,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
                 return type_info;
             } else if (std.mem.eql(u8, fname, "pop")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 if (coll_t.base == .Array) {
                     if (coll_t.array_type) |elem| type_info.* = elem.*;
@@ -1018,8 +1024,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     return type_info;
                 }
             } else if (std.mem.eql(u8, fname, "insert")) {
-                requireArity.check(self, expr, bc.arguments.len, 3, fname);
-                if (bc.arguments.len != 3) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 const idx_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
                 if (idx_t.base != .Int) {
@@ -1037,8 +1042,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
                 return type_info;
             } else if (std.mem.eql(u8, fname, "remove")) {
-                requireArity.check(self, expr, bc.arguments.len, 2, fname);
-                if (bc.arguments.len != 2) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 const idx_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
                 if (idx_t.base != .Int) {
@@ -1061,8 +1065,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 self.fatal_error = true;
                 return type_info;
             } else if (std.mem.eql(u8, fname, "slice")) {
-                requireArity.check(self, expr, bc.arguments.len, 3, fname);
-                if (bc.arguments.len != 3) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 const start_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
                 const len_t = try infer_type.inferTypeFromExpr(self, bc.arguments[2]);
@@ -1086,79 +1089,51 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     self.fatal_error = true;
                 }
                 return type_info;
-            } else if (std.mem.eql(u8, fname, "string")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
-                type_info.* = .{ .base = .String };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "int")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
-                type_info.* = .{ .base = .Int };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "float")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
-                type_info.* = .{ .base = .Float };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "byte")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
-                type_info.* = .{ .base = .Byte };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "type")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
-                type_info.* = .{ .base = .String };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "input")) {
-                requireArity.check(self, expr, bc.arguments.len, 0, fname);
-                if (bc.arguments.len != 0) return type_info;
-                type_info.* = .{ .base = .String };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "os")) {
-                requireArity.check(self, expr, bc.arguments.len, 0, fname);
-                if (bc.arguments.len != 0) return type_info;
-                type_info.* = .{ .base = .String };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "arch")) {
-                requireArity.check(self, expr, bc.arguments.len, 0, fname);
-                if (bc.arguments.len != 0) return type_info;
-                type_info.* = .{ .base = .String };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "abi")) {
-                requireArity.check(self, expr, bc.arguments.len, 0, fname);
-                if (bc.arguments.len != 0) return type_info;
-                type_info.* = .{ .base = .String };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "time")) {
-                requireArity.check(self, expr, bc.arguments.len, 0, fname);
-                if (bc.arguments.len != 0) return type_info;
-                type_info.* = .{ .base = .Int };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "exit")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
-                const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
-                if (arg_type.base != .Int and arg_type.base != .Byte) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
-                    self.fatal_error = true;
+            } else if (std.mem.eql(u8, fname, "string") or
+                std.mem.eql(u8, fname, "int") or
+                std.mem.eql(u8, fname, "float") or
+                std.mem.eql(u8, fname, "byte") or
+                std.mem.eql(u8, fname, "type") or
+                std.mem.eql(u8, fname, "input") or
+                std.mem.eql(u8, fname, "os") or
+                std.mem.eql(u8, fname, "arch") or
+                std.mem.eql(u8, fname, "abi") or
+                std.mem.eql(u8, fname, "time") or
+                std.mem.eql(u8, fname, "tick") or
+                std.mem.eql(u8, fname, "random"))
+            {
+                // Simple builtins: validate args and return type from centralized data
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
+                if (builtin_methods.getMethodInfoByName(fname)) |info| {
+                    type_info.* = .{ .base = info.return_type };
+                    return type_info;
                 }
-                type_info.* = .{ .base = .Nothing };
+                // Fallback for methods not in data structure
                 return type_info;
-            } else if (std.mem.eql(u8, fname, "sleep")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
-                const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
-                if (arg_type.base != .Int and arg_type.base != .Byte) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@sleep: argument must be an integer", .{});
-                    self.fatal_error = true;
+            } else if (std.mem.eql(u8, fname, "exit") or std.mem.eql(u8, fname, "sleep")) {
+                // Validate argument count using centralized data
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
+                // Validate argument type (int | byte)
+                if (bc.arguments.len > 0) {
+                    const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                    if (arg_type.base != .Int and arg_type.base != .Byte) {
+                        if (std.mem.eql(u8, fname, "exit")) {
+                            self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
+                        } else {
+                            self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@sleep: argument must be an integer", .{});
+                        }
+                        self.fatal_error = true;
+                    }
+                }
+                // Get return type from centralized data
+                if (builtin_methods.getMethodInfoByName(fname)) |info| {
+                    type_info.* = .{ .base = info.return_type };
+                    return type_info;
                 }
                 type_info.* = .{ .base = .Nothing };
                 return type_info;
             } else if (std.mem.eql(u8, fname, "spawn")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 if (arg_type.base != .Array) {
                     self.reporter.reportCompileError(
@@ -1182,8 +1157,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.* = .{ .base = .Int };
                 return type_info;
             } else if (std.mem.eql(u8, fname, "kill")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 if (arg_type.base != .Int) {
                     self.reporter.reportCompileError(
@@ -1197,8 +1171,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.* = .{ .base = .Nothing };
                 return type_info;
             } else if (std.mem.eql(u8, fname, "wait")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 if (arg_type.base != .Int) {
                     self.reporter.reportCompileError(
@@ -1211,30 +1184,15 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
                 type_info.* = .{ .base = .Int };
                 return type_info;
-            } else if (std.mem.eql(u8, fname, "random")) {
-                requireArity.check(self, expr, bc.arguments.len, 0, fname);
-                if (bc.arguments.len != 0) return type_info;
-                type_info.* = .{ .base = .Float };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "dice_roll")) {
-                requireArity.check(self, expr, bc.arguments.len, 0, fname);
-                if (bc.arguments.len != 0) return type_info;
-                type_info.* = .{ .base = .Int };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "tick")) {
-                requireArity.check(self, expr, bc.arguments.len, 0, fname);
-                if (bc.arguments.len != 0) return type_info;
-                type_info.* = .{ .base = .Int };
-                return type_info;
             } else if (std.mem.eql(u8, fname, "build")) {
-                // @build(source_path: string, output_path: string, arch: string, os: string, debug: tetra) -> int
-                requireArity.check(self, expr, bc.arguments.len, 5, fname);
-                if (bc.arguments.len != 5) return type_info;
+                // @build(source_path: string, output_path: string, arch: string, os: string, abi: string, debug: tetra) -> int
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const src_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 const out_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
                 const arch_t = try infer_type.inferTypeFromExpr(self, bc.arguments[2]);
                 const os_t = try infer_type.inferTypeFromExpr(self, bc.arguments[3]);
-                const dbg_t = try infer_type.inferTypeFromExpr(self, bc.arguments[4]);
+                const abi_t = try infer_type.inferTypeFromExpr(self, bc.arguments[4]);
+                const dbg_t = try infer_type.inferTypeFromExpr(self, bc.arguments[5]);
 
                 if (src_t.base != .String or out_t.base != .String) {
                     self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.TYPE_MISMATCH, "@build expects first two arguments to be strings (source, output)", .{});
@@ -1248,15 +1206,18 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     self.reporter.reportCompileError(getLocationFromBase(bc.arguments[3].base), ErrorCode.TYPE_MISMATCH, "@build os must be string", .{});
                     self.fatal_error = true;
                 }
+                if (abi_t.base != .String) {
+                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[4].base), ErrorCode.TYPE_MISMATCH, "@build abi must be string", .{});
+                    self.fatal_error = true;
+                }
                 if (dbg_t.base != .Tetra) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[4].base), ErrorCode.TYPE_MISMATCH, "@build debug must be tetra", .{});
+                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[5].base), ErrorCode.TYPE_MISMATCH, "@build debug must be tetra", .{});
                     self.fatal_error = true;
                 }
                 type_info.* = .{ .base = .Int };
                 return type_info;
             } else if (std.mem.eql(u8, fname, "clear")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
-                if (bc.arguments.len != 1) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 if (coll_t.base != .Array and coll_t.base != .String) {
                     self.reporter.reportCompileError(
@@ -1272,8 +1233,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.* = .{ .base = .Nothing };
                 return type_info;
             } else if (std.mem.eql(u8, fname, "find")) {
-                requireArity.check(self, expr, bc.arguments.len, 2, fname);
-                if (bc.arguments.len != 2) return type_info;
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 if (coll_t.base != .Array and coll_t.base != .String) {
                     self.reporter.reportCompileError(
@@ -1288,7 +1248,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.* = .{ .base = .Int };
                 return type_info;
             } else if (std.mem.eql(u8, fname, "assert")) {
-                requireArity.check(self, expr, bc.arguments.len, 1, fname);
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 if (bc.arguments.len >= 1) {
                     const cond_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                     if (cond_t.base != .Tetra) {
@@ -1318,41 +1278,69 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             switch (method_call.method.type) {
                 .BUILD => {
                     const argc = method_call.arguments.len;
-                    if (argc != 5) {
-                        if (argc < 5) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.TOO_FEW_ARGUMENTS,
-                                "Too few arguments to @build: expected 5, got {d}",
-                                .{argc},
-                            );
-                        } else {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.TOO_MANY_ARGUMENTS,
-                                "Too many arguments to @build: expected 5, got {d}",
-                                .{argc},
-                            );
+                    if (builtin_methods.getArgCountRange(.BUILD)) |range| {
+                        if (argc < range.min or argc > range.max) {
+                            if (argc < range.min) {
+                                self.reporter.reportCompileError(
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.TOO_FEW_ARGUMENTS,
+                                    "Too few arguments to @build: expected {d}, got {d}",
+                                    .{ range.min, argc },
+                                );
+                            } else {
+                                self.reporter.reportCompileError(
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.TOO_MANY_ARGUMENTS,
+                                    "Too many arguments to @build: expected {d}, got {d}",
+                                    .{ range.max, argc },
+                                );
+                            }
+                            self.fatal_error = true;
+                            type_info.base = .Nothing;
+                            return type_info;
                         }
+                    } else {
+                        // @build should always be in the data structure, but handle gracefully if not
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(expr.base),
+                            ErrorCode.NOT_IMPLEMENTED,
+                            "@build method metadata not found",
+                            .{},
+                        );
                         self.fatal_error = true;
                         type_info.base = .Nothing;
                         return type_info;
                     }
 
-                    // Basic type validation: src/out/arch/os strings; debug tetra
+                    // Basic type validation: src/out/arch/os/abi strings; debug tetra
+                    const src_expr = method_call.arguments[0];
+                    const out_expr = method_call.arguments[1];
                     const arch_expr = method_call.arguments[2];
                     const os_expr = method_call.arguments[3];
-                    const debug_expr = method_call.arguments[4];
+                    const abi_expr = method_call.arguments[4];
+                    const debug_expr = method_call.arguments[5];
 
+                    const src_t = try infer_type.inferTypeFromExpr(self, src_expr);
+                    const out_t = try infer_type.inferTypeFromExpr(self, out_expr);
                     const arch_t = try infer_type.inferTypeFromExpr(self, arch_expr);
                     const os_t = try infer_type.inferTypeFromExpr(self, os_expr);
+                    const abi_t = try infer_type.inferTypeFromExpr(self, abi_expr);
                     const dbg_t = try infer_type.inferTypeFromExpr(self, debug_expr);
 
+                    if (src_t.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(src_expr.base), ErrorCode.TYPE_MISMATCH, "@build src must be string", .{});
+                    }
+                    if (out_t.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(out_expr.base), ErrorCode.TYPE_MISMATCH, "@build out must be string", .{});
+                    }
                     if (arch_t.base != .String) {
                         self.reporter.reportCompileError(getLocationFromBase(arch_expr.base), ErrorCode.TYPE_MISMATCH, "@build arch must be string", .{});
                     }
                     if (os_t.base != .String) {
                         self.reporter.reportCompileError(getLocationFromBase(os_expr.base), ErrorCode.TYPE_MISMATCH, "@build os must be string", .{});
+                    }
+                    if (abi_t.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(abi_expr.base), ErrorCode.TYPE_MISMATCH, "@build abi must be string", .{});
                     }
                     if (dbg_t.base != .Tetra) {
                         self.reporter.reportCompileError(getLocationFromBase(debug_expr.base), ErrorCode.TYPE_MISMATCH, "@build debug must be tetra", .{});

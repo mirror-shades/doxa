@@ -26,13 +26,23 @@ pub fn build(b: *std.Build) void {
     }
 
     // Add test steps
+    const answers_module = b.createModule(.{
+        .root_source_file = b.path("test/answers.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const test_run = b.addTest(.{
         .name = "test_run",
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/test_run.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
+        .root_module = blk: {
+            var module = b.createModule(.{
+                .root_source_file = b.path("test/test_run.zig"),
+                .target = target,
+                .optimize = optimize,
+            });
+            module.addImport("answers", answers_module);
+            break :blk module;
+        },
     });
     const run_test_run = b.addRunArtifact(test_run);
     run_test_run.step.dependOn(&exe.step);
