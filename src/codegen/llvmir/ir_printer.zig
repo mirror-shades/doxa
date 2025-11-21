@@ -1316,6 +1316,31 @@ pub const IRPrinter = struct {
                                 try stack.append(.{ .name = as_i8, .ty = .I8 });
                             }
                         },
+                        .ToString => {
+                            // ToString conversion: for printing purposes, we pass through the value
+                            // since PrintVal can handle I64/F64/PTR directly
+                            // For I64 and F64, keep as-is (PrintVal will handle conversion)
+                            // For PTR (strings), pass through as-is
+                            switch (arg.ty) {
+                                .I64, .F64 => {
+                                    // Pass through the value - PrintVal will handle printing it
+                                    try stack.append(arg);
+                                },
+                                .PTR => {
+                                    // Already a string, pass through
+                                    try stack.append(arg);
+                                },
+                                else => {
+                                    // Unknown type, pass through as I64
+                                    const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                    id += 1;
+                                    const zero_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{result_name});
+                                    defer self.allocator.free(zero_line);
+                                    try w.writeAll(zero_line);
+                                    try stack.append(.{ .name = result_name, .ty = .I64 });
+                                },
+                            }
+                        },
                         else => {
                             // Not implemented yet - push zero
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
