@@ -306,6 +306,8 @@ pub const IRPrinter = struct {
         if (std.mem.eql(u8, name, "tick")) return "doxa_tick";
         if (std.mem.eql(u8, name, "string")) return "doxa_string";
         if (std.mem.eql(u8, name, "dice_roll")) return "doxa_dice_roll";
+        if (std.mem.eql(u8, name, "find")) return "doxa_find";
+        if (std.mem.eql(u8, name, "clear")) return "doxa_clear";
         return name;
     }
 
@@ -350,11 +352,14 @@ pub const IRPrinter = struct {
         try w.writeAll("declare double @llvm.pow.f64(double, double)\n");
         try w.writeAll("declare double @doxa_random()\n");
         try w.writeAll("declare i64 @doxa_tick()\n");
+        try w.writeAll("declare i64 @doxa_int(double)\n");
+        try w.writeAll("declare i64 @doxa_find(ptr, i64)\n");
         try w.writeAll("declare ptr @malloc(i64)\n");
         try w.writeAll("declare i8 @doxa_exists_quantifier_gt(ptr, i64)\n");
         try w.writeAll("declare i8 @doxa_exists_quantifier_eq(ptr, i64)\n");
         try w.writeAll("declare i8 @doxa_forall_quantifier_gt(ptr, i64)\n");
         try w.writeAll("declare i8 @doxa_forall_quantifier_eq(ptr, i64)\n");
+        try w.writeAll("declare void @doxa_clear(ptr)\n");
 
         // Build enum metadata used for pretty-printing enum values in native code.
         try self.buildEnumPrintMap(hir);
@@ -371,20 +376,11 @@ pub const IRPrinter = struct {
         for (hir.constant_pool, 0..) |hv, idx| {
             if (hv == .string) {
                 const s = hv.string;
-                // Escape the string content for LLVM IR (but preserve newlines as actual newlines)
-                var escaped = std.ArrayListUnmanaged(u8){};
-                defer escaped.deinit(self.allocator);
-                for (s) |c| {
-                    switch (c) {
-                        '\n' => try escaped.append(self.allocator, '\n'), // Keep actual newlines
-                        '\r' => try escaped.appendSlice(self.allocator, "\\r"),
-                        '\t' => try escaped.appendSlice(self.allocator, "\\t"),
-                        '\\' => try escaped.appendSlice(self.allocator, "\\\\"),
-                        '"' => try escaped.appendSlice(self.allocator, "\\\""),
-                        else => try escaped.append(self.allocator, c),
-                    }
-                }
-                const str_line = try std.fmt.allocPrint(self.allocator, "@.str.{d} = private constant [{d} x i8] c\"{s}\\00\"\n", .{ idx, escaped.items.len + 1, escaped.items });
+                // Escape the string content for LLVM IR using proper hex escaping
+                const escaped = try escapeLLVMString(self.allocator, s);
+                defer self.allocator.free(escaped);
+                // Use original string length + 1 for null terminator, not escaped length
+                const str_line = try std.fmt.allocPrint(self.allocator, "@.str.{d} = private constant [{d} x i8] c\"{s}\\00\"\n", .{ idx, s.len + 1, escaped });
                 defer self.allocator.free(str_line);
                 try w.writeAll(str_line);
             }
@@ -669,75 +665,128 @@ pub const IRPrinter = struct {
                     var rhs = stack.items[stack.items.len - 1];
                     var lhs = stack.items[stack.items.len - 2];
                     stack.items.len -= 2;
-                    const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
                     switch (a.operand_type) {
                         .Int => {
                             lhs = try self.ensureI64(w, lhs, &id);
                             rhs = try self.ensureI64(w, rhs, &id);
-                            switch (a.op) {
-                                .Add => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                },
-                                .Sub => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                },
-                                .Mul => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                },
-                                .Div => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                },
-                                .Mod => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                },
-                                .Pow => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double sitofp i64 {s} to double, double sitofp i64 {s} to double)\n", .{ name, lhs.name, rhs.name });
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                },
+                            if (a.op == .Pow) {
+                                // For Pow, we need to convert to double first, so allocate name after conversions
+                                // Convert lhs to double
+                                const lhs_double = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const lhs_conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ lhs_double, lhs.name });
+                                defer self.allocator.free(lhs_conv_line);
+                                try w.writeAll(lhs_conv_line);
+                                // Convert rhs to double
+                                const rhs_double = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const rhs_conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ rhs_double, rhs.name });
+                                defer self.allocator.free(rhs_conv_line);
+                                try w.writeAll(rhs_conv_line);
+                                // Call pow with converted values (result is double, but we'll convert back)
+                                // Allocate pow_result first so it gets a lower number
+                                const pow_result = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const pow_line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ pow_result, lhs_double, rhs_double });
+                                defer self.allocator.free(pow_line);
+                                try w.writeAll(pow_line);
+                                // Allocate name for the result after pow call
+                                const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                // Convert result back to i64
+                                const conv_back_line = try std.fmt.allocPrint(self.allocator, "  {s} = fptosi double {s} to i64\n", .{ name, pow_result });
+                                defer self.allocator.free(conv_back_line);
+                                try w.writeAll(conv_back_line);
+                                try stack.append(.{ .name = name, .ty = .I64 });
+                            } else {
+                                const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                switch (a.op) {
+                                    .Add => {
+                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                        defer self.allocator.free(line);
+                                        try w.writeAll(line);
+                                    },
+                                    .Sub => {
+                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                        defer self.allocator.free(line);
+                                        try w.writeAll(line);
+                                    },
+                                    .Mul => {
+                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                        defer self.allocator.free(line);
+                                        try w.writeAll(line);
+                                    },
+                                    .Div => {
+                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                        defer self.allocator.free(line);
+                                        try w.writeAll(line);
+                                    },
+                                    .Mod => {
+                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                        defer self.allocator.free(line);
+                                        try w.writeAll(line);
+                                    },
+                                    else => unreachable,
+                                }
+                                try stack.append(.{ .name = name, .ty = .I64 });
                             }
-                            try stack.append(.{ .name = name, .ty = .I64 });
                         },
                         .Float => {
+                            // Ensure both operands are double - do conversions first
+                            const lhs_double = if (lhs.ty == .F64) blk: {
+                                break :blk lhs.name;
+                            } else blk: {
+                                const lhs_i64 = try self.ensureI64(w, lhs, &id);
+                                const conv_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ conv_name, lhs_i64.name });
+                                defer self.allocator.free(conv_line);
+                                try w.writeAll(conv_line);
+                                break :blk conv_name;
+                            };
+                            const rhs_double = if (rhs.ty == .F64) blk: {
+                                break :blk rhs.name;
+                            } else blk: {
+                                const rhs_i64 = try self.ensureI64(w, rhs, &id);
+                                const conv_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ conv_name, rhs_i64.name });
+                                defer self.allocator.free(conv_line);
+                                try w.writeAll(conv_line);
+                                break :blk conv_name;
+                            };
+                            // Generate the operation instruction name after conversions
+                            const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
                             switch (a.op) {
                                 .Add => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double {s}, {s}\n", .{ name, lhs_double, rhs_double });
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
                                 },
                                 .Sub => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fsub double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fsub double {s}, {s}\n", .{ name, lhs_double, rhs_double });
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
                                 },
                                 .Mul => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fmul double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fmul double {s}, {s}\n", .{ name, lhs_double, rhs_double });
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
                                 },
                                 .Div => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fdiv double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fdiv double {s}, {s}\n", .{ name, lhs_double, rhs_double });
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
                                 },
                                 .Mod => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ name, lhs_double, rhs_double });
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
                                 },
                                 .Pow => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ name, lhs.name, rhs.name });
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ name, lhs_double, rhs_double });
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
                                 },
@@ -745,6 +794,8 @@ pub const IRPrinter = struct {
                             try stack.append(.{ .name = name, .ty = .F64 });
                         },
                         .Byte => {
+                            const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
                             switch (a.op) {
                                 .Add => {
                                     const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
@@ -1201,10 +1252,22 @@ pub const IRPrinter = struct {
                             }
                         },
                         .ToInt => {
-                            // Convert float to int using @doxa_int
+                            // Convert to double first, then to int using @doxa_int
+                            var arg_double = arg;
+                            if (arg.ty != .F64) {
+                                // Convert to i64 first if needed
+                                const arg_i64 = if (arg.ty != .I64) try self.ensureI64(w, arg, &id) else arg;
+                                // Then convert i64 to double
+                                const conv_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ conv_name, arg_i64.name });
+                                defer self.allocator.free(conv_line);
+                                try w.writeAll(conv_line);
+                                arg_double = .{ .name = conv_name, .ty = .F64 };
+                            }
                             const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call i64 @doxa_int(double {s})\n", .{ result_name, arg.name });
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call i64 @doxa_int(double {s})\n", .{ result_name, arg_double.name });
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
                             try stack.append(.{ .name = result_name, .ty = .I64 });
@@ -2156,23 +2219,29 @@ pub const IRPrinter = struct {
 
                     if (needs_promotion) {
                         // Promote both operands to double and use floating-point operations
-                        // Generate type conversion instructions
-                        const lhs_promoted = if (lhs.ty == .I64) blk: {
+                        // Convert each operand to double: I64 -> sitofp, F64 -> use directly, others -> ensureI64 then sitofp
+                        const lhs_promoted = if (lhs.ty == .F64) blk: {
+                            break :blk lhs.name;
+                        } else blk: {
+                            const lhs_i64 = try self.ensureI64(w, lhs, &id);
                             const conv_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
-                            const conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ conv_name, lhs.name });
+                            const conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ conv_name, lhs_i64.name });
                             defer self.allocator.free(conv_line);
                             try w.writeAll(conv_line);
                             break :blk conv_name;
-                        } else lhs.name;
-                        const rhs_promoted = if (rhs.ty == .I64) blk: {
+                        };
+                        const rhs_promoted = if (rhs.ty == .F64) blk: {
+                            break :blk rhs.name;
+                        } else blk: {
+                            const rhs_i64 = try self.ensureI64(w, rhs, &id);
                             const conv_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
-                            const conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ conv_name, rhs.name });
+                            const conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ conv_name, rhs_i64.name });
                             defer self.allocator.free(conv_line);
                             try w.writeAll(conv_line);
                             break :blk conv_name;
-                        } else rhs.name;
+                        };
 
                         // Generate the operation instruction name after conversions
                         const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -2213,49 +2282,71 @@ pub const IRPrinter = struct {
                         try stack.append(.{ .name = name, .ty = .F64 });
                     } else {
                         // Use the original logic for same-type operations
-                        const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                        id += 1;
-                        switch (a.operand_type) {
-                            .Int => {
-                                switch (a.op) {
-                                    .Add => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Sub => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Mul => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Div => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Mod => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Pow => {
-                                        const lhs_f = try std.fmt.allocPrint(self.allocator, "sitofp i64 {s} to double", .{lhs.name});
-                                        defer self.allocator.free(lhs_f);
-                                        const rhs_f = try std.fmt.allocPrint(self.allocator, "sitofp i64 {s} to double", .{rhs.name});
-                                        defer self.allocator.free(rhs_f);
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ name, lhs_f, rhs_f });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                }
-                                try stack.append(.{ .name = name, .ty = .I64 });
-                            },
-                            .Float => {
+                        // Handle Pow for Int specially (needs conversions before name allocation)
+                        if (a.operand_type == .Int and a.op == .Pow) {
+                            // Convert lhs to double
+                            const lhs_double = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
+                            const lhs_conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ lhs_double, lhs.name });
+                            defer self.allocator.free(lhs_conv_line);
+                            try w.writeAll(lhs_conv_line);
+                            // Convert rhs to double
+                            const rhs_double = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
+                            const rhs_conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ rhs_double, rhs.name });
+                            defer self.allocator.free(rhs_conv_line);
+                            try w.writeAll(rhs_conv_line);
+                            // Call pow with converted values (result is double, but we'll convert back)
+                            // Allocate pow_result first so it gets a lower number
+                            const pow_result = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
+                            const pow_line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ pow_result, lhs_double, rhs_double });
+                            defer self.allocator.free(pow_line);
+                            try w.writeAll(pow_line);
+                            // Allocate name for the result after pow call
+                            const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
+                            // Convert result back to i64
+                            const conv_back_line = try std.fmt.allocPrint(self.allocator, "  {s} = fptosi double {s} to i64\n", .{ name, pow_result });
+                            defer self.allocator.free(conv_back_line);
+                            try w.writeAll(conv_back_line);
+                            try stack.append(.{ .name = name, .ty = .I64 });
+                        } else {
+                            const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
+                            switch (a.operand_type) {
+                                .Int => {
+                                    switch (a.op) {
+                                        .Add => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Sub => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Mul => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Div => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Mod => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        else => unreachable,
+                                    }
+                                    try stack.append(.{ .name = name, .ty = .I64 });
+                                },
+                                .Float => {
                                 switch (a.op) {
                                     .Add => {
                                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double {s}, {s}\n", .{ name, lhs.name, rhs.name });
@@ -2326,6 +2417,7 @@ pub const IRPrinter = struct {
                                 try stack.append(.{ .name = name, .ty = .I8 });
                             },
                             else => {},
+                        }
                         }
                     }
                     last_instruction_was_terminator = false;
@@ -2404,10 +2496,22 @@ pub const IRPrinter = struct {
 
                     switch (sop.op) {
                         .ToInt => {
-                            // Convert float to int using @doxa_int
+                            // Convert to double first, then to int using @doxa_int
+                            var arg_double = arg;
+                            if (arg.ty != .F64) {
+                                // Convert to i64 first if needed
+                                const arg_i64 = if (arg.ty != .I64) try self.ensureI64(w, arg, &id) else arg;
+                                // Then convert i64 to double
+                                const conv_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const conv_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ conv_name, arg_i64.name });
+                                defer self.allocator.free(conv_line);
+                                try w.writeAll(conv_line);
+                                arg_double = .{ .name = conv_name, .ty = .F64 };
+                            }
                             const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call i64 @doxa_int(double {s})\n", .{ result_name, arg.name });
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call i64 @doxa_int(double {s})\n", .{ result_name, arg_double.name });
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
                             try stack.append(.{ .name = result_name, .ty = .I64 });

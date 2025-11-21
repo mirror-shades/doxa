@@ -153,6 +153,44 @@ pub export fn doxa_tick() callconv(.c) i64 {
     return @intCast(std.time.nanoTimestamp());
 }
 
+/// Find value in array or substring in string
+/// For arrays: collection is ArrayHeader*, value is i64 (or other type encoded as i64)
+/// For strings: collection is ptr to string, value is ptr to substring
+pub export fn doxa_find(collection: ?*anyopaque, value: i64) callconv(.c) i64 {
+    if (collection == null) return -1;
+    
+    // Try to interpret as ArrayHeader first
+    const maybe_hdr = @as(?*ArrayHeader, @ptrCast(@alignCast(collection)));
+    if (maybe_hdr) |hdr| {
+        // It's an array - search for the value
+        var idx: u64 = 0;
+        while (idx < hdr.len) : (idx += 1) {
+            const elem = doxa_array_get_i64(hdr, idx);
+            if (elem == value) {
+                return @intCast(idx);
+            }
+        }
+        return -1;
+    }
+    
+    // Try to interpret as string (C string)
+    const str_ptr = @as(?[*:0]const u8, @ptrCast(@alignCast(collection)));
+    if (str_ptr) |s| {
+        const str = std.mem.span(s);
+        const needle_ptr = @as(?[*:0]const u8, @ptrCast(@alignCast(@as(?*anyopaque, @ptrFromInt(@as(usize, @intCast(value)))))));
+        if (needle_ptr) |needle| {
+            const needle_str = std.mem.span(needle);
+            if (needle_str.len == 0) return 0;
+            if (std.mem.indexOf(u8, str, needle_str)) |found| {
+                return @intCast(found);
+            }
+        }
+        return -1;
+    }
+    
+    return -1;
+}
+
 //------------------------------------------------------------------------------
 // Map helpers for native (LLVM) backend
 //------------------------------------------------------------------------------
@@ -435,6 +473,23 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
             ip.* = value;
         },
     }
+}
+
+/// Clear an array by setting its length to 0
+/// For strings, this is a no-op since strings are immutable
+pub export fn doxa_clear(collection: ?*anyopaque) callconv(.c) void {
+    if (collection == null) return;
+    
+    // Try to interpret as ArrayHeader first
+    const maybe_hdr = @as(?*ArrayHeader, @ptrCast(@alignCast(collection)));
+    if (maybe_hdr) |hdr| {
+        // It's an array - clear by setting length to 0
+        hdr.len = 0;
+        return;
+    }
+    
+    // For strings, this is a no-op (strings are immutable)
+    // The compiler should prevent calling clear on strings, but if it happens, just return
 }
 
 pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {

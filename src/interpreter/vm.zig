@@ -952,7 +952,6 @@ pub const VM = struct {
         const arg_count: usize = @intCast(arg_count_raw);
 
         if (std.mem.eql(u8, name, "length")) {
-            if (arg_count != 1) return error.UnimplementedInstruction;
             const value = try self.stack.pop();
             switch (value.value) {
                 .array => |arr| {
@@ -969,7 +968,6 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "push")) {
-            if (arg_count != 2) return error.UnimplementedInstruction;
             const element = try self.stack.pop();
             const array_frame = try self.stack.pop();
 
@@ -1004,7 +1002,6 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "safeAdd")) {
-            if (arg_count != 2) return error.UnimplementedInstruction;
             const b = try self.stack.pop();
             const a = try self.stack.pop();
 
@@ -1036,7 +1033,6 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "power") or std.mem.eql(u8, name, "powi")) {
-            if (arg_count != 2) return error.UnimplementedInstruction;
             const exponent = try self.stack.pop();
             const base = try self.stack.pop();
 
@@ -1076,7 +1072,6 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "exists_quantifier_gt") or std.mem.eql(u8, name, "exists_quantifier_eq")) {
-            if (arg_count != 2) return error.UnimplementedInstruction;
             const comparison_value = try self.stack.pop();
             const array_frame = try self.stack.pop();
             const is_equality = std.mem.eql(u8, name, "exists_quantifier_eq");
@@ -1118,7 +1113,6 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "forall_quantifier_gt") or std.mem.eql(u8, name, "forall_quantifier_eq")) {
-            if (arg_count != 2) return error.UnimplementedInstruction;
             const comparison_value = try self.stack.pop();
             const array_frame = try self.stack.pop();
             const is_equality = std.mem.eql(u8, name, "forall_quantifier_eq");
@@ -1162,7 +1156,6 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "input")) {
-            if (arg_count != 0) return error.UnimplementedInstruction;
             var stdin_buffer: [4096]u8 = undefined;
             var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
             const stdin = &stdin_reader.interface;
@@ -1182,7 +1175,6 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "os")) {
-            if (arg_count != 0) return error.UnimplementedInstruction;
             const os_name = @tagName(@import("builtin").os.tag);
             const duped = try self.allocator.dupe(u8, os_name);
             try self.stack.push(HIRFrame.initString(duped));
@@ -1190,7 +1182,6 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "arch")) {
-            if (arg_count != 0) return error.UnimplementedInstruction;
             const arch_name = @tagName(@import("builtin").cpu.arch);
             const duped = try self.allocator.dupe(u8, arch_name);
             try self.stack.push(HIRFrame.initString(duped));
@@ -1198,7 +1189,6 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "abi")) {
-            if (arg_count != 0) return error.UnimplementedInstruction;
             const abi_name = @tagName(@import("builtin").abi);
             const duped = try self.allocator.dupe(u8, abi_name);
             try self.stack.push(HIRFrame.initString(duped));
@@ -1206,14 +1196,12 @@ pub const VM = struct {
         }
 
         if (std.mem.eql(u8, name, "time")) {
-            if (arg_count != 0) return error.UnimplementedInstruction;
             const timestamp = std.time.timestamp();
             try self.stack.push(HIRFrame.initInt(timestamp));
             return;
         }
 
         if (std.mem.eql(u8, name, "tick")) {
-            if (arg_count != 0) return error.UnimplementedInstruction;
             const ns = std.time.nanoTimestamp();
             try self.stack.push(HIRFrame.initInt(@intCast(ns)));
             return;
@@ -1221,7 +1209,6 @@ pub const VM = struct {
 
         if (std.mem.eql(u8, name, "build")) {
             // New signature: @build(src: string, out: string, arch: string, os: string, abi: string, debug: tetra)
-            if (arg_count != 6) return error.UnimplementedInstruction;
             const debug_frame = try self.stack.pop();
             const abi_frame = try self.stack.pop();
             const os_frame = try self.stack.pop();
