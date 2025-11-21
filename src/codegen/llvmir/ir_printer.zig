@@ -428,17 +428,19 @@ pub const IRPrinter = struct {
         var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
         defer peek_state.deinit();
 
-        // If there is a user-declared entry function named 'main', do not emit a wrapper 'main'
-        var has_user_main: bool = false;
+        // If there is a user-declared entry function, do not emit a wrapper 'main'
+        var has_entry_function: bool = false;
+        var entry_function_name: ?[]const u8 = null;
         for (hir.function_table) |f| {
-            if (f.is_entry and std.mem.eql(u8, f.qualified_name, "main")) {
-                has_user_main = true;
+            if (f.is_entry) {
+                has_entry_function = true;
+                entry_function_name = f.qualified_name;
                 break;
             }
         }
 
-        // Process main program (instructions before functions) only if no user 'main'
-        if (!has_user_main) {
+        // Process main program (instructions before functions) only if no entry function
+        if (!has_entry_function) {
             try self.writeMainProgram(hir, w, functions_start_idx, &peek_state);
         }
 
@@ -464,11 +466,23 @@ pub const IRPrinter = struct {
             try self.writeFunction(hir, w, func, &func_start_labels, &peek_state);
         }
 
-        // If there is a user-declared main, emit a C-compatible wrapper `i32 @main()`
-        if (has_user_main) {
+        // If there is a user-declared entry function, emit a C-compatible wrapper `i32 @main()`
+        if (has_entry_function) {
+            const entry_mangled_name_owned = if (entry_function_name) |name|
+                (if (std.mem.eql(u8, name, "main")) null else try std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{name}))
+            else
+                null;
+            defer if (entry_mangled_name_owned) |name| self.allocator.free(name);
+            const entry_mangled_name = if (entry_function_name) |name|
+                (if (std.mem.eql(u8, name, "main")) "doxa_user_main" else entry_mangled_name_owned.?)
+            else
+                "doxa_user_main";
+
             try w.writeAll("define i32 @main() {\n");
             try w.writeAll("entry:\n");
-            try w.writeAll("  call void @doxa_user_main()\n");
+            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}()\n", .{entry_mangled_name});
+            defer self.allocator.free(call_line);
+            try w.writeAll(call_line);
             try w.writeAll("  ret i32 0\n");
             try w.writeAll("}\n");
         }
@@ -1827,9 +1841,17 @@ pub const IRPrinter = struct {
         const params_str = if (param_strs.items.len == 0) "" else try std.mem.join(self.allocator, ", ", param_strs.items);
         defer if (param_strs.items.len > 0) self.allocator.free(params_str);
 
-        // Rename user entry `main` so we can emit a proper C wrapper `@main`
-        const emitted_name = if (func.is_entry and std.mem.eql(u8, func.qualified_name, "main"))
-            "doxa_user_main"
+        // Rename user entry function so we can emit a proper C wrapper `@main`
+        const emitted_name_owned = if (func.is_entry and !std.mem.eql(u8, func.qualified_name, "main"))
+            try std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{func.qualified_name})
+        else
+            null;
+        defer if (emitted_name_owned) |name| self.allocator.free(name);
+        const emitted_name = if (func.is_entry)
+            (if (std.mem.eql(u8, func.qualified_name, "main"))
+                "doxa_user_main"
+            else
+                emitted_name_owned.?)
         else
             func.qualified_name;
 

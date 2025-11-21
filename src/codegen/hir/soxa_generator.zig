@@ -740,22 +740,37 @@ pub const HIRGenerator = struct {
             }
         }
 
-        if (self.function_signatures.get("main")) |main_func| {
-            const main_function_index = self.getFunctionIndex("main") orelse 0;
+        // Find the entry function by checking is_entry flag
+        var entry_function: ?FunctionInfo = null;
+        var entry_function_name: ?[]const u8 = null;
+        var it = self.function_signatures.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.is_entry) {
+                entry_function = entry.value_ptr.*;
+                entry_function_name = entry.key_ptr.*;
+                break;
+            }
+        }
 
-            const main_call_instruction = HIRInstruction{
+        if (entry_function) |entry_func| {
+            const entry_function_index = if (entry_function_name) |name|
+                self.getFunctionIndex(name) orelse 0
+            else
+                0;
+
+            const entry_call_instruction = HIRInstruction{
                 .Call = .{
-                    .function_index = main_function_index,
-                    .qualified_name = "main",
+                    .function_index = entry_function_index,
+                    .qualified_name = entry_function_name orelse "main",
                     .arg_count = 0,
                     .call_kind = .LocalFunction,
                     .target_module = null,
-                    .return_type = main_func.return_type,
+                    .return_type = entry_func.return_type,
                 },
             };
-            try self.instructions.append(main_call_instruction);
+            try self.instructions.append(entry_call_instruction);
 
-            if (main_func.return_type != .Nothing) {
+            if (entry_func.return_type != .Nothing) {
                 try self.instructions.append(.Pop);
             }
         }
