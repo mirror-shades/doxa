@@ -1,7 +1,0 @@
-entry function main() {
-    var a :: int[] is 1 to 6
-    a[0]?
-    a[@length(a) - 1]?
-}
-
-
