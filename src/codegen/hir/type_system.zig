@@ -184,9 +184,20 @@ pub const TypeSystem = struct {
             },
             .Map => {
                 const key_type = self.allocator.create(HIRType) catch return .Unknown;
-                key_type.* = .String;
                 const value_type = self.allocator.create(HIRType) catch return .Unknown;
-                value_type.* = .Unknown;
+
+                if (type_info.map_key_type) |kt| {
+                    key_type.* = self.convertTypeInfo(kt.*);
+                } else {
+                    key_type.* = .String;
+                }
+
+                if (type_info.map_value_type) |vt| {
+                    value_type.* = self.convertTypeInfo(vt.*);
+                } else {
+                    value_type.* = .Unknown;
+                }
+
                 return HIRType{ .Map = .{ .key = key_type, .value = value_type } };
             },
             .Union => .Unknown,
@@ -356,11 +367,27 @@ pub const TypeSystem = struct {
         const result = switch (expr.data) {
             .Literal => |lit| self.inferTypeFromLiteral(lit),
             .Map => {
-                const key_type = self.allocator.create(HIRType) catch return .Unknown;
-                key_type.* = .String;
-                const value_type = self.allocator.create(HIRType) catch return .Unknown;
-                value_type.* = .Unknown;
-                return HIRType{ .Map = .{ .key = key_type, .value = value_type } };
+                const entries = expr.data.Map;
+                const key_type_ptr = self.allocator.create(HIRType) catch return .Unknown;
+                const value_type_ptr = self.allocator.create(HIRType) catch return .Unknown;
+
+                if (entries.len > 0) {
+                    const first = entries[0];
+                    const inferred_key = self.inferTypeFromExpression(first.key, symbol_table);
+                    const inferred_val = self.inferTypeFromExpression(first.value, symbol_table);
+
+                    key_type_ptr.* = switch (inferred_key) {
+                        // Enums are represented as integer discriminants at runtime.
+                        .Enum => .Int,
+                        else => inferred_key,
+                    };
+                    value_type_ptr.* = inferred_val;
+                } else {
+                    key_type_ptr.* = .String;
+                    value_type_ptr.* = .Unknown;
+                }
+
+                return HIRType{ .Map = .{ .key = key_type_ptr, .value = value_type_ptr } };
             },
             .Variable => |var_token| {
                 if (self.isCustomType(var_token.lexeme)) |custom_type| {
@@ -463,7 +490,15 @@ pub const TypeSystem = struct {
                         return element_type_ptr.*;
                     },
                     .String => .String,
-                    .Map => .Int,
+                    .Map => |map_info| blk: {
+                        const value_ty = map_info.value.*;
+                        // Prefer the map's declared value type when available;
+                        // fall back to int for fully untyped maps.
+                        if (value_ty != .Unknown and value_ty != .Nothing) {
+                            break :blk value_ty;
+                        }
+                        break :blk .Int;
+                    },
                     else => .String,
                 };
             },
