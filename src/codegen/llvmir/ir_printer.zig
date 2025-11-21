@@ -373,6 +373,7 @@ pub const IRPrinter = struct {
         if (hir.string_pool.len > 0) try w.writeAll("\n");
 
         // String constants from constant pool
+        // Offset by string_pool.len to avoid conflicts with string pool indices
         for (hir.constant_pool, 0..) |hv, idx| {
             if (hv == .string) {
                 const s = hv.string;
@@ -380,7 +381,8 @@ pub const IRPrinter = struct {
                 const escaped = try escapeLLVMString(self.allocator, s);
                 defer self.allocator.free(escaped);
                 // Use original string length + 1 for null terminator, not escaped length
-                const str_line = try std.fmt.allocPrint(self.allocator, "@.str.{d} = private constant [{d} x i8] c\"{s}\\00\"\n", .{ idx, s.len + 1, escaped });
+                const str_idx = hir.string_pool.len + idx;
+                const str_line = try std.fmt.allocPrint(self.allocator, "@.str.{d} = private constant [{d} x i8] c\"{s}\\00\"\n", .{ str_idx, s.len + 1, escaped });
                 defer self.allocator.free(str_line);
                 try w.writeAll(str_line);
             }
@@ -901,7 +903,9 @@ pub const IRPrinter = struct {
                             const s = hv.string;
                             const tmp = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
-                            const gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr @.str.{d}, i64 0, i64 0\n", .{ tmp, s.len + 1, idx });
+                            // Offset by string_pool.len to match the constant pool string index
+                            const str_idx = hir.string_pool.len + idx;
+                            const gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr @.str.{d}, i64 0, i64 0\n", .{ tmp, s.len + 1, str_idx });
                             defer self.allocator.free(gep);
                             try w.writeAll(gep);
                             const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{tmp});
@@ -951,7 +955,7 @@ pub const IRPrinter = struct {
                 .Peek => |pk| {
                     if (stack.items.len < 1) continue;
                     const v = stack.items[stack.items.len - 1];
-                    var val = v;
+                    const val = v;
 
                     try self.emitPeekInstruction(w, pk, val, &id, peek_state);
 
@@ -969,26 +973,10 @@ pub const IRPrinter = struct {
                         }
                     }
 
-                    // If the HIR Peek type says this is a string, and the value is a
-                    // raw 64-bit integer (typically pointer bits coming from an
-                    // array-of-struct field), reinterpret it as a pointer and print
-                    // it as a quoted string.
-                    //
-                    // Smaller integer widths (e.g. i1/i2 used for tetra/booleans)
-                    // must *not* go through this path; they have dedicated printing
-                    // logic below (see the .I2 case) and reinterpreting them as
-                    // pointers leads to invalid IR like `inttoptr i64 %i2_val`.
-                    if (pk.value_type == .String and val.ty == .I64) {
-                        const tmp = try self.nextTemp(&id);
-                        const cast_line = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  {s} = inttoptr i64 {s} to ptr\n",
-                            .{ tmp, val.name },
-                        );
-                        defer self.allocator.free(cast_line);
-                        try w.writeAll(cast_line);
-                        val = .{ .name = tmp, .ty = .PTR };
-                    }
+                    // Note: We trust the actual value type (val.ty) for printing, not the
+                    // peek value_type. If the value is I64, it should be printed as an integer.
+                    // The inttoptr conversion was removed because it was incorrectly converting
+                    // real integer values to pointers, causing segfaults.
 
                     switch (val.ty) {
                         .I64 => {
@@ -2116,7 +2104,9 @@ pub const IRPrinter = struct {
                         if (hv == .string) {
                             const s = hv.string;
                             const tmp = try self.nextTemp(&id);
-                            const gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr @.str.{d}, i64 0, i64 0\n", .{ tmp, s.len + 1, idx });
+                            // Offset by string_pool.len to match the constant pool string index
+                            const str_idx = hir.string_pool.len + idx;
+                            const gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr @.str.{d}, i64 0, i64 0\n", .{ tmp, s.len + 1, str_idx });
                             defer self.allocator.free(gep);
                             try w.writeAll(gep);
                             const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{tmp});
@@ -2372,77 +2362,77 @@ pub const IRPrinter = struct {
                                     try stack.append(.{ .name = name, .ty = .I64 });
                                 },
                                 .Float => {
-                                switch (a.op) {
-                                    .Add => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Sub => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = fsub double {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Mul => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = fmul double {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Div => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = fdiv double {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Mod => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Pow => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                }
-                                try stack.append(.{ .name = name, .ty = .F64 });
-                            },
-                            .Byte => {
-                                switch (a.op) {
-                                    .Add => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Sub => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Mul => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Div => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = udiv i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Mod => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = urem i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                    .Pow => {
-                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = call i8 @doxa.byte.pow(i8 {s}, i8 {s})\n", .{ name, lhs.name, rhs.name });
-                                        defer self.allocator.free(line);
-                                        try w.writeAll(line);
-                                    },
-                                }
-                                try stack.append(.{ .name = name, .ty = .I8 });
-                            },
-                            else => {},
-                        }
+                                    switch (a.op) {
+                                        .Add => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Sub => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fsub double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Mul => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fmul double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Div => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = fdiv double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Mod => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Pow => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                    }
+                                    try stack.append(.{ .name = name, .ty = .F64 });
+                                },
+                                .Byte => {
+                                    switch (a.op) {
+                                        .Add => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Sub => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Mul => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Div => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = udiv i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Mod => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = urem i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .Pow => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = call i8 @doxa.byte.pow(i8 {s}, i8 {s})\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                    }
+                                    try stack.append(.{ .name = name, .ty = .I8 });
+                                },
+                                else => {},
+                            }
                         }
                     }
                     last_instruction_was_terminator = false;
