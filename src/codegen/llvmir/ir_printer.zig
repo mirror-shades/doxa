@@ -232,8 +232,19 @@ pub const IRPrinter = struct {
                     continue;
                 }
 
+                // Check if we need to normalize types (i1 -> i2 for logical operations)
+                var needs_i2_conversion = false;
+                var target_type = slot.items[0].value.ty;
+                for (slot.items) |incoming_val| {
+                    if (incoming_val.value.ty == .I2) {
+                        needs_i2_conversion = true;
+                        target_type = .I2;
+                        break;
+                    }
+                }
+
                 const phi_name = try self.nextTempText(id);
-                const type_str = self.stackTypeToLLVMType(slot.items[0].value.ty);
+                const type_str = self.stackTypeToLLVMType(target_type);
 
                 var incoming = std.array_list.Managed([]const u8).init(self.allocator);
                 defer {
@@ -243,7 +254,8 @@ pub const IRPrinter = struct {
 
                 for (slot.items) |incoming_val| {
                     const blk_name: []const u8 = if (std.mem.startsWith(u8, incoming_val.block, "func_")) "entry" else incoming_val.block;
-                    const pair = try std.fmt.allocPrint(self.allocator, "[ {s}, %{s} ]", .{ incoming_val.value.name, blk_name });
+                    const value_name = incoming_val.value.name;
+                    const pair = try std.fmt.allocPrint(self.allocator, "[ {s}, %{s} ]", .{ value_name, blk_name });
                     try incoming.append(pair);
                 }
 
@@ -256,7 +268,7 @@ pub const IRPrinter = struct {
 
                 try stack.append(.{
                     .name = phi_name,
-                    .ty = slot.items[0].value.ty,
+                    .ty = target_type,
                     .array_type = slot.items[0].value.array_type,
                 });
             }
@@ -2070,6 +2082,20 @@ pub const IRPrinter = struct {
                 },
                 .Jump => |j| {
                     if (last_instruction_was_terminator) continue;
+                    // Convert i1 to i2 for logical operation merge points
+                    if (std.mem.startsWith(u8, j.label, "and_end") or std.mem.startsWith(u8, j.label, "or_end")) {
+                        var i: usize = 0;
+                        while (i < stack.items.len) : (i += 1) {
+                            if (stack.items[i].ty == .I1) {
+                                const converted_name = try self.nextTemp(&id);
+                                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ converted_name, stack.items[i].name });
+                                defer self.allocator.free(zext_line);
+                                try w.writeAll(zext_line);
+                                stack.items[i].name = converted_name;
+                                stack.items[i].ty = .I2;
+                            }
+                        }
+                    }
                     try self.recordStackForLabel(&merge_map, j.label, stack.items, current_block);
                     const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{j.label});
                     defer self.allocator.free(br_line);
@@ -4018,6 +4044,16 @@ pub const IRPrinter = struct {
         };
         defer self.allocator.free(line);
         try w.writeAll(line);
+
+        // For tetra comparisons, convert i1 result to i2 (tetra)
+        if (operand_type == .Tetra) {
+            const tetra_result_name = try self.nextTemp(id);
+            const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ tetra_result_name, result_name });
+            defer self.allocator.free(zext_line);
+            try w.writeAll(zext_line);
+            return .{ .name = tetra_result_name, .ty = .I2 };
+        }
+
         return .{ .name = result_name, .ty = .I1 };
     }
 

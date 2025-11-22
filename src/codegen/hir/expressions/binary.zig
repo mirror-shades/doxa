@@ -8,6 +8,7 @@ const HIRType = @import("../soxa_types.zig").HIRType;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
+const TETRA_FALSE = @import("../soxa_generator.zig").TETRA_FALSE;
 
 pub const BinaryExpressionHandler = struct {
     generator: *HIRGenerator,
@@ -96,21 +97,35 @@ pub const BinaryExpressionHandler = struct {
             try self.generator.instructions.append(.Dup);
 
             const short_circuit_label = try self.generator.generateLabel("and_short_circuit");
+            const false_handle_label = try self.generator.generateLabel("and_false_handle");
             const end_label = try self.generator.generateLabel("and_end");
 
+            // JumpCond pops the duplicate, so after jump:
+            // - If true: stack has [left_val] (original)
+            // - If false: stack has [left_val] (original)
             try self.generator.instructions.append(.{
                 .JumpCond = .{
                     .label_true = short_circuit_label,
-                    .label_false = end_label,
+                    .label_false = false_handle_label,
                     .vm_offset = 0,
                     .condition_type = .Tetra,
                 },
             });
 
-            try self.generator.instructions.append(.{ .Label = .{ .name = short_circuit_label, .vm_address = 0 } });
-            try self.generator.instructions.append(.Pop);
-            try self.generator.generateExpression(log.right, true, should_pop_after_use);
+            // False branch: pop left_val and push false
+            try self.generator.instructions.append(.{ .Label = .{ .name = false_handle_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.Pop); // Pop the original left_val
+            const false_idx = try self.generator.addConstant(HIRValue{ .tetra = TETRA_FALSE });
+            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .tetra = TETRA_FALSE }, .constant_id = false_idx } });
+            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
 
+            // True branch: pop left_val, evaluate right
+            try self.generator.instructions.append(.{ .Label = .{ .name = short_circuit_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.Pop); // Pop the original left_val
+            try self.generator.generateExpression(log.right, true, should_pop_after_use);
+            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+
+            // Merge point: stack has [false] or [right_val]
             try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
         } else if (log.operator.type == .OR) {
             // Similar for OR but with inverted logic
