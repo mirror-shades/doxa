@@ -565,6 +565,12 @@ pub const HIRGenerator = struct {
                     }
 
                     try self.trackVariableType(param.name.lexeme, param_type);
+
+                    // Track array element type for array alias parameters
+                    if (param_type == .Array) {
+                        try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
+                    }
+
                     try self.symbol_table.trackAliasParameter(param.name.lexeme);
 
                     if (param.type_expr) |type_expr_for_custom| {
@@ -621,6 +627,11 @@ pub const HIRGenerator = struct {
                     }
 
                     try self.trackVariableType(param.name.lexeme, param_type);
+
+                    // Track array element type for array parameters
+                    if (param_type == .Array) {
+                        try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
+                    }
 
                     // Parameters must always be treated as local variables, even if a
                     // global with the same name exists later in the script. Using
@@ -1416,7 +1427,12 @@ pub const HIRGenerator = struct {
                     },
                 }
 
-                const inferred = self.inferCallReturnType(function_name, call_kind) catch .Unknown;
+                const inferred = self.inferCallReturnType(function_name, call_kind) catch {
+                    // Fall back to type system inference for complex builtins
+                    const fallback_result = self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
+                    // std.debug.print("Fallback for {s}: {s}\n", .{function_name, @tagName(fallback_result)});
+                    return fallback_result;
+                };
                 return inferred;
             },
             else => {
@@ -1671,7 +1687,8 @@ pub const HIRGenerator = struct {
                 if (std.mem.eql(u8, function_name, "pop") or
                     std.mem.eql(u8, function_name, "remove"))
                 {
-                    return .Unknown;
+                    std.debug.print("Returning error for pop\n", .{});
+                    return error.InvalidAliasType;
                 }
                 if (std.mem.eql(u8, function_name, "print") or
                     std.mem.eql(u8, function_name, "println"))

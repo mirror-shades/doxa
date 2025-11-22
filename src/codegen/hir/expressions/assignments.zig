@@ -60,6 +60,12 @@ pub const AssignmentsHandler = struct {
                     try self.generator.trackArrayElementType(assign.name.lexeme, element_type);
                 }
             }
+        } else if (assigned_type == .Array and assign.value.?.data == .Variable) {
+            // When assigning from a variable with array type, transfer element type
+            const var_name = assign.value.?.data.Variable.lexeme;
+            if (self.generator.getTrackedArrayElementType(var_name)) |elem_type| {
+                try self.generator.trackArrayElementType(assign.name.lexeme, elem_type);
+            }
         }
 
         // Check if this is an alias parameter
