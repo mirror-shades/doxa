@@ -595,6 +595,14 @@ pub const TypeSystem = struct {
                 // If operand type is unknown, default to Int (for literals like 5--)
                 return if (operand_type == .Unknown) .Int else operand_type;
             },
+            .Match => |match_expr| {
+                // Infer type from the first case body (all cases should return the same type)
+                if (match_expr.cases.len > 0) {
+                    const first_case_body = match_expr.cases[0].body;
+                    return self.inferTypeFromExpression(first_case_body, symbol_table);
+                }
+                return .Unknown;
+            },
             else => .String,
         };
         return result;
