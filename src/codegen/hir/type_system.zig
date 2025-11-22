@@ -444,32 +444,9 @@ pub const TypeSystem = struct {
                 return .Unknown;
             },
             .Binary => |binary| {
-                const left_type = self.inferTypeFromExpression(binary.left.?, symbol_table);
-                const right_type = self.inferTypeFromExpression(binary.right.?, symbol_table);
-
-                return switch (binary.operator.type) {
-                    .EQUALITY, .BANG_EQUAL, .LESS, .LESS_EQUAL, .GREATER, .GREATER_EQUAL => .Tetra,
-                    .AND, .OR, .XOR => .Tetra,
-                    .PLUS, .MINUS, .ASTERISK, .SLASH, .MODULO => {
-                        if (left_type == .Float or right_type == .Float) {
-                            return .Float;
-                        } else if (left_type == .Int or right_type == .Int) {
-                            return .Int;
-                        } else if (left_type == .Byte or right_type == .Byte) {
-                            return .Byte;
-                        } else {
-                            return .Int;
-                        }
-                    },
-                    .POWER => {
-                        if (left_type == .Float or right_type == .Float) {
-                            return .Float;
-                        } else {
-                            return .Int;
-                        }
-                    },
-                    else => .Tetra,
-                };
+                // Use the centralized binary operation result type inference
+                // which correctly handles division (always Float) and other type promotions
+                return self.inferBinaryOpResultType(binary.operator.type, binary.left.?, binary.right.?, symbol_table);
             },
             .Array => {
                 const elements = expr.data.Array;
@@ -606,6 +583,18 @@ pub const TypeSystem = struct {
                 defer self.allocator.destroy(type_info_ptr);
                 return self.convertTypeInfo(type_info_ptr.*);
             },
+            .Increment => |operand| {
+                // Increment returns the same type as the operand
+                const operand_type = self.inferTypeFromExpression(operand, symbol_table);
+                // If operand type is unknown, default to Int (for literals like 5++)
+                return if (operand_type == .Unknown) .Int else operand_type;
+            },
+            .Decrement => |operand| {
+                // Decrement returns the same type as the operand
+                const operand_type = self.inferTypeFromExpression(operand, symbol_table);
+                // If operand type is unknown, default to Int (for literals like 5--)
+                return if (operand_type == .Unknown) .Int else operand_type;
+            },
             else => .String,
         };
         return result;
@@ -619,7 +608,8 @@ pub const TypeSystem = struct {
             if (left_type == .String and right_type == .String) {
                 return .String;
             } else if (left_type == .Array and right_type == .Array) {
-                return .Array;
+                // Array concatenation: return the left array type (both should have same element type)
+                return left_type;
             } else {
                 const common_type = self.computeNumericCommonType(left_type, right_type, operator_type);
                 if (common_type != .Unknown) {
