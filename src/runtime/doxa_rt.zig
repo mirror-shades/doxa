@@ -60,12 +60,12 @@ pub export fn doxa_write_quoted_string(ptr: ?[*:0]const u8) callconv(.c) void {
 
 // Simple peek function for strings - called by LLVM IR with raw string pointers
 pub export fn doxa_peek_string(ptr: ?[*:0]const u8) callconv(.c) void {
+    writeStdout("\"");
     if (ptr) |p| {
         const slice = std.mem.span(p);
-        writeStdout("\"");
         writeStdout(slice);
-        writeStdout("\"");
     }
+    writeStdout("\"");
 }
 
 pub export fn doxa_str_eq(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) bool {
@@ -672,4 +672,43 @@ pub export fn doxa_forall_quantifier_gt(hdr: ?*ArrayHeader, comparison_bits: i64
 
 pub export fn doxa_forall_quantifier_eq(hdr: ?*ArrayHeader, comparison_bits: i64) callconv(.c) u8 {
     return forallQuantifier(hdr, comparison_bits, .Equal);
+}
+
+// Type checking for union types and as expressions
+// Returns 1 (true) if the value matches the target type, 0 (false) otherwise
+// value_type: 0=int, 1=float, 2=byte, 3=string (ptr), 4=array (ptr), 5=struct (ptr), 6=enum (i64 variant index)
+// For now, we use a simplified type checking that works with the LLVM representation
+pub export fn doxa_type_check(value: i64, value_type: i64, target_type: ?[*:0]const u8) callconv(.c) i64 {
+    _ = value; // Value itself is not needed for basic type checking
+    if (target_type == null) return 0;
+    
+    const target = std.mem.span(target_type.?);
+    
+    // Map value_type to type string
+    const actual_type: []const u8 = switch (value_type) {
+        0 => "int",
+        1 => "float",
+        2 => "byte",
+        3 => "string",
+        4 => "array",
+        5 => "struct",
+        6 => "enum",
+        else => "unknown",
+    };
+    
+    // Simple string comparison
+    if (std.mem.eql(u8, actual_type, target)) {
+        return 1; // true
+    }
+    
+    // Handle array types like "int[]", "string[]", etc.
+    if (std.mem.endsWith(u8, target, "[]")) {
+        if (value_type == 4) { // array
+            // For now, accept any array type
+            // TODO: Check element type more precisely
+            return 1;
+        }
+    }
+    
+    return 0; // false
 }
