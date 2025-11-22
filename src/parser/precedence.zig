@@ -266,7 +266,10 @@ pub fn getRule(token_type: token.TokenType) ParseRule {
 }
 
 pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*ast.Expr {
-    const prefix_rule = getRule(self.peek().type).prefix;
+    const current_token = self.peek();
+    const prefix_rule = getRule(current_token.type).prefix;
+
+
     if (prefix_rule == null) {
         return null;
     }

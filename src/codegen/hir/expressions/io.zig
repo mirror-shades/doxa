@@ -187,15 +187,9 @@ pub const IOHandler = struct {
         // NEW: Prefer expression inference; refine for array indexing
         var inferred_type: HIRType = self.generator.inferTypeFromExpression(peek.expr);
         var enum_type_name: ?[]const u8 = null;
-        if (peek.expr.data == .Index) {
-            // Check if we're indexing a string - string[index] returns a string
-            const container_type = self.generator.inferTypeFromExpression(peek.expr.data.Index.array);
-            if (container_type == .String) {
-                inferred_type = .String;
-            } else if (peek.expr.data.Index.array.data == .Variable) {
-                if (self.generator.getTrackedArrayElementType(peek.expr.data.Index.array.data.Variable.lexeme)) |elem_type| {
-                    inferred_type = elem_type;
-                }
+        if (peek.expr.data == .Index and peek.expr.data.Index.array.data == .Variable) {
+            if (self.generator.getTrackedArrayElementType(peek.expr.data.Index.array.data.Variable.lexeme)) |elem_type| {
+                inferred_type = elem_type;
             }
         } else if (peek.expr.data == .Variable) {
             if (self.generator.getTrackedVariableType(peek.expr.data.Variable.lexeme)) |tracked_type| {

@@ -480,15 +480,22 @@ pub const TypeSystem = struct {
                 };
             },
             .InternalCall => |internal| {
-                const name = internal.method.lexeme;
-                if (std.mem.eql(u8, name, "substring")) return .String;
-                if (std.mem.eql(u8, name, "length")) return .Int;
-                if (std.mem.eql(u8, name, "int")) return .Int;
-                if (std.mem.eql(u8, name, "float")) return .Float;
-                if (std.mem.eql(u8, name, "string")) return .String;
-                if (std.mem.eql(u8, name, "byte")) {
-                    return .Byte;
+                const method_name = std.mem.trimLeft(u8, internal.method.lexeme, "@");
+                if (std.mem.eql(u8, method_name, "pop")) {
+                    const receiver_type = self.inferTypeFromExpression(internal.receiver, symbol_table);
+                    switch (receiver_type) {
+                        .Array => |elem_ptr| return elem_ptr.*,
+                        .String => return .String,
+                        else => return .Unknown,
+                    }
                 }
+                if (std.mem.eql(u8, method_name, "substring")) return .String;
+                if (std.mem.eql(u8, method_name, "length")) return .Int;
+                if (std.mem.eql(u8, method_name, "int")) return .Int;
+                if (std.mem.eql(u8, method_name, "float")) return .Float;
+                if (std.mem.eql(u8, method_name, "string")) return .String;
+                if (std.mem.eql(u8, method_name, "byte")) return .Byte;
+                if (std.mem.eql(u8, method_name, "type")) return .String;
                 return .Unknown;
             },
             .BuiltinCall => |bc| {

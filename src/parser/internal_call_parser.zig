@@ -18,6 +18,7 @@ const Parser = @import("parser_types.zig").Parser;
 pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
 
+
     if (method_tok.type == .PRINT) {
         return try parsePrintMethod(self);
     }
@@ -110,6 +111,7 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
             .arguments = try call_args.toOwnedSlice(),
         } },
     };
+
 
     return method_expr;
 }

@@ -1,6 +1,6 @@
 const std = @import("std");
-const token = @import("types/token.zig");
-const ast = @import("ast/ast.zig");
+const token = @import("../types/token.zig");
+const ast = @import("../ast/ast.zig");
 
 /// Represents the metadata for a built-in method
 pub const BuiltinMethodInfo = struct {

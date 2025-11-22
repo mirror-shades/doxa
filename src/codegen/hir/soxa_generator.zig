@@ -1427,6 +1427,20 @@ pub const HIRGenerator = struct {
                     },
                 }
 
+                // Special handling for builtins that need argument type information
+                if (call_kind == .BuiltinFunction and std.mem.eql(u8, function_name, "pop")) {
+                    // For @pop, infer the element type from the array/string argument
+                    if (call.arguments.len == 1) {
+                        const arg_type = self.inferTypeFromExpression(call.arguments[0].expr);
+                        switch (arg_type) {
+                            .Array => |elem_ptr| return elem_ptr.*,
+                            .String => return .String,
+                            else => return .Unknown,
+                        }
+                    }
+                    return .Unknown;
+                }
+
                 const inferred = self.inferCallReturnType(function_name, call_kind) catch {
                     // Fall back to type system inference for complex builtins
                     const fallback_result = self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
@@ -1684,10 +1698,7 @@ pub const HIRGenerator = struct {
                 {
                     return .Nothing;
                 }
-                if (std.mem.eql(u8, function_name, "pop") or
-                    std.mem.eql(u8, function_name, "remove"))
-                {
-                    std.debug.print("Returning error for pop\n", .{});
+                if (std.mem.eql(u8, function_name, "remove")) {
                     return error.InvalidAliasType;
                 }
                 if (std.mem.eql(u8, function_name, "print") or

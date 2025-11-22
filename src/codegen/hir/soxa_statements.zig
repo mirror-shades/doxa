@@ -177,6 +177,15 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
                 if (var_type == .Nothing) {
                     var_type = self.inferTypeFromExpression(init_expr);
+
+                    // If the variable is being assigned an array, track the element type
+                    if (var_type == .Array and init_expr.data == .Variable) {
+                        const source_var_name = init_expr.data.Variable.lexeme;
+                        if (self.symbol_table.getTrackedArrayElementType(source_var_name)) |elem_type| {
+                            try self.trackArrayElementType(decl.name.lexeme, elem_type);
+                        }
+                    }
+
                     if (var_type == .Union) {
                         const union_members = var_type.Union;
                         const member_names = try self.allocator.alloc([]const u8, union_members.len);
