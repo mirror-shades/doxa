@@ -8,7 +8,7 @@ const unifyTypes = helpers.unifyTypes;
 const getLocationFromBase = helpers.getLocationFromBase;
 const lookupVariable = helpers.lookupVariable;
 const infer_type = @import("./infer_type.zig");
-const builtin_methods = @import("../../builtin_methods.zig");
+const builtin_methods = @import("../../runtime/builtin_methods.zig");
 
 pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInfo {
     if (self.type_cache.get(expr.base.id)) |cached| {
@@ -1012,6 +1012,17 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             } else if (std.mem.eql(u8, fname, "pop")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                if (bc.arguments[0].data == .Variable and std.mem.eql(u8, bc.arguments[0].data.Variable.lexeme, "list")) {
+                    std.debug.print("DEBUG: coll_t for list: base={s}", .{@tagName(coll_t.base)});
+                    if (coll_t.base == .Array) {
+                        if (coll_t.array_type) |elem| {
+                            std.debug.print(" elem_type={s}", .{@tagName(elem.base)});
+                        } else {
+                            std.debug.print(" elem_type=null", .{});
+                        }
+                    }
+                    std.debug.print("\n", .{});
+                }
                 if (coll_t.base == .Array) {
                     if (coll_t.array_type) |elem| type_info.* = elem.*;
                     return type_info;
