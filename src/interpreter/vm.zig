@@ -1714,7 +1714,11 @@ pub const VM = struct {
                     }
                 }
 
-                try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                if (map_value.else_value) |else_ptr| {
+                    try self.stack.push(HIRFrame.initFromHIRValue(else_ptr.*));
+                } else {
+                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
+                }
             },
             else => {
                 return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get from non-map value: {s}", .{@tagName(map_frame.value)});

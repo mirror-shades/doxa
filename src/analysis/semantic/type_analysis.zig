@@ -84,26 +84,29 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
     errdefer ctx.allocator.destroy(type_info);
 
     switch (expr.data) {
-        .Map => |entries| {
+        .Map => |*map_expr| {
             // Minimal inference for map literals: infer key/value from first entry if present.
             type_info.* = .{ .base = .Map };
-            if (entries.len > 0) {
-                const first_key_type = try inferTypeFromExpr(ctx, entries[0].key);
-                const first_val_type = try inferTypeFromExpr(ctx, entries[0].value);
-                // Reuse inferred pointers to avoid unnecessary deep copies and allocations.
+            if (map_expr.entries.len > 0) {
+                const first_key_type = try inferTypeFromExpr(ctx, map_expr.entries[0].key);
+                const first_val_type = try inferTypeFromExpr(ctx, map_expr.entries[0].value);
                 type_info.map_key_type = first_key_type;
                 type_info.map_value_type = first_val_type;
+                map_expr.key_type = first_key_type;
+                map_expr.value_type = first_val_type;
             }
         },
-        .MapLiteral => |map_literal| {
+        .MapLiteral => |*map_literal| {
             // Minimal inference for map literals: infer key/value from first entry if present.
-            type_info.* = .{ .base = .Map };
+            type_info.* = .{ .base = .Map, .map_has_else_value = (map_literal.else_value != null) };
             if (map_literal.entries.len > 0) {
                 const first_key_type = try inferTypeFromExpr(ctx, map_literal.entries[0].key);
                 const first_val_type = try inferTypeFromExpr(ctx, map_literal.entries[0].value);
                 // Reuse inferred pointers to avoid unnecessary deep copies and allocations.
                 type_info.map_key_type = first_key_type;
                 type_info.map_value_type = first_val_type;
+                map_literal.key_type = first_key_type;
+                map_literal.value_type = first_val_type;
             }
         },
         .Literal => |lit| {

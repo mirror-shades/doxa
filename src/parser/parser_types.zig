@@ -1014,10 +1014,16 @@ pub const Parser = struct {
             .data = if (else_value != null) .{
                 .MapLiteral = .{
                     .entries = try entries.toOwnedSlice(),
+                    .key_type = null,
+                    .value_type = null,
                     .else_value = else_value,
                 },
             } else .{
-                .Map = try entries.toOwnedSlice(),
+                .Map = .{
+                    .entries = try entries.toOwnedSlice(),
+                    .key_type = null,
+                    .value_type = null,
+                },
             },
         };
         return expr;

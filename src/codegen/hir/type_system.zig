@@ -366,8 +366,8 @@ pub const TypeSystem = struct {
     pub fn inferTypeFromExpression(self: *TypeSystem, expr: *ast.Expr, symbol_table: *SymbolTable) HIRType {
         const result = switch (expr.data) {
             .Literal => |lit| self.inferTypeFromLiteral(lit),
-            .Map => {
-                const entries = expr.data.Map;
+            .Map => |map_expr| {
+                const entries = map_expr.entries;
                 const key_type_ptr = self.allocator.create(HIRType) catch return .Unknown;
                 const value_type_ptr = self.allocator.create(HIRType) catch return .Unknown;
 
@@ -472,7 +472,19 @@ pub const TypeSystem = struct {
                         const value_ty = map_info.value.*;
                         // Prefer declared value type when available; fall back to int for untyped maps.
                         const actual_value_ty = if (value_ty != .Unknown and value_ty != .Nothing) value_ty else .Int;
-                        break :blk actual_value_ty;
+                        const has_else = self.mapExpressionHasElse(index.array);
+                        if (has_else) {
+                            break :blk actual_value_ty;
+                        }
+
+                        const value_ptr = self.allocator.create(HIRType) catch break :blk .Unknown;
+                        value_ptr.* = actual_value_ty;
+                        const nothing_ptr = self.allocator.create(HIRType) catch break :blk .Unknown;
+                        nothing_ptr.* = .Nothing;
+                        const members = self.allocator.alloc(*const HIRType, 2) catch break :blk .Unknown;
+                        members[0] = value_ptr;
+                        members[1] = nothing_ptr;
+                        break :blk HIRType{ .Union = members };
                     },
                     else => .String,
                 };
@@ -721,6 +733,27 @@ pub const TypeSystem = struct {
         }
 
         return .Unknown;
+    }
+
+    fn mapExpressionHasElse(self: *TypeSystem, expr: *ast.Expr) bool {
+        return switch (expr.data) {
+            .MapLiteral => |map_literal| map_literal.else_value != null,
+            .Variable => |var_token| blk: {
+                if (self.semantic_analyzer) |semantic| {
+                    if (semantic.current_scope) |scope| {
+                        if (scope.lookupVariable(var_token.lexeme)) |variable| {
+                            if (semantic.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                                if (storage.type_info.base == .Map) {
+                                    break :blk storage.type_info.map_has_else_value;
+                                }
+                            }
+                        }
+                    }
+                }
+                break :blk false;
+            },
+            else => false,
+        };
     }
 
     pub fn astTypeToLowerName(_: *TypeSystem, base: ast.Type) []const u8 {

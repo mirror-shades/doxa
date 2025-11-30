@@ -1052,8 +1052,8 @@ pub const HIRGenerator = struct {
                     try collections_handler.generateArray(elements, preserve_result);
                 }
             },
-            .Map => |entries| try collections_handler.generateMap(entries),
-            .MapLiteral => |map_literal| try collections_handler.generateMap(map_literal.entries),
+            .Map => |map_expr| try collections_handler.generateMap(map_expr.entries, null),
+            .MapLiteral => |map_literal| try collections_handler.generateMap(map_literal.entries, map_literal.else_value),
             .Index => |index| try collections_handler.generateIndex(index, preserve_result, should_pop_after_use),
             .IndexAssign => try collections_handler.generateIndexAssign(expr.data, preserve_result),
             .ForAll => try collections_handler.generateForAll(expr.data),

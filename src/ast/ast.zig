@@ -597,11 +597,17 @@ pub const Expr = struct {
             arguments: []const *Expr,
         },
 
-        Map: []*MapEntry,
-    MapLiteral: struct {
-        entries: []*MapEntry,
-        else_value: ?*Expr = null,
-    },
+        Map: struct {
+            entries: []*MapEntry,
+            key_type: ?*TypeInfo = null,
+            value_type: ?*TypeInfo = null,
+        },
+        MapLiteral: struct {
+            entries: []*MapEntry,
+            key_type: ?*TypeInfo = null,
+            value_type: ?*TypeInfo = null,
+            else_value: ?*Expr = null,
+        },
 
         InternalCall: struct {
             receiver: *Expr,
@@ -841,12 +847,12 @@ pub const Expr = struct {
                 allocator.free(bc.arguments);
             },
 
-            .Map => |entries| {
-                for (entries) |entry| {
+            .Map => |*map_expr| {
+                for (map_expr.entries) |entry| {
                     entry.deinit(allocator);
                     allocator.destroy(entry);
                 }
-                allocator.free(entries);
+                allocator.free(map_expr.entries);
             },
             .MapLiteral => |*map_literal| {
                 for (map_literal.entries) |entry| {
@@ -984,6 +990,7 @@ pub const TypeInfo = struct {
     union_type: ?*UnionType = null,
     map_key_type: ?*TypeInfo = null,
     map_value_type: ?*TypeInfo = null,
+    map_has_else_value: bool = false,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
         if (self.array_type) |array_type| {

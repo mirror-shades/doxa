@@ -152,6 +152,20 @@ pub fn parseMapDecl(self: *Parser, is_public: bool) ErrorList!ast.Stmt {
         map_type_info = .{ .base = .Nothing, .is_mutable = true };
     }
 
+    if (map_type_info.map_key_type != null or map_type_info.map_value_type != null) {
+        switch (map_expr.data) {
+            .Map => |*map_data| {
+                if (map_type_info.map_key_type) |key_type| map_data.key_type = key_type;
+                if (map_type_info.map_value_type) |value_type| map_data.value_type = value_type;
+            },
+            .MapLiteral => |*map_lit| {
+                if (map_type_info.map_key_type) |key_type| map_lit.key_type = key_type;
+                if (map_type_info.map_value_type) |value_type| map_lit.value_type = value_type;
+            },
+            else => {},
+        }
+    }
+
     if (self.peek().type == .NEWLINE) self.advance();
 
     return ast.Stmt{

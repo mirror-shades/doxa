@@ -1,7 +1,9 @@
 const std = @import("std");
 const ast = @import("../../ast/ast.zig");
 const SemanticAnalyzer = @import("semantic.zig").SemanticAnalyzer;
-const ErrorCode = @import("../../utils/errors.zig").ErrorCode;
+const Errors = @import("../../utils/errors.zig");
+const ErrorCode = Errors.ErrorCode;
+const ErrorList = Errors.ErrorList;
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const helpers = @import("./helpers.zig");
 const unifyTypes = helpers.unifyTypes;
@@ -9,6 +11,8 @@ const getLocationFromBase = helpers.getLocationFromBase;
 const lookupVariable = helpers.lookupVariable;
 const infer_type = @import("./infer_type.zig");
 const builtin_methods = @import("../../runtime/builtin_methods.zig");
+
+const SemanticError = std.mem.Allocator.Error || ErrorList;
 
 pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInfo {
     if (self.type_cache.get(expr.base.id)) |cached| {
@@ -19,22 +23,29 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
     errdefer self.allocator.destroy(type_info);
 
     switch (expr.data) {
-        .Map => |entries| {
+        .Map => |*map_expr| {
             type_info.* = .{ .base = .Map };
-            if (entries.len > 0) {
-                const first_key_type = try inferTypeFromExpr(self, entries[0].key);
-                const first_val_type = try inferTypeFromExpr(self, entries[0].value);
-                type_info.map_key_type = first_key_type;
-                type_info.map_value_type = first_val_type;
-            }
+            const resolved = try resolveMapTypes(self, map_expr.entries, map_expr.key_type, map_expr.value_type, expr.base);
+            map_expr.key_type = resolved.key_type;
+            map_expr.value_type = resolved.value_type;
+            type_info.map_key_type = resolved.key_type;
+            type_info.map_value_type = resolved.value_type;
+            type_info.map_has_else_value = false;
+            try validateMapEntries(self, map_expr.entries, resolved.key_type, resolved.value_type);
         },
-        .MapLiteral => |map_literal| {
-            type_info.* = .{ .base = .Map };
-            if (map_literal.entries.len > 0) {
-                const first_key_type = try inferTypeFromExpr(self, map_literal.entries[0].key);
-                const first_val_type = try inferTypeFromExpr(self, map_literal.entries[0].value);
-                type_info.map_key_type = first_key_type;
-                type_info.map_value_type = first_val_type;
+        .MapLiteral => |*map_literal| {
+            type_info.* = .{ .base = .Map, .map_has_else_value = (map_literal.else_value != null) };
+            const resolved = try resolveMapTypes(self, map_literal.entries, map_literal.key_type, map_literal.value_type, expr.base);
+            map_literal.key_type = resolved.key_type;
+            map_literal.value_type = resolved.value_type;
+            type_info.map_key_type = resolved.key_type;
+            type_info.map_value_type = resolved.value_type;
+            try validateMapEntries(self, map_literal.entries, resolved.key_type, resolved.value_type);
+            if (map_literal.else_value) |else_expr| {
+                const else_type = try inferTypeFromExpr(self, else_expr);
+                if (resolved.value_type) |expected_val| {
+                    try helpers.unifyTypes(self, expected_val, else_type, .{ .location = getLocationFromBase(else_expr.base) });
+                }
             }
         },
         .Literal => |lit| {
@@ -247,9 +258,10 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 if (method_table.get(method_name)) |method_info| {
                                     if (method_info.is_static) {
                                         type_info.* = method_info.return_type.*;
-                                        return type_info;
-                                    }
-                                }
+        return type_info;
+    }
+}
+
                             }
                         }
                     }
@@ -551,7 +563,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
 
                 if (array_type.map_value_type) |value_type| {
-                    type_info.* = value_type.*;
+                    if (array_type.map_has_else_value) {
+                        type_info.* = value_type.*;
+                    } else {
+                        try assignValueOrNothingUnion(self, type_info, value_type);
+                    }
                 } else {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
@@ -2418,4 +2434,129 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
     try self.type_cache.put(expr.base.id, type_info);
     return type_info;
+}
+
+const MapTypeResolution = struct {
+    key_type: ?*ast.TypeInfo,
+    value_type: ?*ast.TypeInfo,
+};
+
+fn resolveMapTypes(
+    self: *SemanticAnalyzer,
+    entries: []*ast.MapEntry,
+    explicit_key: ?*ast.TypeInfo,
+    explicit_value: ?*ast.TypeInfo,
+    expr_base: ast.Base,
+) SemanticError!MapTypeResolution {
+    var key_type = explicit_key;
+    var value_type = explicit_value;
+
+    if (entries.len > 0) {
+        if (key_type == null) {
+            key_type = try inferTypeFromExpr(self, entries[0].key);
+        }
+        if (value_type == null) {
+            value_type = try inferTypeFromExpr(self, entries[0].value);
+        }
+    }
+
+    if (key_type == null) {
+        self.reporter.reportCompileError(
+            getLocationFromBase(expr_base),
+            ErrorCode.TYPE_MISMATCH,
+            "Unable to infer map key type. Add an entry or declare an explicit ':: <Type>'",
+            .{},
+        );
+        self.fatal_error = true;
+    }
+
+    if (value_type == null) {
+        self.reporter.reportCompileError(
+            getLocationFromBase(expr_base),
+            ErrorCode.TYPE_MISMATCH,
+            "Unable to infer map value type. Add an entry or declare an explicit 'returns <Type>'",
+            .{},
+        );
+        self.fatal_error = true;
+    }
+
+    return .{
+        .key_type = key_type,
+        .value_type = value_type,
+    };
+}
+
+fn validateMapEntries(
+    self: *SemanticAnalyzer,
+    entries: []*ast.MapEntry,
+    key_type: ?*ast.TypeInfo,
+    value_type: ?*ast.TypeInfo,
+) SemanticError!void {
+    if (key_type) |expected_key| {
+        for (entries) |entry| {
+            const entry_key_type = try inferTypeFromExpr(self, entry.key);
+            try helpers.unifyTypes(self, expected_key, entry_key_type, .{ .location = getLocationFromBase(entry.key.base) });
+        }
+    }
+
+    if (value_type) |expected_value| {
+        for (entries) |entry| {
+            const entry_value_type = try inferTypeFromExpr(self, entry.value);
+            try helpers.unifyTypes(self, expected_value, entry_value_type, .{ .location = getLocationFromBase(entry.value.base) });
+        }
+    }
+}
+
+fn createNothingType(self: *SemanticAnalyzer) SemanticError!*ast.TypeInfo {
+    const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
+    nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
+    return nothing_type;
+}
+
+fn assignValueOrNothingUnion(self: *SemanticAnalyzer, dest: *ast.TypeInfo, value_type: *ast.TypeInfo) SemanticError!void {
+    var members_len: usize = 0;
+    var has_nothing = false;
+    if (value_type.base == .Union and value_type.union_type != null) {
+        const union_members = value_type.union_type.?.types;
+        members_len = union_members.len;
+        for (union_members) |member| {
+            if (member.base == .Nothing) {
+                has_nothing = true;
+                break;
+            }
+        }
+    } else {
+        members_len = 1;
+    }
+
+    var total_members: usize = members_len;
+    if (!has_nothing) total_members += 1;
+    const member_slice = try self.allocator.alloc(*ast.TypeInfo, total_members);
+
+    var idx: usize = 0;
+    if (value_type.base == .Union and value_type.union_type != null) {
+        for (value_type.union_type.?.types) |member| {
+            member_slice[idx] = try self.deepCopyTypeInfoPtr(member);
+            idx += 1;
+        }
+    } else {
+        member_slice[idx] = try self.deepCopyTypeInfoPtr(value_type);
+        idx += 1;
+    }
+
+    if (!has_nothing) {
+        member_slice[idx] = try createNothingType(self);
+    }
+
+    const union_info = try self.allocator.create(ast.UnionType);
+    union_info.* = .{
+        .types = member_slice,
+        .current_type_index = null,
+    };
+
+    dest.* = .{
+        .base = .Union,
+        .union_type = union_info,
+        .is_mutable = value_type.is_mutable,
+    };
 }

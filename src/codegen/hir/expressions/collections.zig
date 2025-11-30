@@ -116,7 +116,11 @@ pub const CollectionsHandler = struct {
     }
 
     /// Generate HIR for map literals
-    pub fn generateMap(self: *CollectionsHandler, entries: []*ast.MapEntry) !void {
+    pub fn generateMap(self: *CollectionsHandler, entries: []*ast.MapEntry, else_expr: ?*ast.Expr) !void {
+        if (else_expr) |expr| {
+            try self.generator.generateExpression(expr, true, false);
+        }
+
         // Generate key-value pairs in reverse order so the VM pops in source order
         var reverse_i: usize = entries.len;
         while (reverse_i > 0) {
@@ -161,6 +165,7 @@ pub const CollectionsHandler = struct {
                 .entries = dummy_entries,
                 .key_type = inferred_key_type,
                 .value_type = inferred_value_type,
+                .has_else_value = else_expr != null,
             },
         };
         try self.generator.instructions.append(map_instruction);
