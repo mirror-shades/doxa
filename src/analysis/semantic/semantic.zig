@@ -1275,7 +1275,7 @@ pub const SemanticAnalyzer = struct {
         return copied;
     }
 
-    fn deepCopyTypeInfoPtr(self: *SemanticAnalyzer, src: *ast.TypeInfo) !*ast.TypeInfo {
+    pub fn deepCopyTypeInfoPtr(self: *SemanticAnalyzer, src: *ast.TypeInfo) !*ast.TypeInfo {
         const copied = try ast.TypeInfo.createDefault(self.allocator);
         copied.* = try self.deepCopyTypeInfo(src.*);
         return copied;
