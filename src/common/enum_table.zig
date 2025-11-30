@@ -79,4 +79,9 @@ pub const EnumTable = struct {
         if (id >= self.entries.items.len) return null;
         return self.entries.items[id].variants;
     }
+
+    pub fn getName(self: *const EnumTable, id: EnumId) ?[]const u8 {
+        if (id >= self.entries.items.len) return null;
+        return self.entries.items[id].qualified_name;
+    }
 };

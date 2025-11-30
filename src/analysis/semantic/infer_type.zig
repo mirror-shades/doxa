@@ -608,25 +608,19 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         .FieldAccess => |field| {
             const object_type = try infer_type.inferTypeFromExpr(self, field.object);
 
-            var resolved_object_type = object_type;
             if (object_type.base == .Union) {
-                if (object_type.union_type) |union_type| {
-                    var candidate: ?*const ast.TypeInfo = null;
-                    for (union_type.types) |member| {
-                        if (member.base == .Nothing) continue;
-                        if (candidate == null) {
-                            candidate = member;
-                        } else {
-                            // Multiple non-nothing members - cannot safely resolve.
-                            candidate = null;
-                            break;
-                        }
-                    }
-                    if (candidate) |resolved| {
-                        resolved_object_type = @constCast(resolved);
-                    }
-                }
+                self.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
+                    "Cannot access field '{s}' on union type; narrow it with 'as' or match first",
+                    .{field.field.lexeme},
+                );
+                self.fatal_error = true;
+                type_info.base = .Nothing;
+                return type_info;
             }
+
+            var resolved_object_type = object_type;
 
             if (resolved_object_type.base == .Custom) {
                 if (resolved_object_type.custom_type) |custom_type_name| {

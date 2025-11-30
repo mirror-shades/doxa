@@ -235,6 +235,10 @@ pub const IOHandler = struct {
             }
         }
 
+        if (union_members == null and inferred_type == .Union) {
+            union_members = try self.generator.collectUnionMemberNamesFromHIRType(inferred_type);
+        }
+
         // Generate peek instruction with full path and correct type
         try self.generator.instructions.append(.{ .Peek = .{
             .name = peek_path,
