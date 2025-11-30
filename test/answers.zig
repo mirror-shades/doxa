@@ -20,6 +20,10 @@ pub const expected_brainfuck_results = [_]print_result{
     .{ .value = "Output: 0x09" },
 };
 
+pub const expected_array_storage_results = [_]print_result{
+    .{ .value = "2 3" },
+};
+
 pub const expected_complex_print_results = [_]print_result{
     .{ .value = "The variable \"number\" is equal to 10" },
     .{ .value = "The variable name \"number\" has 6 letters" },

@@ -1,0 +1,4 @@
+const literal is [1, 2, 3]
+const alias is literal
+
+@push(alias, 4)?

@@ -505,6 +505,31 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
     }
 }
 
+/// Concatenate two arrays by allocating a new header and copying elements.
+pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u64, elem_tag: u64) callconv(.c) *ArrayHeader {
+    const len_a: u64 = if (a) |hdr| hdr.len else 0;
+    const len_b: u64 = if (b) |hdr| hdr.len else 0;
+    const result = doxa_array_new(elem_size, elem_tag, len_a + len_b);
+
+    if (a) |hdr_a| {
+        var idx: u64 = 0;
+        while (idx < len_a) : (idx += 1) {
+            const val = doxa_array_get_i64(hdr_a, idx);
+            doxa_array_set_i64(result, idx, val);
+        }
+    }
+
+    if (b) |hdr_b| {
+        var idx: u64 = 0;
+        while (idx < len_b) : (idx += 1) {
+            const val = doxa_array_get_i64(hdr_b, idx);
+            doxa_array_set_i64(result, len_a + idx, val);
+        }
+    }
+
+    return result;
+}
+
 /// Clear an array by setting its length to 0
 /// For strings, this is a no-op since strings are immutable
 pub export fn doxa_clear(collection: ?*anyopaque) callconv(.c) void {

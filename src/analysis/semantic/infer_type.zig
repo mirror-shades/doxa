@@ -28,6 +28,15 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 type_info.map_value_type = first_val_type;
             }
         },
+        .MapLiteral => |map_literal| {
+            type_info.* = .{ .base = .Map };
+            if (map_literal.entries.len > 0) {
+                const first_key_type = try inferTypeFromExpr(self, map_literal.entries[0].key);
+                const first_val_type = try inferTypeFromExpr(self, map_literal.entries[0].value);
+                type_info.map_key_type = first_key_type;
+                type_info.map_value_type = first_val_type;
+            }
+        },
         .Literal => |lit| {
             type_info.inferFrom(lit);
         },
@@ -584,8 +593,27 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             const object_type = try infer_type.inferTypeFromExpr(self, field.object);
 
             var resolved_object_type = object_type;
-            if (object_type.base == .Custom) {
-                if (object_type.custom_type) |custom_type_name| {
+            if (object_type.base == .Union) {
+                if (object_type.union_type) |union_type| {
+                    var candidate: ?*const ast.TypeInfo = null;
+                    for (union_type.types) |member| {
+                        if (member.base == .Nothing) continue;
+                        if (candidate == null) {
+                            candidate = member;
+                        } else {
+                            // Multiple non-nothing members - cannot safely resolve.
+                            candidate = null;
+                            break;
+                        }
+                    }
+                    if (candidate) |resolved| {
+                        resolved_object_type = @constCast(resolved);
+                    }
+                }
+            }
+
+            if (resolved_object_type.base == .Custom) {
+                if (resolved_object_type.custom_type) |custom_type_name| {
                     if (helpers.isModuleNamespace(self, custom_type_name)) {
                         return helpers.handleModuleFieldAccess(self, custom_type_name, field.field.lexeme, .{ .location = getLocationFromBase(expr.base) });
                     }
@@ -1003,6 +1031,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 const val_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
                 if (coll_t.base == .Array) {
+                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@push")) return type_info;
                     if (coll_t.array_type) |elem| try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(bc.arguments[1].base) });
                 } else if (coll_t.base != .String) {
                     self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@push requires array or string, got {s}", .{@tagName(coll_t.base)});
@@ -1024,6 +1053,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     std.debug.print("\n", .{});
                 }
                 if (coll_t.base == .Array) {
+                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@pop")) return type_info;
                     if (coll_t.array_type) |elem| type_info.* = elem.*;
                     return type_info;
                 } else if (coll_t.base == .String) {
@@ -1044,6 +1074,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     return type_info;
                 }
                 if (coll_t.base == .Array) {
+                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@insert")) return type_info;
                     const val_t = try infer_type.inferTypeFromExpr(self, bc.arguments[2]);
                     if (coll_t.array_type) |elem| try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(bc.arguments[2].base) });
                 } else if (coll_t.base != .String) {
@@ -1062,6 +1093,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     return type_info;
                 }
                 if (coll_t.base == .Array) {
+                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@remove")) return type_info;
                     if (coll_t.array_type) |elem| {
                         type_info.* = elem.*;
                     } else {
@@ -1088,6 +1120,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (coll_t.base == .String) {
                     type_info.* = .{ .base = .String };
                 } else if (coll_t.base == .Array) {
+                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@slice")) return type_info;
                     if (coll_t.array_type) |elem| {
                         const new_elem = try ast.TypeInfo.createDefault(self.allocator);
                         new_elem.* = elem.*;

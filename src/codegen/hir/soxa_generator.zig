@@ -52,6 +52,7 @@ pub const HIRGenerator = struct {
     current_field_name: ?[]const u8 = null,
     string_pool: std.array_list.Managed([]const u8),
     reporter: *Reporter,
+    array_storage_override: ?SoxaTypes.ArrayStorageKind = null,
 
     symbol_table: SymbolTable,
     constant_manager: ConstantManager,
@@ -150,6 +151,7 @@ pub const HIRGenerator = struct {
             .current_peek_expr = null,
             .string_pool = std.array_list.Managed([]const u8).init(allocator),
             .reporter = reporter,
+            .array_storage_override = null,
             .symbol_table = SymbolTable.init(allocator),
             .constant_manager = ConstantManager.init(allocator),
             .label_generator = LabelGenerator.init(allocator),
@@ -537,10 +539,13 @@ pub const HIRGenerator = struct {
                 const param = params[param_index];
 
                 if (function_body.param_is_alias[param_index]) {
+                    var declared_type_info: ?*ast.TypeInfo = null;
+                    defer if (declared_type_info) |info| self.allocator.destroy(info);
+
                     var param_type: HIRType = .Unknown;
                     if (param.type_expr) |type_expr| {
                         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-                        defer self.allocator.destroy(type_info_ptr);
+                        declared_type_info = type_info_ptr;
                         param_type = self.convertTypeInfo(type_info_ptr.*);
 
                         // Semantic validation for alias parameter types
@@ -569,6 +574,8 @@ pub const HIRGenerator = struct {
                     // Track array element type for array alias parameters
                     if (param_type == .Array) {
                         try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
+                        const storage_kind = if (declared_type_info) |info| convertArrayStorageKind(info.array_storage) else SoxaTypes.ArrayStorageKind.dynamic;
+                        try self.trackArrayStorageKind(param.name.lexeme, storage_kind);
                     }
 
                     try self.symbol_table.trackAliasParameter(param.name.lexeme);
@@ -617,10 +624,13 @@ pub const HIRGenerator = struct {
                         },
                     });
                 } else {
+                    var declared_type_info: ?*ast.TypeInfo = null;
+                    defer if (declared_type_info) |info| self.allocator.destroy(info);
+
                     var param_type: HIRType = .Unknown;
                     if (param.type_expr) |type_expr| {
                         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-                        defer self.allocator.destroy(type_info_ptr);
+                        declared_type_info = type_info_ptr;
                         param_type = self.convertTypeInfo(type_info_ptr.*);
                     } else {
                         param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
@@ -631,6 +641,8 @@ pub const HIRGenerator = struct {
                     // Track array element type for array parameters
                     if (param_type == .Array) {
                         try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
+                        const storage_kind = if (declared_type_info) |info| convertArrayStorageKind(info.array_storage) else SoxaTypes.ArrayStorageKind.dynamic;
+                        try self.trackArrayStorageKind(param.name.lexeme, storage_kind);
                     }
 
                     // Parameters must always be treated as local variables, even if a
@@ -1041,6 +1053,7 @@ pub const HIRGenerator = struct {
                 }
             },
             .Map => |entries| try collections_handler.generateMap(entries),
+            .MapLiteral => |map_literal| try collections_handler.generateMap(map_literal.entries),
             .Index => |index| try collections_handler.generateIndex(index, preserve_result, should_pop_after_use),
             .IndexAssign => try collections_handler.generateIndexAssign(expr.data, preserve_result),
             .ForAll => try collections_handler.generateForAll(expr.data),
@@ -1479,6 +1492,32 @@ pub const HIRGenerator = struct {
         return self.type_system.collectUnionMemberNames(ut);
     }
 
+    pub fn collectUnionMemberNamesFromHIRType(self: *HIRGenerator, hir_type: HIRType) ![][]const u8 {
+        if (hir_type != .Union) return &[_][]const u8{};
+        const union_members = hir_type.Union;
+        var names = try self.allocator.alloc([]const u8, union_members.len);
+        for (union_members, 0..) |member_ptr, i| {
+            const member_type = member_ptr.*;
+            names[i] = switch (member_type) {
+                .Int => "int",
+                .Float => "float",
+                .String => "string",
+                .Tetra => "tetra",
+                .Byte => "byte",
+                .Nothing => "nothing",
+                .Array => "array",
+                .Map => "map",
+                .Struct => "struct",
+                .Enum => "enum",
+                .Function => "function",
+                .Union => "union",
+                .Unknown => "unknown",
+                .Poison => "poison",
+            };
+        }
+        return names;
+    }
+
     fn ensureAuxMapsInit(self: *HIRGenerator) void {
         _ = self;
     }
@@ -1489,6 +1528,27 @@ pub const HIRGenerator = struct {
 
     pub fn getTrackedArrayElementType(self: *HIRGenerator, var_name: []const u8) ?HIRType {
         return self.symbol_table.getTrackedArrayElementType(var_name);
+    }
+
+    pub fn trackArrayStorageKind(self: *HIRGenerator, var_name: []const u8, storage: SoxaTypes.ArrayStorageKind) !void {
+        try self.symbol_table.trackArrayStorageKind(var_name, storage);
+    }
+
+    pub fn getTrackedArrayStorageKind(self: *HIRGenerator, var_name: []const u8) ?SoxaTypes.ArrayStorageKind {
+        return self.symbol_table.getTrackedArrayStorageKind(var_name);
+    }
+
+    fn convertArrayStorageKind(kind: ast.ArrayStorageKind) SoxaTypes.ArrayStorageKind {
+        return switch (kind) {
+            .dynamic => .dynamic,
+            .fixed => .fixed,
+            .const_literal => .const_literal,
+        };
+    }
+
+    pub fn storageKindFromTypeInfo(self: *HIRGenerator, type_info: ast.TypeInfo) SoxaTypes.ArrayStorageKind {
+        _ = self;
+        return convertArrayStorageKind(type_info.array_storage);
     }
 
     fn inferBinaryOpResultType(self: *HIRGenerator, operator_type: TokenType, left_expr: *ast.Expr, right_expr: *ast.Expr) HIRType {

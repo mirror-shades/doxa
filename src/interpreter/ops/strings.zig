@@ -158,7 +158,7 @@ pub fn exec(vm: anytype, s: anytype) !void {
             .array => |arr| {
                 var logical_len: usize = 0;
                 while (logical_len < arr.elements.len) : (logical_len += 1) {
-                    if (std.meta.eql(arr.elements[logical_len], HIRValue.nothing)) break;
+                    if (arr.elements[logical_len] == .nothing) break;
                 }
                 try vm.stack.push(HIRFrame.initInt(@intCast(logical_len)));
             },
@@ -168,7 +168,10 @@ pub fn exec(vm: anytype, s: anytype) !void {
     }
 
     if (s.op == .ToString) {
-        const result = try vm.valueToString(val.value);
+        const value_ptr = try vm.allocator.create(HIRValue);
+        value_ptr.* = val.value;
+        defer vm.allocator.destroy(value_ptr);
+        const result = try vm.valueToString(value_ptr);
         try vm.stack.push(HIRFrame.initString(result));
         return;
     }

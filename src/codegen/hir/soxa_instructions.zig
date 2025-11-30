@@ -1,7 +1,9 @@
 const HIRValue = @import("soxa_values.zig").HIRValue;
 const HIRType = @import("soxa_types.zig").HIRType;
 const HIRMapEntry = @import("soxa_values.zig").HIRMapEntry;
-const ScopeKind = @import("soxa_types.zig").ScopeKind;
+const SoxaTypes = @import("soxa_types.zig");
+const ScopeKind = SoxaTypes.ScopeKind;
+const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 const StructId = @import("soxa_types.zig").StructId;
 pub const CallKind = @import("soxa_types.zig").CallKind;
 const Reporting = @import("../../utils/reporting.zig");
@@ -366,6 +368,7 @@ pub const HIRInstruction = union(enum) {
         element_type: HIRType,
         size: u32, // 0 = dynamic array
         nested_element_type: ?HIRType = null, // For nested arrays like int[][]
+        storage_kind: ArrayStorageKind = .dynamic,
     },
 
     /// Get array element by index
@@ -617,6 +620,7 @@ pub const HIRInstruction = union(enum) {
         entries: []HIRMapEntry,
         key_type: HIRType,
         value_type: HIRType,
+        has_else_value: bool = false,
     },
 
     /// Get map value by key

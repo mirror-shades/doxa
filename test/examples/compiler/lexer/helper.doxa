@@ -12,7 +12,7 @@ const numeric is ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
 
 const keywords is ["var", "const", "function", "entry", "is"]
 
-pub const map LiteralToToken :: string returns TokenType {
+pub map LiteralToToken :: string returns TokenType {
     "var" then TokenType.VAR,
     "const" then TokenType.CONST,
     "function" then TokenType.FUNCTION,

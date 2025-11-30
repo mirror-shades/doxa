@@ -240,7 +240,10 @@ pub const Stmt = struct {
         },
         MapDecl: struct {
             name: Token,
+            key_type: TypeInfo,
+            value_type: TypeInfo,
             fields: []*MapField,
+            else_value: ?*Expr = null,
             is_public: bool = false,
         },
         Return: struct {
@@ -248,7 +251,12 @@ pub const Stmt = struct {
             type_info: TypeInfo,
         },
         EnumDecl: EnumDecl,
-        MapLiteral: []*MapEntry,
+        MapLiteral: struct {
+            entries: []*MapEntry,
+            key_type: ?TypeInfo = null,
+            value_type: ?TypeInfo = null,
+            else_value: ?*Expr = null,
+        },
         Module: struct {
             name: Token,
             imports: []const ImportInfo,
@@ -320,13 +328,21 @@ pub const Stmt = struct {
                     allocator.destroy(field);
                 }
                 allocator.free(m.fields);
+                if (m.else_value) |else_val| {
+                    else_val.deinit(allocator);
+                    allocator.destroy(else_val);
+                }
             },
-            .MapLiteral => |entries| {
-                for (entries) |entry| {
+            .MapLiteral => |*map_literal| {
+                for (map_literal.entries) |entry| {
                     entry.deinit(allocator);
                     allocator.destroy(entry);
                 }
-                allocator.free(entries);
+                allocator.free(map_literal.entries);
+                if (map_literal.else_value) |else_val| {
+                    else_val.deinit(allocator);
+                    allocator.destroy(else_val);
+                }
             },
             .Assert => |*a| {
                 a.condition.deinit(allocator);
@@ -581,7 +597,11 @@ pub const Expr = struct {
             arguments: []const *Expr,
         },
 
-        Map: []MapEntry,
+        Map: []*MapEntry,
+    MapLiteral: struct {
+        entries: []*MapEntry,
+        else_value: ?*Expr = null,
+    },
 
         InternalCall: struct {
             receiver: *Expr,
@@ -823,12 +843,23 @@ pub const Expr = struct {
 
             .Map => |entries| {
                 for (entries) |entry| {
+                    entry.deinit(allocator);
+                    allocator.destroy(entry);
+                }
+                allocator.free(entries);
+            },
+            .MapLiteral => |*map_literal| {
+                for (map_literal.entries) |entry| {
                     entry.key.deinit(allocator);
                     allocator.destroy(entry.key);
                     entry.value.deinit(allocator);
                     allocator.destroy(entry.value);
                 }
-                allocator.free(entries);
+                allocator.free(map_literal.entries);
+                if (map_literal.else_value) |else_val| {
+                    else_val.deinit(allocator);
+                    allocator.destroy(else_val);
+                }
             },
             .InternalCall => |*m| {
                 m.receiver.deinit(allocator);
@@ -933,6 +964,12 @@ pub const Type = enum {
     Union,
 };
 
+pub const ArrayStorageKind = enum {
+    dynamic,
+    fixed,
+    const_literal,
+};
+
 pub const TypeInfo = struct {
     base: Type,
     custom_type: ?[]const u8 = null,
@@ -943,6 +980,7 @@ pub const TypeInfo = struct {
     element_type: ?Type = null,
     variants: ?[][]const u8 = null,
     array_size: ?usize = null,
+    array_storage: ArrayStorageKind = .dynamic,
     union_type: ?*UnionType = null,
     map_key_type: ?*TypeInfo = null,
     map_value_type: ?*TypeInfo = null,
@@ -1233,10 +1271,13 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
                 }
             }
 
+            const storage_kind: ArrayStorageKind = if (array_size != null) .fixed else .dynamic;
+
             break :blk TypeInfo{
                 .base = .Array,
                 .array_type = element_type,
                 .array_size = array_size,
+                .array_storage = storage_kind,
             };
         },
         .Struct => |fields| blk: {

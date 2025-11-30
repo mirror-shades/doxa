@@ -42,6 +42,22 @@ var strs is ["a", "b"]            // Inferred as string[]
 // Invalid operations
 var mixed is [1, "two", true]     // Error: mixed types
 @push(nums, "four")                // Error: type mismatch
+```
+
+#### Array Storage Kinds
+
+Doxa tracks how every array is stored, and that storage kind determines which builtins can mutate it.
+
+- `dynamic` — default for `var` arrays and anything returned from runtime helpers. These can grow and shrink freely.
+- `fixed` — any type annotation that names a literal size (for example, `int[4]`) produces a fixed array. Type aliases preserve this metadata, so wrapping `int[4]` in an alias and then declaring `var data :: MyAlias` still behaves as fixed storage with an immutable length/capacity.
+- `const literal` — a `const` binding that receives a compile-time literal (including nested literals) is tagged immutable. Any other `const` that aliases that value inherits the same storage kind.
+
+Mutating methods like `@push`, `@insert`, `@remove`, or `@clear` require dynamic storage. Coerce a fixed/const literal array into dynamic form by copying it into a mutable declaration:
+
+```doxa
+const literal = [1, 2]
+var copy :: int[] is literal  // copy becomes dynamic and @push-friendly
+```
 ````
 
 ### Maps

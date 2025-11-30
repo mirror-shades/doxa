@@ -4,12 +4,14 @@ module SourceManager from "./source_manager.doxa"
 import Token, TokenType from "./token.doxa"
 import NumberType from "./types.doxa"
 
-function lex(src :: string) {
+pub function lex(src :: string) {
     var tokens :: Token[]
     var line_breaks :: int[]
     var line is 1
 
+
     each c at i in src {
+        @print("helper result: {c}\n")
         if c == "\n" then {
             line += 1
             @push(line_breaks, i)
@@ -65,9 +67,9 @@ function makeAlpha(^src :: string, ^i :: int, c :: string) returns Token {
         word += word_char
     }
     if Helper.isKeyword(word) then {
-        const token_type :: TokenType is Helper.LiteralToToken[word]
+        @print("the word is: {word}")
         return $Token {
-            type is token_type
+            type is TokenType.IDENTIFIER
             literal is word
             start is i
             end is i + @length(word)
@@ -118,15 +120,4 @@ function makeNumeric(^src :: string, ^i :: int) returns Token {
         start is i
         end is i + @length(current_num)
     }
-}
-
-entry function main() {
-    var program_src is "
-    ...var hello is \"hello... world\"\n
-    ...\n
-    ...entry function main() {\n
-    ...    hello?\n
-    ...}"
-    
-    lex(program_src)
 }

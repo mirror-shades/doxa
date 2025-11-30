@@ -172,6 +172,28 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []ast.Stmt, par
         try hir_generator.type_system.custom_types.put(custom_type.name, converted_type);
     }
 
+    // Manually register TokenType enum if not already registered
+    if (hir_generator.type_system.custom_types.get("TokenType") == null) {
+        const tokentype_variants = try memoryManager.getAnalysisAllocator().alloc([]const u8, 16);
+        tokentype_variants[0] = try memoryManager.getAnalysisAllocator().dupe(u8, "INT_LITERAL");
+        tokentype_variants[1] = try memoryManager.getAnalysisAllocator().dupe(u8, "FLOAT_LITERAL");
+        tokentype_variants[2] = try memoryManager.getAnalysisAllocator().dupe(u8, "BYTE_LITERAL");
+        tokentype_variants[3] = try memoryManager.getAnalysisAllocator().dupe(u8, "TETRA_LITERAL");
+        tokentype_variants[4] = try memoryManager.getAnalysisAllocator().dupe(u8, "STRING_LITERAL");
+        tokentype_variants[5] = try memoryManager.getAnalysisAllocator().dupe(u8, "NOTHING_LITERAL");
+        tokentype_variants[6] = try memoryManager.getAnalysisAllocator().dupe(u8, "VAR");
+        tokentype_variants[7] = try memoryManager.getAnalysisAllocator().dupe(u8, "CONST");
+        tokentype_variants[8] = try memoryManager.getAnalysisAllocator().dupe(u8, "FUNCTION");
+        tokentype_variants[9] = try memoryManager.getAnalysisAllocator().dupe(u8, "MAIN");
+        tokentype_variants[10] = try memoryManager.getAnalysisAllocator().dupe(u8, "ENTRY");
+        tokentype_variants[11] = try memoryManager.getAnalysisAllocator().dupe(u8, "ASSIGN");
+        tokentype_variants[12] = try memoryManager.getAnalysisAllocator().dupe(u8, "MODULE");
+        tokentype_variants[13] = try memoryManager.getAnalysisAllocator().dupe(u8, "IMPORT");
+        tokentype_variants[14] = try memoryManager.getAnalysisAllocator().dupe(u8, "FROM");
+        tokentype_variants[15] = try memoryManager.getAnalysisAllocator().dupe(u8, "IDENTIFIER");
+        try hir_generator.registerEnumType("TokenType", tokentype_variants);
+    }
+
     const struct_methods = semantic_analyzer.getStructMethods();
     var struct_methods_iter = struct_methods.iterator();
     while (struct_methods_iter.next()) |entry| {

@@ -130,10 +130,10 @@ pub const PrintOps = struct {
                     }
                     defer vm.allocator.free(field_path);
 
-                    const field_type_string = PrintOps.getTypeString(vm, field.value);
+                    const field_type_string = PrintOps.getTypeString(vm, field.value.*);
                     try printToStdout(":: {s} is ", .{field_type_string});
 
-                    switch (field.value) {
+                    switch (field.value.*) {
                         .struct_instance => |nested| {
                             const field_names = try vm.allocator.alloc([]const u8, nested.fields.len);
                             const field_types = try vm.allocator.alloc(@TypeOf(nested.fields[0].field_type), nested.fields.len);
@@ -163,7 +163,7 @@ pub const PrintOps = struct {
                                     if (@hasField(child, "program")) {
                                         try vm.executeInstruction(nested_peek);
                                     } else if (@hasField(child, "bytecode")) {
-                                        try PrintOps.formatHIRValue(vm, field.value);
+                                        try PrintOps.formatHIRValue(vm, field.value.*);
                                         try printToStdout("\n", .{});
                                         return;
                                     }
@@ -174,7 +174,7 @@ pub const PrintOps = struct {
                             }
                         },
                         else => {
-                            try PrintOps.formatHIRValue(vm, field.value);
+                            try PrintOps.formatHIRValue(vm, field.value.*);
                             try printToStdout("\n", .{});
                         },
                     }
@@ -247,7 +247,7 @@ pub const PrintOps = struct {
                 try printToStdout("[", .{});
                 var first = true;
                 for (arr.elements) |elem| {
-                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                    if (elem == .nothing) break;
                     if (!first) try printToStdout(", ", .{});
                     try PrintOps.printHIRValue(vm, elem);
                     first = false;
@@ -258,7 +258,7 @@ pub const PrintOps = struct {
                 try printToStdout("{{ ", .{});
                 for (s.fields, 0..) |field, i| {
                     try printToStdout("{s}: ", .{field.name});
-                    try PrintOps.printHIRValue(vm, field.value);
+                    try PrintOps.printHIRValue(vm, field.value.*);
                     if (i < s.fields.len - 1) try printToStdout(", ", .{});
                 }
                 try printToStdout(" }}", .{});
@@ -311,7 +311,7 @@ pub const PrintOps = struct {
 
     fn firstNonNothingElement(elems: []HIRValue) ?HIRValue {
         for (elems) |e| {
-            if (!@import("std").meta.eql(e, HIRValue.nothing)) return e;
+            if (e != .nothing) return e;
         }
         return null;
     }
@@ -406,7 +406,7 @@ pub const PrintOps = struct {
                 try printToStdout("[", .{});
                 var first = true;
                 for (arr.elements) |elem| {
-                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                    if (elem == .nothing) break;
                     if (!first) try printToStdout(", ", .{});
                     try PrintOps.formatHIRValue(vm, elem);
                     first = false;
@@ -417,7 +417,7 @@ pub const PrintOps = struct {
                 try printToStdout("{{ ", .{});
                 for (s.fields, 0..) |field, i| {
                     try printToStdout("{s}: ", .{field.name});
-                    try PrintOps.formatHIRValue(vm, field.value);
+                    try PrintOps.formatHIRValue(vm, field.value.*);
                     if (i < s.fields.len - 1) try printToStdout(", ", .{});
                 }
                 try printToStdout(" }}", .{});
@@ -501,7 +501,7 @@ pub const PrintOps = struct {
                 try printToStdout("[", .{});
                 var first = true;
                 for (arr.elements) |elem| {
-                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                    if (elem == .nothing) break;
                     if (!first) try printToStdout(", ", .{});
                     try PrintOps.formatHIRValueRaw(vm, elem);
                     first = false;
@@ -512,7 +512,7 @@ pub const PrintOps = struct {
                 try printToStdout("{{ ", .{});
                 for (s.fields, 0..) |field, i| {
                     try printToStdout(" {s}: ", .{field.name});
-                    try PrintOps.formatHIRValueRaw(vm, field.value);
+                    try PrintOps.formatHIRValueRaw(vm, field.value.*);
                     if (i < s.fields.len - 1) try printToStdout(", ", .{});
                 }
                 try printToStdout(" }}", .{});

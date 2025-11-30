@@ -207,7 +207,7 @@ pub const IOHandler = struct {
             }
         }
 
-        // New: include union member list for variables declared as unions
+        // New: include union member list for variables declared as unions or expressions that return unions
         var union_members: ?[][]const u8 = null;
         // Attach inline union info for selected builtins/internal calls
         if (peek.expr.data == .Variable) {
@@ -233,6 +233,9 @@ pub const IOHandler = struct {
                     }
                 }
             }
+        } else if (inferred_type == .Union) {
+            // For expressions that result in union types (like map access), extract member names
+            union_members = try self.generator.collectUnionMemberNamesFromHIRType(inferred_type);
         }
 
         // Generate peek instruction with full path and correct type

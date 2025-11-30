@@ -242,8 +242,8 @@ pub const MemoryManager = struct {
         self.execution_arena.deinit();
         self.execution_arena = std.heap.ArenaAllocator.init(self.allocator);
 
-        self.custom_type_instances.clearRetainingCapacity();
-        self.next_instance_id = 0;
+        // Note: custom_type_instances are cleaned up per-scope, not globally
+        // Each scope's instances are cleaned up when that scope is deinitialized
     }
 
     pub fn reset(self: *MemoryManager) void {
@@ -405,6 +405,7 @@ pub const Scope = struct {
     parent: ?*Scope,
     variables: std.AutoHashMap(u32, *Variable),
     name_map: std.StringHashMap(*Variable),
+    custom_type_instances: std.StringHashMap(CustomTypeInstanceData),
     arena: std.heap.ArenaAllocator,
     manager: *ScopeManager,
     memory_manager: *MemoryManager,
@@ -422,6 +423,7 @@ pub const Scope = struct {
             .arena = std.heap.ArenaAllocator.init(memory_manager.allocator),
             .variables = std.AutoHashMap(u32, *Variable).init(memory_manager.allocator),
             .name_map = std.StringHashMap(*Variable).init(memory_manager.allocator),
+            .custom_type_instances = std.StringHashMap(CustomTypeInstanceData).init(memory_manager.allocator),
             .manager = memory_manager.scope_manager,
             .memory_manager = memory_manager,
         };
@@ -440,6 +442,10 @@ pub const Scope = struct {
         if (!self.name_map_deinit) {
             self.name_map.deinit();
             self.name_map_deinit = true;
+        }
+        if (!self.custom_type_instances_deinit) {
+            self.custom_type_instances.deinit();
+            self.custom_type_instances_deinit = true;
         }
 
         self.arena.deinit();
@@ -565,5 +571,10 @@ pub const Scope = struct {
             current_scope = scope.parent;
         }
         return null;
+    }
+
+    pub fn createCustomTypeInstance(self: *Scope, instance_name: []const u8, instance_data: CustomTypeInstanceData) !void {
+        const name_copy = try self.arena.allocator().dupe(u8, instance_name);
+        try self.custom_type_instances.put(name_copy, instance_data);
     }
 };

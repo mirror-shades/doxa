@@ -9,6 +9,12 @@ const HIRValue = @import("soxa_values.zig").HIRValue;
 pub const StructId = u32;
 pub const EnumId = u32;
 
+pub const ArrayStorageKind = enum {
+    dynamic,
+    fixed,
+    const_literal,
+};
+
 pub const HIRType = union(enum) {
     Int,
     Byte,
@@ -17,7 +23,7 @@ pub const HIRType = union(enum) {
     Tetra,
     Nothing,
 
-    // OK: pointer, not by-value recursion
+    // Arrays carry element type metadata
     Array: *const HIRType,
 
     // Map carries both key & value types
@@ -61,6 +67,7 @@ pub const StructFieldInfo = struct {
 pub const MapTypeInfo = struct {
     key_type: HIRType,
     value_type: HIRType,
+    has_else: bool,
 };
 
 pub const EnumTypeInfo = struct {

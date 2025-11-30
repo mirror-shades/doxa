@@ -624,6 +624,7 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeByte(14); // Instruction tag
             try writer.writeByte(@intFromEnum(a.element_type));
             try writer.writeInt(u32, a.size, .little);
+            try writer.writeByte(@intFromEnum(a.storage_kind));
         },
         .ArrayGet => |a| {
             try writer.writeByte(15); // Instruction tag
@@ -845,7 +846,13 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             const element_type_byte = try reader.readByte();
             const element_type = @as(HIRType, @enumFromInt(element_type_byte));
             const size = try reader.readInt(u32, .little);
-            return HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } };
+            const storage_byte = try reader.readByte();
+            const storage_kind = @as(SoxaTypes.ArrayStorageKind, @enumFromInt(storage_byte));
+            return HIRInstruction{ .ArrayNew = .{
+                .element_type = element_type,
+                .size = size,
+                .storage_kind = storage_kind,
+            } };
         },
         15 => { // ArrayGet
             const bounds_check = (try reader.readByte()) != 0;
@@ -1064,7 +1071,10 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .Halt => try writer.print("    Halt                        ; Program termination\n", .{}),
 
         // Array operations
-        .ArrayNew => |a| try writer.print("    ArrayNew {s} {}             ; Create array\n", .{ @tagName(a.element_type), a.size }),
+        .ArrayNew => |a| try writer.print(
+            "    ArrayNew {s} {} {s}             ; Create array\n",
+            .{ @tagName(a.element_type), a.size, @tagName(a.storage_kind) },
+        ),
         .ArrayGet => |a| try writer.print("    ArrayGet {}                 ; Get array element\n", .{a.bounds_check}),
         .ArrayGetAndAdd => |a| try writer.print("    ArrayGetAndAdd {}           ; Compound assignment: array[index] += value\n", .{a.bounds_check}),
         .ArrayGetAndSub => |a| try writer.print("    ArrayGetAndSub {}           ; Compound assignment: array[index] -= value\n", .{a.bounds_check}),
@@ -1081,7 +1091,10 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .ArrayLen => try writer.print("    ArrayLen                    ; Get array length\n", .{}),
         .ArrayConcat => try writer.print("    ArrayConcat                 ; Concatenate arrays\n", .{}),
 
-        .Map => |m| try writer.print("    Map {} {s}                   ; Create map with {} entries\n", .{ m.entries.len, @tagName(m.key_type), m.entries.len }),
+        .Map => |m| try writer.print(
+            "    Map {} {s} {s} else:{s}       ; Create map with {} entries\n",
+            .{ m.entries.len, @tagName(m.key_type), @tagName(m.value_type), if (m.has_else_value) "true" else "false", m.entries.len },
+        ),
         .MapGet => |m| try writer.print("    MapGet {s}                   ; Get map value by key\n", .{@tagName(m.key_type)}),
         .MapSet => |m| try writer.print("    MapSet {s}                   ; Set map value by key\n", .{@tagName(m.key_type)}),
 

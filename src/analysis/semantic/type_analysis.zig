@@ -95,6 +95,17 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                 type_info.map_value_type = first_val_type;
             }
         },
+        .MapLiteral => |map_literal| {
+            // Minimal inference for map literals: infer key/value from first entry if present.
+            type_info.* = .{ .base = .Map };
+            if (map_literal.entries.len > 0) {
+                const first_key_type = try inferTypeFromExpr(ctx, map_literal.entries[0].key);
+                const first_val_type = try inferTypeFromExpr(ctx, map_literal.entries[0].value);
+                // Reuse inferred pointers to avoid unnecessary deep copies and allocations.
+                type_info.map_key_type = first_key_type;
+                type_info.map_value_type = first_val_type;
+            }
+        },
         .Literal => |lit| {
             type_info.inferFrom(lit); // TokenLiteral is already the right type
         },
