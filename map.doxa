@@ -1,25 +1,21 @@
 map IdToName {
     1 then "Bob"
     2 then "Sam"
-    3 then "Doug"
 }
 
 map IdToNameElse {
     1 then "Bob"
     2 then "Sam"
-    3 then "Doug"
     else "not found"
 }
 
 IdToName[1]?
 IdToName[2]?
 IdToName[3]?
-IdToName[4]?
 
 IdToNameElse[1]?
 IdToNameElse[2]?
 IdToNameElse[3]?
-IdToNameElse[4]?
 
 var exampleUnion :: string | nothing
 exampleUnion?

@@ -1507,8 +1507,18 @@ pub const HIRGenerator = struct {
                 .Nothing => "nothing",
                 .Array => "array",
                 .Map => "map",
-                .Struct => "struct",
-                .Enum => "enum",
+                .Struct => blk: {
+                    if (self.type_system.struct_table) |table| {
+                        if (table.getName(member_type.Struct)) |name| break :blk name;
+                    }
+                    break :blk "struct";
+                },
+                .Enum => blk: {
+                    if (self.type_system.enum_table) |table| {
+                        if (table.getName(member_type.Enum)) |name| break :blk name;
+                    }
+                    break :blk "enum";
+                },
                 .Function => "function",
                 .Union => "union",
                 .Unknown => "unknown",

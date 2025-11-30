@@ -90,6 +90,11 @@ pub const StructTable = struct {
         return self.entries.items[id].fields;
     }
 
+    pub fn getName(self: *const StructTable, id: StructId) ?[]const u8 {
+        if (id >= self.entries.items.len) return null;
+        return self.entries.items[id].qualified_name;
+    }
+
     pub fn setFieldHIRType(self: *StructTable, id: StructId, field_index: u32, ty: HIRType) void {
         if (self.getEntryById(id)) |entry| {
             if (field_index < entry.fields.len) {

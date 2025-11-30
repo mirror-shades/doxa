@@ -608,7 +608,7 @@ resfloat? // 0
 /////
 // MAPS
 /////
-var map MyMap {
+map MyMap {
     "a" then 1.5,
     "b" then 2.5,
     "c" then 3.5,
@@ -618,19 +618,25 @@ MyMap["a"]? // 1.5
 MyMap["c"]? // 3.5
 MyMap["c"] is 4.5 
 MyMap["c"]? // 4.5
+MyMap["d"]? // nothing
 
-
-
-const map MyMap2 {
-    15 then "fifteen",
-    16 then "sixteen",
-    17 then "seventeen",
+map IdToName {
+    1 then "Bob"
+    2 then "Sam"
 }
 
-MyMap2[15]? // fifteen
-MyMap2[17]? // seventeen
+map IdToNameElse {
+    1 then "Bob"
+    2 then "Sam"
+    else "not found"
+}
 
-var map MyMap_typed0 returns string {
+IdToNameElse[1]?
+IdToNameElse[2]?
+IdToNameElse[3]?
+
+
+map MyMap_typed0 returns string {
     1 then "one",
     2 then "two",
     3 then "three",
@@ -639,7 +645,7 @@ var map MyMap_typed0 returns string {
 MyMap_typed0[1]? // one
 MyMap_typed0[2]? // two
 
-var map MyMap_typed1 :: int {
+map MyMap_typed1 :: int {
     1 then "one",
     2 then "two",
     3 then "three",
@@ -648,7 +654,7 @@ var map MyMap_typed1 :: int {
 MyMap_typed1[1]? // one
 MyMap_typed1[2]? // two
 
-var map MyMap_typed2 :: int returns string {
+map MyMap_typed2 :: int returns string {
     1 then "one",
     2 then "two",
     3 then "three",
@@ -657,7 +663,7 @@ var map MyMap_typed2 :: int returns string {
 MyMap_typed2[1]? // one
 MyMap_typed2[2]? // two
 
-var map MyMap_enum :: Color returns string {
+map MyMap_enum :: Color returns string {
     .Red then "red",
     .Green then "green",
     .Blue then "blue",
@@ -666,12 +672,15 @@ var map MyMap_enum :: Color returns string {
 MyMap_enum[.Red]? // red
 MyMap_enum[.Blue]? // blue
 
-var map MyMap_struct {
+map MyMap_struct {
     1 then mike,
 }
 
-MyMap_struct[1].person.name? // Mike
-MyMap_struct[1].salary? // 1000
+const mikeId1 is MyMap_struct[1] as Employee else $Employee { person is $Person { name is "Unknown", age is 0 }, salary is 0 }
+const mikeId2 is MyMap_struct[2] as Employee else $Employee { person is $Person { name is "Unknown", age is 0 }, salary is 0 }
+mikeId1?
+mikeId2?
+
 
 
 /////
