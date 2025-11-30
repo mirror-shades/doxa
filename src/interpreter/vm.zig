@@ -1454,9 +1454,8 @@ pub const VM = struct {
         var fields = try alloc.alloc(HIRStructField, payload.field_count);
         errdefer alloc.free(fields);
 
-        var idx: usize = payload.field_count;
-        while (idx > 0) {
-            idx -= 1;
+        var idx: usize = 0;
+        while (idx < payload.field_count) : (idx += 1) {
             const field_name_frame = try self.stack.pop();
             const field_value_frame = try self.stack.pop();
 
@@ -2231,7 +2230,10 @@ pub const VM = struct {
                 defer result.deinit();
                 try result.appendSlice("{ ");
                 var first = true;
-                for (s.fields) |field| {
+                var idx: usize = s.fields.len;
+                while (idx > 0) {
+                    idx -= 1;
+                    const field = s.fields[idx];
                     if (!first) try result.appendSlice(", ");
                     try result.appendSlice(field.name);
                     try result.appendSlice(": ");

@@ -112,9 +112,13 @@ pub const IRPrinter = struct {
     global_array_types: std.StringHashMap(HIR.HIRType), // Store array element types for global variables
     global_enum_types: std.StringHashMap([]const u8), // Store enum type names for global variables
     global_struct_field_types: std.StringHashMap([]HIR.HIRType), // Store struct field types for globals
+    global_struct_field_names: std.StringHashMap([]const []const u8), // Store struct field names for globals
+    global_struct_type_names: std.StringHashMap([]const u8), // Track struct type names for globals
     struct_fields_by_id: std.AutoHashMap(HIR.StructId, []HIR.HIRType),
     defined_globals: std.StringHashMap(bool),
     function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
+    function_struct_return_type_names: std.StringHashMap([]const u8),
+    struct_field_names_by_type: std.StringHashMap([]const []const u8),
     last_emitted_enum_value: ?u64 = null,
     enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
 
@@ -125,12 +129,18 @@ pub const IRPrinter = struct {
         array_type: ?HIR.HIRType = null,
         enum_type_name: ?[]const u8 = null, // For enum values, store the type name
         struct_field_types: ?[]HIR.HIRType = null,
+        struct_field_names: ?[]const []const u8 = null,
+        struct_type_name: ?[]const u8 = null,
+        string_literal_value: ?[]const u8 = null,
     };
     const VariableInfo = struct {
         ptr_name: []const u8,
         stack_type: StackType,
         array_type: ?HIR.HIRType = null,
         enum_type_name: ?[]const u8 = null, // For enum variables, store the type name
+        struct_field_types: ?[]HIR.HIRType = null,
+        struct_field_names: ?[]const []const u8 = null,
+        struct_type_name: ?[]const u8 = null,
     };
     const StackIncoming = struct {
         block: []const u8,
@@ -284,10 +294,14 @@ pub const IRPrinter = struct {
             .global_array_types = std.StringHashMap(HIR.HIRType).init(allocator),
             .global_enum_types = std.StringHashMap([]const u8).init(allocator),
             .global_struct_field_types = std.StringHashMap([]HIR.HIRType).init(allocator),
+            .global_struct_field_names = std.StringHashMap([]const []const u8).init(allocator),
+            .global_struct_type_names = std.StringHashMap([]const u8).init(allocator),
             .struct_fields_by_id = std.AutoHashMap(HIR.StructId, []HIR.HIRType).init(allocator),
             .defined_globals = std.StringHashMap(bool).init(allocator),
             .last_emitted_enum_value = null,
             .function_struct_return_fields = std.StringHashMap([]HIR.HIRType).init(allocator),
+            .function_struct_return_type_names = std.StringHashMap([]const u8).init(allocator),
+            .struct_field_names_by_type = std.StringHashMap([]const []const u8).init(allocator),
             .enum_print_map = std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)).init(allocator),
         };
     }
@@ -298,6 +312,8 @@ pub const IRPrinter = struct {
         self.global_array_types.deinit();
         self.global_enum_types.deinit();
         self.global_struct_field_types.deinit();
+        self.global_struct_field_names.deinit();
+        self.global_struct_type_names.deinit();
         self.struct_fields_by_id.deinit();
         self.defined_globals.deinit();
         var ret_it = self.function_struct_return_fields.iterator();
@@ -305,6 +321,12 @@ pub const IRPrinter = struct {
             self.allocator.free(entry.value_ptr.*);
         }
         self.function_struct_return_fields.deinit();
+        self.function_struct_return_type_names.deinit();
+        var names_it = self.struct_field_names_by_type.iterator();
+        while (names_it.next()) |entry| {
+            self.allocator.free(entry.value_ptr.*);
+        }
+        self.struct_field_names_by_type.deinit();
 
         // Clean up enum print metadata lists
         var enum_it = self.enum_print_map.iterator();
@@ -382,6 +404,8 @@ pub const IRPrinter = struct {
 
         // Build enum metadata used for pretty-printing enum values in native code.
         try self.buildEnumPrintMap(hir);
+        // Resolve struct field names up-front so peeks can render named fields.
+        try self.collectStructFieldNames(hir);
 
         // String pool globals
         for (hir.string_pool, 0..) |s, idx| {
@@ -471,7 +495,7 @@ pub const IRPrinter = struct {
         const functions_start_idx = self.findFunctionsSectionStart(hir, &func_start_labels);
 
         // Pre-populate struct field metadata by scanning all StructNew instructions
-        // This ensures struct field types are available when methods access 'this'
+        // This ensures struct field types and names are available when methods access 'this'
         for (hir.instructions) |inst| {
             if (inst == .StructNew) {
                 const sn = inst.StructNew;
@@ -683,7 +707,7 @@ pub const IRPrinter = struct {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ name, info.length, info.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            try stack.append(.{ .name = name, .ty = .PTR });
+                            try stack.append(.{ .name = name, .ty = .PTR, .string_literal_value = s });
                         },
                         .enum_variant => |ev| {
                             // Store enum variant as its index value (i64) but mark it as enum type
@@ -730,6 +754,9 @@ pub const IRPrinter = struct {
                         .array_type = top.array_type,
                         .enum_type_name = top.enum_type_name,
                         .struct_field_types = top.struct_field_types, // Copy the pointer reference
+                        .struct_field_names = top.struct_field_names,
+                        .struct_type_name = top.struct_type_name,
+                        .string_literal_value = top.string_literal_value,
                     };
                     try stack.append(duped);
                 },
@@ -936,17 +963,18 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(zext_line);
                             try w.writeAll(zext_line);
 
-                            const result_i8 = try self.nextTemp(&id);
-                            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [4 x i8], ptr @tetra_not_lut, i64 0, i64 {s}\n", .{ result_i8, idx_i64 });
+                            const lut_ptr = try self.nextTemp(&id);
+                            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [4 x i8], ptr @tetra_not_lut, i64 0, i64 {s}\n", .{ lut_ptr, idx_i64 });
                             defer self.allocator.free(gep_line);
                             try w.writeAll(gep_line);
 
-                            const result_i2 = try self.nextTemp(&id);
-                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i8, ptr {s}\n", .{ result_i2, result_i8 });
+                            const result_i8 = try self.nextTemp(&id);
+                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i8, ptr {s}\n", .{ result_i8, lut_ptr });
                             defer self.allocator.free(load_line);
                             try w.writeAll(load_line);
 
-                            const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i8 {s} to i2\n", .{ result_i2, result_i2 });
+                            const result_i2 = try self.nextTemp(&id);
+                            const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i8 {s} to i2\n", .{ result_i2, result_i8 });
                             defer self.allocator.free(trunc_line);
                             try w.writeAll(trunc_line);
 
@@ -1160,7 +1188,9 @@ pub const IRPrinter = struct {
                 },
                 .Peek => |pk| {
                     if (stack.items.len < 1) continue;
-                    const v = stack.items[stack.items.len - 1];
+                    var v = stack.items[stack.items.len - 1];
+                    self.hydrateStructMetadata(&v, pk.name);
+                    stack.items[stack.items.len - 1] = v;
                     const val = v;
 
                     try self.emitPeekInstruction(w, pk, val, &id, peek_state);
@@ -1240,7 +1270,10 @@ pub const IRPrinter = struct {
                             try w.writeAll(call_line);
                         },
                         .PTR => {
-                            if (val.array_type) |_| {
+                            if (val.struct_field_types) |fts| {
+                                const names = self.resolveStructFieldNames(val);
+                                try self.emitStructValuePeek(w, val.name, fts, names, &id, peek_state, val.struct_type_name);
+                            } else if (val.array_type) |_| {
                                 const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{val.name});
                                 defer self.allocator.free(line);
                                 try w.writeAll(line);
@@ -1694,6 +1727,12 @@ pub const IRPrinter = struct {
                             if (self.function_struct_return_fields.get(c.qualified_name)) |fts| {
                                 pushed.struct_field_types = fts;
                             }
+                            if (self.function_struct_return_type_names.get(c.qualified_name)) |tname| {
+                                pushed.struct_type_name = tname;
+                                if (self.struct_field_names_by_type.get(tname)) |names| {
+                                    pushed.struct_field_names = names;
+                                }
+                            }
                         }
                         try stack.append(pushed);
                     } else {
@@ -1874,7 +1913,17 @@ pub const IRPrinter = struct {
                         const array_type = self.global_array_types.get(gname);
                         const enum_type_name = self.global_enum_types.get(gname);
                         const struct_fields = self.global_struct_field_types.get(gname);
-                        try stack.append(.{ .name = result_name, .ty = st, .array_type = array_type, .enum_type_name = enum_type_name, .struct_field_types = struct_fields });
+                        const struct_names = self.global_struct_field_names.get(gname);
+                        const struct_type_name = self.global_struct_type_names.get(gname);
+                        try stack.append(.{
+                            .name = result_name,
+                            .ty = st,
+                            .array_type = array_type,
+                            .enum_type_name = enum_type_name,
+                            .struct_field_types = struct_fields,
+                            .struct_field_names = struct_names,
+                            .struct_type_name = struct_type_name,
+                        });
                     } else if (variables.get(lv.var_name)) |entry| {
                         const result_name = try self.nextTemp(&id);
                         const ty_str = self.stackTypeToLLVMType(entry.stack_type);
@@ -1885,7 +1934,15 @@ pub const IRPrinter = struct {
                         );
                         defer self.allocator.free(line);
                         try w.writeAll(line);
-                        try stack.append(.{ .name = result_name, .ty = entry.stack_type, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name });
+                        try stack.append(.{
+                            .name = result_name,
+                            .ty = entry.stack_type,
+                            .array_type = entry.array_type,
+                            .enum_type_name = entry.enum_type_name,
+                            .struct_field_types = entry.struct_field_types,
+                            .struct_field_names = entry.struct_field_names,
+                            .struct_type_name = entry.struct_type_name,
+                        });
                     } else {
                         const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                         id += 1;
@@ -1915,6 +1972,8 @@ pub const IRPrinter = struct {
                         // If the global stores a pointer (like a struct pointer), we need to load it first
                         // because methods expect a pointer to the struct, not a pointer to the global variable
                         const struct_fields = self.global_struct_field_types.get(gname);
+                        const struct_names = self.global_struct_field_names.get(gname);
+                        const struct_type_name = self.global_struct_type_names.get(gname);
                         if (st == .PTR) {
                             // Load the pointer value from the global
                             const loaded_ptr = try self.nextTemp(&id);
@@ -1923,16 +1982,24 @@ pub const IRPrinter = struct {
                             defer self.allocator.free(load_line);
                             try w.writeAll(load_line);
                             self.allocator.free(gptr);
-                            try stack.append(.{ .name = loaded_ptr, .ty = .PTR, .struct_field_types = struct_fields });
+                            try stack.append(.{ .name = loaded_ptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         } else {
                             // For non-pointer globals, push the global pointer directly
                             // Note: We don't free gptr here because it will be used in the call instruction
                             // The memory will be cleaned up when the IR printer is destroyed
-                            try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields });
+                            try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         }
                     } else if (variables.get(psid.var_name)) |entry| {
                         // Push the local variable pointer directly (not loaded)
-                        try stack.append(.{ .name = entry.ptr_name, .ty = .PTR, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name });
+                        try stack.append(.{
+                            .name = entry.ptr_name,
+                            .ty = .PTR,
+                            .array_type = entry.array_type,
+                            .enum_type_name = entry.enum_type_name,
+                            .struct_field_types = entry.struct_field_types,
+                            .struct_field_names = entry.struct_field_names,
+                            .struct_type_name = entry.struct_type_name,
+                        });
                     } else {
                         // Fallback: create a null pointer
                         const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -1965,6 +2032,18 @@ pub const IRPrinter = struct {
                         if (value.struct_field_types) |fts| {
                             _ = try self.global_struct_field_types.put(sv.var_name, fts);
                         }
+                        const stored_names = if (value.struct_field_names) |names|
+                            names
+                        else if (value.struct_type_name) |tname|
+                            self.struct_field_names_by_type.get(tname)
+                        else
+                            null;
+                        if (stored_names) |names| {
+                            _ = try self.global_struct_field_names.put(sv.var_name, names);
+                        }
+                        if (value.struct_type_name) |tname| {
+                            _ = try self.global_struct_type_names.put(sv.var_name, tname);
+                        }
                         const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, gptr });
                         defer self.allocator.free(store_line);
                         try w.writeAll(store_line);
@@ -1979,6 +2058,9 @@ pub const IRPrinter = struct {
                             info_ptr.?.stack_type = value.ty;
                             info_ptr.?.array_type = value.array_type;
                             info_ptr.?.enum_type_name = value.enum_type_name;
+                            info_ptr.?.struct_field_types = value.struct_field_types;
+                            info_ptr.?.struct_field_names = value.struct_field_names;
+                            info_ptr.?.struct_type_name = value.struct_type_name;
                         }
                         const store_line = try std.fmt.allocPrint(
                             self.allocator,
@@ -2018,6 +2100,18 @@ pub const IRPrinter = struct {
                         if (value.struct_field_types) |fts| {
                             _ = try self.global_struct_field_types.put(sd.var_name, fts);
                         }
+                        const stored_names = if (value.struct_field_names) |names|
+                            names
+                        else if (value.struct_type_name) |tname|
+                            self.struct_field_names_by_type.get(tname)
+                        else
+                            null;
+                        if (stored_names) |names| {
+                            _ = try self.global_struct_field_names.put(sd.var_name, names);
+                        }
+                        if (value.struct_type_name) |tname| {
+                            _ = try self.global_struct_type_names.put(sd.var_name, tname);
+                        }
                         const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, gptr });
                         defer self.allocator.free(store_line);
                         try w.writeAll(store_line);
@@ -2031,6 +2125,9 @@ pub const IRPrinter = struct {
                             info_ptr.?.stack_type = value.ty;
                             info_ptr.?.array_type = value.array_type;
                             info_ptr.?.enum_type_name = value.enum_type_name;
+                            info_ptr.?.struct_field_types = value.struct_field_types;
+                            info_ptr.?.struct_field_names = value.struct_field_names;
+                            info_ptr.?.struct_type_name = value.struct_type_name;
                         }
                         const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info_ptr.?.ptr_name });
                         defer self.allocator.free(store_line);
@@ -2073,6 +2170,18 @@ pub const IRPrinter = struct {
                         if (value.struct_field_types) |fts| {
                             _ = try self.global_struct_field_types.put(sc.var_name, fts);
                         }
+                        const stored_names = if (value.struct_field_names) |names|
+                            names
+                        else if (value.struct_type_name) |tname|
+                            self.struct_field_names_by_type.get(tname)
+                        else
+                            null;
+                        if (stored_names) |names| {
+                            _ = try self.global_struct_field_names.put(sc.var_name, names);
+                        }
+                        if (value.struct_type_name) |tname| {
+                            _ = try self.global_struct_type_names.put(sc.var_name, tname);
+                        }
                         _ = try self.defined_globals.put(sc.var_name, true);
                         const gptr = try self.mangleGlobalName(sc.var_name);
                         defer self.allocator.free(gptr);
@@ -2089,6 +2198,9 @@ pub const IRPrinter = struct {
                             info_ptr.?.stack_type = value.ty;
                             info_ptr.?.array_type = value.array_type;
                             info_ptr.?.enum_type_name = value.enum_type_name;
+                            info_ptr.?.struct_field_types = value.struct_field_types;
+                            info_ptr.?.struct_field_names = value.struct_field_names;
+                            info_ptr.?.struct_type_name = value.struct_type_name;
                         }
                         const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info_ptr.?.ptr_name });
                         defer self.allocator.free(store_line);
@@ -2126,6 +2238,7 @@ pub const IRPrinter = struct {
                 },
                 else => {},
             }
+
         }
 
         // Ensure a valid exit if control falls through
@@ -2166,6 +2279,7 @@ pub const IRPrinter = struct {
     ) !void {
         const range = self.getFunctionRange(hir, func, func_start_labels) orelse return;
         var pending_fields: ?[]HIR.HIRType = null;
+        var pending_type_name: ?[]const u8 = null;
         var idx: usize = range.start + 1;
         while (idx < range.end) : (idx += 1) {
             const inst = hir.instructions[idx];
@@ -2175,15 +2289,20 @@ pub const IRPrinter = struct {
                         self.allocator.free(existing);
                     }
                     pending_fields = try self.allocator.dupe(HIR.HIRType, sn.field_types);
+                    pending_type_name = sn.type_name;
                 },
                 .Return => |ret| {
                     if (pending_fields) |fields| {
                         defer pending_fields = null;
                         if (ret.has_value and !self.function_struct_return_fields.contains(func.qualified_name)) {
                             _ = try self.function_struct_return_fields.put(func.qualified_name, fields);
+                            if (pending_type_name) |tn| {
+                                _ = try self.function_struct_return_type_names.put(func.qualified_name, tn);
+                            }
                         } else {
                             self.allocator.free(fields);
                         }
+                        pending_type_name = null;
                     }
                 },
                 .Label => {},
@@ -2191,12 +2310,54 @@ pub const IRPrinter = struct {
                     if (pending_fields) |fields| {
                         self.allocator.free(fields);
                         pending_fields = null;
+                        pending_type_name = null;
                     }
                 },
             }
         }
         if (pending_fields) |fields| {
             self.allocator.free(fields);
+        }
+        pending_type_name = null;
+    }
+
+    fn collectStructFieldNames(self: *IRPrinter, hir: *const HIR.HIRProgram) !void {
+        for (hir.instructions, 0..) |inst, idx| {
+            if (inst != .StructNew) continue;
+            const sn = inst.StructNew;
+
+            if (self.struct_field_names_by_type.contains(sn.type_name)) {
+                continue;
+            }
+
+            const field_count: usize = @intCast(sn.field_count);
+            if (field_count == 0) {
+                const empty = try self.allocator.alloc([]const u8, 0);
+                try self.struct_field_names_by_type.put(sn.type_name, empty);
+                continue;
+            }
+
+            var names = try self.allocator.alloc([]const u8, field_count);
+            var found: usize = 0;
+            var search_idx = idx;
+            while (search_idx > 0 and found < field_count) {
+                search_idx -= 1;
+                const prev = hir.instructions[search_idx];
+                if (prev == .Const) {
+                    const payload = prev.Const;
+                    if (payload.value == .string) {
+                        const slot = found;
+                        names[slot] = payload.value.string;
+                        found += 1;
+                    }
+                }
+            }
+
+            if (found == field_count) {
+                try self.struct_field_names_by_type.put(sn.type_name, names);
+            } else {
+                self.allocator.free(names);
+            }
         }
     }
 
@@ -2228,6 +2389,8 @@ pub const IRPrinter = struct {
             array_type: ?HIR.HIRType = null,
             struct_field_types: ?[]HIR.HIRType = null,
             enum_type_name: ?[]const u8 = null,
+            struct_field_names: ?[]const []const u8 = null,
+            struct_type_name: ?[]const u8 = null,
         };
         var alias_slots = std.AutoHashMap(u32, AliasInfo).init(self.allocator);
         defer alias_slots.deinit();
@@ -3326,7 +3489,9 @@ pub const IRPrinter = struct {
                 },
                 .Peek => |pk| {
                     if (stack.items.len < 1) continue;
-                    const v = stack.items[stack.items.len - 1];
+                    var v = stack.items[stack.items.len - 1];
+                    self.hydrateStructMetadata(&v, pk.name);
+                    stack.items[stack.items.len - 1] = v;
 
                     try self.emitPeekInstruction(w, pk, v, &id, peek_state);
 
@@ -3347,7 +3512,10 @@ pub const IRPrinter = struct {
                             try w.writeAll(call_line);
                         },
                         .PTR => {
-                            if (v.array_type) |_| {
+                            if (v.struct_field_types) |fts| {
+                                const names = self.resolveStructFieldNames(v);
+                                try self.emitStructValuePeek(w, v.name, fts, names, &id, peek_state, v.struct_type_name);
+                            } else if (v.array_type) |_| {
                                 const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
                                 defer self.allocator.free(call_line);
                                 try w.writeAll(call_line);
@@ -3414,7 +3582,14 @@ pub const IRPrinter = struct {
                     if (alias_slots.get(la.slot_index)) |info| {
                         const stack_ty = self.hirTypeToStackType(info.pointee_type);
                         if (stack_ty == .PTR) {
-                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .struct_field_types = info.struct_field_types });
+                            try stack.append(.{
+                                .name = info.ptr_name,
+                                .ty = .PTR,
+                                .array_type = info.array_type,
+                                .struct_field_types = info.struct_field_types,
+                                .struct_field_names = info.struct_field_names,
+                                .struct_type_name = info.struct_type_name,
+                            });
                         } else {
                             const result = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
@@ -3422,7 +3597,14 @@ pub const IRPrinter = struct {
                             const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ result, llvm_ty, info.ptr_name });
                             defer self.allocator.free(load_line);
                             try w.writeAll(load_line);
-                            try stack.append(.{ .name = result, .ty = stack_ty, .array_type = info.array_type, .struct_field_types = info.struct_field_types });
+                            try stack.append(.{
+                                .name = result,
+                                .ty = stack_ty,
+                                .array_type = info.array_type,
+                                .struct_field_types = info.struct_field_types,
+                                .struct_field_names = info.struct_field_names,
+                                .struct_type_name = info.struct_type_name,
+                            });
                         }
                     } else {
                         const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -3450,8 +3632,8 @@ pub const IRPrinter = struct {
                     if (stack.items.len < 1) continue;
                     const ptr_val = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
-                    var struct_fields: ?[]HIR.HIRType = null;
-                    if (spa.param_type == .Struct) {
+                    var struct_fields: ?[]HIR.HIRType = ptr_val.struct_field_types;
+                    if (struct_fields == null and spa.param_type == .Struct) {
                         if (std.mem.eql(u8, spa.param_name, "this")) {
                             if (std.mem.indexOfScalar(u8, func.qualified_name, '.')) |dot_idx| {
                                 const struct_name = func.qualified_name[0..dot_idx];
@@ -3472,6 +3654,9 @@ pub const IRPrinter = struct {
                         .pointee_type = spa.param_type,
                         .array_type = array_hint,
                         .struct_field_types = struct_fields,
+                        .struct_field_names = ptr_val.struct_field_names,
+                        .struct_type_name = ptr_val.struct_type_name,
+                        .enum_type_name = ptr_val.enum_type_name,
                     };
                     try alias_slots.put(spa.var_index, alias_info);
                     last_instruction_was_terminator = false;
@@ -3513,276 +3698,7 @@ pub const IRPrinter = struct {
                         .enum_type_name = null,
                     }, v, &id, peek_state);
 
-                    // Build struct type string for GEP
-                    var struct_type_llvm: []const u8 = undefined;
-                    var needs_free = false;
-                    if (v.struct_field_types) |fts| {
-                        var buf = std.ArrayListUnmanaged(u8){};
-                        defer buf.deinit(self.allocator);
-                        try buf.appendSlice(self.allocator, "{ ");
-                        var i: usize = 0;
-                        while (i < fts.len) : (i += 1) {
-                            const st = self.hirTypeToStackType(fts[i]);
-                            const lt = self.stackTypeToLLVMType(st);
-                            try buf.appendSlice(self.allocator, lt);
-                            if (i + 1 < fts.len) try buf.appendSlice(self.allocator, ", ");
-                        }
-                        try buf.appendSlice(self.allocator, " }");
-                        struct_type_llvm = try buf.toOwnedSlice(self.allocator);
-                        needs_free = true;
-                    } else {
-                        // Fallback: assume all fields are i64
-                        struct_type_llvm = try std.fmt.allocPrint(self.allocator, "{{ {s} }}", .{"i64"});
-                        needs_free = true;
-                    }
-                    defer if (needs_free) self.allocator.free(struct_type_llvm);
-
-                    // Print opening brace
-                    const open_brace_info = try internPeekString(
-                        self.allocator,
-                        &peek_state.*.string_map,
-                        &peek_state.*.strings,
-                        peek_state.*.next_id_ptr,
-                        &peek_state.*.globals,
-                        "{ ",
-                    );
-                    const open_brace_ptr = try self.nextTemp(&id);
-                    const open_brace_gep = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-                        .{ open_brace_ptr, open_brace_info.length, open_brace_info.name },
-                    );
-                    defer self.allocator.free(open_brace_gep);
-                    try w.writeAll(open_brace_gep);
-                    const open_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{open_brace_ptr});
-                    defer self.allocator.free(open_brace_call);
-                    try w.writeAll(open_brace_call);
-
-                    // Print each field
-                    const field_count: usize = @intCast(ps.field_count);
-                    for (0..field_count) |i| {
-                        if (i > 0) {
-                            // Print comma separator
-                            const comma_info = try internPeekString(
-                                self.allocator,
-                                &peek_state.*.string_map,
-                                &peek_state.*.strings,
-                                peek_state.*.next_id_ptr,
-                                &peek_state.*.globals,
-                                ", ",
-                            );
-                            const comma_ptr = try self.nextTemp(&id);
-                            const comma_gep = try std.fmt.allocPrint(
-                                self.allocator,
-                                "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-                                .{ comma_ptr, comma_info.length, comma_info.name },
-                            );
-                            defer self.allocator.free(comma_gep);
-                            try w.writeAll(comma_gep);
-                            const comma_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{comma_ptr});
-                            defer self.allocator.free(comma_call);
-                            try w.writeAll(comma_call);
-                        }
-
-                        // Print field name
-                        const field_name = ps.field_names[i];
-                        const field_name_colon = try std.fmt.allocPrint(self.allocator, "{s}: ", .{field_name});
-                        defer self.allocator.free(field_name_colon);
-                        const field_name_info = try internPeekString(
-                            self.allocator,
-                            &peek_state.*.string_map,
-                            &peek_state.*.strings,
-                            peek_state.*.next_id_ptr,
-                            &peek_state.*.globals,
-                            field_name_colon,
-                        );
-                        const field_name_ptr = try self.nextTemp(&id);
-                        const field_name_gep = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-                            .{ field_name_ptr, field_name_info.length, field_name_info.name },
-                        );
-                        defer self.allocator.free(field_name_gep);
-                        try w.writeAll(field_name_gep);
-                        const field_name_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{field_name_ptr});
-                        defer self.allocator.free(field_name_call);
-                        try w.writeAll(field_name_call);
-
-                        // Get field value using GEP and load
-                        const field_gep = try self.nextTemp(&id);
-                        const gep_line = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  {s} = getelementptr inbounds {s}, ptr {s}, i32 0, i32 {d}\n",
-                            .{ field_gep, struct_type_llvm, v.name, @as(i32, @intCast(i)) },
-                        );
-                        defer self.allocator.free(gep_line);
-                        try w.writeAll(gep_line);
-
-                        const field_type = if (i < ps.field_types.len) ps.field_types[i] else HIR.HIRType{ .Int = {} };
-                        const field_stack_type = self.hirTypeToStackType(field_type);
-                        const field_llvm_type = self.stackTypeToLLVMType(field_stack_type);
-
-                        const field_val = try self.nextTemp(&id);
-                        const load_line = try std.fmt.allocPrint(
-                            self.allocator,
-                            "  {s} = load {s}, ptr {s}\n",
-                            .{ field_val, field_llvm_type, field_gep },
-                        );
-                        defer self.allocator.free(load_line);
-                        try w.writeAll(load_line);
-
-                        // Print field value based on type
-                        switch (field_stack_type) {
-                            .I64 => {
-                                // Check if it's an enum
-                                if (field_type == .Enum) {
-                                    // Try to get enum type name from struct metadata or use default
-                                    const enum_type_name_str = ps.type_name; // Use struct type name as fallback
-                                    try self.emitEnumPrint(peek_state, w, &id, enum_type_name_str, field_val);
-                                } else {
-                                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{field_val});
-                                    defer self.allocator.free(call_line);
-                                    try w.writeAll(call_line);
-                                }
-                            },
-                            .F64 => {
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{field_val});
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
-                            },
-                            .PTR => {
-                                // Could be string or another struct - assume string for now
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s})\n", .{field_val});
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
-                            },
-                            .I8 => {
-                                const byte_i64 = try self.nextTemp(&id);
-                                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i8 {s} to i64\n", .{ byte_i64, field_val });
-                                defer self.allocator.free(zext_line);
-                                try w.writeAll(zext_line);
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_byte(i64 {s})\n", .{byte_i64});
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
-                            },
-                            .I2 => {
-                                // Tetra: print false (0), true (1), both (2), or neither (3)
-                                const false_info = try internPeekString(
-                                    self.allocator,
-                                    &peek_state.*.string_map,
-                                    &peek_state.*.strings,
-                                    peek_state.*.next_id_ptr,
-                                    &peek_state.*.globals,
-                                    "false",
-                                );
-                                const true_info = try internPeekString(
-                                    self.allocator,
-                                    &peek_state.*.string_map,
-                                    &peek_state.*.strings,
-                                    peek_state.*.next_id_ptr,
-                                    &peek_state.*.globals,
-                                    "true",
-                                );
-                                const both_info = try internPeekString(
-                                    self.allocator,
-                                    &peek_state.*.string_map,
-                                    &peek_state.*.strings,
-                                    peek_state.*.next_id_ptr,
-                                    &peek_state.*.globals,
-                                    "both",
-                                );
-                                const neither_info = try internPeekString(
-                                    self.allocator,
-                                    &peek_state.*.string_map,
-                                    &peek_state.*.strings,
-                                    peek_state.*.next_id_ptr,
-                                    &peek_state.*.globals,
-                                    "neither",
-                                );
-
-                                const tetra_i64 = try self.nextTemp(&id);
-                                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i64\n", .{ tetra_i64, field_val });
-                                defer self.allocator.free(zext_line);
-                                try w.writeAll(zext_line);
-
-                                const eq0 = try self.nextTemp(&id);
-                                const eq1 = try self.nextTemp(&id);
-                                const eq2 = try self.nextTemp(&id);
-                                const eq3 = try self.nextTemp(&id);
-                                const icmp0 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 0\n", .{ eq0, tetra_i64 });
-                                const icmp1 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 1\n", .{ eq1, tetra_i64 });
-                                const icmp2 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 2\n", .{ eq2, tetra_i64 });
-                                const icmp3 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 3\n", .{ eq3, tetra_i64 });
-                                defer self.allocator.free(icmp0);
-                                defer self.allocator.free(icmp1);
-                                defer self.allocator.free(icmp2);
-                                defer self.allocator.free(icmp3);
-                                try w.writeAll(icmp0);
-                                try w.writeAll(icmp1);
-                                try w.writeAll(icmp2);
-                                try w.writeAll(icmp3);
-
-                                const fptr = try self.nextTemp(&id);
-                                const tptr = try self.nextTemp(&id);
-                                const bptr = try self.nextTemp(&id);
-                                const nptr = try self.nextTemp(&id);
-                                const fgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ fptr, false_info.length, false_info.name });
-                                const tgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ tptr, true_info.length, true_info.name });
-                                const bgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ bptr, both_info.length, both_info.name });
-                                const ngep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ nptr, neither_info.length, neither_info.name });
-                                defer self.allocator.free(fgep);
-                                defer self.allocator.free(tgep);
-                                defer self.allocator.free(bgep);
-                                defer self.allocator.free(ngep);
-                                try w.writeAll(fgep);
-                                try w.writeAll(tgep);
-                                try w.writeAll(bgep);
-                                try w.writeAll(ngep);
-
-                                const sel23 = try self.nextTemp(&id);
-                                const sel23_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel23, eq3, nptr, bptr });
-                                defer self.allocator.free(sel23_line);
-                                try w.writeAll(sel23_line);
-
-                                const sel01 = try self.nextTemp(&id);
-                                const sel01_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel01, eq1, tptr, fptr });
-                                defer self.allocator.free(sel01_line);
-                                try w.writeAll(sel01_line);
-
-                                const sel_final = try self.nextTemp(&id);
-                                const sel_final_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel_final, eq2, sel23, sel01 });
-                                defer self.allocator.free(sel_final_line);
-                                try w.writeAll(sel_final_line);
-
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{sel_final});
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
-                            },
-                            else => {},
-                        }
-                    }
-
-                    // Print closing brace
-                    const close_brace_info = try internPeekString(
-                        self.allocator,
-                        &peek_state.*.string_map,
-                        &peek_state.*.strings,
-                        peek_state.*.next_id_ptr,
-                        &peek_state.*.globals,
-                        " }",
-                    );
-                    const close_brace_ptr = try self.nextTemp(&id);
-                    const close_brace_gep = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-                        .{ close_brace_ptr, close_brace_info.length, close_brace_info.name },
-                    );
-                    defer self.allocator.free(close_brace_gep);
-                    try w.writeAll(close_brace_gep);
-                    const close_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{close_brace_ptr});
-                    defer self.allocator.free(close_brace_call);
-                    try w.writeAll(close_brace_call);
-
+                    try self.emitStructValuePeek(w, v.name, ps.field_types, ps.field_names, &id, peek_state, ps.type_name);
                     // Print newline
                     try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
 
@@ -4049,7 +3965,15 @@ pub const IRPrinter = struct {
         const inttoptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ ptr_name, current_name });
         defer self.allocator.free(inttoptr_line);
         try w.writeAll(inttoptr_line);
-        return .{ .name = ptr_name, .ty = .PTR, .array_type = value.array_type };
+        return .{
+            .name = ptr_name,
+            .ty = .PTR,
+            .array_type = value.array_type,
+            .enum_type_name = value.enum_type_name,
+            .struct_field_types = value.struct_field_types,
+            .struct_field_names = value.struct_field_names,
+            .struct_type_name = value.struct_type_name,
+        };
     }
 
     const ArrayLenLoad = struct {
@@ -4999,6 +4923,10 @@ pub const IRPrinter = struct {
                         break :blk array_type_str_owned.?;
                     }
 
+                    if (value.struct_type_name) |tn| {
+                        break :blk tn;
+                    }
+
                     // If we have struct field type metadata, try to recover the
                     // original struct name so peeks show "Point" instead of "string".
                     if (value.struct_field_types) |fts| {
@@ -5367,6 +5295,308 @@ pub const IRPrinter = struct {
         try w.writeAll(call_debug);
     }
 
+    fn hydrateStructMetadata(
+        self: *IRPrinter,
+        val: *StackVal,
+        peek_name: ?[]const u8,
+    ) void {
+        if (val.struct_field_types == null or val.struct_field_names == null or val.struct_type_name == null) {
+            if (peek_name) |name| {
+                if (val.struct_field_types == null) {
+                    if (self.global_struct_field_types.get(name)) |fts| {
+                        val.struct_field_types = fts;
+                    }
+                }
+                if (val.struct_field_names == null) {
+                    if (self.global_struct_field_names.get(name)) |names| {
+                        val.struct_field_names = names;
+                    }
+                }
+                if (val.struct_type_name == null) {
+                    if (self.global_struct_type_names.get(name)) |tn| {
+                        val.struct_type_name = tn;
+                    }
+                }
+            }
+        }
+    }
+
+    fn resolveStructFieldNames(self: *IRPrinter, value: StackVal) ?[]const []const u8 {
+        if (value.struct_field_names) |names| return names;
+        if (value.struct_type_name) |type_name| {
+            return self.struct_field_names_by_type.get(type_name);
+        }
+        return null;
+    }
+
+    fn emitStructValuePeek(
+        self: *IRPrinter,
+        w: anytype,
+        value_name: []const u8,
+        field_types: []HIR.HIRType,
+        field_names: ?[]const []const u8,
+        id: *usize,
+        peek_state: *PeekEmitState,
+        struct_type_name: ?[]const u8,
+    ) !void {
+        // Build struct type string for GEPs
+        var struct_type_llvm: []const u8 = undefined;
+        var needs_free = false;
+        if (field_types.len > 0) {
+            var buf = std.ArrayListUnmanaged(u8){};
+            defer buf.deinit(self.allocator);
+            try buf.appendSlice(self.allocator, "{ ");
+            var i: usize = 0;
+            while (i < field_types.len) : (i += 1) {
+                const st = self.hirTypeToStackType(field_types[i]);
+                const lt = self.stackTypeToLLVMType(st);
+                try buf.appendSlice(self.allocator, lt);
+                if (i + 1 < field_types.len) try buf.appendSlice(self.allocator, ", ");
+            }
+            try buf.appendSlice(self.allocator, " }");
+            struct_type_llvm = try buf.toOwnedSlice(self.allocator);
+            needs_free = true;
+        } else {
+            struct_type_llvm = try std.fmt.allocPrint(self.allocator, "{{ {s} }}", .{"i64"});
+            needs_free = true;
+        }
+        defer if (needs_free) self.allocator.free(struct_type_llvm);
+
+        // Print opening brace
+        const open_brace_info = try internPeekString(
+            self.allocator,
+            &peek_state.*.string_map,
+            &peek_state.*.strings,
+            peek_state.*.next_id_ptr,
+            &peek_state.*.globals,
+            "{ ",
+        );
+        const open_brace_ptr = try self.nextTemp(id);
+        const open_brace_gep = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+            .{ open_brace_ptr, open_brace_info.length, open_brace_info.name },
+        );
+        defer self.allocator.free(open_brace_gep);
+        try w.writeAll(open_brace_gep);
+        const open_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{open_brace_ptr});
+        defer self.allocator.free(open_brace_call);
+        try w.writeAll(open_brace_call);
+
+        // Print each field (reverse order to match VM peek formatting)
+        var field_index: usize = field_types.len;
+        while (field_index > 0) {
+            field_index -= 1;
+            const field_type = field_types[field_index];
+
+            if (field_names) |names| {
+                if (field_index < names.len) {
+                    const name_with_colon = try std.fmt.allocPrint(self.allocator, "{s}: ", .{names[field_index]});
+                    defer self.allocator.free(name_with_colon);
+                    const name_info = try internPeekString(
+                        self.allocator,
+                        &peek_state.*.string_map,
+                        &peek_state.*.strings,
+                        peek_state.*.next_id_ptr,
+                        &peek_state.*.globals,
+                        name_with_colon,
+                    );
+                    const name_ptr = try self.nextTemp(id);
+                    const name_gep = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                        .{ name_ptr, name_info.length, name_info.name },
+                    );
+                    defer self.allocator.free(name_gep);
+                    try w.writeAll(name_gep);
+                    const name_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{name_ptr});
+                    defer self.allocator.free(name_call);
+                    try w.writeAll(name_call);
+                }
+            }
+
+            const field_gep = try self.nextTemp(id);
+            const gep_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds {s}, ptr {s}, i32 0, i32 {d}\n",
+                .{ field_gep, struct_type_llvm, value_name, @as(i32, @intCast(field_index)) },
+            );
+            defer self.allocator.free(gep_line);
+            try w.writeAll(gep_line);
+
+            const field_stack_type = self.hirTypeToStackType(field_type);
+            const field_llvm_type = self.stackTypeToLLVMType(field_stack_type);
+            const field_val = try self.nextTemp(id);
+            const load_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = load {s}, ptr {s}\n",
+                .{ field_val, field_llvm_type, field_gep },
+            );
+            defer self.allocator.free(load_line);
+            try w.writeAll(load_line);
+
+            switch (field_stack_type) {
+                .I64 => {
+                    if (field_type == .Enum) {
+                        const enum_name = struct_type_name orelse "enum";
+                        try self.emitEnumPrint(peek_state, w, id, enum_name, field_val);
+                    } else {
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{field_val});
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                    }
+                },
+                .F64 => {
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{field_val});
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                },
+                .PTR => {
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s})\n", .{field_val});
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                },
+                .I8 => {
+                    const byte_i64 = try self.nextTemp(id);
+                    const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i8 {s} to i64\n", .{ byte_i64, field_val });
+                    defer self.allocator.free(zext_line);
+                    try w.writeAll(zext_line);
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_byte(i64 {s})\n", .{byte_i64});
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                },
+                .I2 => {
+                    const false_info = try internPeekString(
+                        self.allocator,
+                        &peek_state.*.string_map,
+                        &peek_state.*.strings,
+                        peek_state.*.next_id_ptr,
+                        &peek_state.*.globals,
+                        "false",
+                    );
+                    const true_info = try internPeekString(
+                        self.allocator,
+                        &peek_state.*.string_map,
+                        &peek_state.*.strings,
+                        peek_state.*.next_id_ptr,
+                        &peek_state.*.globals,
+                        "true",
+                    );
+                    const both_info = try internPeekString(
+                        self.allocator,
+                        &peek_state.*.string_map,
+                        &peek_state.*.strings,
+                        peek_state.*.next_id_ptr,
+                        &peek_state.*.globals,
+                        "both",
+                    );
+                    const neither_info = try internPeekString(
+                        self.allocator,
+                        &peek_state.*.string_map,
+                        &peek_state.*.strings,
+                        peek_state.*.next_id_ptr,
+                        &peek_state.*.globals,
+                        "neither",
+                    );
+                    const tetra_i64 = try self.nextTemp(id);
+                    const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i64\n", .{ tetra_i64, field_val });
+                    defer self.allocator.free(zext_line);
+                    try w.writeAll(zext_line);
+                    const eq0 = try self.nextTemp(id);
+                    const eq1 = try self.nextTemp(id);
+                    const eq2 = try self.nextTemp(id);
+                    const eq3 = try self.nextTemp(id);
+                    const icmp0 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 0\n", .{ eq0, tetra_i64 });
+                    const icmp1 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 1\n", .{ eq1, tetra_i64 });
+                    const icmp2 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 2\n", .{ eq2, tetra_i64 });
+                    const icmp3 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 3\n", .{ eq3, tetra_i64 });
+                    defer self.allocator.free(icmp0);
+                    defer self.allocator.free(icmp1);
+                    defer self.allocator.free(icmp2);
+                    defer self.allocator.free(icmp3);
+                    try w.writeAll(icmp0);
+                    try w.writeAll(icmp1);
+                    try w.writeAll(icmp2);
+                    try w.writeAll(icmp3);
+                    const fptr = try self.nextTemp(id);
+                    const tptr = try self.nextTemp(id);
+                    const bptr = try self.nextTemp(id);
+                    const nptr = try self.nextTemp(id);
+                    const fgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ fptr, false_info.length, false_info.name });
+                    const tgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ tptr, true_info.length, true_info.name });
+                    const bgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ bptr, both_info.length, both_info.name });
+                    const ngep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ nptr, neither_info.length, neither_info.name });
+                    defer self.allocator.free(fgep);
+                    defer self.allocator.free(tgep);
+                    defer self.allocator.free(bgep);
+                    defer self.allocator.free(ngep);
+                    try w.writeAll(fgep);
+                    try w.writeAll(tgep);
+                    try w.writeAll(bgep);
+                    try w.writeAll(ngep);
+                    const sel23 = try self.nextTemp(id);
+                    const sel23_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel23, eq3, nptr, bptr });
+                    defer self.allocator.free(sel23_line);
+                    try w.writeAll(sel23_line);
+                    const sel01 = try self.nextTemp(id);
+                    const sel01_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel01, eq1, tptr, fptr });
+                    defer self.allocator.free(sel01_line);
+                    try w.writeAll(sel01_line);
+                    const sel_final = try self.nextTemp(id);
+                    const sel_final_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel_final, eq2, sel23, sel01 });
+                    defer self.allocator.free(sel_final_line);
+                    try w.writeAll(sel_final_line);
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{sel_final});
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                },
+                else => {},
+            }
+
+            if (field_index > 0) {
+                const comma_info = try internPeekString(
+                    self.allocator,
+                    &peek_state.*.string_map,
+                    &peek_state.*.strings,
+                    peek_state.*.next_id_ptr,
+                    &peek_state.*.globals,
+                    ", ",
+                );
+                const comma_ptr = try self.nextTemp(id);
+                const comma_gep = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                    .{ comma_ptr, comma_info.length, comma_info.name },
+                );
+                defer self.allocator.free(comma_gep);
+                try w.writeAll(comma_gep);
+                const comma_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{comma_ptr});
+                defer self.allocator.free(comma_call);
+                try w.writeAll(comma_call);
+            }
+        }
+
+        const close_brace_info = try internPeekString(
+            self.allocator,
+            &peek_state.*.string_map,
+            &peek_state.*.strings,
+            peek_state.*.next_id_ptr,
+            &peek_state.*.globals,
+            " }",
+        );
+        const close_brace_ptr = try self.nextTemp(id);
+        const close_brace_gep = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+            .{ close_brace_ptr, close_brace_info.length, close_brace_info.name },
+        );
+        defer self.allocator.free(close_brace_gep);
+        try w.writeAll(close_brace_gep);
+        const close_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{close_brace_ptr});
+        defer self.allocator.free(close_brace_call);
+        try w.writeAll(close_brace_call);
+    }
+
     fn findLabelIndex(self: *IRPrinter, hir: *const HIR.HIRProgram, label: []const u8) ?usize {
         _ = self;
         for (hir.instructions, 0..) |inst, idx| {
@@ -5434,16 +5664,31 @@ pub const IRPrinter = struct {
         try w.writeAll(cast_malloc_line);
 
         // Pop name/value pairs off the stack in forward field order (see HIR push order)
+        const existing_names = self.struct_field_names_by_type.get(sn.type_name);
+        const capture_names = existing_names == null;
+        var pending_names: ?[][]const u8 = null;
+        if (capture_names) {
+            pending_names = try self.allocator.alloc([]const u8, @intCast(sn.field_count));
+        }
         var idx_usize: usize = 0;
         while (idx_usize < @as(usize, @intCast(sn.field_count))) : (idx_usize += 1) {
             // Pop field name
             if (stack.items.len < 1) return error.StackUnderflow;
+            const field_name_val = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
 
             // Pop field value
             if (stack.items.len < 1) return error.StackUnderflow;
             const field_val = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
+
+            if (capture_names) {
+                if (pending_names) |buf| {
+                    const literal = field_name_val.string_literal_value orelse "";
+                    const mut_buf = @constCast(buf);
+                    mut_buf[idx_usize] = literal;
+                }
+            }
 
             // Field type for this index
             const field_type = sn.field_types[idx_usize];
@@ -5527,10 +5772,29 @@ pub const IRPrinter = struct {
         }
 
         // Push struct pointer onto stack, remember field types for later GEPs
-        // Push struct pointer onto stack with field types metadata
-        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .struct_field_types = try self.allocator.dupe(HIR.HIRType, sn.field_types) });
+        var struct_field_names: ?[]const []const u8 = null;
+        if (existing_names) |names| {
+            struct_field_names = names;
+            if (capture_names) {
+                if (pending_names) |buf| {
+                    self.allocator.free(buf);
+                }
+            }
+        } else if (pending_names) |buf| {
+            try self.struct_field_names_by_type.put(sn.type_name, buf);
+            struct_field_names = buf;
+        }
 
-        // Store struct field types globally for later lookup
+        const field_type_copy = try self.allocator.dupe(HIR.HIRType, sn.field_types);
+        try stack.append(.{
+            .name = struct_ptr,
+            .ty = .PTR,
+            .struct_field_types = field_type_copy,
+            .struct_field_names = struct_field_names,
+            .struct_type_name = sn.type_name,
+        });
+
+        // Store struct field metadata globally for later lookup
         try self.global_struct_field_types.put(sn.type_name, try self.allocator.dupe(HIR.HIRType, sn.field_types));
     }
 
