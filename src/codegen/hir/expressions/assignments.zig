@@ -4,8 +4,10 @@ const types = @import("../../../types/types.zig");
 const Location = @import("../../../utils/reporting.zig").Location;
 const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
 const HIRValue = @import("../soxa_values.zig").HIRValue;
-const HIRType = @import("../soxa_types.zig").HIRType;
-const ScopeKind = @import("../soxa_types.zig").ScopeKind;
+const SoxaTypes = @import("../soxa_types.zig");
+const HIRType = SoxaTypes.HIRType;
+const ScopeKind = SoxaTypes.ScopeKind;
+const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
@@ -66,6 +68,19 @@ pub const AssignmentsHandler = struct {
             if (self.generator.getTrackedArrayElementType(var_name)) |elem_type| {
                 try self.generator.trackArrayElementType(assign.name.lexeme, elem_type);
             }
+        }
+
+        if (assigned_type == .Array) {
+            var storage_kind: ArrayStorageKind = .dynamic;
+            if (assign.value.?.data == .Variable) {
+                const source_var = assign.value.?.data.Variable.lexeme;
+                if (self.generator.getTrackedArrayStorageKind(source_var)) |tracked| {
+                    storage_kind = tracked;
+                }
+            } else if (self.generator.array_storage_override) |override_kind| {
+                storage_kind = override_kind;
+            }
+            try self.generator.trackArrayStorageKind(assign.name.lexeme, storage_kind);
         }
 
         // Check if this is an alias parameter

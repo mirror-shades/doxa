@@ -22,6 +22,19 @@ const CallKind = SoxaTypes.CallKind;
 const HIRProgram = SoxaTypes.HIRProgram;
 const HIRType = SoxaTypes.HIRType;
 
+fn parseTypeFromToken(name: []const u8) HIRType {
+    if (std.mem.eql(u8, name, "Int")) return .Int;
+    if (std.mem.eql(u8, name, "Float")) return .Float;
+    if (std.mem.eql(u8, name, "String")) return .String;
+    if (std.mem.eql(u8, name, "Byte")) return .Byte;
+    if (std.mem.eql(u8, name, "Tetra")) return .Tetra;
+    if (std.mem.eql(u8, name, "Map")) return .Map;
+    if (std.mem.eql(u8, name, "Array")) return .Array;
+    if (std.mem.eql(u8, name, "Struct")) return .Struct;
+    if (std.mem.eql(u8, name, "Enum")) return .Enum;
+    return .Unknown;
+}
+
 pub const SoxaTextParser = struct {
     allocator: std.mem.Allocator,
     source: []const u8,
@@ -829,7 +842,11 @@ pub const SoxaTextParser = struct {
             const size_str = tokens.next() orelse return;
             const element_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Float")) .Float else if (std.mem.eql(u8, type_str, "String")) .String else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Tetra")) .Tetra else if (std.mem.eql(u8, type_str, "Array")) .Nothing else .Nothing;
             const size = std.fmt.parseInt(u32, size_str, 10) catch return;
-            try self.instructions.append(HIRInstruction{ .ArrayNew = .{ .element_type = element_type, .size = size } });
+            try self.instructions.append(HIRInstruction{ .ArrayNew = .{
+                .element_type = element_type,
+                .size = size,
+                .storage_kind = .dynamic,
+            } });
         } else if (std.mem.eql(u8, op, "ArrayGet")) {
             const bounds_str = tokens.next() orelse return;
             const bounds_check = std.mem.eql(u8, bounds_str, "true");
@@ -886,32 +903,41 @@ pub const SoxaTextParser = struct {
         } else if (std.mem.eql(u8, op, "Map")) {
             const count_str = tokens.next() orelse return;
             const key_type_str = tokens.next() orelse return;
+            const value_type_str = tokens.next() orelse return;
+            const else_token = tokens.next() orelse return;
             const entry_count = std.fmt.parseInt(u32, count_str, 10) catch return;
-            const key_type: HIRType = if (std.mem.eql(u8, key_type_str, "String")) .String else if (std.mem.eql(u8, key_type_str, "Int")) .Int else .String;
+            const key_type = parseTypeFromToken(key_type_str);
+            const value_type = parseTypeFromToken(value_type_str);
+            const has_else_value = std.mem.eql(u8, else_token, "else:true");
 
             const dummy_entries = try self.allocator.alloc(HIRMapEntry, entry_count);
             for (dummy_entries) |*entry| {
+                const nothing_key = try self.allocator.create(HIRValue);
+                nothing_key.* = HIRValue{ .nothing = .{} };
+                const nothing_value = try self.allocator.create(HIRValue);
+                nothing_value.* = HIRValue{ .nothing = .{} };
                 entry.* = HIRMapEntry{
-                    .key = HIRValue.nothing,
-                    .value = HIRValue.nothing,
+                    .key = nothing_key,
+                    .value = nothing_value,
                 };
             }
 
             try self.instructions.append(HIRInstruction{ .Map = .{
                 .entries = dummy_entries,
                 .key_type = key_type,
-                .value_type = HIRType.Unknown,
+                .value_type = value_type,
+                .has_else_value = has_else_value,
             } });
         } else if (std.mem.eql(u8, op, "MapGet")) {
             const key_type_str = tokens.next() orelse return;
-            const key_type: HIRType = if (std.mem.eql(u8, key_type_str, "String")) .String else if (std.mem.eql(u8, key_type_str, "Int")) .Int else .String;
+            const key_type = parseTypeFromToken(key_type_str);
 
             try self.instructions.append(HIRInstruction{ .MapGet = .{
                 .key_type = key_type,
             } });
         } else if (std.mem.eql(u8, op, "MapSet")) {
             const key_type_str = tokens.next() orelse return;
-            const key_type: HIRType = if (std.mem.eql(u8, key_type_str, "String")) .String else if (std.mem.eql(u8, key_type_str, "Int")) .Int else .String;
+            const key_type = parseTypeFromToken(key_type_str);
 
             try self.instructions.append(HIRInstruction{ .MapSet = .{
                 .key_type = key_type,

@@ -269,6 +269,13 @@ pub const Parser = struct {
                     }
                     try statements.append(decl);
                 },
+                .MAP_TYPE => {
+                    const map_stmt = try declaration_parser.parseMapDecl(self, is_public);
+                    if (is_entry) {
+                        return error.InvalidEntryPoint;
+                    }
+                    try statements.append(map_stmt);
+                },
                 .FUNCTION => {
                     var func = try declaration_parser.parseFunctionDecl(self);
                     func.data.FunctionDecl.is_public = is_public;
@@ -332,13 +339,6 @@ pub const Parser = struct {
                         return error.InvalidEntryPoint;
                     }
                     try statements.append(enum_decl);
-                },
-                .MAP_TYPE => {
-                    const map_stmt = try declaration_parser.parseMapDecl(self, is_public);
-                    if (is_entry) {
-                        return error.InvalidEntryPoint;
-                    }
-                    try statements.append(map_stmt);
                 },
                 .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH => {
                     if (is_entry) {
@@ -935,27 +935,44 @@ pub const Parser = struct {
     }
 
     pub fn parseMap(self: *Parser) ErrorList!?*ast.Expr {
-        var entries = std.array_list.Managed(ast.MapEntry).init(self.allocator);
+        var entries = std.array_list.Managed(*ast.MapEntry).init(self.allocator);
         errdefer {
-            for (entries.items) |*entry| {
-                entry.key.deinit(self.allocator);
-                self.allocator.destroy(entry.key);
-                entry.value.deinit(self.allocator);
-                self.allocator.destroy(entry.value);
+            for (entries.items) |entry| {
+                entry.deinit(self.allocator);
+                self.allocator.destroy(entry);
             }
             entries.deinit();
         }
 
+        var else_value: ?*ast.Expr = null;
+        errdefer if (else_value) |ev| {
+            ev.deinit(self.allocator);
+            self.allocator.destroy(ev);
+        };
+
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
             while (self.peek().type == .NEWLINE) self.advance();
+
+            // Handle else clause
+            if (self.peek().type == .ELSE) {
+                if (else_value != null) return error.DuplicateElseClause;
+                self.advance();
+
+                else_value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+                if (self.peek().type == .COMMA) {
+                    self.advance();
+                }
+                while (self.peek().type == .NEWLINE) self.advance();
+                continue;
+            }
+
             const key = blk: {
                 const token_type = self.peek().type;
                 switch (token_type) {
-                    .INT, .FLOAT, .STRING, .BYTE, .LOGIC, .IDENTIFIER => {
-                        break :blk try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
-                    },
-                    .DOT => {
-                        break :blk try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
+                    .INT, .FLOAT, .STRING, .BYTE, .LOGIC, .IDENTIFIER, .DOT => {
+                        const prec = try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
+                        break :blk prec;
                     },
                     else => return error.ExpectedMapKey,
                 }
@@ -970,10 +987,12 @@ pub const Parser = struct {
 
             const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-            try entries.append(.{
+            const entry = try self.allocator.create(ast.MapEntry);
+            entry.* = .{
                 .key = key,
                 .value = value,
-            });
+            };
+            try entries.append(entry);
 
             if (self.peek().type == .COMMA) {
                 self.advance();
@@ -992,7 +1011,12 @@ pub const Parser = struct {
                 .id = ast.generateNodeId(),
                 .span = ast.SourceSpan.fromToken(self.peek()),
             },
-            .data = .{
+            .data = if (else_value != null) .{
+                .MapLiteral = .{
+                    .entries = try entries.toOwnedSlice(),
+                    .else_value = else_value,
+                },
+            } else .{
                 .Map = try entries.toOwnedSlice(),
             },
         };

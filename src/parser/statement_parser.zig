@@ -641,7 +641,12 @@ pub fn parseMapStatement(self: *Parser) ErrorList!ast.Stmt {
             .span = ast.SourceSpan.fromToken(map_token),
         },
         .data = .{
-            .MapLiteral = try entries.toOwnedSlice(),
+            .MapLiteral = .{
+                .entries = try entries.toOwnedSlice(),
+                .key_type = null,
+                .value_type = null,
+                .else_value = null,
+            },
         },
     };
 }

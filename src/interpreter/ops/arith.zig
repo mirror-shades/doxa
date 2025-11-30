@@ -21,13 +21,13 @@ pub fn exec(vm: anytype, a: anytype) !void {
                         .array => |arr_b| {
                             var len_a: u32 = 0;
                             for (arr_a.elements) |elem| {
-                                if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                if (elem == .nothing) break;
                                 len_a += 1;
                             }
 
                             var len_b: u32 = 0;
                             for (arr_b.elements) |elem| {
-                                if (std.meta.eql(elem, HIRValue.nothing)) break;
+                                if (elem == .nothing) break;
                                 len_b += 1;
                             }
 

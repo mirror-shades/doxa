@@ -105,7 +105,7 @@ pub const FunctionOps = struct {
                 .array => |arr| {
                     var length: u32 = 0;
                     for (arr.elements) |elem| {
-                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                        if (elem.* == .nothing) break;
                         length += 1;
                     }
                     try vm.stack.push(HIRFrame.initInt(@as(i64, @intCast(length))));

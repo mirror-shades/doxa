@@ -153,6 +153,7 @@ pub const ErrorList = error{
     ExpectedExpression,
     ExpectedIdentifier,
     ExpectedMapKey,
+    DuplicateElseClause,
     ExpectedAssignmentOperator,
     ExpectedLiteral,
     ExpectedString,
@@ -424,6 +425,7 @@ pub const ErrorCode = struct {
     pub const INVALID_RETURN_TYPE_FOR_UNION = "E6015";
     pub const PRIVATE_FIELD_ACCESS = "E6016";
     pub const UNDEFINED_FIELD = "E6017";
+    pub const ARRAY_REQUIRES_DYNAMIC_STORAGE = "E6018";
 
     // 7xxx - Modules & Imports
     pub const MODULE_NOT_FOUND = "E7001";

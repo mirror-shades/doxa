@@ -1,6 +1,8 @@
 const std = @import("std");
-const HIRType = @import("soxa_types.zig").HIRType;
-const ScopeKind = @import("soxa_types.zig").ScopeKind;
+const SoxaTypes = @import("soxa_types.zig");
+const HIRType = SoxaTypes.HIRType;
+const ScopeKind = SoxaTypes.ScopeKind;
+const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 
 pub const SymbolTable = struct {
     variables: std.StringHashMap(u32),
@@ -12,6 +14,7 @@ pub const SymbolTable = struct {
     variable_custom_types: std.StringHashMap([]const u8),
 
     variable_array_element_types: std.StringHashMap(HIRType),
+    variable_array_storage: std.StringHashMap(ArrayStorageKind),
 
     variable_union_members_by_index: std.AutoHashMap(u32, [][]const u8),
 
@@ -30,6 +33,7 @@ pub const SymbolTable = struct {
             .variable_types = std.StringHashMap(HIRType).init(allocator),
             .variable_custom_types = std.StringHashMap([]const u8).init(allocator),
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
+            .variable_array_storage = std.StringHashMap(ArrayStorageKind).init(allocator),
             .variable_union_members_by_index = std.AutoHashMap(u32, [][]const u8).init(allocator),
             .alias_parameters = std.StringHashMap(void).init(allocator),
             .current_function = null,
@@ -43,6 +47,7 @@ pub const SymbolTable = struct {
         self.variable_types.deinit();
         self.variable_custom_types.deinit();
         self.variable_array_element_types.deinit();
+        self.variable_array_storage.deinit();
         self.variable_union_members_by_index.deinit();
         self.alias_parameters.deinit();
     }
@@ -206,6 +211,14 @@ pub const SymbolTable = struct {
     /// Get tracked array element type
     pub fn getTrackedArrayElementType(self: *SymbolTable, var_name: []const u8) ?HIRType {
         return self.variable_array_element_types.get(var_name);
+    }
+
+    pub fn trackArrayStorageKind(self: *SymbolTable, var_name: []const u8, storage: ArrayStorageKind) !void {
+        try self.variable_array_storage.put(var_name, storage);
+    }
+
+    pub fn getTrackedArrayStorageKind(self: *SymbolTable, var_name: []const u8) ?ArrayStorageKind {
+        return self.variable_array_storage.get(var_name);
     }
 
     /// Track union member type names by variable index to avoid name collisions

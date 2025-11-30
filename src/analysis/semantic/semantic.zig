@@ -751,6 +751,10 @@ pub const SemanticAnalyzer = struct {
                         continue;
                     }
 
+                    if (decl.initializer) |init_expr| {
+                        self.tryTagConstLiteralArray(type_info, init_expr);
+                    }
+
                     // Convert TypeInfo to TokenType
                     const token_type = helpers.convertTypeToTokenType(self, type_info.base);
 
@@ -1162,7 +1166,7 @@ pub const SemanticAnalyzer = struct {
                 },
                 .MapLiteral => |map_entries| {
                     // Validate map literal entries
-                    for (map_entries) |entry| {
+                    for (map_entries.entries) |entry| {
                         _ = try infer_type.inferTypeFromExpr(self, entry.key);
                         _ = try infer_type.inferTypeFromExpr(self, entry.value);
                     }
@@ -1351,6 +1355,60 @@ pub const SemanticAnalyzer = struct {
 
         // Return the original type info if no resolution needed
         return type_info;
+    }
+
+    fn tryTagConstLiteralArray(self: *SemanticAnalyzer, type_info: *ast.TypeInfo, initializer: *ast.Expr) void {
+        if (type_info.base != .Array) return;
+        if (type_info.is_mutable) return;
+        if (type_info.array_storage == .fixed) return;
+        if (!self.isCompileTimeArrayLiteral(initializer)) return;
+
+        type_info.array_storage = .const_literal;
+        if (type_info.array_size == null) {
+            type_info.array_size = self.literalArrayLength(initializer);
+        }
+    }
+
+    fn isCompileTimeArrayLiteral(self: *SemanticAnalyzer, expr: *ast.Expr) bool {
+        return switch (expr.data) {
+            .Array => |elements| blk: {
+                for (elements) |element| {
+                    switch (element.data) {
+                        .Literal => {},
+                        .Array => if (!self.isCompileTimeArrayLiteral(element)) return false,
+                        else => return false,
+                    }
+                }
+                break :blk true;
+            },
+            else => false,
+        };
+    }
+
+    fn literalArrayLength(_: *SemanticAnalyzer, expr: *ast.Expr) usize {
+        return switch (expr.data) {
+            .Array => |elements| elements.len,
+            else => 0,
+        };
+    }
+
+    pub fn ensureDynamicArrayStorage(self: *SemanticAnalyzer, array_type: *const ast.TypeInfo, location: Location, usage: []const u8) bool {
+        if (array_type.array_storage == .dynamic) return true;
+
+        const storage_desc = switch (array_type.array_storage) {
+            .fixed => "fixed-size",
+            .const_literal => "const literal",
+            .dynamic => unreachable,
+        };
+
+        self.reporter.reportCompileError(
+            location,
+            ErrorCode.ARRAY_REQUIRES_DYNAMIC_STORAGE,
+            "{s} arrays cannot be used with {s}; dynamic storage is required",
+            .{ storage_desc, usage },
+        );
+        self.fatal_error = true;
+        return false;
     }
 
     // Instead of setting fatal_error = true immediately, collect errors

@@ -112,6 +112,7 @@ pub const IRPrinter = struct {
     global_array_types: std.StringHashMap(HIR.HIRType), // Store array element types for global variables
     global_enum_types: std.StringHashMap([]const u8), // Store enum type names for global variables
     global_struct_field_types: std.StringHashMap([]HIR.HIRType), // Store struct field types for globals
+    struct_fields_by_id: std.AutoHashMap(HIR.StructId, []HIR.HIRType),
     defined_globals: std.StringHashMap(bool),
     function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
     last_emitted_enum_value: ?u64 = null,
@@ -283,6 +284,7 @@ pub const IRPrinter = struct {
             .global_array_types = std.StringHashMap(HIR.HIRType).init(allocator),
             .global_enum_types = std.StringHashMap([]const u8).init(allocator),
             .global_struct_field_types = std.StringHashMap([]HIR.HIRType).init(allocator),
+            .struct_fields_by_id = std.AutoHashMap(HIR.StructId, []HIR.HIRType).init(allocator),
             .defined_globals = std.StringHashMap(bool).init(allocator),
             .last_emitted_enum_value = null,
             .function_struct_return_fields = std.StringHashMap([]HIR.HIRType).init(allocator),
@@ -296,6 +298,7 @@ pub const IRPrinter = struct {
         self.global_array_types.deinit();
         self.global_enum_types.deinit();
         self.global_struct_field_types.deinit();
+        self.struct_fields_by_id.deinit();
         self.defined_globals.deinit();
         var ret_it = self.function_struct_return_fields.iterator();
         while (ret_it.next()) |entry| {
@@ -360,6 +363,7 @@ pub const IRPrinter = struct {
         try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
         try w.writeAll("declare i64 @doxa_array_get_i64(ptr, i64)\n");
         try w.writeAll("declare void @doxa_array_set_i64(ptr, i64, i64)\n");
+        try w.writeAll("declare ptr @doxa_array_concat(ptr, ptr, i64, i64)\n");
         try w.writeAll("declare ptr @doxa_map_new(i64, i64, i64)\n");
         try w.writeAll("declare void @doxa_map_set_i64(ptr, i64, i64)\n");
         try w.writeAll("declare i64 @doxa_map_get_i64(ptr, i64)\n");
@@ -466,15 +470,16 @@ pub const IRPrinter = struct {
         // Find where functions section starts
         const functions_start_idx = self.findFunctionsSectionStart(hir, &func_start_labels);
 
-        // Pre-populate global_struct_field_types by scanning all StructNew instructions
+        // Pre-populate struct field metadata by scanning all StructNew instructions
         // This ensures struct field types are available when methods access 'this'
         for (hir.instructions) |inst| {
             if (inst == .StructNew) {
                 const sn = inst.StructNew;
-                // Store struct field types globally for later lookup
-                // Only store if not already present (first occurrence wins)
                 if (!self.global_struct_field_types.contains(sn.type_name)) {
                     _ = try self.global_struct_field_types.put(sn.type_name, try self.allocator.dupe(HIR.HIRType, sn.field_types));
+                }
+                if (!self.struct_fields_by_id.contains(sn.struct_id)) {
+                    _ = try self.struct_fields_by_id.put(sn.struct_id, try self.allocator.dupe(HIR.HIRType, sn.field_types));
                 }
             }
         }
@@ -2701,6 +2706,10 @@ pub const IRPrinter = struct {
                     try self.emitArrayPop(w, &stack, &id);
                     last_instruction_was_terminator = false;
                 },
+                .ArrayConcat => {
+                    try self.emitArrayConcat(w, &stack, &id);
+                    last_instruction_was_terminator = false;
+                },
                 .Map => |m| {
                     try self.emitMap(w, &stack, &id, m);
                     last_instruction_was_terminator = false;
@@ -4587,6 +4596,40 @@ pub const IRPrinter = struct {
         try stack.append(actual);
     }
 
+    fn emitArrayConcat(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+    ) !void {
+        if (stack.items.len < 2) return;
+        var rhs = stack.items[stack.items.len - 1];
+        var lhs = stack.items[stack.items.len - 2];
+        stack.items.len -= 2;
+
+        if (lhs.ty != .PTR) {
+            lhs = try self.ensurePointer(w, lhs, id);
+        }
+        if (rhs.ty != .PTR) {
+            rhs = try self.ensurePointer(w, rhs, id);
+        }
+
+        const elem_type = lhs.array_type orelse rhs.array_type orelse HIR.HIRType{ .Int = {} };
+        const elem_size = self.arrayElementSize(elem_type);
+        const elem_tag = self.arrayElementTag(elem_type);
+
+        const concat_reg = try self.nextTemp(id);
+        const call_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = call ptr @doxa_array_concat(ptr {s}, ptr {s}, i64 {d}, i64 {d})\n",
+            .{ concat_reg, lhs.name, rhs.name, elem_size, elem_tag },
+        );
+        defer self.allocator.free(call_line);
+        try w.writeAll(call_line);
+
+        try stack.append(.{ .name = concat_reg, .ty = .PTR, .array_type = elem_type });
+    }
+
     fn emitRange(
         self: *IRPrinter,
         w: anytype,
@@ -5573,15 +5616,22 @@ pub const IRPrinter = struct {
         defer self.allocator.free(load_line);
         try w.writeAll(load_line);
 
-        // Push field value onto stack
-        // If the field is a struct pointer, try to preserve the struct field types metadata
-        // for subsequent nested field accesses.
+        // Push field value onto stack and preserve metadata for arrays/structs.
+        var pushed = StackVal{ .name = field_val, .ty = field_stack_type };
         if (field_stack_type == .PTR) {
-            const pushed: StackVal = .{ .name = field_val, .ty = field_stack_type };
-            try stack.append(pushed);
-        } else {
-            try stack.append(.{ .name = field_val, .ty = field_stack_type });
+            switch (field_type) {
+                .Array => |elem_ptr| {
+                    pushed.array_type = elem_ptr.*;
+                },
+                .Struct => |sid| {
+                    if (self.struct_fields_by_id.get(sid)) |fts| {
+                        pushed.struct_field_types = fts;
+                    }
+                },
+                else => {},
+            }
         }
+        try stack.append(pushed);
     }
 
     fn emitSetField(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sf: std.meta.TagPayload(HIRInstruction, .SetField)) !void {

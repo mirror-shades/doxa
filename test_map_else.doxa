@@ -1,0 +1,8 @@
+map TestMap {
+    "key1" then "value1",
+    "key2" then "value2",
+    else "default_value"
+}
+
+var result1 is TestMap["key1"]  // should be "value1"
+var result2 is TestMap["missing"]  // should be "default_value"

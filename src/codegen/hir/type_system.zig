@@ -467,14 +467,12 @@ pub const TypeSystem = struct {
                         return element_type_ptr.*;
                     },
                     .String => .String,
-                    .Map => |map_info| blk: {
+                    .Map => blk: {
+                        const map_info = container_type.Map;
                         const value_ty = map_info.value.*;
-                        // Prefer the map's declared value type when available;
-                        // fall back to int for fully untyped maps.
-                        if (value_ty != .Unknown and value_ty != .Nothing) {
-                            break :blk value_ty;
-                        }
-                        break :blk .Int;
+                        // Prefer declared value type when available; fall back to int for untyped maps.
+                        const actual_value_ty = if (value_ty != .Unknown and value_ty != .Nothing) value_ty else .Int;
+                        break :blk actual_value_ty;
                     },
                     else => .String,
                 };

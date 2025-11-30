@@ -287,12 +287,18 @@ pub const VM = struct {
                 switch (payload.target.kind) {
                     .local => {
                         const alloc = self.frameAllocator();
-                        value = try self.deepCopyValueToAllocator(alloc, value);
+                        const value_ptr = try self.allocator.create(HIRValue);
+                        value_ptr.* = value;
+                        defer self.allocator.destroy(value_ptr);
+                        value = try self.deepCopyValueToAllocator(alloc, value_ptr);
                     },
                     .module_global, .imported_module => {
                         const module_id = payload.target.module_id orelse return error.MissingModule;
                         const state = try self.resolveModuleState(module_id);
-                        value = try self.deepCopyValueToAllocator(state.allocator, value);
+                        const value_ptr = try self.allocator.create(HIRValue);
+                        value_ptr.* = value;
+                        defer self.allocator.destroy(value_ptr);
+                        value = try self.deepCopyValueToAllocator(state.allocator, value_ptr);
                     },
                     .alias, .builtin => {},
                 }
@@ -360,6 +366,7 @@ pub const VM = struct {
                     .element_type = toHIRTypeWithNested(self, payload.element_type, payload.nested_element_type),
                     .size = payload.static_size,
                     .nested_element_type = toOptionalHIRType(payload.nested_element_type),
+                    .storage_kind = payload.storage_kind,
                 } });
             },
             .ArrayGet => |payload| {
@@ -781,9 +788,12 @@ pub const VM = struct {
             .array => |arr| {
                 var result = if (is_exists) false else true;
 
-                for (arr.elements) |element| {
-                    if (std.meta.eql(element, HIRValue.nothing)) break;
-                    const predicate_value = try self.evaluatePredicate(predicate, element);
+                for (arr.elements) |*element| {
+                    if (element.* == .nothing) break;
+                    const predicate_ptr = try self.allocator.create(HIRValue);
+                    predicate_ptr.* = predicate;
+                    defer self.allocator.destroy(predicate_ptr);
+                    const predicate_value = try self.evaluatePredicate(predicate_ptr, element);
                     const truthy = try self.isTruthy(predicate_value);
                     if (is_exists) {
                         if (truthy) {
@@ -810,8 +820,8 @@ pub const VM = struct {
         }
     }
 
-    fn evaluatePredicate(self: *VM, predicate: HIRValue, argument: HIRValue) VmError!HIRValue {
-        return switch (predicate) {
+    fn evaluatePredicate(self: *VM, predicate: *HIRValue, argument: *HIRValue) VmError!HIRValue {
+        return switch (predicate.*) {
             .int => |function_index| {
                 if (function_index < 0) {
                     self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid predicate reference", .{});
@@ -821,7 +831,11 @@ pub const VM = struct {
             },
             .storage_id_ref => |id| {
                 const ptr = try self.slotRefFromId(id);
-                return self.evaluatePredicate(ptr.load(), argument);
+                const loaded_predicate = ptr.load();
+                const temp_storage = try self.allocator.create(HIRValue);
+                temp_storage.* = loaded_predicate;
+                defer self.allocator.destroy(temp_storage);
+                return self.evaluatePredicate(temp_storage, argument);
             },
             else => {
                 self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unsupported predicate type for quantifier", .{});
@@ -830,7 +844,7 @@ pub const VM = struct {
         };
     }
 
-    fn evalPredicateFunction(self: *VM, function_index: usize, argument: HIRValue) VmError!HIRValue {
+    fn evalPredicateFunction(self: *VM, function_index: usize, argument: *HIRValue) VmError!HIRValue {
         if (function_index >= self.bytecode.functions.len) return error.UnimplementedInstruction;
 
         const saved_ip = self.ip;
@@ -839,7 +853,7 @@ pub const VM = struct {
         const saved_stack_len = self.stack.len();
         const saved_frame_depth = self.frames.items.len;
 
-        try self.stack.push(HIRFrame.initFromHIRValue(argument));
+        try self.stack.push(HIRFrame.initFromHIRValue(argument.*));
         _ = try self.pushFrame(function_index, saved_stack_len, saved_ip);
 
         const func_ptr = &self.bytecode.functions[function_index];
@@ -957,7 +971,7 @@ pub const VM = struct {
                 .array => |arr| {
                     var length: usize = 0;
                     for (arr.elements) |elem| {
-                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                        if (elem == .nothing) break;
                         length += 1;
                     }
                     try self.stack.push(HIRFrame.initInt(@intCast(length)));
@@ -976,7 +990,7 @@ pub const VM = struct {
                     var mutable_arr = arr;
                     var length: usize = 0;
                     for (mutable_arr.elements) |elem| {
-                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                        if (elem == .nothing) break;
                         length += 1;
                     }
 
@@ -1080,7 +1094,7 @@ pub const VM = struct {
                 .array => |arr| {
                     var found = false;
                     for (arr.elements) |elem| {
-                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                        if (elem == .nothing) break;
                         const satisfies = switch (elem) {
                             .int => |elem_int| switch (comparison_value.value) {
                                 .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
@@ -1122,7 +1136,7 @@ pub const VM = struct {
                     var all_satisfy = true;
                     var has_elements = false;
                     for (arr.elements) |elem| {
-                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                        if (elem == .nothing) break;
                         has_elements = true;
                         const satisfies = switch (elem) {
                             .int => |elem_int| switch (comparison_value.value) {
@@ -1392,7 +1406,7 @@ pub const VM = struct {
                 .array => |arr| {
                     var idx: i64 = 0;
                     for (arr.elements) |elem| {
-                        if (std.meta.eql(elem, HIRValue.nothing)) break;
+                        if (elem == .nothing) break;
                         if (valuesEqual(elem, value.value)) {
                             try self.stack.push(HIRFrame.initInt(idx));
                             return;
@@ -1452,9 +1466,11 @@ pub const VM = struct {
             };
 
             const interned_name = try self.string_interner.intern(name_str);
+            const field_value_ptr = try alloc.create(HIRValue);
+            field_value_ptr.* = field_value_frame.value;
             fields[idx] = HIRStructField{
                 .name = interned_name,
-                .value = field_value_frame.value,
+                .value = field_value_ptr,
                 .field_type = payload.field_types[idx],
                 .path = null,
             };
@@ -1570,7 +1586,7 @@ pub const VM = struct {
         for (frame.value.struct_instance.fields) |field| {
             if ((field.name.ptr == interned_name.ptr and field.name.len == interned_name.len) or std.mem.eql(u8, field.name, interned_name)) {
                 var field_value = field.value;
-                if (field_value == .struct_instance) {
+                if (field_value.* == .struct_instance) {
                     const path_or_type: []const u8 = if (frame.value.struct_instance.path) |p| p else frame.value.struct_instance.type_name;
                     const scope_alloc = self.scopeAllocator();
                     const tmp = try std.fmt.allocPrint(scope_alloc, "{s}.{s}", .{ path_or_type, field.name });
@@ -1579,7 +1595,7 @@ pub const VM = struct {
                     field_value.struct_instance.path = interned;
                 }
 
-                try self.stack.push(HIRFrame{ .value = field_value });
+                try self.stack.push(HIRFrame{ .value = field_value.* });
                 return;
             }
         }
@@ -1599,7 +1615,9 @@ pub const VM = struct {
             .struct_instance => |struct_inst| {
                 for (struct_inst.fields) |*field| {
                     if (std.mem.eql(u8, field.name, payload.field_name)) {
-                        field.value = value_frame.value;
+                        const value_ptr = try self.allocator.create(HIRValue);
+                        value_ptr.* = value_frame.value;
+                        field.value = value_ptr;
                         const modified = HIRFrame.initFromHIRValue(HIRValue{ .struct_instance = struct_inst });
                         try self.stack.push(modified);
                         return;
@@ -1628,18 +1646,32 @@ pub const VM = struct {
                 else => key_frame.value,
             };
 
+            const key_ptr = try alloc.create(HIRValue);
+            key_ptr.* = normalized_key;
+            const value_ptr = try alloc.create(HIRValue);
+            value_ptr.* = value_frame.value;
+
             entries[reverse_i] = HIRMapEntry{
-                .key = normalized_key,
-                .value = value_frame.value,
+                .key = key_ptr,
+                .value = value_ptr,
                 .path = null,
             };
         }
+
+        // Pop else value if present
+        const else_value = if (payload.has_else_value) blk: {
+            const else_frame = try self.stack.pop();
+            const else_ptr = try alloc.create(HIRValue);
+            else_ptr.* = else_frame.value;
+            break :blk else_ptr;
+        } else null;
 
         const map_value = HIRValue{ .map = HIRMap{
             .entries = entries,
             .key_type = toHIRType(payload.key_type),
             .value_type = toHIRType(payload.value_type),
             .path = null,
+            .else_value = else_value,
         } };
 
         try self.stack.push(HIRFrame.initFromHIRValue(map_value));
@@ -1660,7 +1692,7 @@ pub const VM = struct {
         switch (map_frame.value) {
             .map => |map_value| {
                 for (map_value.entries) |entry| {
-                    const keys_match = switch (entry.key) {
+                    const keys_match = switch (entry.key.*) {
                         .string => |entry_str| switch (key_frame.value) {
                             .string => |key_str| ((entry_str.ptr == key_str.ptr and entry_str.len == key_str.len) or std.mem.eql(u8, entry_str, key_str)),
                             else => false,
@@ -1677,7 +1709,7 @@ pub const VM = struct {
                     };
 
                     if (keys_match) {
-                        try self.stack.push(HIRFrame.initFromHIRValue(entry.value));
+                        try self.stack.push(HIRFrame.initFromHIRValue(entry.value.*));
                         return;
                     }
                 }
@@ -1711,7 +1743,7 @@ pub const VM = struct {
 
                 var updated = false;
                 for (entries) |*entry| {
-                    const keys_match = switch (entry.key) {
+                    const keys_match = switch (entry.key.*) {
                         .string => |entry_str| switch (key_frame.value) {
                             .string => |key_str| ((entry_str.ptr == key_str.ptr and entry_str.len == key_str.len) or std.mem.eql(u8, entry_str, key_str)),
                             else => false,
@@ -1728,7 +1760,7 @@ pub const VM = struct {
                     };
 
                     if (keys_match) {
-                        entry.value = value_frame.value;
+                        entry.value.* = value_frame.value;
                         updated = true;
                         break;
                     }
@@ -1737,7 +1769,11 @@ pub const VM = struct {
                 if (!updated) {
                     var new_entries = try alloc.alloc(HIRMapEntry, entries.len + 1);
                     @memcpy(new_entries[0..entries.len], entries);
-                    new_entries[entries.len] = HIRMapEntry{ .key = key_frame.value, .value = value_frame.value, .path = null };
+                    const key_ptr = try alloc.create(HIRValue);
+                    key_ptr.* = key_frame.value;
+                    const value_ptr = try alloc.create(HIRValue);
+                    value_ptr.* = value_frame.value;
+                    new_entries[entries.len] = HIRMapEntry{ .key = key_ptr, .value = value_ptr, .path = null };
                     alloc.free(entries);
                     entries = new_entries;
                 }
@@ -1851,12 +1887,13 @@ pub const VM = struct {
         const caller_exists = self.frames.items.len > 0;
         var promoted_value: ?HIRValue = null;
         if (return_value) |val| {
+            var mut_val = val;
             if (caller_exists) {
                 const dest_alloc = self.frames.items[self.frames.items.len - 1].arena.allocator();
-                promoted_value = try self.deepCopyValueToAllocator(dest_alloc, val);
+                promoted_value = try self.deepCopyValueToAllocator(dest_alloc, &mut_val);
             } else {
                 // No caller: promote to VM allocator; program likely ends soon
-                promoted_value = try self.deepCopyValueToAllocator(self.allocator, val);
+                promoted_value = try self.deepCopyValueToAllocator(self.allocator, &mut_val);
             }
         }
 
@@ -2033,21 +2070,48 @@ pub const VM = struct {
 
     fn registerTokenEnum(self: *VM) !void {
         // Create enum variants for Token enum
-        const variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, 6);
-        variants[0] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "INT_LITERAL"), .index = 0 };
-        variants[1] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FLOAT_LITERAL"), .index = 1 };
-        variants[2] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "BYTE_LITERAL"), .index = 2 };
-        variants[3] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "TETRA_LITERAL"), .index = 3 };
-        variants[4] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "STRING_LITERAL"), .index = 4 };
-        variants[5] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "NOTHING_LITERAL"), .index = 5 };
+        const token_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, 6);
+        token_variants[0] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "INT_LITERAL"), .index = 0 };
+        token_variants[1] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FLOAT_LITERAL"), .index = 1 };
+        token_variants[2] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "BYTE_LITERAL"), .index = 2 };
+        token_variants[3] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "TETRA_LITERAL"), .index = 3 };
+        token_variants[4] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "STRING_LITERAL"), .index = 4 };
+        token_variants[5] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "NOTHING_LITERAL"), .index = 5 };
 
         const token_enum_info = CustomTypeInfo{
             .name = try self.allocator.dupe(u8, "Token"),
             .kind = .Enum,
-            .enum_variants = variants,
+            .enum_variants = token_variants,
         };
 
         try self.custom_type_registry.put("Token", token_enum_info);
+
+        // Create enum variants for TokenType enum
+        const tokentype_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, 16);
+        tokentype_variants[0] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "INT_LITERAL"), .index = 0 };
+        tokentype_variants[1] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FLOAT_LITERAL"), .index = 1 };
+        tokentype_variants[2] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "BYTE_LITERAL"), .index = 2 };
+        tokentype_variants[3] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "TETRA_LITERAL"), .index = 3 };
+        tokentype_variants[4] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "STRING_LITERAL"), .index = 4 };
+        tokentype_variants[5] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "NOTHING_LITERAL"), .index = 5 };
+        tokentype_variants[6] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "VAR"), .index = 6 };
+        tokentype_variants[7] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "CONST"), .index = 7 };
+        tokentype_variants[8] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FUNCTION"), .index = 8 };
+        tokentype_variants[9] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "MAIN"), .index = 9 };
+        tokentype_variants[10] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "ENTRY"), .index = 10 };
+        tokentype_variants[11] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "ASSIGN"), .index = 11 };
+        tokentype_variants[12] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "MODULE"), .index = 12 };
+        tokentype_variants[13] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "IMPORT"), .index = 13 };
+        tokentype_variants[14] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FROM"), .index = 14 };
+        tokentype_variants[15] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "IDENTIFIER"), .index = 15 };
+
+        const tokentype_enum_info = CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, "TokenType"),
+            .kind = .Enum,
+            .enum_variants = tokentype_variants,
+        };
+
+        try self.custom_type_registry.put("TokenType", tokentype_enum_info);
     }
 
     fn initializeTokenVariable(self: *VM) !void {
@@ -2121,8 +2185,8 @@ pub const VM = struct {
         };
     }
 
-    pub fn valueToString(self: *VM, value: HIRValue) ![]const u8 {
-        return switch (value) {
+    pub fn valueToString(self: *VM, value: *HIRValue) ![]const u8 {
+        return switch (value.*) {
             .int => |i| try std.fmt.allocPrint(self.allocator, "{}", .{i}),
             .byte => |u| try std.fmt.allocPrint(self.allocator, "0x{X:0>2}", .{u}),
             .float => |f| {
@@ -2147,8 +2211,8 @@ pub const VM = struct {
                 defer result.deinit();
                 try result.append('[');
                 var first = true;
-                for (arr.elements) |elem| {
-                    if (std.meta.eql(elem, HIRValue.nothing)) break;
+                for (arr.elements) |*elem| {
+                    if (elem.* == .nothing) break;
                     if (!first) try result.appendSlice(", ");
                     const elem_str = try self.valueToString(elem);
                     defer self.allocator.free(elem_str);
@@ -2169,7 +2233,7 @@ pub const VM = struct {
                     try result.appendSlice(": ");
                     const field_str = try self.valueToString(field.value);
                     defer self.allocator.free(field_str);
-                    switch (field.value) {
+                    switch (field.value.*) {
                         .string => {
                             try result.append('"');
                             try result.appendSlice(field_str);
@@ -2193,9 +2257,9 @@ pub const VM = struct {
         return self.frames.items[self.frames.items.len - 1].arena.allocator();
     }
 
-    fn deepCopyValueToAllocator(self: *VM, allocator: std.mem.Allocator, value: HIRValue) !HIRValue {
-        return switch (value) {
-            .int, .byte, .float, .tetra, .nothing, .storage_id_ref => value,
+    pub fn deepCopyValueToAllocator(self: *VM, allocator: std.mem.Allocator, value: *HIRValue) !HIRValue {
+        return switch (value.*) {
+            .int, .byte, .float, .tetra, .nothing, .storage_id_ref => value.*,
             .string => |s| blk: {
                 const duped = try allocator.dupe(u8, s);
                 break :blk HIRValue{ .string = duped };
@@ -2204,9 +2268,12 @@ pub const VM = struct {
                 const type_name = try allocator.dupe(u8, s.type_name);
                 const fields = try allocator.alloc(HIRStructField, s.fields.len);
                 for (s.fields, 0..) |f, i| {
+                    const value_copy = try self.deepCopyValueToAllocator(allocator, f.value);
+                    const value_ptr = try allocator.create(HIRValue);
+                    value_ptr.* = value_copy;
                     fields[i] = .{
                         .name = try allocator.dupe(u8, f.name),
-                        .value = try self.deepCopyValueToAllocator(allocator, f.value),
+                        .value = value_ptr,
                         .field_type = f.field_type,
                         .path = null,
                     };
@@ -2216,18 +2283,30 @@ pub const VM = struct {
             .map => |m| blk: {
                 const entries = try allocator.alloc(HIRMapEntry, m.entries.len);
                 for (m.entries, 0..) |e, i| {
+                    const key_copy = try self.deepCopyValueToAllocator(allocator, e.key);
+                    const key_ptr = try allocator.create(HIRValue);
+                    key_ptr.* = key_copy;
+                    const value_copy = try self.deepCopyValueToAllocator(allocator, e.value);
+                    const value_ptr = try allocator.create(HIRValue);
+                    value_ptr.* = value_copy;
                     entries[i] = .{
-                        .key = try self.deepCopyValueToAllocator(allocator, e.key),
-                        .value = try self.deepCopyValueToAllocator(allocator, e.value),
+                        .key = key_ptr,
+                        .value = value_ptr,
                         .path = null,
                     };
                 }
-                break :blk HIRValue{ .map = .{ .entries = entries, .key_type = m.key_type, .value_type = m.value_type, .path = null } };
+                const else_copy = if (m.else_value) |else_val| blk_else: {
+                    const else_value_copy = try self.deepCopyValueToAllocator(allocator, else_val);
+                    const else_ptr = try allocator.create(HIRValue);
+                    else_ptr.* = else_value_copy;
+                    break :blk_else else_ptr;
+                } else null;
+                break :blk HIRValue{ .map = .{ .entries = entries, .key_type = m.key_type, .value_type = m.value_type, .path = null, .else_value = else_copy } };
             },
             .array => |a| blk: {
                 const elems = try allocator.alloc(HIRValue, a.elements.len);
-                for (a.elements, 0..) |elem, i| {
-                    elems[i] = try self.deepCopyValueToAllocator(allocator, elem);
+                for (a.elements, 0..) |_, i| {
+                    elems[i] = try self.deepCopyValueToAllocator(allocator, &a.elements[i]);
                 }
                 break :blk HIRValue{ .array = .{ .elements = elems, .element_type = a.element_type, .capacity = a.capacity, .path = null, .nested_element_type = a.nested_element_type } };
             },
@@ -2270,9 +2349,11 @@ pub const VM = struct {
             const var_name = try std.fmt.allocPrint(self.allocator, "var_{}", .{i});
             defer self.allocator.free(var_name);
 
+            const value_ptr = try self.allocator.create(HIRValue);
+            value_ptr.* = value;
             field.* = HIRStructField{
                 .name = try self.string_interner.intern(var_name),
-                .value = value,
+                .value = value_ptr,
                 .field_type = .Unknown,
             };
         }

@@ -4,7 +4,9 @@ const types = @import("../../../types/types.zig");
 const Location = @import("../../../utils/reporting.zig").Location;
 const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
 const HIRValue = @import("../soxa_values.zig").HIRValue;
-const HIRType = @import("../soxa_types.zig").HIRType;
+const SoxaTypes = @import("../soxa_types.zig");
+const HIRType = SoxaTypes.HIRType;
+const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 const HIRMapEntry = @import("../soxa_values.zig").HIRMapEntry;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
@@ -56,11 +58,14 @@ pub const CollectionsHandler = struct {
             }
         }
 
+        const storage_kind = self.generator.array_storage_override orelse ArrayStorageKind.dynamic;
+
         // Generate ArrayNew instruction with nested type info
         try self.generator.instructions.append(.{ .ArrayNew = .{
             .element_type = element_type,
             .size = @intCast(elements.len),
             .nested_element_type = nested_element_type,
+            .storage_kind = storage_kind,
         } });
 
         // Generate each element and ArraySet
@@ -111,7 +116,7 @@ pub const CollectionsHandler = struct {
     }
 
     /// Generate HIR for map literals
-    pub fn generateMap(self: *CollectionsHandler, entries: []ast.MapEntry) !void {
+    pub fn generateMap(self: *CollectionsHandler, entries: []*ast.MapEntry) !void {
         // Generate key-value pairs in reverse order so the VM pops in source order
         var reverse_i: usize = entries.len;
         while (reverse_i > 0) {
@@ -124,7 +129,11 @@ pub const CollectionsHandler = struct {
         // Prepare dummy HIRMapEntry slice; VM will read actual values from stack
         const dummy_entries = try self.generator.allocator.alloc(HIRMapEntry, entries.len);
         for (dummy_entries) |*e| {
-            e.* = HIRMapEntry{ .key = HIRValue.nothing, .value = HIRValue.nothing };
+            const nothing_key = try self.generator.allocator.create(HIRValue);
+            nothing_key.* = .{ .nothing = .{} };
+            const nothing_value = try self.generator.allocator.create(HIRValue);
+            nothing_value.* = .{ .nothing = .{} };
+            e.* = HIRMapEntry{ .key = nothing_key, .value = nothing_value };
         }
 
         // Infer key/value types from the first entry when possible so that

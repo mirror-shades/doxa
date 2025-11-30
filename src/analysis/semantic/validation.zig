@@ -312,7 +312,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
 
                 _ = try type_analysis.inferTypeFromExpr(&type_ctx, &dummy_expr);
             },
-            .MapLiteral => |map_entries| {
+            .MapLiteral => |*map_literal| {
                 // Validate map literal entries
                 var type_ctx = type_analysis.TypeAnalysisContext.init(
                     ctx.allocator,
@@ -326,9 +326,15 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                     ctx.fatal_error,
                     ctx.current_struct_type,
                 );
-                for (map_entries) |entry| {
+                for (map_literal.entries) |entry| {
                     _ = try type_analysis.inferTypeFromExpr(&type_ctx, entry.key);
                     _ = try type_analysis.inferTypeFromExpr(&type_ctx, entry.value);
+                }
+
+                // Validate else_value if present - it should match the map's value type
+                if (map_literal.else_value) |else_val| {
+                    _ = try type_analysis.inferTypeFromExpr(&type_ctx, else_val);
+                    // Type compatibility check would be done during unification if needed
                 }
             },
             // TODO: Handle other statements...

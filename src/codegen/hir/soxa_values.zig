@@ -1,4 +1,6 @@
-const HIRType = @import("soxa_types.zig").HIRType;
+const SoxaTypes = @import("soxa_types.zig");
+const HIRType = SoxaTypes.HIRType;
+const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 
 pub const HIRValue = union(enum) {
     int: i64,
@@ -14,12 +16,15 @@ pub const HIRValue = union(enum) {
     storage_id_ref: u32, // NEW: Represents a storage ID for aliases
 };
 
+pub const nothing_value = HIRValue{ .nothing = .{} };
+
 pub const HIRArray = struct {
     elements: []HIRValue,
     element_type: HIRType,
     capacity: u32,
     path: ?[]const u8 = @as(?[]const u8, null),
     nested_element_type: ?HIRType = null, // For nested arrays: what type are the nested elements?
+    storage_kind: ArrayStorageKind = .dynamic,
 };
 
 pub const HIRStruct = struct {
@@ -31,7 +36,7 @@ pub const HIRStruct = struct {
 
 pub const HIRStructField = struct {
     name: []const u8,
-    value: HIRValue,
+    value: *HIRValue,
     field_type: HIRType,
     path: ?[]const u8 = @as(?[]const u8, null),
 };
@@ -41,11 +46,12 @@ pub const HIRMap = struct {
     key_type: HIRType,
     value_type: HIRType,
     path: ?[]const u8 = @as(?[]const u8, null),
+    else_value: ?*HIRValue = null,
 };
 
 pub const HIRMapEntry = struct {
-    key: HIRValue,
-    value: HIRValue,
+    key: *HIRValue,
+    value: *HIRValue,
     path: ?[]const u8 = @as(?[]const u8, null),
 };
 

@@ -8,7 +8,8 @@ const HIRType = @import("soxa_generator.zig").HIRType;
 const HIRValue = @import("soxa_generator.zig").HIRValue;
 const HIRInstruction = @import("soxa_generator.zig").HIRInstruction;
 const HIRMapEntry = @import("soxa_generator.zig").HIRMapEntry;
-const ScopeKind = @import("soxa_types.zig").ScopeKind;
+const SoxaTypes = @import("soxa_types.zig");
+const ScopeKind = SoxaTypes.ScopeKind;
 
 pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || ErrorList)!void {
     switch (stmt.data) {
@@ -121,6 +122,15 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     self.current_enum_type = custom_type_name;
                 }
 
+                const previous_override = self.array_storage_override;
+                defer self.array_storage_override = previous_override;
+
+                if (decl.type_info.base == .Array) {
+                    self.array_storage_override = self.storageKindFromTypeInfo(decl.type_info);
+                } else {
+                    self.array_storage_override = null;
+                }
+
                 try self.generateExpression(init_expr, true, true);
 
                 self.current_enum_type = old_enum_context;
@@ -161,6 +171,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                     .element_type = element_type_fix,
                                     .size = 0,
                                     .nested_element_type = nested_element_type_fix,
+                                    .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
                                 } });
                                 try self.trackArrayElementType(decl.name.lexeme, element_type_fix);
                                 var_type = HIRType.Nothing;
@@ -272,6 +283,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     try self.instructions.append(.{ .ArrayNew = .{
                         .element_type = element_type,
                         .size = size,
+                        .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
                     } });
 
                     try self.trackArrayElementType(decl.name.lexeme, element_type);
@@ -316,6 +328,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                             try self.instructions.append(.{ .ArrayNew = .{
                                 .element_type = element_type,
                                 .size = size,
+                                .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
                             } });
 
                             try self.trackArrayElementType(decl.name.lexeme, element_type);
@@ -327,6 +340,13 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         },
                     }
                 }
+            }
+
+            if (decl.type_info.base == .Array) {
+                try self.trackArrayStorageKind(decl.name.lexeme, self.storageKindFromTypeInfo(decl.type_info));
+            } else switch (var_type) {
+                .Array => try self.trackArrayStorageKind(decl.name.lexeme, SoxaTypes.ArrayStorageKind.dynamic),
+                else => {},
             }
 
             try self.trackVariableType(decl.name.lexeme, var_type);
@@ -364,11 +384,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             } else {
                 const is_module_ctx = self.current_function == null and self.isModuleContext();
                 const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);
-
-                // Debug output
-                if (std.mem.eql(u8, decl.name.lexeme, "LiteralToToken")) {
-                    std.debug.print("Processing LiteralToToken: is_module_ctx={}, scope_kind={s}\n", .{ is_module_ctx, @tagName(scope_kind) });
-                }
 
                 try self.instructions.append(.{ .StoreDecl = .{
                     .var_index = var_idx,
@@ -444,20 +459,29 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
             try self.instructions.append(.{ .Label = .{ .name = success_label, .vm_address = 0 } });
         },
-        .MapLiteral => |entries| {
-            var reverse_i = entries.len;
+        .MapLiteral => |map_literal| {
+            // Generate else value first if it exists
+            if (map_literal.else_value) |else_expr| {
+                try self.generateExpression(else_expr, true, false);
+            }
+
+            var reverse_i = map_literal.entries.len;
             while (reverse_i > 0) {
                 reverse_i -= 1;
-                const entry = entries[reverse_i];
+                const entry = map_literal.entries[reverse_i];
                 try self.generateExpression(entry.key, true, false);
                 try self.generateExpression(entry.value, true, false);
             }
 
-            const dummy_entries = try self.allocator.alloc(HIRMapEntry, entries.len);
+            const dummy_entries = try self.allocator.alloc(HIRMapEntry, map_literal.entries.len);
             for (dummy_entries) |*entry| {
+                const nothing_key = try self.allocator.create(HIRValue);
+                nothing_key.* = .{ .nothing = .{} };
+                const nothing_value = try self.allocator.create(HIRValue);
+                nothing_value.* = .{ .nothing = .{} };
                 entry.* = HIRMapEntry{
-                    .key = HIRValue.nothing,
-                    .value = HIRValue.nothing,
+                    .key = nothing_key,
+                    .value = nothing_value,
                 };
             }
 
@@ -466,10 +490,58 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     .entries = dummy_entries,
                     .key_type = .String,
                     .value_type = .Unknown,
+                    .has_else_value = map_literal.else_value != null,
                 },
             };
 
             try self.instructions.append(map_instruction);
+        },
+        .MapDecl => |map_decl| {
+            // Generate the map literal
+            var reverse_i = map_decl.fields.len;
+            while (reverse_i > 0) {
+                reverse_i -= 1;
+                const field = map_decl.fields[reverse_i];
+                // TODO: Create expression from field.name (Token) for key
+                // TODO: Create expression from field.type_expr (*TypeExpr) for value
+                _ = field; // Remove when implemented
+            }
+
+            const dummy_entries = try self.allocator.alloc(HIRMapEntry, map_decl.fields.len);
+            for (dummy_entries) |*entry| {
+                const nothing_key = try self.allocator.create(HIRValue);
+                nothing_key.* = .{ .nothing = .{} };
+                const nothing_value = try self.allocator.create(HIRValue);
+                nothing_value.* = .{ .nothing = .{} };
+                entry.* = HIRMapEntry{
+                    .key = nothing_key,
+                    .value = nothing_value,
+                };
+            }
+
+            try self.instructions.append(.{
+                .Map = .{
+                    .entries = dummy_entries,
+                    .key_type = .String, // TODO: infer from fields
+                    .value_type = .Unknown, // TODO: infer from fields
+                },
+            });
+
+            // Store it in a variable
+            const var_idx = try self.getOrCreateVariable(map_decl.name.lexeme);
+            const is_module_ctx = self.current_function == null and self.isModuleContext();
+            const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(map_decl.name.lexeme, is_module_ctx);
+
+            try self.instructions.append(.{
+                .StoreDecl = .{
+                    .var_index = var_idx,
+                    .var_name = map_decl.name.lexeme,
+                    .scope_kind = scope_kind,
+                    .module_context = null,
+                    .declared_type = .Unknown, // Map type
+                    .is_const = false, // Maps are mutable
+                },
+            });
         },
         else => {
             self.reporter.reportCompileError(

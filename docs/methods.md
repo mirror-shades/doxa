@@ -50,6 +50,8 @@ Note: The standard library is not implemented yet. Names and signatures referenc
 
 ## Array Methods
 
+Mutable intrinsics require dynamic storage. Passing a fixed-size annotation (`int[4]`) or a `const` literal (including any const alias that references it) results in a compile-time `E6018` error explaining that the array must migrate to dynamic storage first.
+
 ### @length
 
 - **Input**: `string | array`

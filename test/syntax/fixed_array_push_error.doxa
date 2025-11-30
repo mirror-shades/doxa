@@ -1,0 +1,2 @@
+const fixed :: int[3] is [1, 2, 3]
+@push(fixed, 4)?

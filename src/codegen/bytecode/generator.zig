@@ -546,6 +546,7 @@ pub const BytecodeGenerator = struct {
                     }),
                     .static_size = payload.size,
                     .nested_element_type = if (payload.nested_element_type) |nested| module.typeFromHIR(nested) catch return error.UnknownType else null,
+                    .storage_kind = payload.storage_kind,
                 } }),
                 .ArrayGet => |payload| try self.instructions.append(self.allocator, .{ .ArrayGet = .{ .bounds_check = payload.bounds_check } }),
                 .ArraySet => |payload| try self.instructions.append(self.allocator, .{ .ArraySet = .{ .bounds_check = payload.bounds_check } }),
@@ -626,6 +627,7 @@ pub const BytecodeGenerator = struct {
                         .Unknown => .Nothing,
                         else => payload.value_type,
                     }),
+                    .has_else_value = payload.has_else_value,
                 } }),
                 .MapGet => |payload| try self.instructions.append(self.allocator, .{ .MapGet = .{ .key_type = try module.typeFromHIR(switch (payload.key_type) {
                     .Unknown => .Nothing,

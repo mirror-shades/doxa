@@ -118,6 +118,13 @@ pub fn parseMapDecl(self: *Parser, is_public: bool) ErrorList!ast.Stmt {
     self.advance();
     const map_expr = try self.parseMap() orelse return error.ExpectedExpression;
 
+    // Check for else clause
+    var else_value: ?*ast.Expr = null;
+    if (self.peek().type == .ELSE) {
+        self.advance();
+        else_value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+    }
+
     // Create map type info from explicit types or infer from map expression
     var map_type_info: ast.TypeInfo = undefined;
     if (key_type_expr != null and value_type_expr != null) {
