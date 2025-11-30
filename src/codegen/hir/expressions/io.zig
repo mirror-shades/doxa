@@ -233,9 +233,6 @@ pub const IOHandler = struct {
                     }
                 }
             }
-        } else if (inferred_type == .Union) {
-            // For expressions that result in union types (like map access), extract member names
-            union_members = try self.generator.collectUnionMemberNamesFromHIRType(inferred_type);
         }
 
         // Generate peek instruction with full path and correct type
