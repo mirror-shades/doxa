@@ -1,0 +1,34 @@
+map IdToName {
+    1 then "Bob"
+    2 then "Sam"
+    3 then "Doug"
+}
+
+map IdToNameElse {
+    1 then "Bob"
+    2 then "Sam"
+    3 then "Doug"
+    else "not found"
+}
+
+IdToName[1]?
+IdToName[2]?
+IdToName[3]?
+IdToName[4]?
+
+IdToNameElse[1]?
+IdToNameElse[2]?
+IdToNameElse[3]?
+IdToNameElse[4]?
+
+var exampleUnion :: string | nothing
+exampleUnion?
+
+/*
+make the map AST node store the types of key and value
+this can be taken explicitly or inferred from the first key/value pair
+make semantic analysis compare each key/value against type
+(current version uses an old key/value entry in typeinfo that we have removed)
+maps should return a `T | nothing` union unless an else branch is provided
+else value should also be checked in sem analysis to match map value type
+*/

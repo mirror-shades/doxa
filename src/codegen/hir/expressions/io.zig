@@ -260,11 +260,15 @@ pub const IOHandler = struct {
         try self.generator.generateExpression(peek_data.expr, true, false);
 
         // Get struct info from the expression
-        const struct_info: StructPeekInfo = switch (peek_data.expr.data) {
+        const struct_info = switch (peek_data.expr.data) {
             .StructLiteral => |struct_lit| blk: {
                 const field_count: u32 = @truncate(struct_lit.fields.len);
                 const field_names = try self.generator.allocator.alloc([]const u8, struct_lit.fields.len);
                 const field_types = try self.generator.allocator.alloc(HIRType, struct_lit.fields.len);
+                for (struct_lit.fields, 0..) |field_ptr, idx| {
+                    field_names[idx] = field_ptr.name.lexeme;
+                    field_types[idx] = self.generator.inferTypeFromExpression(field_ptr.value);
+                }
                 break :blk StructPeekInfo{
                     .name = struct_lit.name.lexeme,
                     .field_count = field_count,
@@ -278,12 +282,14 @@ pub const IOHandler = struct {
                 }
                 const field_names = try self.generator.allocator.alloc([]const u8, 0);
                 const field_types = try self.generator.allocator.alloc(HIRType, 0);
-                break :blk StructPeekInfo{
+                var info = StructPeekInfo{
                     .name = var_token.lexeme,
                     .field_count = 0,
                     .field_names = field_names,
                     .field_types = field_types,
                 };
+                try self.populateStructInfoFromType(&info, var_type);
+                break :blk info;
             } else {
                 return error.UnknownVariableType;
             },
@@ -337,6 +343,28 @@ pub const IOHandler = struct {
             .location = peek_data.location,
             .should_pop_after_peek = !preserve_result,
         } });
+    }
+
+    fn populateStructInfoFromType(self: *IOHandler, info: *StructPeekInfo, hir_type: HIRType) !void {
+        if (hir_type != .Struct) return;
+        const struct_id = hir_type.Struct;
+        if (self.generator.type_system.struct_table) |table| {
+            if (@constCast(table).getEntryById(struct_id)) |entry| {
+                const fields = entry.fields;
+                const names = try self.generator.allocator.alloc([]const u8, fields.len);
+                const types_arr = try self.generator.allocator.alloc(HIRType, fields.len);
+                for (fields, 0..) |field_info, idx| {
+                    names[idx] = field_info.name;
+                    types_arr[idx] = field_info.hir_type;
+                }
+                self.generator.allocator.free(info.field_names);
+                self.generator.allocator.free(info.field_types);
+                info.field_names = names;
+                info.field_types = types_arr;
+                info.field_count = @intCast(fields.len);
+                info.name = entry.qualified_name;
+            }
+        }
     }
 
     /// Generate HIR for input expressions

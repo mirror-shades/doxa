@@ -117,7 +117,10 @@ pub const PrintOps = struct {
 
         switch (value.value) {
             .struct_instance => |s| {
-                for (s.fields) |field| {
+                var field_index: usize = s.fields.len;
+                while (field_index > 0) {
+                    field_index -= 1;
+                    const field = s.fields[field_index];
                     if (i.location) |location| {
                         try printToStdout("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
                     }
@@ -256,10 +259,15 @@ pub const PrintOps = struct {
             },
             .struct_instance => |s| {
                 try printToStdout("{{ ", .{});
-                for (s.fields, 0..) |field, i| {
+                var first: bool = true;
+                var idx: usize = s.fields.len;
+                while (idx > 0) {
+                    idx -= 1;
+                    const field = s.fields[idx];
+                    if (!first) try printToStdout(", ", .{});
                     try printToStdout("{s}: ", .{field.name});
                     try PrintOps.printHIRValue(vm, field.value.*);
-                    if (i < s.fields.len - 1) try printToStdout(", ", .{});
+                    first = false;
                 }
                 try printToStdout(" }}", .{});
             },
@@ -415,10 +423,15 @@ pub const PrintOps = struct {
             },
             .struct_instance => |s| {
                 try printToStdout("{{ ", .{});
-                for (s.fields, 0..) |field, i| {
+                var first: bool = true;
+                var idx: usize = s.fields.len;
+                while (idx > 0) {
+                    idx -= 1;
+                    const field = s.fields[idx];
+                    if (!first) try printToStdout(", ", .{});
                     try printToStdout("{s}: ", .{field.name});
                     try PrintOps.formatHIRValue(vm, field.value.*);
-                    if (i < s.fields.len - 1) try printToStdout(", ", .{});
+                    first = false;
                 }
                 try printToStdout(" }}", .{});
             },
@@ -459,10 +472,15 @@ pub const PrintOps = struct {
             },
             .struct_value => |s| {
                 try printToStdout("{{ ", .{});
-                for (s.fields, 0..) |field, i| {
+                var first: bool = true;
+                var idx: usize = s.fields.len;
+                while (idx > 0) {
+                    idx -= 1;
+                    const field = s.fields[idx];
+                    if (!first) try printToStdout(", ", .{});
                     try printToStdout("{s}: ", .{field.name});
                     try PrintOps.formatTokenLiteral(vm, field.value);
-                    if (i < s.fields.len - 1) try printToStdout(", ", .{});
+                    first = false;
                 }
                 try printToStdout(" }}", .{});
             },
@@ -510,10 +528,15 @@ pub const PrintOps = struct {
             },
             .struct_instance => |s| {
                 try printToStdout("{{ ", .{});
-                for (s.fields, 0..) |field, i| {
+                var first: bool = true;
+                var idx: usize = s.fields.len;
+                while (idx > 0) {
+                    idx -= 1;
+                    const field = s.fields[idx];
+                    if (!first) try printToStdout(", ", .{});
                     try printToStdout(" {s}: ", .{field.name});
                     try PrintOps.formatHIRValueRaw(vm, field.value.*);
-                    if (i < s.fields.len - 1) try printToStdout(", ", .{});
+                    first = false;
                 }
                 try printToStdout(" }}", .{});
             },
