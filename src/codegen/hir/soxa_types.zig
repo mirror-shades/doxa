@@ -129,6 +129,7 @@ pub const HIRProgram = struct {
         is_entry: bool,
         param_is_alias: []bool, // NEW: Track which parameters are aliases
         param_types: []HIRType, // NEW: Track parameter types for VM binding
+        param_is_union: []bool, // Track union parameters for native backend
     };
 
     pub const ModuleInfo = struct {

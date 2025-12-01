@@ -6,16 +6,14 @@
 
 ``` 
 zig ZigOps {
-    fn fast_hash(data: []const u8) -> u64 {
-        return @llvm_external_call("ZigOps.fast_hash", data.ptr, data.len);
-    }
-    
-    fn sqrt_approx(x: f64) -> f64 {
-        return @llvm_external_call("ZigOps.sqrt_approx", x);
+    const std = @import("std")
+
+    fn sqrt(x: f64) f64 {
+        return std.math.sqrt(x);
     }
 }
 
-const zigSqrt is ZigOps.sqrt_approx(10.5)
+const zigSqrt is ZigOps.sqrt(10)
 ```
 
 the zig within the block is compiled to an object file and caches after HIR gen and before the pipeline splits between VM and compiler. the object can then be both linked in compilation or accessed jit in vm execution. this adds a small amount of overhead for VM execution but only for the first run due to cacheing.

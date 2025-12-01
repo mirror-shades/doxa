@@ -96,6 +96,7 @@ pub const HIRGenerator = struct {
         is_entry: bool,
         param_is_alias: []bool,
         param_types: []HIRType,
+        param_is_union: []bool,
     };
 
     pub const FunctionBody = struct {
@@ -107,6 +108,7 @@ pub const HIRGenerator = struct {
         return_type_info: ast.TypeInfo,
         param_is_alias: []bool,
         param_types: []HIRType,
+        param_is_union: []bool,
     };
 
     pub const FunctionCallSite = struct {
@@ -255,9 +257,15 @@ pub const HIRGenerator = struct {
 
                     var param_is_alias = try self.allocator.alloc(bool, func.params.len);
                     var param_types = try self.allocator.alloc(HIRType, func.params.len);
+                    var param_is_union = try self.allocator.alloc(bool, func.params.len);
                     for (func.params, 0..) |param, i| {
                         param_is_alias[i] = param.is_alias;
-                        param_types[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
+                        const param_type_info = if (param.type_expr) |type_expr|
+                            (try ast.typeInfoFromExpr(self.allocator, type_expr)).*
+                        else
+                            ast.TypeInfo{ .base = .Int };
+                        param_is_union[i] = param_type_info.base == .Union;
+                        param_types[i] = self.convertTypeInfo(param_type_info);
                         // Sanitize param types: keep only simple primitives/markers for signature
                         param_types[i] = switch (param_types[i]) {
                             .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[i],
@@ -276,6 +284,7 @@ pub const HIRGenerator = struct {
                         .is_entry = func.is_entry,
                         .param_is_alias = param_is_alias,
                         .param_types = param_types,
+                        .param_is_union = param_is_union,
                     };
 
                     try self.function_signatures.put(func.name.lexeme, function_info);
@@ -289,6 +298,7 @@ pub const HIRGenerator = struct {
                         .return_type_info = func.return_type_info,
                         .param_is_alias = param_is_alias,
                         .param_types = param_types,
+                        .param_is_union = param_is_union,
                     });
                 },
                 .Expression => |maybe_expr| {
@@ -320,15 +330,22 @@ pub const HIRGenerator = struct {
                                 // For non-static methods, prepend 'this' parameter
                                 var param_is_alias = try self.allocator.alloc(bool, arity);
                                 var param_types = try self.allocator.alloc(HIRType, arity);
+                                var param_is_union = try self.allocator.alloc(bool, arity);
                                 var param_idx: usize = 0;
                                 if (!method.is_static) {
                                     param_is_alias[param_idx] = true; // 'this' is an alias
                                     param_types[param_idx] = HIRType{ .Struct = 0 }; // 'this' is a struct pointer
+                                    param_is_union[param_idx] = false;
                                     param_idx += 1;
                                 }
                                 for (method.params) |param| {
                                     param_is_alias[param_idx] = param.is_alias;
-                                    param_types[param_idx] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
+                                    const param_type_info = if (param.type_expr) |type_expr|
+                                        (try ast.typeInfoFromExpr(self.allocator, type_expr)).*
+                                    else
+                                        ast.TypeInfo{ .base = .Int };
+                                    param_is_union[param_idx] = param_type_info.base == .Union;
+                                    param_types[param_idx] = self.convertTypeInfo(param_type_info);
                                     // Sanitize param types: keep only simple primitives/markers for signature
                                     param_types[param_idx] = switch (param_types[param_idx]) {
                                         .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[param_idx],
@@ -348,6 +365,7 @@ pub const HIRGenerator = struct {
                                     .is_entry = false,
                                     .param_is_alias = param_is_alias,
                                     .param_types = param_types,
+                                    .param_is_union = param_is_union,
                                 };
 
                                 if (!self.function_signatures.contains(qualified)) {
@@ -361,6 +379,7 @@ pub const HIRGenerator = struct {
                                         .return_type_info = method.return_type_info,
                                         .param_is_alias = param_is_alias,
                                         .param_types = param_types,
+                                        .param_is_union = param_is_union,
                                     });
                                 }
                             }
@@ -390,12 +409,15 @@ pub const HIRGenerator = struct {
 
                                 var param_is_alias_imported = try self.allocator.alloc(bool, func.params.len);
                                 var param_types_imported = try self.allocator.alloc(HIRType, func.params.len);
+                                var param_is_union_imported = try self.allocator.alloc(bool, func.params.len);
                                 for (func.params, 0..) |param, i| {
                                     param_is_alias_imported[i] = param.is_alias;
-                                    var pt: HIRType = if (param.type_expr) |type_expr|
-                                        self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*)
+                                    const param_type_info = if (param.type_expr) |type_expr|
+                                        (try ast.typeInfoFromExpr(self.allocator, type_expr)).*
                                     else
-                                        .Int;
+                                        ast.TypeInfo{ .base = .Int };
+                                    param_is_union_imported[i] = param_type_info.base == .Union;
+                                    var pt: HIRType = self.convertTypeInfo(param_type_info);
                                     // Sanitize for signature table
                                     pt = switch (pt) {
                                         .Int, .Byte, .Float, .String, .Tetra, .Nothing => pt,
@@ -414,6 +436,7 @@ pub const HIRGenerator = struct {
                                     .is_entry = false,
                                     .param_is_alias = param_is_alias_imported,
                                     .param_types = param_types_imported,
+                                    .param_is_union = param_is_union_imported,
                                 };
 
                                 try self.function_signatures.put(qualified_name, function_info);
@@ -427,6 +450,7 @@ pub const HIRGenerator = struct {
                                     .return_type_info = func.return_type_info,
                                     .param_is_alias = param_is_alias_imported,
                                     .param_types = param_types_imported,
+                                    .param_is_union = param_is_union_imported,
                                 });
                             },
                             else => {},
@@ -478,16 +502,19 @@ pub const HIRGenerator = struct {
                                 .is_entry = false,
                                 .param_is_alias = try self.allocator.alloc(bool, func_params.len),
                                 .param_types = try self.allocator.alloc(HIRType, func_params.len),
+                                .param_is_union = try self.allocator.alloc(bool, func_params.len),
                             };
 
                             if (!self.function_signatures.contains(sym_name)) {
                                 // Initialize parameter metadata for imported symbol
                                 for (func_params, 0..) |p, i| {
                                     function_info2.param_is_alias[i] = p.is_alias;
-                                    var pt2: HIRType = if (p.type_expr) |te|
-                                        self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, te)).*)
+                                    const param_type_info = if (p.type_expr) |te|
+                                        (try ast.typeInfoFromExpr(self.allocator, te)).*
                                     else
-                                        .Int;
+                                        ast.TypeInfo{ .base = .Int };
+                                    function_info2.param_is_union[i] = param_type_info.base == .Union;
+                                    var pt2: HIRType = self.convertTypeInfo(param_type_info);
                                     pt2 = switch (pt2) {
                                         .Int, .Byte, .Float, .String, .Tetra, .Nothing => pt2,
                                         .Struct, .Enum => pt2,
@@ -506,6 +533,7 @@ pub const HIRGenerator = struct {
                                     .return_type_info = (try ast.typeInfoFromHIRType(self.allocator, func_return_type)).*,
                                     .param_is_alias = function_info2.param_is_alias,
                                     .param_types = function_info2.param_types,
+                                    .param_is_union = function_info2.param_is_union,
                                 });
                             }
 
@@ -533,10 +561,14 @@ pub const HIRGenerator = struct {
 
             const params = function_body.function_params;
 
+            // Track LLVM parameter index (may be different from HIR param index due to union doubling)
+            var llvm_param_index: u32 = 0;
+
             var param_index = params.len;
             while (param_index > 0) {
                 param_index -= 1;
                 const param = params[param_index];
+                const is_union_param = function_body.param_is_union[param_index];
 
                 if (function_body.param_is_alias[param_index]) {
                     var declared_type_info: ?*ast.TypeInfo = null;
@@ -652,14 +684,53 @@ pub const HIRGenerator = struct {
                     // recursive functions like `fber` to read/write a global `x`
                     // instead of their own parameter).
                     const var_idx = try self.symbol_table.createVariable(param.name.lexeme);
-                    try self.instructions.append(.{ .StoreVar = .{
-                        .var_index = var_idx,
-                        .var_name = param.name.lexeme,
-                        .scope_kind = self.symbol_table.determineVariableScope(param.name.lexeme),
-                        .module_context = null,
-                        .expected_type = param_type,
-                    } });
+
+                    if (is_union_param) {
+                        // For union parameters, we need to store both value and tag
+                        // Since we're processing in reverse order, the tag is on top of the stack
+
+                        // First, store the tag (on top of stack)
+                        const tag_var_name = try std.fmt.allocPrint(self.allocator, "__{s}_tag", .{param.name.lexeme});
+
+                        const tag_var_idx = try self.symbol_table.createVariable(tag_var_name);
+                        try self.trackVariableType(tag_var_name, .Int); // Tags are i64/ints
+
+                        try self.instructions.append(.{ .StoreVar = .{
+                            .var_index = tag_var_idx,
+                            .var_name = tag_var_name,
+                            .scope_kind = self.symbol_table.determineVariableScope(tag_var_name),
+                            .module_context = null,
+                            .expected_type = .Int,
+                            .type_tag_name = null,
+                        } });
+
+                        // Track the tag variable for this union parameter
+                        try self.symbol_table.trackUnionTag(param.name.lexeme, tag_var_name);
+
+                        // Then store the value (below the tag on stack)
+                        try self.instructions.append(.{ .StoreVar = .{
+                            .var_index = var_idx,
+                            .var_name = param.name.lexeme,
+                            .scope_kind = self.symbol_table.determineVariableScope(param.name.lexeme),
+                            .module_context = null,
+                            .expected_type = param_type,
+                            .type_tag_name = null,
+                        } });
+                    } else {
+                        // Regular parameter
+                        try self.instructions.append(.{ .StoreVar = .{
+                            .var_index = var_idx,
+                            .var_name = param.name.lexeme,
+                            .scope_kind = self.symbol_table.determineVariableScope(param.name.lexeme),
+                            .module_context = null,
+                            .expected_type = param_type,
+                            .type_tag_name = null,
+                        } });
+                    }
                 }
+
+                // Advance LLVM parameter index (union params consume 2, others consume 1)
+                llvm_param_index += if (is_union_param) 2 else 1;
             }
 
             // Process 'this' parameter for non-static methods (it's pushed first, so popped last)
@@ -710,8 +781,8 @@ pub const HIRGenerator = struct {
             try self.instructions.append(.{ .ExitScope = .{ .scope_id = function_scope_id } });
 
             if (std.mem.eql(u8, function_body.function_info.name, "safeAdd") or std.mem.eql(u8, function_body.function_info.name, "safeMath.safeAdd")) {
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = 1, .var_name = "a", .scope_kind = self.symbol_table.determineVariableScope("a"), .module_context = null } });
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = 0, .var_name = "b", .scope_kind = self.symbol_table.determineVariableScope("b"), .module_context = null } });
+                try self.instructions.append(.{ .LoadVar = .{ .var_index = 1, .var_name = "a", .scope_kind = self.symbol_table.determineVariableScope("a"), .module_context = null, .type_tag_name = self.symbol_table.getUnionTagVariable("a") } });
+                try self.instructions.append(.{ .LoadVar = .{ .var_index = 0, .var_name = "b", .scope_kind = self.symbol_table.determineVariableScope("b"), .module_context = null, .type_tag_name = self.symbol_table.getUnionTagVariable("b") } });
                 try self.instructions.append(.{ .Call = .{ .function_index = 1, .qualified_name = "math.add", .arg_count = 2, .call_kind = .ModuleFunction, .target_module = "math", .return_type = .Int } });
                 try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = .Int } });
             } else if (!has_returned) {
@@ -900,6 +971,7 @@ pub const HIRGenerator = struct {
                 .is_entry = function_info.is_entry,
                 .param_is_alias = function_body.param_is_alias,
                 .param_types = function_body.param_types,
+                .param_is_union = function_body.param_is_union,
             });
         }
 
@@ -1312,6 +1384,7 @@ pub const HIRGenerator = struct {
                     .scope_kind = self.symbol_table.determineVariableScope(target_var),
                     .module_context = null,
                     .expected_type = expected_type,
+                    .type_tag_name = null,
                 } });
             }
         }

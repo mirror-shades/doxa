@@ -118,6 +118,7 @@ pub const BasicExpressionHandler = struct {
                         .var_name = var_token.lexeme,
                         .scope_kind = scope_kind,
                         .module_context = null,
+                        .type_tag_name = self.generator.symbol_table.getUnionTagVariable(var_token.lexeme),
                     },
                 };
                 try self.generator.instructions.append(load_var_inst);
@@ -156,6 +157,7 @@ pub const BasicExpressionHandler = struct {
                         .var_name = var_token.lexeme,
                         .scope_kind = scope_kind,
                         .module_context = null,
+                        .type_tag_name = self.generator.symbol_table.getUnionTagVariable(var_token.lexeme),
                     },
                 };
                 try self.generator.instructions.append(load_var_inst2);
@@ -208,6 +210,7 @@ pub const BasicExpressionHandler = struct {
             .var_name = "this",
             .scope_kind = .Local,
             .module_context = null,
+            .type_tag_name = self.generator.symbol_table.getUnionTagVariable("this"),
         } });
     }
 

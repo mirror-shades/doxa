@@ -480,7 +480,7 @@ pub const SoxaTextParser = struct {
                 ScopeKind.Builtin
             else
                 ScopeKind.Local;
-            try self.instructions.append(HIRInstruction{ .LoadVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null } });
+            try self.instructions.append(HIRInstruction{ .LoadVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .type_tag_name = null } });
         } else if (std.mem.eql(u8, op, "StoreVar")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
@@ -501,7 +501,7 @@ pub const SoxaTextParser = struct {
                 (if (std.mem.eql(u8, t, "Int")) .Int else if (std.mem.eql(u8, t, "Byte")) .Byte else if (std.mem.eql(u8, t, "Float")) .Float else if (std.mem.eql(u8, t, "String")) .String else if (std.mem.eql(u8, t, "Tetra")) .Tetra else if (std.mem.eql(u8, t, "Nothing")) .Nothing else .Int)
             else
                 .Int;
-            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+            try self.instructions.append(HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type, .type_tag_name = null } });
         } else if (std.mem.eql(u8, op, "LoadAlias")) {
             const idx_str = tokens.next() orelse return;
             const slot_index = std.fmt.parseInt(u32, idx_str, 10) catch return;

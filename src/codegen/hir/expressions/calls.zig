@@ -488,7 +488,7 @@ pub const CallsHandler = struct {
 
                 const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
 
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type, .type_tag_name = null } });
             }
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
@@ -514,10 +514,10 @@ pub const CallsHandler = struct {
 
                 if (target_type == .String) {
                     try self.generator.instructions.append(.Swap);
-                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type, .type_tag_name = null } });
                 } else {
                     try self.generator.instructions.append(.Swap);
-                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type, .type_tag_name = null } });
                 }
             }
         } else if (std.mem.eql(u8, name, "insert")) {
@@ -533,7 +533,7 @@ pub const CallsHandler = struct {
 
                 const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
 
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type, .type_tag_name = null } });
             } else {
                 try self.generator.instructions.append(.Pop);
             }
@@ -553,7 +553,7 @@ pub const CallsHandler = struct {
                 const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
 
                 try self.generator.instructions.append(.Swap);
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type, .type_tag_name = null } });
             } else {
                 try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.Pop);
@@ -585,7 +585,7 @@ pub const CallsHandler = struct {
                 const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
                 const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type, .type_tag_name = null } });
             }
             // @clear returns nothing
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
@@ -816,6 +816,7 @@ pub const CallsHandler = struct {
                     .var_name = v.lexeme,
                     .scope_kind = .Local,
                     .module_context = null,
+                    .type_tag_name = self.generator.symbol_table.getUnionTagVariable(v.lexeme),
                 },
             });
         } else {

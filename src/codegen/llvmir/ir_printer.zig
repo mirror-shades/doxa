@@ -122,6 +122,9 @@ pub const IRPrinter = struct {
     last_emitted_enum_value: ?u64 = null,
     enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
 
+    current_function_param_count: u32 = 0,
+    current_function_llvm_param_index: u32 = 0,
+
     const StackType = enum { I64, F64, I8, I1, I2, PTR, Nothing };
     const StackVal = struct {
         name: []const u8,
@@ -132,6 +135,7 @@ pub const IRPrinter = struct {
         struct_field_names: ?[]const []const u8 = null,
         struct_type_name: ?[]const u8 = null,
         string_literal_value: ?[]const u8 = null,
+        type_tag_name: ?[]const u8 = null,
     };
     const VariableInfo = struct {
         ptr_name: []const u8,
@@ -141,6 +145,8 @@ pub const IRPrinter = struct {
         struct_field_types: ?[]HIR.HIRType = null,
         struct_field_names: ?[]const []const u8 = null,
         struct_type_name: ?[]const u8 = null,
+        type_tag_name: ?[]const u8 = null,
+        union_tag_ptr: ?[]const u8 = null,
     };
     const StackIncoming = struct {
         block: []const u8,
@@ -176,6 +182,32 @@ pub const IRPrinter = struct {
             return with_fraction;
         }
         return raw;
+    }
+
+    fn stackTypeToTypeTag(_: *IRPrinter, stack_type: StackType) i64 {
+        return switch (stack_type) {
+            .I64 => 0,
+            .F64 => 1,
+            .I8 => 2,
+            .PTR => 3,
+            .I2 => 7, // bool/tetra fallback
+            .I1 => 7,
+            .Nothing => 8,
+        };
+    }
+
+    fn emitTypeTagConstant(
+        self: *IRPrinter,
+        w: anytype,
+        id: *usize,
+        tag: i64,
+    ) ![]const u8 {
+        const tag_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+        id.* += 1;
+        const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ tag_name, tag });
+        defer self.allocator.free(line);
+        try w.writeAll(line);
+        return tag_name;
     }
 
     fn paramTypeMatchesStack(_: *IRPrinter, param_type: HIR.HIRType, stack_type: StackType) bool {
@@ -757,6 +789,7 @@ pub const IRPrinter = struct {
                         .struct_field_names = top.struct_field_names,
                         .struct_type_name = top.struct_type_name,
                         .string_literal_value = top.string_literal_value,
+                        .type_tag_name = top.type_tag_name,
                     };
                     try stack.append(duped);
                 },
@@ -1414,6 +1447,11 @@ pub const IRPrinter = struct {
                     if (stack.items.len < 1) continue;
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
+                    if (value.type_tag_name) |tag_name| {
+                        std.debug.print("TypeCheck using tag {s} for {s}\n", .{ tag_name, tc.target_type });
+                    } else {
+                        std.debug.print("TypeCheck missing tag for {s}\n", .{tc.target_type});
+                    }
 
                     // Determine value type tag: 0=int, 1=float, 2=byte, 3=string, 4=array, 5=struct, 6=enum
                     const value_type_tag: i64 = switch (value.ty) {
@@ -1448,13 +1486,17 @@ pub const IRPrinter = struct {
                     defer self.allocator.free(target_gep);
                     try w.writeAll(target_gep);
 
-                    // Call runtime type check function
-                    // Allocate type_tag_name first so it gets a lower instruction number
-                    const type_tag_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ type_tag_name, value_type_tag });
-                    defer self.allocator.free(tag_line);
-                    try w.writeAll(tag_line);
+                    // Determine runtime type tag, preferring propagated metadata when available
+                    const type_tag_name = if (value.type_tag_name) |existing|
+                        existing
+                    else blk: {
+                        const tag_temp = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                        id += 1;
+                        const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ tag_temp, value_type_tag });
+                        defer self.allocator.free(tag_line);
+                        try w.writeAll(tag_line);
+                        break :blk tag_temp;
+                    };
 
                     // Now allocate result_name so it gets a higher instruction number
                     const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -1683,12 +1725,16 @@ pub const IRPrinter = struct {
                     for (raw_args.items, 0..) |arg, i| {
                         var declared_type: ?HIR.HIRType = null;
                         var is_alias = false;
+                        var needs_union_tag = false;
                         if (func_info) |info| {
                             if (i < info.param_types.len) {
                                 declared_type = info.param_types[i];
                             }
                             if (i < info.param_is_alias.len) {
                                 is_alias = info.param_is_alias[i];
+                            }
+                            if (i < info.param_is_union.len) {
+                                needs_union_tag = info.param_is_union[i];
                             }
                         }
                         const llvm_ty = blk: {
@@ -1705,6 +1751,15 @@ pub const IRPrinter = struct {
                         };
                         const arg_str = try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ llvm_ty, arg.name });
                         try arg_strings.append(arg_str);
+
+                        if (needs_union_tag) {
+                            const tag_name = if (arg.type_tag_name) |existing|
+                                existing
+                            else
+                                try self.emitTypeTagConstant(w, &id, self.stackTypeToTypeTag(arg.ty));
+                            const tag_arg = try std.fmt.allocPrint(self.allocator, "i64 {s}", .{tag_name});
+                            try arg_strings.append(tag_arg);
+                        }
                     }
 
                     const args_str = if (arg_strings.items.len == 0) "" else try std.mem.join(self.allocator, ", ", arg_strings.items);
@@ -1884,6 +1939,7 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .LoadVar => |lv| {
+                    std.debug.print("LoadVar {s} scope {s}\n", .{ lv.var_name, @tagName(lv.scope_kind) });
                     if (lv.scope_kind == .GlobalLocal) {
                         const gname = lv.var_name;
                         const st = self.global_types.get(gname) orelse .I64;
@@ -1923,6 +1979,7 @@ pub const IRPrinter = struct {
                             .struct_field_types = struct_fields,
                             .struct_field_names = struct_names,
                             .struct_type_name = struct_type_name,
+                            .type_tag_name = lv.type_tag_name,
                         });
                     } else if (variables.get(lv.var_name)) |entry| {
                         const result_name = try self.nextTemp(&id);
@@ -1942,7 +1999,13 @@ pub const IRPrinter = struct {
                             .struct_field_types = entry.struct_field_types,
                             .struct_field_names = entry.struct_field_names,
                             .struct_type_name = entry.struct_type_name,
+                            .type_tag_name = entry.type_tag_name,
                         });
+                        if (entry.type_tag_name) |tag_name| {
+                            std.debug.print("LoadVar {s} tag {s}\n", .{ lv.var_name, tag_name });
+                        } else {
+                            std.debug.print("LoadVar {s} tag <null>\n", .{lv.var_name});
+                        }
                     } else {
                         const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                         id += 1;
@@ -2061,6 +2124,7 @@ pub const IRPrinter = struct {
                             info_ptr.?.struct_field_types = value.struct_field_types;
                             info_ptr.?.struct_field_names = value.struct_field_names;
                             info_ptr.?.struct_type_name = value.struct_type_name;
+                            info_ptr.?.type_tag_name = value.type_tag_name;
                         }
                         const store_line = try std.fmt.allocPrint(
                             self.allocator,
@@ -2128,6 +2192,7 @@ pub const IRPrinter = struct {
                             info_ptr.?.struct_field_types = value.struct_field_types;
                             info_ptr.?.struct_field_names = value.struct_field_names;
                             info_ptr.?.struct_type_name = value.struct_type_name;
+                            info_ptr.?.type_tag_name = value.type_tag_name;
                         }
                         const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info_ptr.?.ptr_name });
                         defer self.allocator.free(store_line);
@@ -2201,6 +2266,7 @@ pub const IRPrinter = struct {
                             info_ptr.?.struct_field_types = value.struct_field_types;
                             info_ptr.?.struct_field_names = value.struct_field_names;
                             info_ptr.?.struct_type_name = value.struct_type_name;
+                            info_ptr.?.type_tag_name = value.type_tag_name;
                         }
                         const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info_ptr.?.ptr_name });
                         defer self.allocator.free(store_line);
@@ -2256,7 +2322,7 @@ pub const IRPrinter = struct {
                             const call_line = try std.fmt.allocPrint(
                                 self.allocator,
                                 "  {s} = call ptr @doxa_array_concat(ptr {s}, ptr {s}, i64 {d}, i64 {d})\n",
-                                .{concat_reg, lhs.name, rhs.name, elem_size, elem_tag},
+                                .{ concat_reg, lhs.name, rhs.name, elem_size, elem_tag },
                             );
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
@@ -2478,12 +2544,21 @@ pub const IRPrinter = struct {
 
         var param_strs = std.array_list.Managed([]const u8).init(self.allocator);
         defer {
-            for (param_strs.items) |param_str| {
-                self.allocator.free(param_str);
-            }
+            for (param_strs.items) |param_str| self.allocator.free(param_str);
             param_strs.deinit();
         }
 
+        const param_count = func.param_types.len;
+        var param_value_names = try self.allocator.alloc([]const u8, param_count);
+        var param_tag_names = try self.allocator.alloc(?[]const u8, param_count);
+        defer {
+            for (param_value_names) |name| self.allocator.free(name);
+            for (param_tag_names) |maybe_name| if (maybe_name) |name| self.allocator.free(name);
+            self.allocator.free(param_value_names);
+            self.allocator.free(param_tag_names);
+        }
+
+        var total_params: usize = 0;
         for (func.param_types, 0..) |param_type, param_idx| {
             const is_alias = if (param_idx < func.param_is_alias.len) func.param_is_alias[param_idx] else false;
             const param_type_str = if (is_alias) "ptr" else switch (param_type) {
@@ -2500,8 +2575,22 @@ pub const IRPrinter = struct {
                 .Union => "ptr",
                 else => "i64",
             };
-            const param_str = try std.fmt.allocPrint(self.allocator, "{s} %{d}", .{ param_type_str, param_idx });
-            try param_strs.append(param_str);
+            const value_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{total_params});
+            total_params += 1;
+            param_value_names[param_idx] = value_name;
+            const param_decl = try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ param_type_str, value_name });
+            try param_strs.append(param_decl);
+
+            const needs_union_tag = param_idx < func.param_is_union.len and func.param_is_union[param_idx];
+            if (needs_union_tag) {
+                const tag_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{total_params});
+                total_params += 1;
+                param_tag_names[param_idx] = tag_name;
+                const tag_decl = try std.fmt.allocPrint(self.allocator, "i64 {s}", .{tag_name});
+                try param_strs.append(tag_decl);
+            } else {
+                param_tag_names[param_idx] = null;
+            }
         }
 
         const params_str = if (param_strs.items.len == 0) "" else try std.mem.join(self.allocator, ", ", param_strs.items);
@@ -2553,7 +2642,7 @@ pub const IRPrinter = struct {
         }
 
         // Process function body instructions
-        var id: usize = func.param_types.len; // Start after parameters
+        var id: usize = total_params; // Start after parameters (include union tags)
         var stack = std.array_list.Managed(StackVal).init(self.allocator);
         defer stack.deinit();
         var merge_map = std.StringHashMap(StackMergeState).init(self.allocator);
@@ -2576,7 +2665,7 @@ pub const IRPrinter = struct {
 
         // Add parameters to stack
         for (func.param_types, 0..) |param_type, param_idx| {
-            const param_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{param_idx});
+            const param_name = param_value_names[param_idx];
             // Check if this is an alias parameter
             const is_alias = if (param_idx < func.param_is_alias.len) func.param_is_alias[param_idx] else false;
             const stack_type = if (is_alias) .PTR else self.hirTypeToStackType(param_type);
@@ -2584,7 +2673,12 @@ pub const IRPrinter = struct {
                 .Array => |inner| inner.*,
                 else => null,
             };
-            try stack.append(.{ .name = param_name, .ty = stack_type, .array_type = array_hint });
+            try stack.append(.{
+                .name = param_name,
+                .ty = stack_type,
+                .array_type = array_hint,
+                .type_tag_name = param_tag_names[param_idx],
+            });
         }
 
         // Process function body instructions
@@ -2924,6 +3018,10 @@ pub const IRPrinter = struct {
                         .array_type = top.array_type,
                         .enum_type_name = top.enum_type_name,
                         .struct_field_types = top.struct_field_types, // Copy the pointer reference
+                        .struct_field_names = top.struct_field_names,
+                        .struct_type_name = top.struct_type_name,
+                        .string_literal_value = top.string_literal_value,
+                        .type_tag_name = top.type_tag_name,
                     };
                     try stack.append(duped);
                     last_instruction_was_terminator = false;
@@ -3345,22 +3443,49 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .StoreVar => |sv| {
-                    if (stack.items.len < 1) continue;
-                    const value = stack.items[stack.items.len - 1];
-                    stack.items.len -= 1;
+                    const value = if (stack.items.len >= 1) blk: {
+                        const v = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        break :blk v;
+                    } else blk: {
+                        // Parameter StoreVar - create a synthetic value for the LLVM parameter
+                        const param_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{self.current_function_llvm_param_index});
+                        self.current_function_llvm_param_index += 1;
+                        const param_type = self.hirTypeToStackType(sv.expected_type);
+                        break :blk StackVal{ .name = param_name, .ty = param_type, .type_tag_name = sv.type_tag_name };
+                    };
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
+                    if (value.type_tag_name) |tag_name| {
+                        std.debug.print("StoreVar {s} tag {s}\n", .{ sv.var_name, tag_name });
+                    } else {
+                        std.debug.print("StoreVar {s} tag <null>\n", .{sv.var_name});
+                    }
                     var info_ptr = variables.getPtr(sv.var_name);
                     if (info_ptr == null) {
                         const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sv.var_name});
                         const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
                         defer self.allocator.free(alloca_line);
                         try w.writeAll(alloca_line);
-                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = value.ty, .array_type = value.array_type };
+                        const info = VariableInfo{
+                            .ptr_name = ptr_name,
+                            .stack_type = value.ty,
+                            .array_type = value.array_type,
+                            .enum_type_name = value.enum_type_name,
+                            .struct_field_types = value.struct_field_types,
+                            .struct_field_names = value.struct_field_names,
+                            .struct_type_name = value.struct_type_name,
+                            .type_tag_name = value.type_tag_name,
+                        };
                         try variables.put(sv.var_name, info);
                         info_ptr = variables.getPtr(sv.var_name);
                     } else {
                         info_ptr.?.stack_type = value.ty;
                         info_ptr.?.array_type = value.array_type;
+                        info_ptr.?.enum_type_name = value.enum_type_name;
+                        info_ptr.?.struct_field_types = value.struct_field_types;
+                        info_ptr.?.struct_field_names = value.struct_field_names;
+                        info_ptr.?.struct_type_name = value.struct_type_name;
+                        info_ptr.?.type_tag_name = value.type_tag_name;
                     }
                     const store_line = try std.fmt.allocPrint(
                         self.allocator,
@@ -3372,9 +3497,17 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .StoreDecl => |sd| {
-                    if (stack.items.len < 1) continue;
-                    const value = stack.items[stack.items.len - 1];
-                    stack.items.len -= 1;
+                    const value = if (stack.items.len >= 1) blk: {
+                        const v = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        break :blk v;
+                    } else blk: {
+                        // Parameter StoreVar - create a synthetic value for the LLVM parameter
+                        const param_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{self.current_function_llvm_param_index});
+                        self.current_function_llvm_param_index += 1;
+                        const param_type = self.hirTypeToStackType(sv.expected_type);
+                        break :blk StackVal{ .name = param_name, .ty = param_type, .type_tag_name = sv.type_tag_name };
+                    };
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     var info_ptr = variables.getPtr(sd.var_name);
                     if (info_ptr == null) {
@@ -3382,12 +3515,26 @@ pub const IRPrinter = struct {
                         const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
                         defer self.allocator.free(alloca_line);
                         try w.writeAll(alloca_line);
-                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = value.ty, .array_type = value.array_type };
+                        const info = VariableInfo{
+                            .ptr_name = ptr_name,
+                            .stack_type = value.ty,
+                            .array_type = value.array_type,
+                            .enum_type_name = value.enum_type_name,
+                            .struct_field_types = value.struct_field_types,
+                            .struct_field_names = value.struct_field_names,
+                            .struct_type_name = value.struct_type_name,
+                            .type_tag_name = value.type_tag_name,
+                        };
                         try variables.put(sd.var_name, info);
                         info_ptr = variables.getPtr(sd.var_name);
                     } else {
                         info_ptr.?.stack_type = value.ty;
                         info_ptr.?.array_type = value.array_type;
+                        info_ptr.?.enum_type_name = value.enum_type_name;
+                        info_ptr.?.struct_field_types = value.struct_field_types;
+                        info_ptr.?.struct_field_names = value.struct_field_names;
+                        info_ptr.?.struct_type_name = value.struct_type_name;
+                        info_ptr.?.type_tag_name = value.type_tag_name;
                     }
                     const store_line = try std.fmt.allocPrint(
                         self.allocator,
@@ -3399,9 +3546,17 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .StoreConst => |sc| {
-                    if (stack.items.len < 1) continue;
-                    const value = stack.items[stack.items.len - 1];
-                    stack.items.len -= 1;
+                    const value = if (stack.items.len >= 1) blk: {
+                        const v = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        break :blk v;
+                    } else blk: {
+                        // Parameter StoreVar - create a synthetic value for the LLVM parameter
+                        const param_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{self.current_function_llvm_param_index});
+                        self.current_function_llvm_param_index += 1;
+                        const param_type = self.hirTypeToStackType(sv.expected_type);
+                        break :blk StackVal{ .name = param_name, .ty = param_type, .type_tag_name = sv.type_tag_name };
+                    };
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     var info_ptr = variables.getPtr(sc.var_name);
                     if (info_ptr == null) {
@@ -3412,6 +3567,10 @@ pub const IRPrinter = struct {
                         info_ptr.?.stack_type = value.ty;
                         info_ptr.?.array_type = value.array_type;
                         info_ptr.?.enum_type_name = value.enum_type_name;
+                        info_ptr.?.struct_field_types = value.struct_field_types;
+                        info_ptr.?.struct_field_names = value.struct_field_names;
+                        info_ptr.?.struct_type_name = value.struct_type_name;
+                        info_ptr.?.type_tag_name = value.type_tag_name;
                     }
                     const store_line = try std.fmt.allocPrint(
                         self.allocator,
@@ -3432,9 +3591,22 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .TypeCheck => |tc| {
-                    if (stack.items.len < 1) continue;
-                    const value = stack.items[stack.items.len - 1];
-                    stack.items.len -= 1;
+                    const value = if (stack.items.len >= 1) blk: {
+                        const v = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        break :blk v;
+                    } else blk: {
+                        // Parameter StoreVar - create a synthetic value for the LLVM parameter
+                        const param_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{self.current_function_llvm_param_index});
+                        self.current_function_llvm_param_index += 1;
+                        const param_type = self.hirTypeToStackType(sv.expected_type);
+                        break :blk StackVal{ .name = param_name, .ty = param_type, .type_tag_name = sv.type_tag_name };
+                    };
+                    if (value.type_tag_name) |tag_name| {
+                        std.debug.print("TypeCheck2 using tag {s} for {s}\n", .{ tag_name, tc.target_type });
+                    } else {
+                        std.debug.print("TypeCheck2 missing tag for {s}\n", .{tc.target_type});
+                    }
 
                     // Determine value type tag: 0=int, 1=float, 2=byte, 3=string, 4=array, 5=struct, 6=enum
                     const value_type_tag: i64 = switch (value.ty) {
@@ -3470,12 +3642,10 @@ pub const IRPrinter = struct {
                     try w.writeAll(target_gep);
 
                     // Call runtime type check function
-                    // Allocate type_tag_name first so it gets a lower instruction number
-                    const type_tag_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ type_tag_name, value_type_tag });
-                    defer self.allocator.free(tag_line);
-                    try w.writeAll(tag_line);
+                    const type_tag_name = if (value.type_tag_name) |existing|
+                        existing
+                    else
+                        try self.emitTypeTagConstant(w, &id, value_type_tag);
 
                     // Now allocate result_name so it gets a higher instruction number
                     const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -3642,9 +3812,17 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .StoreAlias => |sa| {
-                    if (stack.items.len < 1) continue;
-                    const value = stack.items[stack.items.len - 1];
-                    stack.items.len -= 1;
+                    const value = if (stack.items.len >= 1) blk: {
+                        const v = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        break :blk v;
+                    } else blk: {
+                        // Parameter StoreVar - create a synthetic value for the LLVM parameter
+                        const param_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{self.current_function_llvm_param_index});
+                        self.current_function_llvm_param_index += 1;
+                        const param_type = self.hirTypeToStackType(sv.expected_type);
+                        break :blk StackVal{ .name = param_name, .ty = param_type, .type_tag_name = sv.type_tag_name };
+                    };
                     if (alias_slots.get(sa.slot_index)) |info| {
                         const llvm_ty = self.hirTypeToLLVMType(info.pointee_type, false);
                         const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info.ptr_name });
@@ -3701,6 +3879,8 @@ pub const IRPrinter = struct {
                 .EnterScope => |_| {
                     // EnterScope is a no-op in LLVM IR generation
                     // It's used for scope tracking but doesn't generate LLVM IR
+                    // Reset LLVM parameter index for function parameter handling
+                    self.current_function_llvm_param_index = 0;
                     last_instruction_was_terminator = false;
                 },
                 .ExitScope => |_| {
@@ -4021,21 +4201,21 @@ pub const IRPrinter = struct {
                 const widen_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext {s} {s} to i64\n", .{ widened, src_ty, value.name });
                 defer self.allocator.free(widen_line);
                 try w.writeAll(widen_line);
-                return .{ .name = widened, .ty = .I64 };
+                return .{ .name = widened, .ty = .I64, .type_tag_name = value.type_tag_name };
             },
             .PTR => {
                 const tmp = try self.nextTemp(id);
                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ tmp, value.name });
                 defer self.allocator.free(line);
                 try w.writeAll(line);
-                return .{ .name = tmp, .ty = .I64 };
+                return .{ .name = tmp, .ty = .I64, .type_tag_name = value.type_tag_name };
             },
             .F64 => {
                 const tmp = try self.nextTemp(id);
                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast double {s} to i64\n", .{ tmp, value.name });
                 defer self.allocator.free(line);
                 try w.writeAll(line);
-                return .{ .name = tmp, .ty = .I64 };
+                return .{ .name = tmp, .ty = .I64, .type_tag_name = value.type_tag_name };
             },
             else => return value,
         }
@@ -6090,22 +6270,7 @@ pub const IRPrinter = struct {
     }
 
     fn hirTypeToLLVMType(self: *IRPrinter, hir_type: HIR.HIRType, as_pointer: bool) []const u8 {
-        _ = self;
-        if (as_pointer) return "ptr";
-        return switch (hir_type) {
-            .Int => "i64",
-            .Float => "double",
-            .Byte => "i8",
-            .Tetra => "i2",
-            .String => "ptr",
-            .Array => "ptr",
-            .Map => "ptr",
-            .Struct => "ptr",
-            .Enum => "ptr",
-            .Function => "ptr",
-            .Union => "ptr",
-            .Nothing => "void",
-            else => "i64",
-        };
+        _ = as_pointer;
+        return self.stackTypeToLLVMType(self.hirTypeToStackType(hir_type));
     }
 };

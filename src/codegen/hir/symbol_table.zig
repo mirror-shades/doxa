@@ -18,6 +18,8 @@ pub const SymbolTable = struct {
 
     variable_union_members_by_index: std.AutoHashMap(u32, [][]const u8),
 
+    variable_union_tags: std.StringHashMap([]const u8), // Maps union var name to tag var name
+
     alias_parameters: std.StringHashMap(void),
 
     current_function: ?[]const u8,
@@ -35,6 +37,7 @@ pub const SymbolTable = struct {
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
             .variable_array_storage = std.StringHashMap(ArrayStorageKind).init(allocator),
             .variable_union_members_by_index = std.AutoHashMap(u32, [][]const u8).init(allocator),
+            .variable_union_tags = std.StringHashMap([]const u8).init(allocator),
             .alias_parameters = std.StringHashMap(void).init(allocator),
             .current_function = null,
             .allocator = allocator,
@@ -49,6 +52,7 @@ pub const SymbolTable = struct {
         self.variable_array_element_types.deinit();
         self.variable_array_storage.deinit();
         self.variable_union_members_by_index.deinit();
+        self.variable_union_tags.deinit();
         self.alias_parameters.deinit();
     }
 
@@ -239,5 +243,15 @@ pub const SymbolTable = struct {
     /// Get union members by variable index
     pub fn getUnionMembersByIndex(self: *SymbolTable, var_index: u32) ?[][]const u8 {
         return self.variable_union_members_by_index.get(var_index);
+    }
+
+    /// Track union tag variable for a union parameter
+    pub fn trackUnionTag(self: *SymbolTable, var_name: []const u8, tag_var_name: []const u8) !void {
+        try self.variable_union_tags.put(var_name, tag_var_name);
+    }
+
+    /// Get union tag variable name for a union parameter
+    pub fn getUnionTagVariable(self: *SymbolTable, var_name: []const u8) ?[]const u8 {
+        return self.variable_union_tags.get(var_name);
     }
 };

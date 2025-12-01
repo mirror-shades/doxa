@@ -131,6 +131,7 @@ pub const AssignmentsHandler = struct {
             .scope_kind = scope_kind,
             .module_context = null,
             .expected_type = assigned_type,
+            .type_tag_name = null,
         } });
     }
 
@@ -168,6 +169,7 @@ pub const AssignmentsHandler = struct {
                     .var_name = compound.name.lexeme,
                     .scope_kind = scope_kind,
                     .module_context = null,
+                    .type_tag_name = self.generator.symbol_table.getUnionTagVariable(compound.name.lexeme),
                 },
             });
         }
@@ -254,6 +256,7 @@ pub const AssignmentsHandler = struct {
                 .scope_kind = scope_kind,
                 .module_context = null,
                 .expected_type = expected_type,
+                .type_tag_name = null,
             } });
         }
     }

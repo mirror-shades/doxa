@@ -76,6 +76,7 @@ pub const HIRInstruction = union(enum) {
         var_name: []const u8, // LLVM: Symbol table lookup
         scope_kind: ScopeKind, // Resolution context
         module_context: ?[]const u8, // For imported variables
+        type_tag_name: ?[]const u8, // For union variables: name of the tag variable
     },
 
     /// Store to variable
@@ -87,6 +88,7 @@ pub const HIRInstruction = union(enum) {
         scope_kind: ScopeKind,
         module_context: ?[]const u8,
         expected_type: HIRType, // Add expected type for coercion
+        type_tag_name: ?[]const u8, // For union variables: name of the tag variable
     },
 
     /// Store constant (one-time assignment)

@@ -386,6 +386,7 @@ pub const CollectionsHandler = struct {
                                             .var_name = var_name,
                                             .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                                             .module_context = null,
+                                            .type_tag_name = self.generator.symbol_table.getUnionTagVariable(var_name),
                                         },
                                     });
                                 } else {
@@ -444,6 +445,7 @@ pub const CollectionsHandler = struct {
                                             .var_name = var_name,
                                             .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                                             .module_context = null,
+                                            .type_tag_name = self.generator.symbol_table.getUnionTagVariable(var_name),
                                         },
                                     });
                                 } else {
@@ -549,6 +551,7 @@ pub const CollectionsHandler = struct {
                                             .var_name = var_name,
                                             .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                                             .module_context = null,
+                                            .type_tag_name = self.generator.symbol_table.getUnionTagVariable(var_name),
                                         },
                                     });
                                 } else {
@@ -607,6 +610,7 @@ pub const CollectionsHandler = struct {
                                             .var_name = var_name,
                                             .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                                             .module_context = null,
+                                            .type_tag_name = self.generator.symbol_table.getUnionTagVariable(var_name),
                                         },
                                     });
                                 } else {
@@ -680,6 +684,7 @@ pub const CollectionsHandler = struct {
                     .var_name = var_name,
                     .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                     .module_context = null,
+                    .type_tag_name = self.generator.symbol_table.getUnionTagVariable(var_name),
                 },
             });
 
@@ -735,6 +740,7 @@ pub const CollectionsHandler = struct {
                     .var_name = var_name,
                     .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                     .module_context = null,
+                    .type_tag_name = self.generator.symbol_table.getUnionTagVariable(var_name),
                 },
             });
 
