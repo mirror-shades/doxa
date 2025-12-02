@@ -620,6 +620,36 @@ pub const TypeSystem = struct {
                 }
                 return .Unknown;
             },
+            .If => |if_expr| {
+                // Infer type from the then branch (and else branch if it exists)
+                if (if_expr.then_branch) |then_branch| {
+                    const then_type = self.inferTypeFromExpression(then_branch, symbol_table);
+                    if (if_expr.else_branch) |else_branch| {
+                        const else_type = self.inferTypeFromExpression(else_branch, symbol_table);
+                        // Try to find a common type
+                        if (@as(std.meta.Tag(HIRType), then_type) == @as(std.meta.Tag(HIRType), else_type)) {
+                            return then_type;
+                        }
+                        // For numeric types, try to find common type
+                        const then_tag = @as(std.meta.Tag(HIRType), then_type);
+                        const else_tag = @as(std.meta.Tag(HIRType), else_type);
+                        if ((then_tag == .Int or then_tag == .Float or then_tag == .Byte) and
+                            (else_tag == .Int or else_tag == .Float or else_tag == .Byte))
+                        {
+                            // Use computeNumericCommonType to find common type
+                            // We need a dummy operator type - use PLUS as it's the most permissive
+                            const common_type = self.computeNumericCommonType(then_type, else_type, .PLUS);
+                            if (common_type != .Unknown) {
+                                return common_type;
+                            }
+                        }
+                        // Default to then_type if we can't find a common type
+                        return then_type;
+                    }
+                    return then_type;
+                }
+                return .Unknown;
+            },
             else => .String,
         };
         return result;

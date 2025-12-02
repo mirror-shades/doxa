@@ -11,6 +11,13 @@ const HIRMapEntry = @import("soxa_generator.zig").HIRMapEntry;
 const SoxaTypes = @import("soxa_types.zig");
 const ScopeKind = SoxaTypes.ScopeKind;
 
+fn isLiteralExpression(expr: *ast.Expr) bool {
+    return switch (expr.data) {
+        .Literal => true,
+        else => false,
+    };
+}
+
 pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || ErrorList)!void {
     switch (stmt.data) {
         .Expression => |expr| {
@@ -369,15 +376,31 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
 
             if (!decl.type_info.is_mutable) {
+                // Check if the initializer is a literal (compile-time constant)
+                const is_literal = if (decl.initializer) |init_expr| isLiteralExpression(init_expr) else false;
+
                 const is_module_ctx = self.current_function == null and self.isModuleContext();
                 const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);
 
-                try self.instructions.append(.{ .StoreConst = .{
-                    .var_index = var_idx,
-                    .var_name = decl.name.lexeme,
-                    .scope_kind = scope_kind,
-                    .module_context = null,
-                } });
+                if (is_literal) {
+                    // For literal constants, use StoreConst
+                    try self.instructions.append(.{ .StoreConst = .{
+                        .var_index = var_idx,
+                        .var_name = decl.name.lexeme,
+                        .scope_kind = scope_kind,
+                        .module_context = null,
+                    } });
+                } else {
+                    // For non-literal const declarations, use StoreDecl with is_const = true
+                    try self.instructions.append(.{ .StoreDecl = .{
+                        .var_index = var_idx,
+                        .var_name = decl.name.lexeme,
+                        .scope_kind = scope_kind,
+                        .module_context = null,
+                        .declared_type = var_type,
+                        .is_const = true,
+                    } });
+                }
                 if (self.current_function == null) {
                     try self.instructions.append(.Pop);
                 }

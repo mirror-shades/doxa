@@ -1,38 +1,36 @@
 entry function main() {
-    // this is looking in the working directory, not the file directory
     const input is @read("./advent.txt")
-    var count is 50
-    var new_count is count
+    var new_count is 50
+    var previous_count is 50
     var zeroes_hit :: int
     
     for c while c < @length(input) do c += 1 {
         if input[c] == "L" or input[c] == "R" then {
-            // this is not inferred correctly, needed to use explicit typing to coerce it from string
-            var mod :: int is if input[c] == "R" then 1 else -1
+            var mod is if input[c] == "R" then 1 else -1
             var s_num :: string
             c += 1
             while input[c] != "\n" do c += 1 {
                 s_num += input[c]
             }
             const num is @int(s_num)
-            count is new_count
+            previous_count is new_count
             new_count += num * mod
-            if new_count > count then {
-                count += 1
-                while count <= new_count do count += 1 {
-                    if(count % 100 == 0) then {
+            var _count is previous_count
+            if new_count > previous_count then {
+                _count += 1
+                while _count <= new_count do _count += 1 {
+                    if(_count % 100 == 0) then {
                         zeroes_hit += 1
                     }
                 }
             } else {
-                count -= 1
-                while count >= new_count do count -= 1 {
-                    if(count % 100 == 0) then {
+                _count -= 1
+                while _count >= new_count do _count -= 1 {
+                    if(_count % 100 == 0) then {
                         zeroes_hit += 1
                     }
                 }
             }
         }
     } 
-    @print("Zeroes hit: {zeroes_hit}\n")
 }
