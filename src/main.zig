@@ -569,6 +569,7 @@ pub fn main() !void {
         };
 
         var bytecode_generator = BytecodeGenerator.init(memoryManager.getExecutionAllocator(), "out", artifact_stem);
+        bytecode_generator.source_path = path;
         var bytecode_module = try bytecode_generator.generate(&hir_program);
         defer bytecode_module.deinit();
 

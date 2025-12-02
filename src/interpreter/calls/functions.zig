@@ -319,7 +319,7 @@ pub const FunctionOps = struct {
                 }
                 // Clear modifies in place and returns nothing
             },
-            .string => |s_val| {
+            .string => {
                 // Strings are immutable, so clear on string should report an error
                 return vm.reporter.reportRuntimeError(
                     null,

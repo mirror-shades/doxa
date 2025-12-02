@@ -756,6 +756,8 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.RANDOM, .nothing);
         } else if (std.mem.eql(u8, method_name, "build")) {
             try self.addToken(.BUILD, .nothing);
+        } else if (std.mem.eql(u8, method_name, "read")) {
+            try self.addToken(.READ, .nothing);
         } else {
             return error.InvalidInternalMethod;
         }

@@ -225,6 +225,7 @@ pub const BytecodeModule = struct {
     functions: []BytecodeFunction,
     modules: []ModuleDescriptor,
     artifact_path: ?[]u8 = null,
+    source_path: ?[]const u8 = null,
 
     /// Caller is responsible for ensuring the backing HIR program remains
     /// alive for the lifetime of the bytecode module. We only free the data
@@ -240,6 +241,10 @@ pub const BytecodeModule = struct {
         if (self.artifact_path) |path| {
             self.allocator.free(path);
             self.artifact_path = null;
+        }
+        if (self.source_path) |path| {
+            self.allocator.free(path);
+            self.source_path = null;
         }
     }
 };

@@ -7,12 +7,14 @@ pub const BytecodeGenerator = struct {
     allocator: std.mem.Allocator,
     artifact_dir: []const u8,
     artifact_stem: []const u8,
+    source_path: ?[]const u8 = null,
 
     pub fn init(allocator: std.mem.Allocator, artifact_dir: []const u8, artifact_stem: []const u8) BytecodeGenerator {
         return BytecodeGenerator{
             .allocator = allocator,
             .artifact_dir = artifact_dir,
             .artifact_stem = artifact_stem,
+            .source_path = null,
         };
     }
 
@@ -30,6 +32,11 @@ pub const BytecodeGenerator = struct {
 
         const artifact_path = try self.buildArtifactPath(program);
 
+        var source_path_copy: ?[]const u8 = null;
+        if (self.source_path) |path| {
+            source_path_copy = try self.allocator.dupe(u8, path);
+        }
+
         return module.BytecodeModule{
             .allocator = self.allocator,
             .spec_version = module.SpecVersion,
@@ -39,6 +46,7 @@ pub const BytecodeGenerator = struct {
             .functions = functions,
             .modules = modules,
             .artifact_path = artifact_path,
+            .source_path = source_path_copy,
         };
     }
 

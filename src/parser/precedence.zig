@@ -239,6 +239,7 @@ pub const rules = blk: {
     r.set(.TIME, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.TICK, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.BUILD, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.READ, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Add cast operator support
     r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });
@@ -268,7 +269,6 @@ pub fn getRule(token_type: token.TokenType) ParseRule {
 pub fn parsePrecedence(self: *Parser, precedence_level: Precedence) ErrorList!?*ast.Expr {
     const current_token = self.peek();
     const prefix_rule = getRule(current_token.type).prefix;
-
 
     if (prefix_rule == null) {
         return null;

@@ -18,7 +18,6 @@ const Parser = @import("parser_types.zig").Parser;
 pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
 
-
     if (method_tok.type == .PRINT) {
         return try parsePrintMethod(self);
     }
@@ -45,6 +44,10 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
 
     if (method_tok.type == .BUILD) {
         return try parseBuildMethod(self);
+    }
+
+    if (method_tok.type == .READ) {
+        return try parseReadMethod(self);
     }
 
     self.advance();
@@ -111,7 +114,6 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
             .arguments = try call_args.toOwnedSlice(),
         } },
     };
-
 
     return method_expr;
 }
@@ -501,4 +503,35 @@ pub fn parseBuildMethod(self: *Parser) ErrorList!?*ast.Expr {
     };
 
     return build_expr;
+}
+
+pub fn parseReadMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance();
+
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    const path_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    const arguments = try self.allocator.alloc(*ast.Expr, 1);
+    arguments[0] = path_expr;
+
+    const read_expr = try self.allocator.create(ast.Expr);
+    read_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = arguments,
+        } },
+    };
+
+    return read_expr;
 }
