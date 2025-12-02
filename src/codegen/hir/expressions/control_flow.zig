@@ -420,22 +420,11 @@ pub const ControlFlowHandler = struct {
         // Body
         try self.generator.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
 
-        // Enter per-iteration scope to ensure locals/consts do not leak across iterations
-        var iteration_scope_id: u32 = 0;
-        if (self.generator.current_function != null) {
-            iteration_scope_id = self.generator.label_generator.label_count + 2000;
-            try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = iteration_scope_id, .var_count = 0 } });
-        }
-
+        // Generate body without per-iteration scope to avoid memory accumulation
         try self.generator.generateExpression(loop.body, false, false);
 
         // Step
         try self.generator.instructions.append(.{ .Label = .{ .name = loop_step_label, .vm_address = 0 } });
-
-        // Exit per-iteration scope before executing the step
-        if (self.generator.current_function != null) {
-            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = iteration_scope_id } });
-        }
         if (loop.step) |step_expr| {
             try self.generator.generateExpression(step_expr, false, false);
         }
