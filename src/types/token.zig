@@ -95,6 +95,7 @@ pub const TokenType = enum {
     ASSERT, // @assert      - assert condition with message
     PANIC, // @panic       - panic with message
     INPUT, // @input       - read from stdin
+    READ, // @read       - read file contents
     OS, // @os     - get operating system
     ARCH, // @arch     - get architecture
     ABI, // @abi     - get ABI

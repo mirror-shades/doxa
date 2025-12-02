@@ -1188,6 +1188,41 @@ pub const VM = struct {
             return;
         }
 
+        if (std.mem.eql(u8, name, "read")) {
+            if (arg_count != 1) {
+                return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT_COUNT, "@read expects 1 argument", .{});
+            }
+
+            const path_frame = try self.stack.pop();
+            const path = switch (path_frame.value) {
+                .string => |s| s,
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@read: argument must be string", .{}),
+            };
+
+            // Resolve path relative to source file if available, otherwise use cwd
+            const source_dir = if (self.bytecode.source_path) |source_path|
+                std.fs.path.dirname(source_path) orelse "."
+            else
+                ".";
+
+            const resolved_path = try std.fs.path.resolve(self.allocator, &[_][]const u8{ source_dir, path });
+            defer self.allocator.free(resolved_path);
+
+            const file = std.fs.cwd().openFile(resolved_path, .{}) catch |err| {
+                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@read: failed to open file '{s}': {s}", .{ resolved_path, @errorName(err) });
+            };
+            defer file.close();
+
+            const content = file.readToEndAlloc(self.allocator, std.math.maxInt(usize)) catch |err| {
+                return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@read: failed to read file '{s}': {s}", .{ path, @errorName(err) });
+            };
+            defer self.allocator.free(content);
+
+            const duped = try self.allocator.dupe(u8, content);
+            try self.stack.push(HIRFrame.initString(duped));
+            return;
+        }
+
         if (std.mem.eql(u8, name, "os")) {
             const os_name = @tagName(@import("builtin").os.tag);
             const duped = try self.allocator.dupe(u8, os_name);

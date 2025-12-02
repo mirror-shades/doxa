@@ -63,6 +63,7 @@ pub fn getMethodInfo(method_type: token.TokenType) ?*const BuiltinMethodInfo {
         .EXIT => &METHODS[23],
         .SLEEP => &METHODS[24],
         .BUILD => &METHODS[25],
+        .READ => &METHODS[26],
         else => null,
     };
 }
@@ -398,5 +399,14 @@ const METHODS = [_]BuiltinMethodInfo{
         },
         .return_type = T.Int,
         .can_panic = false, // Returns exit code, doesn't panic
+    },
+    // @read - string -> string
+    .{
+        .name = "read",
+        .arg_count_min = 1,
+        .arg_count_max = 1,
+        .input_types = &[_]InputTypeSpec{Input{ .Single = T.String }},
+        .return_type = T.String,
+        .can_panic = true, // Can panic if file not found or can't be read
     },
 };

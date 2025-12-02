@@ -617,7 +617,8 @@ pub const CallsHandler = struct {
             std.mem.eql(u8, name, "random") or
             std.mem.eql(u8, name, "exit") or
             std.mem.eql(u8, name, "sleep") or
-            std.mem.eql(u8, name, "build"))
+            std.mem.eql(u8, name, "build") or
+            std.mem.eql(u8, name, "read"))
         {
             // Use centralized data structure for simple builtin calls
             _ = try self.generateSimpleBuiltinCall(name, builtin_data.arguments);

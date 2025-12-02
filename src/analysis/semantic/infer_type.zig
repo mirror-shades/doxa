@@ -258,10 +258,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 if (method_table.get(method_name)) |method_info| {
                                     if (method_info.is_static) {
                                         type_info.* = method_info.return_type.*;
-        return type_info;
-    }
-}
-
+                                        return type_info;
+                                    }
+                                }
                             }
                         }
                     }
@@ -1154,7 +1153,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 std.mem.eql(u8, fname, "abi") or
                 std.mem.eql(u8, fname, "time") or
                 std.mem.eql(u8, fname, "tick") or
-                std.mem.eql(u8, fname, "random"))
+                std.mem.eql(u8, fname, "random") or
+                std.mem.eql(u8, fname, "read"))
             {
                 // Simple builtins: validate args and return type from centralized data
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
