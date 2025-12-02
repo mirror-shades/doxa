@@ -30,20 +30,23 @@ fn convertToInt(vm: anytype, value: HIRValue) ErrorList!i64 {
             break :blk @as(i64, @intFromFloat(f));
         },
         .string => |s_val| blk: {
-            if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
-                const hex_str = s_val[2..];
+            // Trim leading and trailing whitespace
+            const trimmed = std.mem.trim(u8, s_val, &std.ascii.whitespace);
+
+            if (trimmed.len > 2 and std.mem.eql(u8, trimmed[0..2], "0x")) {
+                const hex_str = trimmed[2..];
                 const parsed_hex = std.fmt.parseInt(i64, hex_str, 16) catch {
                     return runtimePanic(vm, ErrorList.InvalidNumber, ErrorCode.INVALID_ARGUMENT, "@int: invalid hex literal '{s}'", .{s_val});
                 };
                 break :blk parsed_hex;
             }
 
-            const parsed_int_opt: ?i64 = std.fmt.parseInt(i64, s_val, 10) catch null;
+            const parsed_int_opt: ?i64 = std.fmt.parseInt(i64, trimmed, 10) catch null;
             if (parsed_int_opt) |parsed_int| {
                 break :blk parsed_int;
             }
 
-            const parsed_float = std.fmt.parseFloat(f64, s_val) catch {
+            const parsed_float = std.fmt.parseFloat(f64, trimmed) catch {
                 return runtimePanic(vm, ErrorList.InvalidNumber, ErrorCode.INVALID_ARGUMENT, "@int: failed to parse '{s}'", .{s_val});
             };
             if (!std.math.isFinite(parsed_float)) {
