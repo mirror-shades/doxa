@@ -39,23 +39,24 @@ pub const ScopeRecord = struct {
     alias_slots: Managed(module.SlotIndex),
     catch_target: ?usize = null,
     defer_actions: Managed(DeferAction),
-    arena: std.heap.ArenaAllocator,
+    scope: *Memory.Scope,
 
-    fn init(allocator: std.mem.Allocator, id: u32, var_count: u32) ScopeRecord {
+    fn init(allocator: std.mem.Allocator, id: u32, var_count: u32, scope: *Memory.Scope) ScopeRecord {
         return ScopeRecord{
             .id = id,
             .var_count = var_count,
             .alias_slots = Managed(module.SlotIndex).init(allocator),
             .catch_target = null,
             .defer_actions = Managed(DeferAction).init(allocator),
-            .arena = std.heap.ArenaAllocator.init(allocator),
+            .scope = scope,
         };
     }
 
     fn deinit(self: *ScopeRecord) void {
         self.alias_slots.deinit();
         self.defer_actions.deinit();
-        self.arena.deinit();
+        self.scope.deinit();
+        self.scope.memory_manager.allocator.destroy(self.scope);
     }
 
     fn recordAlias(self: *ScopeRecord, slot: module.SlotIndex) !void {
@@ -281,17 +282,17 @@ pub const VM = struct {
                 switch (payload.target.kind) {
                     .local => {
                         const alloc = self.frameAllocator();
-                        const value_ptr = try self.allocator.create(HIRValue);
+                        const value_ptr = try self.runtimeAllocator().create(HIRValue);
                         value_ptr.* = value;
-                        defer self.allocator.destroy(value_ptr);
+                        defer self.runtimeAllocator().destroy(value_ptr);
                         value = try self.deepCopyValueToAllocator(alloc, value_ptr);
                     },
                     .module_global, .imported_module => {
                         const module_id = payload.target.module_id orelse return error.MissingModule;
                         const state = try self.resolveModuleState(module_id);
-                        const value_ptr = try self.allocator.create(HIRValue);
+                        const value_ptr = try self.runtimeAllocator().create(HIRValue);
                         value_ptr.* = value;
-                        defer self.allocator.destroy(value_ptr);
+                        defer self.runtimeAllocator().destroy(value_ptr);
                         value = try self.deepCopyValueToAllocator(state.allocator, value_ptr);
                     },
                     .alias, .builtin => {},
@@ -544,8 +545,8 @@ pub const VM = struct {
             },
             .Nop => {},
             .AssertFail => |payload| {
-                const location_str = try std.fmt.allocPrint(self.allocator, "{s}:{}:{}", .{ payload.location.file, payload.location.range.start_line, payload.location.range.start_col });
-                defer self.allocator.free(location_str);
+                const location_str = try std.fmt.allocPrint(self.runtimeAllocator(), "{s}:{}:{}", .{ payload.location.file, payload.location.range.start_line, payload.location.range.start_col });
+                defer self.runtimeAllocator().free(location_str);
 
                 if (payload.has_message) {
                     const message = try self.stack.pop();
@@ -568,8 +569,8 @@ pub const VM = struct {
                 self.running = false;
             },
             .Unreachable => |payload| {
-                const location_str = try std.fmt.allocPrint(self.allocator, "{s}:{}:{}", .{ payload.location.file, payload.location.range.start_line, payload.location.range.start_col });
-                defer self.allocator.free(location_str);
+                const location_str = try std.fmt.allocPrint(self.runtimeAllocator(), "{s}:{}:{}", .{ payload.location.file, payload.location.range.start_line, payload.location.range.start_col });
+                defer self.runtimeAllocator().free(location_str);
 
                 std.debug.print("Reached unreachable code at {s}\n", .{location_str});
 
@@ -623,10 +624,11 @@ pub const VM = struct {
     }
 
     pub fn scopeAllocator(self: *VM) std.mem.Allocator {
-        if (self.currentScope()) |scope| {
-            return scope.arena.allocator();
+        if (self.currentScope()) |record| {
+            return record.scope.arena.allocator();
         }
-        return self.allocator;
+        // Fallback to execution allocator when no VM scope is active
+        return self.memory_manager.getExecutionAllocator();
     }
 
     /// Allocator for runtime values that need to persist
@@ -690,7 +692,23 @@ pub const VM = struct {
             return;
         }
 
-        const record = ScopeRecord.init(self.allocator, payload.scope_id, payload.var_count);
+        // Determine parent scope in the shared memory system
+        const parent_scope: ?*Memory.Scope = blk: {
+            if (self.currentScope()) |current| {
+                break :blk current.scope;
+            }
+            if (self.memory_manager.scope_manager.root_scope) |root_scope| {
+                break :blk root_scope;
+            }
+            break :blk null;
+        };
+
+        // Create a fresh runtime scope for this VM scope id
+        const scope_alloc = self.memory_manager.allocator;
+        const new_scope = scope_alloc.create(Memory.Scope) catch return error.OutOfMemory;
+        new_scope.* = Memory.Scope.init(payload.scope_id, parent_scope, self.memory_manager);
+
+        const record = ScopeRecord.init(self.allocator, payload.scope_id, payload.var_count, new_scope);
         self.scope_stack.append(record) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
         };
@@ -795,9 +813,9 @@ pub const VM = struct {
 
                 for (arr.elements) |*element| {
                     if (element.* == .nothing) break;
-                    const predicate_ptr = try self.allocator.create(HIRValue);
+                    const predicate_ptr = try self.runtimeAllocator().create(HIRValue);
                     predicate_ptr.* = predicate;
-                    defer self.allocator.destroy(predicate_ptr);
+                    defer self.runtimeAllocator().destroy(predicate_ptr);
                     const predicate_value = try self.evaluatePredicate(predicate_ptr, element);
                     const truthy = try self.isTruthy(predicate_value);
                     if (is_exists) {
@@ -837,9 +855,9 @@ pub const VM = struct {
             .storage_id_ref => |id| {
                 const ptr = try self.slotRefFromId(id);
                 const loaded_predicate = ptr.load();
-                const temp_storage = try self.allocator.create(HIRValue);
+                const temp_storage = try self.runtimeAllocator().create(HIRValue);
                 temp_storage.* = loaded_predicate;
-                defer self.allocator.destroy(temp_storage);
+                defer self.runtimeAllocator().destroy(temp_storage);
                 return self.evaluatePredicate(temp_storage, argument);
             },
             else => {
@@ -1188,7 +1206,7 @@ pub const VM = struct {
                 trimmed = trimmed[0 .. trimmed.len - 1];
             }
 
-            const duped = try self.allocator.dupe(u8, trimmed);
+            const duped = try self.scopeAllocator().dupe(u8, trimmed);
             try self.stack.push(HIRFrame.initString(duped));
             return;
         }
@@ -1210,41 +1228,41 @@ pub const VM = struct {
             else
                 ".";
 
-            const resolved_path = try std.fs.path.resolve(self.allocator, &[_][]const u8{ source_dir, path });
-            defer self.allocator.free(resolved_path);
+            const resolved_path = try std.fs.path.resolve(self.runtimeAllocator(), &[_][]const u8{ source_dir, path });
+            defer self.runtimeAllocator().free(resolved_path);
 
             const file = std.fs.cwd().openFile(resolved_path, .{}) catch |err| {
                 return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@read: failed to open file '{s}': {s}", .{ resolved_path, @errorName(err) });
             };
             defer file.close();
 
-            const content = file.readToEndAlloc(self.allocator, std.math.maxInt(usize)) catch |err| {
+            const content = file.readToEndAlloc(self.runtimeAllocator(), std.math.maxInt(usize)) catch |err| {
                 return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@read: failed to read file '{s}': {s}", .{ path, @errorName(err) });
             };
-            defer self.allocator.free(content);
+            defer self.runtimeAllocator().free(content);
 
-            const duped = try self.allocator.dupe(u8, content);
+            const duped = try self.scopeAllocator().dupe(u8, content);
             try self.stack.push(HIRFrame.initString(duped));
             return;
         }
 
         if (std.mem.eql(u8, name, "os")) {
             const os_name = @tagName(@import("builtin").os.tag);
-            const duped = try self.allocator.dupe(u8, os_name);
+            const duped = try self.scopeAllocator().dupe(u8, os_name);
             try self.stack.push(HIRFrame.initString(duped));
             return;
         }
 
         if (std.mem.eql(u8, name, "arch")) {
             const arch_name = @tagName(@import("builtin").cpu.arch);
-            const duped = try self.allocator.dupe(u8, arch_name);
+            const duped = try self.scopeAllocator().dupe(u8, arch_name);
             try self.stack.push(HIRFrame.initString(duped));
             return;
         }
 
         if (std.mem.eql(u8, name, "abi")) {
             const abi_name = @tagName(@import("builtin").abi);
-            const duped = try self.allocator.dupe(u8, abi_name);
+            const duped = try self.scopeAllocator().dupe(u8, abi_name);
             try self.stack.push(HIRFrame.initString(duped));
             return;
         }
@@ -1528,10 +1546,10 @@ pub const VM = struct {
     }
 
     fn execEnumNew(self: *VM, payload: anytype) VmError!void {
-        const type_name_copy = try self.allocator.dupe(u8, payload.enum_name);
-        errdefer self.allocator.free(type_name_copy);
-        const variant_name_copy = try self.allocator.dupe(u8, payload.variant_name);
-        errdefer self.allocator.free(variant_name_copy);
+        const type_name_copy = try self.scopeAllocator().dupe(u8, payload.enum_name);
+        errdefer self.scopeAllocator().free(type_name_copy);
+        const variant_name_copy = try self.scopeAllocator().dupe(u8, payload.variant_name);
+        errdefer self.scopeAllocator().free(variant_name_copy);
 
         const enum_value = HIRValue{ .enum_variant = .{
             .type_name = type_name_copy,
@@ -1596,8 +1614,8 @@ pub const VM = struct {
                                 // Create enum variant value
                                 const enum_value = HIRValue{
                                     .enum_variant = .{
-                                        .type_name = try self.allocator.dupe(u8, type_name),
-                                        .variant_name = try self.allocator.dupe(u8, field_name),
+                                        .type_name = try self.scopeAllocator().dupe(u8, type_name),
+                                        .variant_name = try self.scopeAllocator().dupe(u8, field_name),
                                         .variant_index = variant.index,
                                         .path = null,
                                     },
@@ -1647,7 +1665,7 @@ pub const VM = struct {
             .struct_instance => |struct_inst| {
                 for (struct_inst.fields) |*field| {
                     if (std.mem.eql(u8, field.name, payload.field_name)) {
-                        const value_ptr = try self.allocator.create(HIRValue);
+                        const value_ptr = try self.scopeAllocator().create(HIRValue);
                         value_ptr.* = value_frame.value;
                         field.value = value_ptr;
                         const modified = HIRFrame.initFromHIRValue(HIRValue{ .struct_instance = struct_inst });
@@ -1948,13 +1966,13 @@ pub const VM = struct {
 
     fn pushFrame(self: *VM, function_index: usize, stack_base: usize, return_ip: usize) VmError!*runtime.Frame {
         const func_ptr = &self.bytecode.functions[function_index];
-        var frame = try runtime.Frame.init(self.allocator, func_ptr, stack_base, self.slot_refs.items.len, return_ip);
+        var frame = try runtime.Frame.init(self.scopeAllocator(), func_ptr, stack_base, self.slot_refs.items.len, return_ip);
         errdefer frame.deinit();
 
         const required_locals = 1000;
 
         frame.arena.deinit();
-        frame.arena = std.heap.ArenaAllocator.init(self.allocator);
+        frame.arena = std.heap.ArenaAllocator.init(self.scopeAllocator());
         const frame_alloc = frame.arena.allocator();
         frame.locals = try frame_alloc.alloc(HIRValue, required_locals);
         frame.alias_refs = try frame_alloc.alloc(?runtime.SlotPointer, required_locals);
@@ -2006,7 +2024,7 @@ pub const VM = struct {
                 .param_is_alias = &[_]bool{},
             };
 
-            var frame = try runtime.Frame.init(self.allocator, &dummy_function, self.stack.len(), self.slot_refs.items.len, 0);
+            var frame = try runtime.Frame.init(self.scopeAllocator(), &dummy_function, self.stack.len(), self.slot_refs.items.len, 0);
 
             frame.allocator.free(frame.locals);
             frame.allocator.free(frame.alias_refs);
@@ -2023,10 +2041,10 @@ pub const VM = struct {
             return;
         }
 
-        var frame = try runtime.Frame.init(self.allocator, &self.bytecode.functions[0], self.stack.len(), self.slot_refs.items.len, 0);
+        var frame = try runtime.Frame.init(self.scopeAllocator(), &self.bytecode.functions[0], self.stack.len(), self.slot_refs.items.len, 0);
         const required_locals = 1000;
         frame.arena.deinit();
-        frame.arena = std.heap.ArenaAllocator.init(self.allocator);
+        frame.arena = std.heap.ArenaAllocator.init(self.scopeAllocator());
         const frame_alloc2 = frame.arena.allocator();
         frame.locals = try frame_alloc2.alloc(HIRValue, required_locals);
         frame.alias_refs = try frame_alloc2.alloc(?runtime.SlotPointer, required_locals);
