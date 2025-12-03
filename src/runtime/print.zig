@@ -127,19 +127,19 @@ pub const PrintOps = struct {
 
                     var field_path: []const u8 = undefined;
                     if (s.path) |path| {
-                        field_path = try std.fmt.allocPrint(vm.allocator, "{s}.{s}", .{ path, field.name });
+                        field_path = try std.fmt.allocPrint(vm.scopeAllocator(), "{s}.{s}", .{ path, field.name });
                     } else {
-                        field_path = try std.fmt.allocPrint(vm.allocator, "{s}.{s}", .{ s.type_name, field.name });
+                        field_path = try std.fmt.allocPrint(vm.scopeAllocator(), "{s}.{s}", .{ s.type_name, field.name });
                     }
-                    defer vm.allocator.free(field_path);
+                    defer vm.scopeAllocator().free(field_path);
 
                     const field_type_string = PrintOps.getTypeString(vm, field.value.*);
                     try printToStdout(":: {s} is ", .{field_type_string});
 
                     switch (field.value.*) {
                         .struct_instance => |nested| {
-                            const field_names = try vm.allocator.alloc([]const u8, nested.fields.len);
-                            const field_types = try vm.allocator.alloc(@TypeOf(nested.fields[0].field_type), nested.fields.len);
+                            const field_names = try vm.scopeAllocator().alloc([]const u8, nested.fields.len);
+                            const field_types = try vm.scopeAllocator().alloc(@TypeOf(nested.fields[0].field_type), nested.fields.len);
                             for (nested.fields, 0..) |nested_field, field_idx| {
                                 field_names[field_idx] = nested_field.name;
                                 field_types[field_idx] = nested_field.field_type;
@@ -203,15 +203,15 @@ pub const PrintOps = struct {
     }
 
     pub fn execPrintInterpolated(vm: anytype, interp: anytype) !void {
-        var args = try vm.allocator.alloc(HIRValue, interp.argument_count);
-        defer vm.allocator.free(args);
+        var args = try vm.scopeAllocator().alloc(HIRValue, interp.argument_count);
+        defer vm.scopeAllocator().free(args);
 
         for (0..interp.argument_count) |i| {
             const arg = try vm.stack.pop();
             args[interp.argument_count - 1 - i] = arg.value;
         }
 
-        var actual_format_parts = std.array_list.Managed([]const u8).init(vm.allocator);
+        var actual_format_parts = std.array_list.Managed([]const u8).init(vm.scopeAllocator());
         defer actual_format_parts.deinit();
 
         for (interp.format_part_ids) |id| {
@@ -478,8 +478,7 @@ pub const PrintOps = struct {
                     idx -= 1;
                     const field = s.fields[idx];
                     if (!first) try printToStdout(", ", .{});
-                    try printToStdout("{s}: ", .{field.name});
-                    try PrintOps.formatTokenLiteral(vm, field.value);
+                    try printToStdout("{s}", .{field.name});
                     first = false;
                 }
                 try printToStdout(" }}", .{});

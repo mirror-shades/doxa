@@ -9,7 +9,9 @@ const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const TokenType = @import("../../types/token.zig").TokenType;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
 const EnumTable = @import("../../common/enum_table.zig").EnumTable;
-const CustomTypeInfo = @import("semantic.zig").SemanticAnalyzer.CustomTypeInfo;
+const Types = @import("../../types/types.zig");
+const CustomTypeInfo = Types.CustomTypeInfo;
+const StructField = Types.StructField;
 const Memory = @import("../../utils/memory.zig");
 const HIRTypeModule = @import("../../codegen/hir/soxa_types.zig");
 const HIRType = HIRTypeModule.HIRType;
@@ -822,11 +824,10 @@ pub fn convertTypeToTokenType(self: *SemanticAnalyzer, base_type: ast.Type) Toke
     };
 }
 
-/// REWRITE: struct fields — use centralized lowering (no Unknown sprinkling)
 pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fields: []const ast.StructFieldType) !void {
     const already_registered = self.custom_types.contains(struct_name);
 
-    var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
+    var struct_fields = try self.allocator.alloc(StructField, fields.len);
     for (fields, 0..) |field, index| {
         var custom_type_name: ?[]const u8 = null;
         if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
@@ -834,12 +835,12 @@ pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fiel
         }
         const full_type_info = try ast.TypeInfo.createDefault(self.allocator);
         full_type_info.* = field.type_info.*; // NOTE: shallow copy; deep-copy if needed
-        struct_fields[index] = CustomTypeInfo.StructField{
+        struct_fields[index] = StructField{
             .name = try self.allocator.dupe(u8, field.name),
             .field_type_info = full_type_info,
             .custom_type_name = custom_type_name,
             .index = @intCast(index),
-            .is_public = false,
+            .is_public = field.is_public,
         };
     }
 
@@ -869,26 +870,28 @@ pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fiel
     const struct_id = try self.struct_table.registerStruct(struct_name, table_inputs);
 
     // Runtime memory registration with proper HIR lowering
-    var mem_fields = try self.allocator.alloc(Memory.CustomTypeInfo.StructField, fields.len);
+    var mem_fields = try self.allocator.alloc(StructField, fields.len);
     for (fields, 0..) |field, i| {
         const mapped_hir_type = try lowerAstTypeToHIR(self, field.type_info);
         var ctn: ?[]const u8 = null;
         if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
             ctn = try self.allocator.dupe(u8, field.type_info.custom_type.?);
         }
-        mem_fields[i] = Memory.CustomTypeInfo.StructField{
+        mem_fields[i] = StructField{
             .name = try self.allocator.dupe(u8, field.name),
-            .field_type = mapped_hir_type,
+            .field_type_info = field.type_info,
             .custom_type_name = ctn,
             .index = @intCast(i),
+            .is_public = field.is_public,
         };
+
         self.struct_table.setFieldHIRType(struct_id, @intCast(i), mapped_hir_type);
         if (structIdFromTypeInfo(self, field.type_info)) |nested_struct_id| {
             self.struct_table.setNestedStructId(struct_id, @intCast(i), nested_struct_id);
         }
     }
 
-    const mem_struct = Memory.CustomTypeInfo{
+    const mem_struct = CustomTypeInfo{
         .name = try self.allocator.dupe(u8, struct_name),
         .kind = .Struct,
         .enum_variants = null,
@@ -919,17 +922,18 @@ pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants
         .kind = .Enum,
         .enum_variants = enum_variants,
     };
+
     try self.custom_types.put(enum_name, custom_type);
 
     // Mirror to VM memory
-    var mem_enum_variants = try self.allocator.alloc(Memory.CustomTypeInfo.EnumVariant, variants.len);
+    var mem_enum_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, variants.len);
     for (variants, 0..) |variant_name, i| {
-        mem_enum_variants[i] = Memory.CustomTypeInfo.EnumVariant{
+        mem_enum_variants[i] = CustomTypeInfo.EnumVariant{
             .name = try self.allocator.dupe(u8, variant_name),
             .index = @intCast(i),
         };
     }
-    const mem_enum = Memory.CustomTypeInfo{
+    const mem_enum = CustomTypeInfo{
         .name = try self.allocator.dupe(u8, enum_name),
         .kind = .Enum,
         .enum_variants = mem_enum_variants,
@@ -949,4 +953,45 @@ pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants
 /// Helper function to get location from AST base
 pub fn getLocationFromBase(base: ast.Base) Reporting.Location {
     return base.location();
+}
+
+pub fn hirTypeToAstType(hir_type: HIRType) ast.Type {
+    return switch (hir_type) {
+        .Int => .Int,
+        .Byte => .Byte,
+        .Float => .Float,
+        .String => .String,
+        .Tetra => .Tetra,
+        .Nothing => .Nothing,
+        .Array => .Array,
+        .Struct => .Struct,
+        .Map => .Map,
+        .Enum => .Enum,
+        .Function => .Function,
+        .Union => .Union,
+        .Unknown => .Nothing, // TODO: This feels hacky
+    };
+}
+
+pub fn astTypeToHirType(ast_type: ast.Type) HIRType {
+    return switch (ast_type) {
+        .Int => .Int,
+        .Byte => .Byte,
+        .Float => .Float,
+        .String => .String,
+        .Tetra => .Tetra,
+        .Nothing => .Nothing,
+        .Array => .Array,
+        .Struct => .Struct,
+        .Map => .Map,
+        .Enum => .Enum,
+        .Function => .Function,
+        .Union => .Union,
+        .Custom => .Unknown, // Custom types map to Unknown in HIR
+    };
+}
+
+fn convertTypeInfoToHirType(type_info: *ast.TypeInfo, allocator: std.mem.Allocator) !HIRType {
+    _ = allocator; // May be needed for complex type conversions in the future
+    return astTypeToHirType(type_info.base);
 }

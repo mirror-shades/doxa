@@ -634,6 +634,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 struct_fields[i] = .{
                                     .name = custom_field.name,
                                     .type_info = custom_field.field_type_info,
+                                    .is_public = custom_field.is_public,
                                 };
                             }
                             const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
@@ -674,6 +675,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                             struct_fields_inner[i] = .{
                                                 .name = custom_field.name,
                                                 .type_info = custom_field.field_type_info,
+                                                .is_public = custom_field.is_public,
                                             };
                                         }
                                         type_info.* = .{ .base = .Struct, .custom_type = type_info.custom_type, .struct_fields = struct_fields_inner, .is_mutable = false };
@@ -769,6 +771,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 struct_field.* = .{
                     .name = field.name.lexeme,
                     .type_info = field_type,
+                    .is_public = true, // Struct literal fields are always public
                 };
             }
             type_info.* = .{ .base = .Struct, .struct_fields = struct_fields };

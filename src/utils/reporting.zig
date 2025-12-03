@@ -29,6 +29,7 @@ pub const ReporterOptions = struct {
     debug_hir: bool = false,
     debug_bytecode: bool = false,
     debug_execution: bool = false,
+    debug_memory: bool = false,
     log_to_file: bool = true,
     log_file_path: []const u8 = "last_diagnostics.log",
     max_log_bytes: usize = 2 * 1024 * 1024,
@@ -90,6 +91,7 @@ pub const Reporter = struct {
     debug_hir: bool,
     debug_bytecode: bool,
     debug_execution: bool,
+    debug_memory: bool,
     file_uri_cache: std.StringHashMap([]const u8),
     published_state: std.StringHashMap(PublishedState),
 
@@ -139,6 +141,7 @@ pub const Reporter = struct {
             .debug_hir = options.debug_hir,
             .debug_bytecode = options.debug_bytecode,
             .debug_execution = options.debug_execution,
+            .debug_memory = options.debug_memory,
             .file_uri_cache = std.StringHashMap([]const u8).init(allocator),
             .published_state = std.StringHashMap(PublishedState).init(allocator),
         };
@@ -288,6 +291,11 @@ pub const Reporter = struct {
 
     fn debugExecution(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
         if (!self.debug_execution and !self.debug_verbose) return;
+        self.report(.Debug, .Hint, loc, code, fmt, args);
+    }
+
+    pub fn debugMemory(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
+        if (!self.debug_memory and !self.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 

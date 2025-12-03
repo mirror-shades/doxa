@@ -252,6 +252,7 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             .debug_hir = false,
             .debug_bytecode = false,
             .debug_execution = false,
+            .debug_memory = false,
             .debug_verbose = false,
         },
         .mode = .UNDEFINED,
@@ -348,6 +349,9 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         } else if (stringEquals(arg, "--debug-execution")) {
             options.reporter_options.debug_execution = true;
             continue;
+        } else if (stringEquals(arg, "--debug-memory")) {
+            options.reporter_options.debug_memory = true;
+            continue;
         } else if (stringEquals(arg, "--profile")) {
             options.profile = true;
             continue;
@@ -417,7 +421,7 @@ fn printUsage() void {
     std.debug.print("  --profile                         # Enable profiling\n", .{});
     std.debug.print("  --help, -h                        # Show this help message\n", .{});
     std.debug.print("  --debug-[stage]                   # Enable debug output for [stage]\n", .{});
-    std.debug.print("                                    # lexer, parser, semantic, hir, bytecode, execution\n", .{});
+    std.debug.print("                                    # lexer, parser, semantic, hir, bytecode, execution, memory\n", .{});
     std.debug.print("  --debug-verbose                   # Enable all debug output\n", .{});
     std.debug.print("\nCompile options:\n", .{});
     std.debug.print("  -o, --output <path>               # Output executable path (required)\n", .{});
@@ -541,6 +545,11 @@ pub fn main() !void {
     try semantic_analyzer.analyze(parsedStatements);
     profiler.stopPhase();
 
+    // Dump memory state if debug_memory is enabled
+    if (cli_options.reporter_options.debug_memory) {
+        memoryManager.dumpState(&reporter);
+    }
+
     profiler.startPhase(Phase.GENERATE_S);
 
     // Generate the soxa path for intermediate files
@@ -586,6 +595,11 @@ pub fn main() !void {
         };
 
         profiler.stopPhase();
+
+        // Dump memory state after execution if debug_memory is enabled
+        if (cli_options.reporter_options.debug_memory) {
+            memoryManager.dumpState(&reporter);
+        }
         try profiler.dump();
     }
 

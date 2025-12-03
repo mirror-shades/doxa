@@ -83,6 +83,7 @@ pub const HIRGenerator = struct {
     current_assignment_target: ?[]const u8 = null,
 
     loop_context_stack: std.array_list.Managed(LoopContext),
+    current_function_scope_id: ?u32 = null,
 
     is_generating_nested_array: bool = false,
 
@@ -529,6 +530,7 @@ pub const HIRGenerator = struct {
             try self.instructions.append(.{ .Label = .{ .name = function_body.function_info.start_label, .vm_address = 0 } });
 
             const function_scope_id = self.label_generator.label_count + 1000;
+            self.current_function_scope_id = function_scope_id;
             try self.instructions.append(.{ .EnterScope = .{ .scope_id = function_scope_id, .var_count = 0 } });
 
             const params = function_body.function_params;
@@ -707,7 +709,12 @@ pub const HIRGenerator = struct {
                 has_returned = self.statementAlwaysReturns(body_stmt);
             }
 
-            try self.instructions.append(.{ .ExitScope = .{ .scope_id = function_scope_id } });
+            // Don't add unconditional ExitScope here - generateReturn adds it before returns
+            // Only add ExitScope if function doesn't have explicit returns
+            if (!has_returned) {
+                try self.instructions.append(.{ .ExitScope = .{ .scope_id = function_scope_id } });
+            }
+            self.current_function_scope_id = null;
 
             if (std.mem.eql(u8, function_body.function_info.name, "safeAdd") or std.mem.eql(u8, function_body.function_info.name, "safeMath.safeAdd")) {
                 try self.instructions.append(.{ .LoadVar = .{ .var_index = 1, .var_name = "a", .scope_kind = self.symbol_table.determineVariableScope("a"), .module_context = null } });
@@ -744,6 +751,7 @@ pub const HIRGenerator = struct {
 
             self.current_function = null;
             self.current_function_return_type = .Nothing;
+            self.current_function_scope_id = null;
             self.symbol_table.exitFunctionScope();
         }
     }

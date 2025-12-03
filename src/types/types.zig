@@ -6,10 +6,21 @@ const TokenType = TokenImport.TokenType;
 const MemoryImport = @import("../utils/memory.zig");
 const MemoryManager = MemoryImport.MemoryManager;
 const Scope = MemoryImport.Scope;
+const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
+const HIRStruct = @import("../codegen/hir/soxa_values.zig").HIRStruct;
+const HIREnum = @import("../codegen/hir/soxa_values.zig").HIREnum;
 const Reporting = @import("../utils/reporting.zig");
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
+
+pub const StructField = struct {
+    name: []const u8,
+    field_type_info: *ast.TypeInfo,
+    custom_type_name: ?[]const u8 = null, // For custom types like Person
+    index: u32,
+    is_public: bool = false,
+};
 
 pub const ModuleEnvironment = struct {
     module_name: []const u8,
@@ -152,11 +163,6 @@ pub const Environment = struct {
     }
 };
 
-pub const StructField = struct {
-    name: []const u8,
-    value: TokenLiteral,
-};
-
 pub const Tetra = enum {
     true,
     false,
@@ -185,4 +191,48 @@ pub const TokenLiteral = union(enum) {
         defining_module: ?*ModuleEnvironment,
     },
     enum_variant: []const u8,
+};
+
+pub const CustomTypeInstanceData = union {
+    struct_instance: *HIRStruct,
+    enum_instance: *HIREnum,
+};
+
+pub const CustomTypeInfo = struct {
+    name: []const u8,
+    kind: CustomTypeKind,
+    enum_variants: ?[]EnumVariant = null,
+    struct_fields: ?[]StructField = null,
+
+    pub const CustomTypeKind = enum {
+        Struct,
+        Enum,
+    };
+
+    pub const EnumVariant = struct {
+        name: []const u8,
+        index: u32,
+    };
+
+    pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
+        if (self.kind != .Enum or self.enum_variants == null) return null;
+
+        for (self.enum_variants.?) |variant| {
+            if (std.mem.eql(u8, variant.name, variant_name)) {
+                return variant.index;
+            }
+        }
+        return null;
+    }
+
+    pub fn getStructFieldIndex(self: *const CustomTypeInfo, field_name: []const u8) ?u32 {
+        if (self.kind != .Struct or self.struct_fields == null) return null;
+
+        for (self.struct_fields.?) |field| {
+            if (std.mem.eql(u8, field.name, field_name)) {
+                return field.index;
+            }
+        }
+        return null;
+    }
 };
