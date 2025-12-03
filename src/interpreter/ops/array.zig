@@ -14,6 +14,50 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
+/// Resolves an array index, handling negative indices like Python
+/// Returns the resolved positive index or an error
+fn resolveArrayIndex(index: HIRFrame, array_length: usize) !u32 {
+    const index_val: i64 = switch (index.value) {
+        .int => |i| i,
+        .byte => |u| @as(i64, u),
+        .tetra => |t| @as(i64, t),
+        .string => |s| blk: {
+            const parsed = std.fmt.parseInt(i64, s, 10) catch {
+                return ErrorList.IndexOutOfBounds;
+            };
+            break :blk parsed;
+        },
+        .array => |arr| blk: {
+            if (arr.elements.len > 0) {
+                break :blk switch (arr.elements[0]) {
+                    .int => |i| i,
+                    .byte => |u| @as(i64, u),
+                    .tetra => |t| @as(i64, t),
+                    else => return ErrorList.IndexOutOfBounds,
+                };
+            } else {
+                return ErrorList.IndexOutOfBounds;
+            }
+        },
+        .nothing => return ErrorList.IndexOutOfBounds,
+        else => return ErrorList.IndexOutOfBounds,
+    };
+
+    // Handle negative indexing like Python: arr[-1] is last element
+    if (index_val < 0) {
+        const positive_index = @as(i64, @intCast(array_length)) + index_val;
+        if (positive_index < 0) {
+            return ErrorList.IndexOutOfBounds;
+        }
+        return @as(u32, @intCast(positive_index));
+    } else {
+        if (@as(u64, @intCast(index_val)) > std.math.maxInt(u32)) {
+            return ErrorList.IndexOutOfBounds;
+        }
+        return @as(u32, @intCast(index_val));
+    }
+}
+
 fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
     if (array.storage_kind == .dynamic) return array;
 
@@ -115,50 +159,6 @@ fn arrayGet(vm: anytype, a: anytype) !void {
     const index = try vm.stack.pop();
     const array = try vm.stack.pop();
 
-    const index_val = switch (index.value) {
-        .int => |i| if (i < 0) {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
-        } else @as(u32, @intCast(i)),
-        .byte => |u| @as(u32, u),
-        .tetra => |t| @as(u32, t),
-        .string => |s| blk: {
-            const parsed = std.fmt.parseInt(i64, s, 10) catch {
-                try vm.stack.push(array);
-                return;
-            };
-            if (parsed < 0) {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{parsed});
-            }
-            break :blk @as(u32, @intCast(parsed));
-        },
-        .array => |arr| blk: {
-            if (arr.elements.len > 0) {
-                break :blk switch (arr.elements[0]) {
-                    .int => |i| if (i < 0) {
-                        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
-                    } else @as(u32, @intCast(i)),
-                    .byte => |u| @as(u32, u),
-                    .tetra => |t| @as(u32, t),
-                    else => {
-                        try vm.stack.push(array);
-                        return;
-                    },
-                };
-            } else {
-                try vm.stack.push(array);
-                return;
-            }
-        },
-        .nothing => {
-            try vm.stack.push(array);
-            return;
-        },
-        else => {
-            try vm.stack.push(array);
-            return;
-        },
-    };
-
     switch (array.value) {
         .array => |arr| {
             var actual_length: u32 = 0;
@@ -167,12 +167,14 @@ fn arrayGet(vm: anytype, a: anytype) !void {
                 actual_length += 1;
             }
 
-            if (a.bounds_check and index_val >= actual_length) {
+            const resolved_index = try resolveArrayIndex(index, actual_length);
+
+            if (a.bounds_check and resolved_index >= actual_length) {
                 return ErrorList.IndexOutOfBounds;
             }
 
-            const element = if (index_val < actual_length)
-                arr.elements[index_val]
+            const element = if (resolved_index < actual_length)
+                arr.elements[resolved_index]
             else
                 getDefaultValue(arr.element_type);
 
@@ -183,11 +185,12 @@ fn arrayGet(vm: anytype, a: anytype) !void {
             try vm.stack.push(HIRFrame.initFromHIRValue(element));
         },
         .string => |s| {
-            if (index_val >= s.len) {
+            const resolved_index = try resolveArrayIndex(index, s.len);
+            if (resolved_index >= s.len) {
                 try vm.stack.push(HIRFrame.initFromHIRValue(nothing_value));
                 return;
             }
-            const char_str = s[index_val .. index_val + 1];
+            const char_str = s[resolved_index .. resolved_index + 1];
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = char_str }));
         },
         .nothing => {

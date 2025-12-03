@@ -60,7 +60,11 @@ pub const PrintOps = struct {
     }
 
     pub fn execPeek(vm: anytype, peek: anytype) !void {
-        const value = try vm.stack.peek();
+        const value = vm.stack.peek() catch {
+            // Stack might be empty after an error, handle gracefully
+            try printToStdout("(stack empty)", .{});
+            return;
+        };
 
         if (peek.location) |location| {
             try printToStdout("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
