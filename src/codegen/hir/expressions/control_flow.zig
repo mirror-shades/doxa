@@ -417,20 +417,34 @@ pub const ControlFlowHandler = struct {
 
         try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = loop_body_label, .label_false = loop_end_label, .vm_offset = 0, .condition_type = .Tetra } });
 
-        // Body
+        // Body - create scope that will be cleaned up each iteration
         try self.generator.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
 
-        // Generate body without per-iteration scope to avoid memory accumulation
+        // Enter loop iteration scope
+        const loop_scope_id = self.generator.label_generator.label_count + 2000; // Use offset to avoid conflicts
+        try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = loop_scope_id, .var_count = 0 } });
+
         try self.generator.generateExpression(loop.body, false, false);
 
-        // Step
-        try self.generator.instructions.append(.{ .Label = .{ .name = loop_step_label, .vm_address = 0 } });
-        if (loop.step) |step_expr| {
-            try self.generator.generateExpression(step_expr, false, false);
+        // If there's a step, exit scope at step label (continue target)
+        // Otherwise, exit scope at start label (continue target)
+        if (loop.step != null) {
+            // Step - exit scope here so continue jumps to clean state
+            try self.generator.instructions.append(.{ .Label = .{ .name = loop_step_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
+
+            if (loop.step) |step_expr| {
+                try self.generator.generateExpression(step_expr, false, false);
+            }
+        } else {
+            // No step - exit scope at start of next iteration
+            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
         }
 
         try self.generator.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });
         try self.generator.instructions.append(.{ .Label = .{ .name = loop_end_label, .vm_address = 0 } }); // Add end label
+        // Also exit scope here in case of break
+        try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
         self.generator.popLoopContext();
     }
 
@@ -474,6 +488,11 @@ pub const ControlFlowHandler = struct {
             // No value - push nothing
             const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+        }
+
+        // Exit function scope before returning
+        if (self.generator.current_function_scope_id) |scope_id| {
+            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = scope_id } });
         }
 
         // Generate Return instruction (only if not tail call)

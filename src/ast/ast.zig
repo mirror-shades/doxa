@@ -1068,6 +1068,7 @@ pub const TypeInfo = struct {
 pub const StructFieldType = struct {
     name: []const u8,
     type_info: *TypeInfo,
+    is_public: bool = false,
 };
 
 pub const UnionType = struct {

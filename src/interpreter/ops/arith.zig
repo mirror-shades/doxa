@@ -31,7 +31,7 @@ pub fn exec(vm: anytype, a: anytype) !void {
                                 len_b += 1;
                             }
 
-                            const new_elements = try vm.allocator.alloc(HIRValue, len_a + len_b);
+                            const new_elements = try vm.scopeAllocator().alloc(HIRValue, len_a + len_b);
 
                             for (0..len_a) |i| {
                                 new_elements[i] = arr_a.elements[i];

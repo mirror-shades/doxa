@@ -5,7 +5,8 @@ const ast = @import("../ast/ast.zig");
 const TypeInfo = ast.TypeInfo;
 const TypesImport = @import("../types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
-const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
+const CustomTypeInfo = TypesImport.CustomTypeInfo;
+const CustomTypeInstanceData = TypesImport.CustomTypeInstanceData;
 const HIRStruct = @import("../codegen/hir/soxa_values.zig").HIRStruct;
 const HIREnum = @import("../codegen/hir/soxa_values.zig").HIREnum;
 const HIRStructField = @import("../codegen/hir/soxa_values.zig").HIRStructField;
@@ -36,57 +37,6 @@ pub const StringInterner = struct {
         const copy = try self.allocator.dupe(u8, string);
         try self.strings.put(copy, copy);
         return copy;
-    }
-};
-
-pub const CustomTypeInstanceData = union {
-    struct_instance: *HIRStruct,
-    enum_instance: *HIREnum,
-};
-
-pub const CustomTypeInfo = struct {
-    name: []const u8,
-    kind: CustomTypeKind,
-    enum_variants: ?[]EnumVariant = null,
-    struct_fields: ?[]StructField = null,
-
-    pub const CustomTypeKind = enum {
-        Struct,
-        Enum,
-    };
-
-    pub const EnumVariant = struct {
-        name: []const u8,
-        index: u32,
-    };
-
-    pub const StructField = struct {
-        name: []const u8,
-        field_type: HIRType,
-        custom_type_name: ?[]const u8 = null,
-        index: u32,
-    };
-
-    pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
-        if (self.kind != .Enum or self.enum_variants == null) return null;
-
-        for (self.enum_variants.?) |variant| {
-            if (std.mem.eql(u8, variant.name, variant_name)) {
-                return variant.index;
-            }
-        }
-        return null;
-    }
-
-    pub fn getStructFieldIndex(self: *const CustomTypeInfo, field_name: []const u8) ?u32 {
-        if (self.kind != .Struct or self.struct_fields == null) return null;
-
-        for (self.struct_fields.?) |field| {
-            if (std.mem.eql(u8, field.name, field_name)) {
-                return field.index;
-            }
-        }
-        return null;
     }
 };
 
@@ -310,6 +260,10 @@ pub const MemoryManager = struct {
     pub fn createScope(self: *MemoryManager, scope_id: u32, parent: ?*Scope) !*Scope {
         return self.hashmap_manager.createScope(scope_id, parent, self);
     }
+
+    pub fn dumpState(self: *MemoryManager, reporter: anytype) void {
+        self.scope_manager.dumpStateWithReporter(reporter);
+    }
 };
 
 const ValueStorage = struct { value: TokenLiteral, type: TokenType, type_info: *ast.TypeInfo, constant: bool };
@@ -382,6 +336,37 @@ pub const ScopeManager = struct {
                 const key = entry.key_ptr.*;
                 const value = entry.value_ptr.*;
                 std.debug.print("  [{d}]: type={}, constant={}\n", .{ key, value.type, value.constant });
+            }
+        }
+    }
+
+    pub fn dumpStateWithReporter(self: *ScopeManager, reporter: anytype) void {
+        const scope_id = if (self.root_scope) |rs| rs.id else 0;
+        reporter.debugMemory(null, null, "Current scope ID: {}", .{scope_id});
+
+        if (self.variable_map.count() > 0) {
+            reporter.debugMemory(null, null, "Variables:", .{});
+            var var_it = self.variable_map.iterator();
+            while (var_it.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const value = entry.value_ptr.*;
+                if (self.getVariableScope(value)) |var_scope| {
+                    reporter.debugMemory(null, null, "  [{d}]: name='{s}', type={}, storage={d}, scope={d}, is_alias={}", .{ key, value.name, value.type, value.storage_id, var_scope.id, value.is_alias });
+                } else {
+                    reporter.debugMemory(null, null, "  [{d}]: name='{s}', type={}, storage={d}, scope=?, is_alias={}", .{ key, value.name, value.type, value.storage_id, value.is_alias });
+                }
+            }
+        } else {
+            reporter.debugMemory(null, null, "No variables", .{});
+        }
+
+        if (self.value_storage.count() > 0) {
+            reporter.debugMemory(null, null, "Storage:", .{});
+            var storage_it = self.value_storage.iterator();
+            while (storage_it.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const value = entry.value_ptr.*;
+                reporter.debugMemory(null, null, "  [{d}]: type={}, constant={}", .{ key, value.type, value.constant });
             }
         }
     }

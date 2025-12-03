@@ -457,6 +457,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                 struct_field.* = .{
                     .name = field.name.lexeme,
                     .type_info = field_type,
+                    .is_public = true, // Struct literal fields are always public
                 };
             }
             type_info.* = .{ .base = .Struct, .struct_fields = struct_fields };
@@ -736,6 +737,7 @@ pub fn deepCopyTypeInfo(ctx: *TypeAnalysisContext, type_info: ast.TypeInfo) std.
             field_copy.* = .{
                 .name = try ctx.allocator.dupe(u8, field.name),
                 .type_info = try deepCopyTypeInfoPtr(ctx, field.type_info),
+                .is_public = field.is_public,
             };
         }
         copy.struct_fields = fields_copy;

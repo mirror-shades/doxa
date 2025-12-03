@@ -15,9 +15,7 @@ const core = @import("core.zig");
 const HIRFrame = core.HIRFrame;
 const runtime = @import("runtime.zig");
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
-const memory = @import("../utils/memory.zig");
-const StringInterner = memory.StringInterner;
-const CustomTypeInfo = memory.CustomTypeInfo;
+const Memory = @import("../utils/memory.zig");
 const Managed = std.array_list.Managed;
 const ops_arith = @import("ops/arith.zig");
 const ops_compare = @import("ops/compare.zig");
@@ -27,6 +25,8 @@ const ops_array = @import("ops/array.zig");
 const ops_type = @import("ops/type.zig");
 const PrintOps = @import("../runtime/print.zig").PrintOps;
 const Errors = @import("../utils/errors.zig");
+const Types = @import("../types/types.zig");
+const CustomTypeInfo = Types.CustomTypeInfo;
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
@@ -85,7 +85,6 @@ pub const VM = struct {
     ip: usize = 0,
     running: bool = false,
     skip_increment: bool = false,
-    string_interner: *StringInterner,
     custom_type_registry: std.StringHashMap(CustomTypeInfo),
     scope_stack: Managed(ScopeRecord),
     try_stack: Managed(usize),
@@ -113,9 +112,6 @@ pub const VM = struct {
         const label_cache = try allocator.alloc(usize, max_label_id + 1);
         for (label_cache) |*entry| entry.* = 0;
 
-        const string_interner = try allocator.create(StringInterner);
-        string_interner.* = StringInterner.init(allocator);
-
         var vm = VM{
             .bytecode = bytecode,
             .reporter = reporter,
@@ -128,7 +124,6 @@ pub const VM = struct {
             .slot_refs = Managed(runtime.SlotPointer).init(allocator),
             .ip = 0,
             .running = false,
-            .string_interner = string_interner,
             .custom_type_registry = std.StringHashMap(CustomTypeInfo).init(allocator),
             .scope_stack = Managed(ScopeRecord).init(allocator),
             .try_stack = Managed(usize).init(allocator),
@@ -166,8 +161,6 @@ pub const VM = struct {
         self.allocator.free(self.module_state);
         self.allocator.free(self.label_cache);
         self.stack.deinit();
-        self.string_interner.deinit();
-        self.allocator.destroy(self.string_interner);
     }
 
     pub fn reset(self: *VM) void {
@@ -283,6 +276,7 @@ pub const VM = struct {
             .StoreSlot => |payload| {
                 var value = try self.popValue();
                 const ptr = try self.resolveSlot(payload.target);
+
                 // Promote value lifetime based on destination
                 switch (payload.target.kind) {
                     .local => {
@@ -307,6 +301,7 @@ pub const VM = struct {
             .StoreConstSlot => |operand| {
                 const value = try self.popValue();
                 const ptr = try self.resolveSlot(operand);
+
                 ptr.store(value);
             },
             .PushStorageRef => |operand| {
@@ -627,11 +622,21 @@ pub const VM = struct {
         return &self.scope_stack.items[self.scope_stack.items.len - 1];
     }
 
-    fn scopeAllocator(self: *VM) std.mem.Allocator {
+    pub fn scopeAllocator(self: *VM) std.mem.Allocator {
         if (self.currentScope()) |scope| {
             return scope.arena.allocator();
         }
         return self.allocator;
+    }
+
+    /// Allocator for runtime values that need to persist
+    pub fn runtimeAllocator(self: *VM) std.mem.Allocator {
+        // Prefer frame allocator for values that need to live
+        if (self.frames.items.len > 0) {
+            return self.frames.items[self.frames.items.len - 1].arena.allocator();
+        }
+        // Fall back to scope allocator
+        return self.scopeAllocator();
     }
 
     fn resolveModuleState(self: *VM, module_id: module.ModuleId) VmError!*runtime.ModuleState {
@@ -996,9 +1001,9 @@ pub const VM = struct {
 
                     if (length >= mutable_arr.capacity) {
                         const new_capacity = @max(mutable_arr.capacity * 2, mutable_arr.capacity + 1);
-                        var new_elements = try self.allocator.alloc(HIRValue, new_capacity);
+                        var new_elements = try self.scopeAllocator().alloc(HIRValue, new_capacity);
                         @memcpy(new_elements[0..mutable_arr.elements.len], mutable_arr.elements);
-                        self.allocator.free(mutable_arr.elements);
+                        // Don't free old elements - they're in scope arena
                         mutable_arr.elements = new_elements;
                         mutable_arr.capacity = @intCast(new_capacity);
                     }
@@ -1499,11 +1504,10 @@ pub const VM = struct {
                 else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Expected string for field name, got {s}", .{@tagName(field_name_frame.value)}),
             };
 
-            const interned_name = try self.string_interner.intern(name_str);
             const field_value_ptr = try alloc.create(HIRValue);
             field_value_ptr.* = field_value_frame.value;
             fields[idx] = HIRStructField{
-                .name = interned_name,
+                .name = name_str,
                 .value = field_value_ptr,
                 .field_type = payload.field_types[idx],
                 .path = null,
@@ -1557,10 +1561,9 @@ pub const VM = struct {
                     return;
                 }
 
-                const interned_name = try self.string_interner.intern(payload.field_name);
                 for (struct_inst.fields) |*field| {
                     if (field.name.len == 0) {
-                        field.name = interned_name;
+                        field.name = payload.field_name;
                         break;
                     }
                 }
@@ -1615,18 +1618,13 @@ pub const VM = struct {
             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot get field from non-struct value: {s}", .{@tagName(frame.value)});
         }
 
-        const interned_name = try self.string_interner.intern(payload.field_name);
-
         for (frame.value.struct_instance.fields) |field| {
-            if ((field.name.ptr == interned_name.ptr and field.name.len == interned_name.len) or std.mem.eql(u8, field.name, interned_name)) {
+            if (std.mem.eql(u8, field.name, payload.field_name)) {
                 var field_value = field.value;
                 if (field_value.* == .struct_instance) {
                     const path_or_type: []const u8 = if (frame.value.struct_instance.path) |p| p else frame.value.struct_instance.type_name;
                     const scope_alloc = self.scopeAllocator();
-                    const tmp = try std.fmt.allocPrint(scope_alloc, "{s}.{s}", .{ path_or_type, field.name });
-                    const interned = try self.string_interner.intern(tmp);
-                    scope_alloc.free(tmp);
-                    field_value.struct_instance.path = interned;
+                    field_value.struct_instance.path = try std.fmt.allocPrint(scope_alloc, "{s}.{s}", .{ path_or_type, field.name });
                 }
 
                 try self.stack.push(HIRFrame{ .value = field_value.* });
@@ -1675,10 +1673,7 @@ pub const VM = struct {
             const value_frame = try self.stack.pop();
             const key_frame = try self.stack.pop();
 
-            const normalized_key = switch (key_frame.value) {
-                .string => |s| HIRValue{ .string = try self.string_interner.intern(s) },
-                else => key_frame.value,
-            };
+            const normalized_key = key_frame.value;
 
             const key_ptr = try alloc.create(HIRValue);
             key_ptr.* = normalized_key;
@@ -1712,15 +1707,7 @@ pub const VM = struct {
     }
 
     fn execMapGet(self: *VM) VmError!void {
-        var key_frame = try self.stack.pop();
-        switch (key_frame.value) {
-            .string => |s| {
-                const interned = try self.string_interner.intern(s);
-                key_frame.value = HIRValue{ .string = interned };
-            },
-            else => {},
-        }
-
+        const key_frame = try self.stack.pop();
         const map_frame = try self.stack.pop();
 
         switch (map_frame.value) {
@@ -1728,7 +1715,7 @@ pub const VM = struct {
                 for (map_value.entries) |entry| {
                     const keys_match = switch (entry.key.*) {
                         .string => |entry_str| switch (key_frame.value) {
-                            .string => |key_str| ((entry_str.ptr == key_str.ptr and entry_str.len == key_str.len) or std.mem.eql(u8, entry_str, key_str)),
+                            .string => |key_str| std.mem.eql(u8, entry_str, key_str),
                             else => false,
                         },
                         .int => |entry_int| switch (key_frame.value) {
@@ -1763,14 +1750,7 @@ pub const VM = struct {
     fn execMapSet(self: *VM, payload: anytype) VmError!void {
         const alloc = self.scopeAllocator();
         const value_frame = try self.stack.pop();
-        var key_frame = try self.stack.pop();
-        switch (key_frame.value) {
-            .string => |s| {
-                const interned = try self.string_interner.intern(s);
-                key_frame.value = HIRValue{ .string = interned };
-            },
-            else => {},
-        }
+        const key_frame = try self.stack.pop();
         const map_frame = try self.stack.pop();
 
         switch (map_frame.value) {
@@ -1783,7 +1763,7 @@ pub const VM = struct {
                 for (entries) |*entry| {
                     const keys_match = switch (entry.key.*) {
                         .string => |entry_str| switch (key_frame.value) {
-                            .string => |key_str| ((entry_str.ptr == key_str.ptr and entry_str.len == key_str.len) or std.mem.eql(u8, entry_str, key_str)),
+                            .string => |key_str| std.mem.eql(u8, entry_str, key_str),
                             else => false,
                         },
                         .int => |entry_int| switch (key_frame.value) {
@@ -2207,9 +2187,9 @@ pub const VM = struct {
             },
             .String => switch (value) {
                 .string => value,
-                .int => |i| HIRValue{ .string = std.fmt.allocPrint(self.allocator, "{}", .{i}) catch "0" },
-                .byte => |b| HIRValue{ .string = std.fmt.allocPrint(self.allocator, "0x{X:0>2}", .{b}) catch "0x00" },
-                .float => |f| HIRValue{ .string = std.fmt.allocPrint(self.allocator, "{d}", .{f}) catch "0.0" },
+                .int => |i| HIRValue{ .string = std.fmt.allocPrint(self.scopeAllocator(), "{}", .{i}) catch "0" },
+                .byte => |b| HIRValue{ .string = std.fmt.allocPrint(self.scopeAllocator(), "0x{X:0>2}", .{b}) catch "0x00" },
+                .float => |f| HIRValue{ .string = std.fmt.allocPrint(self.scopeAllocator(), "{d}", .{f}) catch "0.0" },
                 else => value,
             },
             .Tetra => switch (value) {
@@ -2223,37 +2203,37 @@ pub const VM = struct {
         };
     }
 
-    pub fn valueToString(self: *VM, value: *HIRValue) ![]const u8 {
+    pub fn valueToString(self: *VM, allocator: std.mem.Allocator, value: *HIRValue) ![]const u8 {
         return switch (value.*) {
-            .int => |i| try std.fmt.allocPrint(self.allocator, "{}", .{i}),
-            .byte => |u| try std.fmt.allocPrint(self.allocator, "0x{X:0>2}", .{u}),
+            .int => |i| try std.fmt.allocPrint(allocator, "{}", .{i}),
+            .byte => |u| try std.fmt.allocPrint(allocator, "0x{X:0>2}", .{u}),
             .float => |f| {
                 const rounded_down = std.math.floor(f);
                 if (f - rounded_down == 0) {
-                    return try std.fmt.allocPrint(self.allocator, "{d}.0", .{f});
+                    return try std.fmt.allocPrint(allocator, "{d}.0", .{f});
                 } else {
-                    return try std.fmt.allocPrint(self.allocator, "{d}", .{f});
+                    return try std.fmt.allocPrint(allocator, "{d}", .{f});
                 }
             },
-            .string => |s| try self.allocator.dupe(u8, s),
-            .tetra => |t| try std.fmt.allocPrint(self.allocator, "{s}", .{switch (t) {
+            .string => |s| try allocator.dupe(u8, s),
+            .tetra => |t| try std.fmt.allocPrint(allocator, "{s}", .{switch (t) {
                 0 => "false",
                 1 => "true",
                 2 => "both",
                 3 => "neither",
                 else => "invalid",
             }}),
-            .nothing => try self.allocator.dupe(u8, "nothing"),
+            .nothing => try allocator.dupe(u8, "nothing"),
             .array => |arr| {
-                var result = std.array_list.Managed(u8).init(self.allocator);
+                var result = std.array_list.Managed(u8).init(allocator);
                 defer result.deinit();
                 try result.append('[');
                 var first = true;
                 for (arr.elements) |*elem| {
                     if (elem.* == .nothing) break;
                     if (!first) try result.appendSlice(", ");
-                    const elem_str = try self.valueToString(elem);
-                    defer self.allocator.free(elem_str);
+                    const elem_str = try self.valueToString(allocator, elem);
+                    defer allocator.free(elem_str);
                     try result.appendSlice(elem_str);
                     first = false;
                 }
@@ -2261,7 +2241,7 @@ pub const VM = struct {
                 return try result.toOwnedSlice();
             },
             .struct_instance => |s| {
-                var result = std.array_list.Managed(u8).init(self.allocator);
+                var result = std.array_list.Managed(u8).init(allocator);
                 defer result.deinit();
                 try result.appendSlice("{ ");
                 var first = true;
@@ -2272,8 +2252,8 @@ pub const VM = struct {
                     if (!first) try result.appendSlice(", ");
                     try result.appendSlice(field.name);
                     try result.appendSlice(": ");
-                    const field_str = try self.valueToString(field.value);
-                    defer self.allocator.free(field_str);
+                    const field_str = try self.valueToString(allocator, field.value);
+                    defer allocator.free(field_str);
                     switch (field.value.*) {
                         .string => {
                             try result.append('"');
@@ -2296,6 +2276,47 @@ pub const VM = struct {
     fn frameAllocator(self: *VM) std.mem.Allocator {
         if (self.frames.items.len == 0) return self.allocator;
         return self.frames.items[self.frames.items.len - 1].arena.allocator();
+    }
+
+    pub fn freeValueFromAllocator(self: *VM, allocator: std.mem.Allocator, value: *HIRValue) void {
+        switch (value.*) {
+            .int, .byte, .float, .tetra, .nothing, .storage_id_ref => {},
+            .string => |s| {
+                allocator.free(s);
+            },
+            .struct_instance => |s| {
+                allocator.free(s.type_name);
+                for (s.fields) |field| {
+                    allocator.free(field.name);
+                    self.freeValueFromAllocator(allocator, field.value);
+                    allocator.destroy(field.value);
+                }
+                allocator.free(s.fields);
+            },
+            .map => |m| {
+                for (m.entries) |entry| {
+                    self.freeValueFromAllocator(allocator, entry.key);
+                    allocator.destroy(entry.key);
+                    self.freeValueFromAllocator(allocator, entry.value);
+                    allocator.destroy(entry.value);
+                }
+                allocator.free(m.entries);
+                if (m.else_value) |else_val| {
+                    self.freeValueFromAllocator(allocator, else_val);
+                    allocator.destroy(else_val);
+                }
+            },
+            .array => |a| {
+                for (a.elements) |*elem| {
+                    self.freeValueFromAllocator(allocator, elem);
+                }
+                allocator.free(a.elements);
+            },
+            .enum_variant => |e| {
+                allocator.free(e.type_name);
+                allocator.free(e.variant_name);
+            },
+        }
     }
 
     pub fn deepCopyValueToAllocator(self: *VM, allocator: std.mem.Allocator, value: *HIRValue) !HIRValue {
@@ -2393,7 +2414,7 @@ pub const VM = struct {
             const value_ptr = try self.allocator.create(HIRValue);
             value_ptr.* = value;
             field.* = HIRStructField{
-                .name = try self.string_interner.intern(var_name),
+                .name = try self.allocator.dupe(u8, var_name),
                 .value = value_ptr,
                 .field_type = .Unknown,
             };
@@ -2401,7 +2422,7 @@ pub const VM = struct {
 
         const struct_instance = HIRValue{
             .struct_instance = HIRStruct{
-                .type_name = try self.string_interner.intern(module_name),
+                .type_name = try self.allocator.dupe(u8, module_name),
                 .fields = fields,
             },
         };

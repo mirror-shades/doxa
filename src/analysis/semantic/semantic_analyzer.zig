@@ -236,7 +236,7 @@ pub const SemanticAnalyzer = struct {
                                                         const field_types = try self.allocator.alloc(@import("../../ast/ast.zig").StructFieldType, sd.fields.len);
                                                         for (sd.fields, field_types) |field, *ft| {
                                                             const ti = try @import("../../ast/ast.zig").typeInfoFromExpr(self.allocator, field.type_expr);
-                                                            ft.* = .{ .name = field.name.lexeme, .type_info = ti };
+                                                            ft.* = .{ .name = field.name.lexeme, .type_info = ti, .is_public = field.is_public };
                                                         }
 
                                                         // Register struct type for type system/runtime

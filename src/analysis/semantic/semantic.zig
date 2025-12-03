@@ -15,16 +15,19 @@ const Location = Reporting.Location;
 
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
+const ErrorCode = Errors.ErrorCode;
+
 const StructTable = @import("../../common/struct_table.zig").StructTable;
 const EnumTable = @import("../../common/enum_table.zig").EnumTable;
 const StructId = @import("../../codegen/hir/soxa_types.zig").StructId;
-const types = @import("types.zig");
-const ErrorCode = Errors.ErrorCode;
 
 const Types = @import("../../types/types.zig");
+const CustomTypeInfo = Types.CustomTypeInfo;
+const TokenLiteral = Types.TokenLiteral;
+const StructField = Types.StructField;
+
 const HIRTypeSystem = @import("../../codegen/hir/type_system.zig");
 const HIRType = @import("../../codegen/hir/soxa_types.zig").HIRType;
-const TokenLiteral = Types.TokenLiteral;
 
 const TokenImport = @import("../../types/token.zig");
 const TokenType = TokenImport.TokenType;
@@ -132,12 +135,6 @@ pub const SemanticAnalyzer = struct {
         return self.function_return_types;
     }
 
-    fn markInternalType(self: *SemanticAnalyzer, type_name: []const u8) void {
-        if (self.custom_types.getPtr(type_name)) |entry| {
-            entry.*.is_internal = true;
-        }
-    }
-
     fn registerTypeAlias(self: *SemanticAnalyzer, alias_name: []const u8, target_type: []const u8) !void {
         if (self.type_aliases.contains(alias_name)) return;
         const alias_copy = try self.allocator.dupe(u8, alias_name);
@@ -158,50 +155,32 @@ pub const SemanticAnalyzer = struct {
         return current;
     }
 
-    fn ensureLegacyAliases(self: *SemanticAnalyzer) !void {
-        if (!self.type_aliases.contains("LangTokenType")) {
-            try self.registerTypeAlias("LangTokenType", "TokenType");
-        }
-    }
+    // remove this
+    // pub const CustomTypeInfo = struct {
+    //     name: []const u8,
+    //     kind: CustomTypeKind,
+    //     enum_variants: ?[]EnumVariant = null,
+    //     struct_fields: ?[]StructField = null,
+    //     is_internal: bool = false,
 
-    fn ensureBuiltinEnums(self: *SemanticAnalyzer) !void {
-        if (!self.custom_types.contains("IndexError")) {
-            const variants = [_][]const u8{"OutOfBounds"};
-            try helpers.registerEnumType(self, "IndexError", &variants);
-            self.markInternalType("IndexError");
-        }
-        if (!self.custom_types.contains("ValueError")) {
-            const variants = [_][]const u8{ "ParseFailed", "OutOfBounds", "Overflow", "Underflow" };
-            try helpers.registerEnumType(self, "ValueError", &variants);
-            self.markInternalType("ValueError");
-        }
-    }
+    //     pub const CustomTypeKind = enum {
+    //         Struct,
+    //         Enum,
+    //     };
 
-    pub const CustomTypeInfo = struct {
-        name: []const u8,
-        kind: CustomTypeKind,
-        enum_variants: ?[]EnumVariant = null,
-        struct_fields: ?[]StructField = null,
-        is_internal: bool = false,
+    //     pub const EnumVariant = struct {
+    //         name: []const u8,
+    //         index: u32,
+    //     };
 
-        pub const CustomTypeKind = enum {
-            Struct,
-            Enum,
-        };
-
-        pub const EnumVariant = struct {
-            name: []const u8,
-            index: u32,
-        };
-
-        pub const StructField = struct {
-            name: []const u8,
-            field_type_info: *ast.TypeInfo,
-            custom_type_name: ?[]const u8 = null, // For custom types like Person
-            index: u32,
-            is_public: bool = false,
-        };
-    };
+    //     pub const StructField = struct {
+    //         name: []const u8,
+    //         field_type_info: *ast.TypeInfo,
+    //         custom_type_name: ?[]const u8 = null, // For custom types like Person
+    //         index: u32,
+    //         is_public: bool = false,
+    //     };
+    // };
 
     // Helper function to convert HIRType to ast.Type
     fn hirTypeToAstType(self: *SemanticAnalyzer, hir_type: HIRType) ast.Type {
@@ -362,10 +341,6 @@ pub const SemanticAnalyzer = struct {
         const root_scope = try self.memory.scope_manager.createScope(null, self.memory);
         self.memory.scope_manager.root_scope = root_scope;
         self.current_scope = root_scope;
-        try self.ensureLegacyAliases();
-
-        // Inject compiler-provided enums (shared error categories)
-        try self.ensureBuiltinEnums();
 
         // Process imported symbols to register their methods
         try self.processImportedSymbols();
@@ -471,6 +446,7 @@ pub const SemanticAnalyzer = struct {
                                                                     field_types[i] = ast.StructFieldType{
                                                                         .name = field.name.lexeme,
                                                                         .type_info = try self.typeExprToTypeInfo(field.type_expr),
+                                                                        .is_public = field.is_public,
                                                                     };
                                                                 }
                                                                 try helpers.registerStructType(self, sd.name.lexeme, field_types);
@@ -587,7 +563,7 @@ pub const SemanticAnalyzer = struct {
                         const struct_fields = try self.allocator.alloc(ast.StructFieldType, struct_decl.fields.len);
                         for (struct_decl.fields, struct_fields) |field, *sf| {
                             const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
-                            sf.* = .{ .name = field.name.lexeme, .type_info = field_type_info };
+                            sf.* = .{ .name = field.name.lexeme, .type_info = field_type_info, .is_public = field.is_public };
                         }
                         // Register only in custom_types (avoid scope insertion here to prevent duplicates)
                         try helpers.registerStructType(self, struct_decl.name.lexeme, struct_fields);
@@ -873,9 +849,8 @@ pub const SemanticAnalyzer = struct {
                                 struct_field.* = .{
                                     .name = field.name.lexeme,
                                     .type_info = field_type_info,
+                                    .is_public = field.is_public,
                                 };
-                                // Propagate field visibility for later checks
-                                _ = field.is_public; // captured via struct_decl when building CustomTypeInfo below
                             }
 
                             // Register the struct type in the current scope
@@ -909,31 +884,9 @@ pub const SemanticAnalyzer = struct {
                             // NEW: Register struct type for HIR generation
                             try helpers.registerStructType(self, struct_decl.name.lexeme, struct_fields);
 
-                            // Override visibility flags in the registered struct with those declared
-                            if (self.custom_types.get(struct_decl.name.lexeme)) |*ct| {
-                                if (ct.kind == .Struct and ct.struct_fields != null) {
-                                    const sf = ct.struct_fields.?;
-                                    var field_index_map = std.StringHashMap(usize).init(self.allocator);
-                                    defer field_index_map.deinit();
-                                    for (struct_decl.fields, 0..) |fptr, i| {
-                                        _ = try field_index_map.put(fptr.name.lexeme, i);
-                                    }
-                                    for (sf) |*sfld| {
-                                        if (field_index_map.get(sfld.name)) |i| {
-                                            // Use parser flag is_public from AST field list
-                                            const declared_public = struct_decl.fields[i].is_public;
-                                            sfld.is_public = declared_public;
-                                        }
-                                    }
-                                }
-                            }
-
                             // Register struct methods (static and instance)
                             var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
-                            defer {
-                                // If we inserted the table into struct_methods we must not deinit here
-                                // Deinit only if not stored due to error
-                            }
+
                             for (struct_decl.methods) |m| {
                                 // Determine return type: use declared, or default for instance methods to the struct type when missing
                                 var ret_type_ptr: *ast.TypeInfo = undefined;
@@ -1428,9 +1381,7 @@ pub const SemanticAnalyzer = struct {
         while (iterator.next()) |entry| {
             const custom_type = entry.value_ptr.*;
             if (custom_type.kind != .Enum) continue;
-            if (custom_type.is_internal) continue; // Skip internal enums in first pass
             const variants = custom_type.enum_variants orelse continue;
-
             var matches = false;
             for (variants) |variant| {
                 if (std.mem.eql(u8, variant.name, member_name)) {
@@ -1448,9 +1399,7 @@ pub const SemanticAnalyzer = struct {
         while (iterator.next()) |entry| {
             const custom_type = entry.value_ptr.*;
             if (custom_type.kind != .Enum) continue;
-            if (!custom_type.is_internal) continue; // Skip non-internal enums in second pass
             const variants = custom_type.enum_variants orelse continue;
-
             var matches = false;
             for (variants) |variant| {
                 if (std.mem.eql(u8, variant.name, member_name)) {
