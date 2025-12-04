@@ -962,6 +962,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
                 .Sub => "Sub",
                 .Mul => "Mul",
                 .Div => "Div",
+                .IntDiv => "IntDiv",
                 .Mod => "Mod",
                 .Pow => "Pow",
             };

@@ -750,7 +750,18 @@ pub const TypeSystem = struct {
             return .Unknown;
         }
 
-        if (operator_type == .SLASH or resolved_left == .Float or resolved_right == .Float) {
+        if (operator_type == .SLASH) {
+            return .Float;
+        }
+
+        if (operator_type == .DOUBLE_SLASH) {
+            // Integer division only works on integer types
+            if (resolved_left == .Float or resolved_right == .Float) {
+                return .Unknown; // Type error
+            }
+        }
+
+        if (resolved_left == .Float or resolved_right == .Float) {
             return .Float;
         }
 

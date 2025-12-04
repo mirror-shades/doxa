@@ -71,6 +71,7 @@ pub const BinaryExpressionHandler = struct {
             .MINUS => try self.handleMinusOperator(left_type, right_type, bin),
             .ASTERISK => try self.handleMultiplyOperator(left_type, right_type, bin),
             .SLASH => try self.handleDivideOperator(left_type, right_type, bin),
+            .DOUBLE_SLASH => try self.handleIntegerDivideOperator(left_type, right_type, bin),
             .MODULO => try self.handleModuloOperator(left_type, right_type, bin),
             .POWER => try self.handlePowerOperator(left_type, right_type, bin),
             .EQUALITY => try self.handleEqualityOperator(bin),
@@ -280,6 +281,21 @@ pub const BinaryExpressionHandler = struct {
                 bin.left.?.base.location(),
                 ErrorCode.TYPE_MISMATCH,
                 "Cannot use / operator between {s} and {s}",
+                .{ @tagName(left_type), @tagName(right_type) },
+            );
+            return ErrorList.TypeMismatch;
+        }
+    }
+
+    fn handleIntegerDivideOperator(self: *BinaryExpressionHandler, left_type: HIRType, right_type: HIRType, bin: ast.Binary) !void {
+        const common_type = self.generator.computeNumericCommonType(left_type, right_type, bin.operator.type);
+        if (common_type != .Unknown) {
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .IntDiv, .operand_type = common_type } });
+        } else {
+            self.generator.reporter.reportCompileError(
+                bin.left.?.base.location(),
+                ErrorCode.TYPE_MISMATCH,
+                "Cannot use // operator between {s} and {s}",
                 .{ @tagName(left_type), @tagName(right_type) },
             );
             return ErrorList.TypeMismatch;

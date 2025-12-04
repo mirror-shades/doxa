@@ -831,6 +831,11 @@ pub const IRPrinter = struct {
                                         defer self.allocator.free(line);
                                         try w.writeAll(line);
                                     },
+                                    .IntDiv => {
+                                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                        defer self.allocator.free(line);
+                                        try w.writeAll(line);
+                                    },
                                     .Mod => {
                                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                                         defer self.allocator.free(line);
@@ -889,6 +894,9 @@ pub const IRPrinter = struct {
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
                                 },
+                                .IntDiv => {
+                                    unreachable;
+                                },
                                 .Mod => {
                                     const line = try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ name, lhs_double, rhs_double });
                                     defer self.allocator.free(line);
@@ -922,6 +930,11 @@ pub const IRPrinter = struct {
                                     try w.writeAll(line);
                                 },
                                 .Div => {
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = udiv i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                },
+                                .IntDiv => {
                                     const line = try std.fmt.allocPrint(self.allocator, "  {s} = udiv i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
@@ -2256,7 +2269,7 @@ pub const IRPrinter = struct {
                             const call_line = try std.fmt.allocPrint(
                                 self.allocator,
                                 "  {s} = call ptr @doxa_array_concat(ptr {s}, ptr {s}, i64 {d}, i64 {d})\n",
-                                .{concat_reg, lhs.name, rhs.name, elem_size, elem_tag},
+                                .{ concat_reg, lhs.name, rhs.name, elem_size, elem_tag },
                             );
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
@@ -3011,6 +3024,7 @@ pub const IRPrinter = struct {
                                 defer self.allocator.free(line);
                                 try w.writeAll(line);
                             },
+                            .IntDiv => unreachable, // IntDiv should not be emitted as floating-point
                             .Mod => {
                                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ name, lhs_promoted, rhs_promoted });
                                 defer self.allocator.free(line);
@@ -3184,6 +3198,7 @@ pub const IRPrinter = struct {
                                             defer self.allocator.free(line);
                                             try w.writeAll(line);
                                         },
+                                        .IntDiv => unreachable, // IntDiv should not be emitted as floating-point
                                         .Mod => {
                                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ name, lhs_double, rhs_double });
                                             defer self.allocator.free(line);
@@ -3215,6 +3230,11 @@ pub const IRPrinter = struct {
                                             try w.writeAll(line);
                                         },
                                         .Div => {
+                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = udiv i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
+                                            defer self.allocator.free(line);
+                                            try w.writeAll(line);
+                                        },
+                                        .IntDiv => {
                                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = udiv i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                                             defer self.allocator.free(line);
                                             try w.writeAll(line);

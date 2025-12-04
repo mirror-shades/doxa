@@ -10,7 +10,6 @@ pub const TokenType = enum {
     RIGHT_BRACKET, // ]
     COMMA, // ,
     MODULO, // %
-    HASH, // #
     TILDE, // ~
     PIPE, // |
     SEMICOLON, // ;

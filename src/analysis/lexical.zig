@@ -196,25 +196,17 @@ pub const LexicalAnalyzer = struct {
 
             '/' => {
                 if (self.match('*')) {
-                    var nesting: usize = 1;
-
-                    while (nesting > 0 and !self.isAtEnd()) {
-                        if (self.peekAt(0) == '/' and self.peekAt(1) == '*') {
-                            self.advance();
-                            self.advance();
-                            nesting += 1;
-                        } else if (self.peekAt(0) == '*' and self.peekAt(1) == '/') {
-                            self.advance();
-                            self.advance();
-                            nesting -= 1;
-                        } else {
-                            self.advance();
-                        }
+                    self.advance();
+                    while (!self.isAtEnd() and (self.peekAt(0) != '*' or self.peekAt(1) != '/')) {
+                        self.advance();
                     }
-
-                    if (nesting > 0) {
+                    if (self.isAtEnd()) {
                         return error.UnterminatedMultilineComment;
                     }
+                    self.advance();
+                    self.advance();
+                } else if (self.match('/')) {
+                    try self.addMinimalToken(.DOUBLE_SLASH);
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.SLASH_EQUAL);
                 } else {
@@ -458,6 +450,8 @@ pub const LexicalAnalyzer = struct {
         }
 
         if (offset >= 0) {
+            // Check for potential overflow before addition
+            if (offset > std.math.maxInt(usize) - self.current) return 0;
             const pos = self.current + @as(usize, @intCast(offset));
             if (pos >= self.source.len) return 0;
             return self.source[pos];

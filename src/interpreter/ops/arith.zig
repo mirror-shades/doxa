@@ -107,6 +107,7 @@ pub fn exec(vm: anytype, a: anytype) !void {
                     return ErrorList.DivisionByZero;
                 } else result = left_float / right_float;
             },
+            .IntDiv => unreachable, // IntDiv should never be called on floats - it's a type error
             .Mod => result = @mod(left_float, right_float),
             .Pow => {
                 result = std.math.pow(f64, left_float, right_float);
@@ -198,6 +199,12 @@ pub fn exec(vm: anytype, a: anytype) !void {
                 }
                 byte_result = @intCast(left_byte / right_byte);
             },
+            .IntDiv => {
+                if (right_byte == 0) {
+                    return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero in byte arithmetic", .{});
+                }
+                byte_result = @intCast(left_byte / right_byte);
+            },
             .Mod => byte_result = @as(u8, @intCast(@mod(left_byte, right_byte))),
             .Pow => {
                 const p: u32 = std.math.pow(u32, @as(u32, left_byte), @as(u32, right_byte));
@@ -265,6 +272,9 @@ pub fn exec(vm: anytype, a: anytype) !void {
             const result = left_float / right_float;
             try vm.stack.push(HIRFrame.initFloat(result));
             return;
+        },
+        .IntDiv => {
+            int_result = try intDiv(vm, left_int, right_int);
         },
         .Mod => int_result = try fastIntMod(vm, left_int, right_int),
         .Pow => {
