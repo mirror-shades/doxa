@@ -35,19 +35,19 @@ else @print(current)
 Examples:
 
 ```doxa
-// Success and failure as expressions
+# Success and failure as expressions
 const n_or_zero is value as int else 0
 
-// Block failure case
+# Block failure case
 value as int else {
     @print("value is not an int/n")
 }
 
-// Explicit success block
+# Explicit success block
 value as int then {
-    // use the narrowed int value here
+    # use the narrowed int value here
 } else {
-    // handle non-int here
+    # handle non-int here
 }
 ```
 
@@ -65,14 +65,14 @@ In Doxa, if and as both use the then / else pattern, but they invert the emphasi
 Examples
 
 ```
-// IF: Truth-driven
+# IF: Truth-driven
 if x > 10 then @print("big/n") else @print("small/n")
 
-// AS: Fallback-driven
-value as int else 0         // If not int, use 0
-value as int then 20 else 0  // If int, use 20  else 0
+# AS: Fallback-driven
+value as int else 0         # If not int, use 0
+value as int then 20 else 0  # If int, use 20  else 0
 
-// Both in action
+# Both in action
 if isReady then start() else wait()
 data as string then parse(data) else log("Bad data/n")
 ```
@@ -131,7 +131,7 @@ Block arms in match:
 
 ```doxa
 var msg is match color {
-    // semicolons can be used to represent line breaks
+    # semicolons can be used to represent line breaks
     .Red then { @print("stop/n"); "red"}
     .Green then { @print("go/n"); "green"
     else { @print("caution/n"); "yellowish"}

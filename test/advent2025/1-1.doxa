@@ -1,5 +1,5 @@
 entry function main() {
-    const input is @read("./advent.txt")
+    const input is @read("./advent1.txt")
     var count is 50
     var zeroes_hit :: int
     

@@ -1,4 +1,4 @@
-// Basic test without aliases
+# Basic test without aliases
 function testBasic() {
     var result is 42
     return result

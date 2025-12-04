@@ -195,19 +195,7 @@ pub const LexicalAnalyzer = struct {
             },
 
             '/' => {
-                if (!self.isAtEnd() and self.source[self.current] == '/') {
-                    self.advance();
-                    while (!self.isAtEnd() and self.peekAt(0) != '\n') {
-                        self.advance();
-                    }
-                    if (!self.isAtEnd() and self.peekAt(0) == '\n') {
-                        self.advance();
-                        if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
-                            const tok_line: usize = if (self.line > 0) self.line - 1 else 0;
-                            try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path, self.file_uri));
-                        }
-                    }
-                } else if (self.match('*')) {
+                if (self.match('*')) {
                     var nesting: usize = 1;
 
                     while (nesting > 0 and !self.isAtEnd()) {
@@ -285,7 +273,20 @@ pub const LexicalAnalyzer = struct {
                 try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, self.line, 1, self.file_path, self.file_uri));
             },
             '%' => try self.addMinimalToken(.MODULO),
-            '#' => try self.addMinimalToken(.HASH),
+            '#' => {
+                if (!self.isAtEnd()) {
+                    while (!self.isAtEnd() and self.peekAt(0) != '\n') {
+                        self.advance();
+                    }
+                    if (!self.isAtEnd() and self.peekAt(0) == '\n') {
+                        self.advance();
+                        if (self.tokens.items.len == 0 or self.tokens.items[self.tokens.items.len - 1].type != .NEWLINE) {
+                            const tok_line: usize = if (self.line > 0) self.line - 1 else 0;
+                            try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, tok_line, 1, self.file_path, self.file_uri));
+                        }
+                    }
+                }
+            },
             '^' => try self.addMinimalToken(.CARET),
             '*' => {
                 if (self.match('*')) {

@@ -3,11 +3,11 @@
 Doxa takes a unique approach to loops. The best way to think about it is that the loop syntax is fully composible. The structure of the full loop will be similar to anyone familiar to C style loops:
 
 ```
-// doxa
+# doxa
 for x while x < 10 do x += 1 {
   ...
 }
-// c
+# c
 for(int x, x < 10; x++) {
 
 }
@@ -41,7 +41,7 @@ while <condition> { ... }
 **Examples**:
 
 ```doxa
-// With early exit
+# With early exit
 while has_next() {
   const item is next()
   if item == 0 then break
@@ -59,13 +59,13 @@ do <step> { ... }
 **Examples**:
 
 ```doxa
-// Basic do loop
+# Basic do loop
 const the_time is getTheTime()
 do the_time is getTheTime() {
   if the_time > expiration_time then break
 }
 
-// complex do block
+# complex do block
 do {
   if getTheTime() > the_time + 100 then {
     the_time = getTheTime()
@@ -85,8 +85,8 @@ do {
 You can use `while true` or just `do` for infinite loops:
 
 ```doxa
-while true { ... }  // Traditional infinite loop
-do { ... }          // Cleaner do-based infinite loop
+while true { ... }  # Traditional infinite loop
+do { ... }          # Cleaner do-based infinite loop
 ```
 
 ## Loop Combinations
@@ -94,7 +94,7 @@ do { ... }          // Cleaner do-based infinite loop
 ### While Do Loop
 
 ```doxa
-// Countdown from 10 to 1, then liftoff
+# Countdown from 10 to 1, then liftoff
 var countdown is 10
 while countdown > 0 do {
     countdown -= 1
@@ -119,16 +119,16 @@ for reading do reading = get_reading() {
 ### For While Do Loop
 
 ```doxa
-// Default initialization: process tasks until done
+# Default initialization: process tasks until done
 var tasks = ["Write report", "Submit assignment", "Attend meeting"]
-var index is 0  // we start at index 0
+var index is 0  # we start at index 0
 for index while index < tasks.length do index += 1 {
     "Task: " + tasks[index]?
 }
 
-// Explicit initialization with complex do block
+# Explicit initialization with complex do block
 for i is 0 while i < @length(tasks) do {
-    // Update: move to next task and log progress
+    # Update: move to next task and log progress
     i += 1
     @print("Progress: {i} / {@length(tasks)}\n")
 } {
@@ -174,7 +174,7 @@ each item at index in collection { ... }
 ```doxa
 for i while i < @length(collection) do i++ {
   item is collection[i]
-  // or with index:
+  # or with index:
   const index is i
   ...
 }

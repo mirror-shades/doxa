@@ -4,7 +4,7 @@ pub struct Context {
     name :: string
     literal :: string
     line_breaks :: int[]
-    // TODO: add hash :: int for caching
+    # TODO: add hash :: int for caching
 
     pub function new(_name :: string, _literal :: string, _line_breaks :: int[]) returns Context {
         return $Context {
@@ -42,8 +42,8 @@ pub struct SourceManager {
                 break
             }
         }
-        // TODO: bug here, must be typed as int or type error
-        // something to do with inference being done too late
+        # TODO: bug here, must be typed as int or type error
+        # something to do with inference being done too late
         const prev_line_break :: int is if line_number > 1 then line_break_context[line_number - 2] else 0
         const column is offset - prev_line_break
         return $Pair { a is line_number, b is column }

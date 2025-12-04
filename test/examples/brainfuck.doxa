@@ -1,5 +1,5 @@
-// a brainfuck interpreter implemented in doxa
-// mirror-shades
+# a brainfuck interpreter implemented in doxa
+# mirror-shades
 
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
 
@@ -26,7 +26,7 @@ function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], t
         } else {
             const loopPointer is loops - 1
             ip is loopSpot[loopPointer]
-            // cancels the ip += 1 from the main loop
+            # cancels the ip += 1 from the main loop
             ip -= 1
         }
     }
@@ -45,7 +45,7 @@ function checkClosingBracket(scan :: string) returns tetra {
 }
 
 function interpret(scan :: string) {
-    var tape :: byte[10] // increase if needed
+    var tape :: byte[10] # increase if needed
     var loops :: int
     var loopSpot :: int[]
     var tp :: int

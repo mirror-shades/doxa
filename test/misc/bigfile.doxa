@@ -1,17 +1,17 @@
-/////
-//IMPORTS
-/////
+##
+#IMPORTS
+##
 
-// modules
+# modules
 module safeMath from "./safeMath.doxa"
 
-// complex import statement
+# complex import statement
 var import1 is safeMath.safeAdd(15, 66)
-import1? // 81
-var import2 is safeMath.safeAdd(1000, 2) // "Overflow"
-import2? // -1
+import1? # 81
+var import2 is safeMath.safeAdd(1000, 2) # "Overflow"
+import2? # -1
 
-// imports
+# imports
 import imported_function, imported_function_input from "./import.doxa"
 import imported_function_output from "./import.doxa"
 
@@ -19,9 +19,9 @@ imported_function()
 imported_function_input(60)
 imported_function_output()?
 
-/////
-// ENUMS, MATCH
-/////
+##
+# ENUMS, MATCH
+##
 enum Color {
     Red,
     Green,
@@ -41,7 +41,7 @@ var matchResult is match b {
     else "It's something else",
 }
 
-matchResult? // It's blue
+matchResult? # It's blue
 
 matchResult is match g {
     .Red then "It's red",
@@ -49,7 +49,7 @@ matchResult is match g {
     else "It's something else",
 }
 
-matchResult? // It's something else
+matchResult? # It's something else
 
 pub function isAlpha(char :: string) returns tetra {
     match char[0] {
@@ -65,12 +65,12 @@ isAlpha("A")?
 isAlpha("")?
 
 
-/////
-// LOOPS
-/////
+##
+# LOOPS
+##
 
 
-// FOR
+# FOR
 for f {
     if f != 2 then f?
     f += 1
@@ -84,8 +84,8 @@ for f is 5 {
 }
 
 
-// DO
-//empty do body
+# DO
+#empty do body
 var do_empty is 0
 do {
     if do_empty != 2 then do_empty?
@@ -93,7 +93,7 @@ do {
     if do_empty == 5 then break
 }
 
-// do bodys
+# do bodys
 var do_body is 0
 do do_body += 1 {
     if do_body == 2 then continue
@@ -101,8 +101,8 @@ do do_body += 1 {
     do_body?
 }
 
-// WHILE
-// WHILE ONLY
+# WHILE
+# WHILE ONLY
 var _while is 0
 while _while < 5 {
     if _while == 5 then break
@@ -110,7 +110,7 @@ while _while < 5 {
     _while += 1
 }
 
-// WHILE DO
+# WHILE DO
 var while_do is 0
 while while_do < 5 do {
     while_do += 1
@@ -119,24 +119,24 @@ while while_do < 5 do {
     if while_do != 2 then while_do?
 }
 
-// FOR DO
+# FOR DO
 for for_do do for_do += 1 {
     if for_do == 5 then break
     if for_do != 2 then for_do?
 }
 
-// FOR WHILE DO
-// default loop variable
+# FOR WHILE DO
+# default loop variable
 for for_while_do_empty while for_while_do_empty < 5 do for_while_do_empty += 1 {
     if for_while_do_empty != 2 then for_while_do_empty?
 }
 
-// manually set the loop variable
+# manually set the loop variable
 for for_while_do is 10 while for_while_do > 0 do for_while_do -= 1 {
     if for_while_do % 2 == 0 then for_while_do?
 }
 
-// EACH
+# EACH
 var collection is [0, 1, 2, 3, 4]
 
 each item in collection {
@@ -152,9 +152,9 @@ each item at index in collection {
 
 
 
-/////
-// ALIASING
-/////
+##
+# ALIASING
+##
 var inc1 is 10
 var inc2 is 20
 
@@ -190,9 +190,9 @@ increment_function_scope(inc1)
 inc1?
 
 
-/////
-// FUNCTIONS AND RECURSION
-/////
+##
+# FUNCTIONS AND RECURSION
+##
 function fizzbuzz(x:: int, limit:: int) {
     var current is x
     while current <= limit {
@@ -205,7 +205,7 @@ function fizzbuzz(x:: int, limit:: int) {
     }
 }
 
-fizzbuzz(100, 115) //fizzbuzz 1-15
+fizzbuzz(100, 115) #fizzbuzz 1-15
 
 
 function fber(x:: int, limit:: int) {
@@ -217,7 +217,7 @@ function fber(x:: int, limit:: int) {
     if x < limit then fber(x + 1, limit)
 }
 
-fber(1000, 1015) //fizzerbuzzer 1-15
+fber(1000, 1015) #fizzerbuzzer 1-15
 
 function forloop(x :: int) {
     for i is 0 while i < x do i++ {
@@ -225,7 +225,7 @@ function forloop(x :: int) {
     }
 }
 
-forloop(5) //660, 726, 732, 798, 864
+forloop(5) #660, 726, 732, 798, 864
 
 function precedence(op :: string[]) {
     var list is op
@@ -246,23 +246,23 @@ function precedence(op :: string[]) {
 precedence(["*", "+", "-", "=", "/"])
 
 
-/////
-// CONDITIONALS
-/////
+##
+# CONDITIONALS
+##
 
 var mixedBranch1 is if true then {
     var notUsed is 10 + 5
     "true"
 } else "false"
 
-mixedBranch1? // true
+mixedBranch1? # true
 
 var mixedBranch2 is if false then {
     var notUsed is 10 + 5
     "true"
 } else "false"
 
-mixedBranch2? // false
+mixedBranch2? # false
 
 var stringArr is ["hello", "world", "foo", "bar"]
 
@@ -272,47 +272,47 @@ each word at index in stringArr {
 }
 
 var condition is if true then "true" else "false"
-condition? // true
+condition? # true
 
 
-/////
-// UNION NARROWING 
-/////
+##
+# UNION NARROWING 
+##
 
 var asThenUnion :: int | float | byte is 10
 var asThen is asThenUnion as int else 0
 
-asThen? // 10
+asThen? # 10
 
 var asThen2 is asThenUnion as int then 20 else 0
 
-asThen2? // 20
+asThen2? # 20
 
 var asThen3 is asThenUnion as int then {10 + 20} else 0
 
-asThen3? // 30
+asThen3? # 30
 
 var asThen4 is asThenUnion as float then 40.0 else { 0.0 }
 
-asThen4? // 0.0
+asThen4? # 0.0
 
-// using as like an 'istype' style conditional
+# using as like an 'istype' style conditional
 asThenUnion as int then {
     var result is 20 + 30
     result?
 } else {
     var result is 30 + 40
     result?
-} // 50
+} # 50
 
 
-asThenUnion? // 10
+asThenUnion? # 10
 asThenUnion is 12.345
-asThenUnion? // 10.0
+asThenUnion? # 10.0
 asThenUnion is 0x0A
-asThenUnion? // 0x0A
+asThenUnion? # 0x0A
 
-// as narrowing
+# as narrowing
 function onlyUsesInt(x :: int) {
     x?
 }
@@ -322,18 +322,18 @@ const x :: int | float is 17
 x as int then onlyUsesInt(x) else "failure"?
 
 
-/////
-// RETURNS 
-/////
+##
+# RETURNS 
+##
 function return_test() returns string {
     return "return"
 }
 
-return_test()? // return
+return_test()? # return
 
-/////
-// STRUCTS
-/////
+##
+# STRUCTS
+##
 struct Person {
     pub name :: string,
     pub age :: int,
@@ -353,15 +353,15 @@ var mike is $Employee {
 }
 
 mike.person.age is 26
-mike.person.age? // 26
-//testing length method
+mike.person.age? # 26
+#testing length method
 @length(mike.person.name)?
-// testing index method
-mike.person.name[0]? // M
-// testing byte print and byte index
-@byte(mike.person.name[0])? // 77
+# testing index method
+mike.person.name[0]? # M
+# testing byte print and byte index
+@byte(mike.person.name[0])? # 77
 
-mike.salary? // 1000
+mike.salary? # 1000
 
 
 struct Point {
@@ -375,7 +375,7 @@ struct Point {
         }
     }
 
-    pub method getX() { // methods are always instance methods with implicit 'this'
+    pub method getX() { # methods are always instance methods with implicit 'this'
         return this.x
     }
 
@@ -383,7 +383,7 @@ struct Point {
         return this.y
     }
 
-    pub function safeSub(a :: int, b :: int) returns int { // functions are always static
+    pub function safeSub(a :: int, b :: int) returns int { # functions are always static
         const result is a - b
         if result > 255 or result < 0 then return -1
         return result
@@ -420,9 +420,9 @@ point_result.x?
 point_result.y?
 
 
-/////
-// TETRAS AND CONTRADICTIONS
-/////
+##
+# TETRAS AND CONTRADICTIONS
+##
 var firstFold :: tetra is true
 var secondFold :: tetra is false
 var thirdFold :: tetra is both
@@ -433,10 +433,10 @@ secondFold?
 thirdFold?
 fourthFold?
 
-//both is both true and false
-(both == true and both == false)? // true
-//neither is neither true or false
-(neither == true or neither == false)? // false
+#both is both true and false
+(both == true and both == false)? # true
+#neither is neither true or false
+(neither == true or neither == false)? # false
 
 const Bob is true
 const Shakespere is false
@@ -450,11 +450,11 @@ function living(alive :: tetra) {
 
 /* 
 expected output:
-I am alive // from Bob
-I am dead  // from Shakespere
-I am alive // from zombie
-I am dead  // from zombie
-           // no trigger from angel
+I am alive # from Bob
+I am dead  # from Shakespere
+I am alive # from zombie
+I am dead  # from zombie
+           # no trigger from angel
 */
 
 living(Bob)
@@ -464,19 +464,19 @@ living(angel)
 
 
 
-/////
-// ARRAYS
-/////
+##
+# ARRAYS
+##
 var arr :: int[] is [111111, 222222, 333333, 444444, 555555]
 
 arr?
-arr[3]? // 444444
+arr[3]? # 444444
 arr[3] is 666666
-arr[3]? // 666666
-@push(arr, 420000) // TODO: all array methods should use the @ syntax
-arr[5]? // 420000
-@pop(arr)? //42000
-arr? //
+arr[3]? # 666666
+@push(arr, 420000) # TODO: all array methods should use the @ syntax
+arr[5]? # 420000
+@pop(arr)? #42000
+arr? #
 
 var arr_part_one is [1, 2, 3]
 var arr_part_two is [4, 5, 6]
@@ -509,9 +509,9 @@ tetraArr[9]?
 strArr[0]?
 strArr[9]?
 
-/////
-// ARRAY OF STRUCT
-/////
+##
+# ARRAY OF STRUCT
+##
 
 enum Species {
     FROG,
@@ -549,19 +549,19 @@ zoo[2].name?
 zoo[2].animal_type?
 
 
-/////
-// DEFAULT ARGUMENTS
-/////
+##
+# DEFAULT ARGUMENTS
+##
 function foo(a :: int, b :: int is 5) returns int {
     return a+b
 }
 
-foo(777, 2)? // 779
-foo(777, ~)? // 782
+foo(777, 2)? # 779
+foo(777, ~)? # 782
 
-/////
-// UNION TYPES
-/////
+##
+# UNION TYPES
+##
 
 const un1 :: int | float is 3
 const un2 :: int | float is 3.5
@@ -573,8 +573,8 @@ function process_number_union_string(value :: int | float) returns string {
     }
 }
 
-process_number_union_string(un1)? // integer
-process_number_union_string(un2)? // float
+process_number_union_string(un1)? # integer
+process_number_union_string(un2)? # float
 
 function process_number_union_narrow(value :: int | float) returns int {
     return match value {
@@ -583,15 +583,15 @@ function process_number_union_narrow(value :: int | float) returns int {
     }
 }
 
-process_number_union_narrow(un1)? // 3
-process_number_union_narrow(un2)? // 0
+process_number_union_narrow(un1)? # 3
+process_number_union_narrow(un2)? # 0
 
 function process_number_union_int(value :: int | float) returns int {
     return value as int else 0
 }
 
-process_number_union_int(un1)? // 3
-process_number_union_int(un2)? // 0
+process_number_union_int(un1)? # 3
+process_number_union_int(un2)? # 0
 
 function process_number_union_return_union(value :: int | float) returns int | float {
     return value
@@ -599,26 +599,26 @@ function process_number_union_return_union(value :: int | float) returns int | f
 
 const newun :: int | float is process_number_union_return_union(un1)
 
-const resint is newun as int else 0 // integer
-const resfloat is newun as float else 0 // float
+const resint is newun as int else 0 # integer
+const resfloat is newun as float else 0 # float
 
-resint? // 3
-resfloat? // 0
+resint? # 3
+resfloat? # 0
 
-/////
-// MAPS
-/////
+##
+# MAPS
+##
 map MyMap {
     "a" then 1.5,
     "b" then 2.5,
     "c" then 3.5,
 }
 
-MyMap["a"]? // 1.5
-MyMap["c"]? // 3.5
+MyMap["a"]? # 1.5
+MyMap["c"]? # 3.5
 MyMap["c"] is 4.5 
-MyMap["c"]? // 4.5
-MyMap["d"]? // nothing
+MyMap["c"]? # 4.5
+MyMap["d"]? # nothing
 
 map IdToName {
     1 then "Bob"
@@ -642,8 +642,8 @@ map MyMap_typed0 returns string {
     3 then "three",
 }
 
-MyMap_typed0[1]? // one
-MyMap_typed0[2]? // two
+MyMap_typed0[1]? # one
+MyMap_typed0[2]? # two
 
 map MyMap_typed1 :: int {
     1 then "one",
@@ -651,8 +651,8 @@ map MyMap_typed1 :: int {
     3 then "three",
 }
 
-MyMap_typed1[1]? // one
-MyMap_typed1[2]? // two
+MyMap_typed1[1]? # one
+MyMap_typed1[2]? # two
 
 map MyMap_typed2 :: int returns string {
     1 then "one",
@@ -660,8 +660,8 @@ map MyMap_typed2 :: int returns string {
     3 then "three",
 }
 
-MyMap_typed2[1]? // one
-MyMap_typed2[2]? // two
+MyMap_typed2[1]? # one
+MyMap_typed2[2]? # two
 
 map MyMap_enum :: Color returns string {
     .Red then "red",
@@ -669,8 +669,8 @@ map MyMap_enum :: Color returns string {
     .Blue then "blue",
 }
 
-MyMap_enum[.Red]? // red
-MyMap_enum[.Blue]? // blue
+MyMap_enum[.Red]? # red
+MyMap_enum[.Blue]? # blue
 
 map MyMap_struct {
     1 then mike,
@@ -683,9 +683,9 @@ mikeId2?
 
 
 
-/////
-// RANGE
-/////
+##
+# RANGE
+##
 var range1 is 1 to 6
 range1?
 
@@ -699,60 +699,60 @@ var range4 is 10 to 10
 range4?
 
 
-/////   
-// FORMAL LOGICAL NOTATION
-/////
-(∃x ∈ arr : x > checkAgainst)? // true 
-(∀x ∈ arr : x > checkAgainst)? // false 
-(¬∀x ∈ arr : x > checkAgainst)? // true 
-(false ↔ false)? // true  70
-(true ⊕ true)? // false  71
-(true ∧ false)? // false  72
-(true ∨ false)? // true  73
-(true ↑ false)? // true  74
-(true ↓ false)? // false  75
-(true → false)? // false  76
+##   
+# FORMAL LOGICAL NOTATION
+##
+(∃x ∈ arr : x > checkAgainst)? # true 
+(∀x ∈ arr : x > checkAgainst)? # false 
+(¬∀x ∈ arr : x > checkAgainst)? # true 
+(false ↔ false)? # true  70
+(true ⊕ true)? # false  71
+(true ∧ false)? # false  72
+(true ∨ false)? # true  73
+(true ↑ false)? # true  74
+(true ↓ false)? # false  75
+(true → false)? # false  76
 
 
-// quantifiers
+# quantifiers
 var ex is exists e in arr where e > checkAgainst
 
-ex? // true
+ex? # true
 
 var uni is forall u in arr where u > checkAgainst
-uni? // false
+uni? # false
 
 
-/////
-// LINE BREAKS
-/////
+##
+# LINE BREAKS
+##
 
 const brokenLine is 42 - 
 ... 100
 
 brokenLine?
 
-// explicit line breaks with semicolon
+# explicit line breaks with semicolon
 living(Bob); living(Shakespere); living(zombie); living(angel); 
 
 
-/////
-// @type AND INFERENCE
-/////
+##
+# @type AND INFERENCE
+##
 
 var _int :: int
-_int? // 0
+_int? # 0
 
 var _float :: float
-_float? // 0.0
+_float? # 0.0
 
 var _byte :: byte
-_byte? // 0x00
+_byte? # 0x00
 
 var _tetra :: tetra
-_tetra? // false
+_tetra? # false
 
 var _string :: string
-_string? // ""
+_string? # ""
 
 "end"?

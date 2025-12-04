@@ -1,6 +1,6 @@
-// in main:
-// lex src file:
-// pass tokens for imports and modules
-// if found, add a dependency to the graph
-// we can verify circular imports with the graph
-// lex and parse on demand?2
+# in main:
+# lex src file:
+# pass tokens for imports and modules
+# if found, add a dependency to the graph
+# we can verify circular imports with the graph
+# lex and parse on demand?2

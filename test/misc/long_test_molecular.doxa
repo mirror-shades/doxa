@@ -1,26 +1,26 @@
-// Atomic type arrays
+# Atomic type arrays
 var explicit_int_array :: int[] is [1, 2, 3];
 var explicit_sized_int_array :: int[3] is [4, 5, 6];
 var implicit_int_array is [7, 8, 9];
-var unit_int_array :: int[]; // []
+var unit_int_array :: int[]; # []
 var explicit_byte_array :: byte[] is [0x00, 0x01, 0x02];
 var explicit_sized_byte_array :: byte[3] is [0x03, 0x04, 0x05];
 var implicit_byte_array is [0x06, 0x07, 0x08];
-var unit_byte_array :: byte[]; // []
+var unit_byte_array :: byte[]; # []
 var explicit_float_array :: float[] is [1.0, 2.0, 3.0];
 var explicit_sized_float_array :: float[3] is [4.0, 5.0, 6.0];
 var implicit_float_array is [7.0, 8.0, 9.0];
-var unit_float_array :: float[]; // []
+var unit_float_array :: float[]; # []
 var explicit_tetra_array :: tetra[] is [both, false, true];
 var explicit_sized_tetra_array :: tetra[3] is [both, false, true];
 var implicit_tetra_array is [true, false, both];
-var unit_tetra_array :: tetra[]; // []
+var unit_tetra_array :: tetra[]; # []
 var explicit_string_array :: string[] is ["foo", "bar", "baz"];
 var explicit_sized_string_array :: string[3] is ["qux", "quux", "quuz"];
 var implicit_string_array is ["hello", "world", "test"];
-var unit_string_array :: string[]; // []
+var unit_string_array :: string[]; # []
 
-// Const atomic array tests
+# Const atomic array tests
 const const_explicit_int_array :: int[] is [1, 2, 3];
 const const_explicit_sized_int_array :: int[3] is [4, 5, 6];
 const const_implicit_int_array is [7, 8, 9];
@@ -53,7 +53,7 @@ const const_enum_red :: Color is .Red;
 const const_enum_green :: Color is .Green;
 const const_enum_blue :: Color is .Blue;
 
-// Test match expressions with different enum values
+# Test match expressions with different enum values
 var int_from_map is match const_enum_red {
     .Red then "one",
     .Green then "two",
@@ -72,7 +72,7 @@ var int_from_map_blue is match const_enum_blue {
     .Blue then "three",
 }
 
-// Test match with different return types
+# Test match with different return types
 var string_from_map is match const_enum_red {
     .Red then "red",
     .Green then "green", 
@@ -98,7 +98,7 @@ var else_string_from_map is match const_enum_green {
 
 
 
-// Test match with Stoplight enum
+# Test match with Stoplight enum
 const stoplight_red :: Stoplight is .Red;
 const stoplight_yellow :: Stoplight is .Yellow;
 const stoplight_green :: Stoplight is .Green;
@@ -121,20 +121,20 @@ var stoplight_action_green is match stoplight_green {
     .Green then "go",
 }
 
-// When type is explicitly specified, short form works
+# When type is explicitly specified, short form works
 var explicit_enum_array :: Color[] is [.Red, .Green, .Blue];
 var explicit_sized_enum_array :: Color[3] is [.Blue, .Red, .Green];
-var unit_enum_array :: Color[]; // []
+var unit_enum_array :: Color[]; # []
 
-// When type is not specified, full qualification needed
+# When type is not specified, full qualification needed
 var implicit_enum_array is [Color.Green, Color.Blue, Color.Red];
 
-// Const versions - unit arrays get default empty array
+# Const versions - unit arrays get default empty array
 const const_explicit_enum_array :: Color[] is [.Red, .Green, .Blue];
 const const_explicit_sized_enum_array :: Color[3] is [.Blue, .Red, .Green];
 const const_implicit_enum_array is [Color.Green, Color.Blue, Color.Red];
 
-// Mixed enum arrays (need full qualification)
+# Mixed enum arrays (need full qualification)
 var mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
 const const_mixed_enum_array is [Color.Red, Stoplight.Yellow, Color.Blue];
 
@@ -158,7 +158,7 @@ var implicit_struct_array is [
     $Person { name is "Henry", age is 60 },
     $Person { name is "Ivy", age is 65 }
 ];
-var unit_struct_array :: Person[]; // []
+var unit_struct_array :: Person[]; # []
 
 const const_explicit_struct_array :: Person[] is [
     $Person { name is "Alice", age is 25 },
@@ -185,7 +185,7 @@ var struct_array is [
     Bob
 ];
 
-// Nested arrays (arrays of arrays)
+# Nested arrays (arrays of arrays)
 var nested_int_array :: int[][] is [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
 var nested_string_array :: string[][] is [["hello", "world"], ["foo", "bar"]];
 var nested_tetra_array :: tetra[][] is [[true, false, both], [false, true, both]];
@@ -199,7 +199,7 @@ var nested_struct_array :: Person[][] is [
 
 const const_nested_int_array :: int[][] is [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
 
-// Empty arrays of different types
+# Empty arrays of different types
 var empty_int_array :: int[] is [];
 var empty_string_array :: string[] is [];
 var empty_struct_array :: Person[] is [];
@@ -217,7 +217,7 @@ fn foo_explicit_input_struct(person :: Person) -> string) {
     return person.name; 
 }
 
-// Function tests with enums
+# Function tests with enums
 fn get_color_name(color :: Color) -> string) {
     return match color {
         .Red then "red",
@@ -291,7 +291,7 @@ fn get_enum_from_int(value :: int) -> Color) {
     };
 } 
 
-// Union tests
+# Union tests
 var union_decl_int_float :: int | float;
 var union_decl_string_int_float :: string | int | float;
 var union_decl_string_nothing :: string | nothing;

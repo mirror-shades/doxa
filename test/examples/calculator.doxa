@@ -114,13 +114,13 @@ function split(input :: string) returns string[] {
                 }
             }
             if is_unary_minus then {
-                current is current + c  // Add to current number
+                current is current + c  # Add to current number
             } else {
                 if current != "" then {
                     @push(result, current)
                     current is ""
                 }
-                @push(result, c)  // Binary minus operator
+                @push(result, c)  # Binary minus operator
             }
         }
         else if c != " " {

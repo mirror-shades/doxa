@@ -18,23 +18,23 @@ The pipe's only usage in Doxa is to specify a typed union.
 ## Examples
 
 ```doxa
-// A union that can be either an integer or a float
+# A union that can be either an integer or a float
 var number :: int | float
-number is 42     // Valid - integer
-number is 3.14   // Valid - float
+number is 42     # Valid - integer
+number is 3.14   # Valid - float
 
-// A union that can be a string, integer, or float
+# A union that can be a string, integer, or float
 var value :: string | int | float
-value is "hello" // Valid - string
-value is 100     // Valid - integer
-value is 2.718   // Valid - float
+value is "hello" # Valid - string
+value is 100     # Valid - integer
+value is 2.718   # Valid - float
 
-// Unions default to the first type when not initialized
+# Unions default to the first type when not initialized
 var defaulted :: int | float
-defaulted?       // Prints 0 (default int value)
+defaulted?       # Prints 0 (default int value)
 
 var float_first :: float | int
-float_first?     // Prints 0.0 (default float value)
+float_first?     # Prints 0.0 (default float value)
 ```
 
 ## Default Behavior
@@ -55,19 +55,19 @@ This ensures that unions always have a well-defined state and the compiler knows
 A common use case for unions is representing optional values using `nothing`:
 
 ```doxa
-// Optional integer
+# Optional integer
 var maybe_name :: string | nothing
-maybe_name is "Alice"     // Has a value
-maybe_name is nothing // No value
+maybe_name is "Alice"     # Has a value
+maybe_name is nothing # No value
 
-// Function that might not return a value
+# Function that might not return a value
 function findValue(arr :: MyObject[], target :: string) returns(int | nothing) {
     each x in arr {
         if (x.name equals target) then {
             return x
         }
     }
-    return nothing // Not found
+    return nothing # Not found
 }
 ```
 
@@ -90,7 +90,7 @@ enum ErrorList {
     Underflow,
 }
 
-// Match function to process errors
+# Match function to process errors
 function handleError(err :: ErrorList) {
     match err {
         .Overflow then doSomething(),
@@ -98,7 +98,7 @@ function handleError(err :: ErrorList) {
     }
 }
 
-// Function returns a union - we won't know if the value is a number or one of our errors until we check
+# Function returns a union - we won't know if the value is a number or one of our errors until we check
 function addLimit(a :: int, b :: int) returns( int | ErrorList ) {
     const result is a + b
     if result > 255 then return ErrorList.Overflow
@@ -106,27 +106,27 @@ function addLimit(a :: int, b :: int) returns( int | ErrorList ) {
     return result
 }
 
-// All of these return unions
-const unknownBigResult is addLimit(1000, 1000)   // ErrorList.Overflow
-const unknownSmallResult is addLimit(100, -1000) // ErrorList.Underflow
-const unknownRightResult is addLimit(100, -10)   // 90
+# All of these return unions
+const unknownBigResult is addLimit(1000, 1000)   # ErrorList.Overflow
+const unknownSmallResult is addLimit(100, -1000) # ErrorList.Underflow
+const unknownRightResult is addLimit(100, -10)   # 90
 
-// Handle errors - several approaches:
+# Handle errors - several approaches:
 
-// Approach 1: Pattern matching (cleanest)
+# Approach 1: Pattern matching (cleanest)
 match unknownRightResult {
-    int then onlyUsesInts(unknownRightResult),  // unknownRightResult is typed as int here
-    ErrorList then handleError(unknownRightResult),  // unknownRightResult is typed as ErrorList here
+    int then onlyUsesInts(unknownRightResult),  # unknownRightResult is typed as int here
+    ErrorList then handleError(unknownRightResult),  # unknownRightResult is typed as ErrorList here
 }
 
-// Approach 2: Explicit fallback with error handling
+# Approach 2: Explicit fallback with error handling
 const myInt is unknownRightResult as int else {
     @panic("This should never happen in production!")
 }
 onlyUsesInts(myInt)
 
-// Note type checking in control flow doesn't implicitly cast unlike match case which is exhaustive
-// this can be done by narrowing within the branch but it is not as ergonomic as match case
+# Note type checking in control flow doesn't implicitly cast unlike match case which is exhaustive
+# this can be done by narrowing within the branch but it is not as ergonomic as match case
 if unknownRightResult @istype int then {
     onlyUsesInts(unknownRightResult) as int else{}
 } else if unknownRightResult @istype ErrorList then {
@@ -142,29 +142,29 @@ The `as` keyword attempts to cast a union to a specific type. If the cast fails,
 var value :: int | string
 value is "hello"
 
-// This will execute the else block since value is currently a string
+# This will execute the else block since value is currently a string
 const number is value as int else {
     return error.ExpectedInteger
 }
 
-// This will succeed since value is now an int
+# This will succeed since value is now an int
 value is 42
 const doubled is value as int else {
     return error.ExpectedInteger
-} // doubled is 84
+} # doubled is 84
 ```
 
 `as` can be used for control flow as well, using then blocks:
 
 ```
-// using as like an 'istype' style conditional
+# using as like an 'istype' style conditional
 asThenUnion as int then {
     var result is 20 + 30
     result?
 } else {
     var result is 30 + 40
     result?
-} // 50
+} # 50
 ```
 
 ### Common Patterns
@@ -173,7 +173,7 @@ asThenUnion as int then {
 
 ```doxa
 const result is someUnion as int else {
-    return 0 // Default value if not an int
+    return 0 # Default value if not an int
 }
 ```
 
@@ -189,7 +189,7 @@ const number is value as int else {
 
 ```doxa
 const processed is value as string else {
-    // Handle non-string case
+    # Handle non-string case
     return "default"
 }
 ```
