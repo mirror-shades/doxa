@@ -1,4 +1,4 @@
-# Doxa Programming Language [[Docs]](https://mirror-shades.github.io/doxa/)[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mirror-shades/doxa)
+# Doxa Programming Language [[Docs]](https:#mirror-shades.github.io/doxa/)[![Ask DeepWiki](https:#deepwiki.com/badge.svg)](https:#deepwiki.com/mirror-shades/doxa)
 
 Doxa is inspired by Nagarjuna's four cornered logic, known as Catuṣkoṭi. Doxa does not use bools but instead tetras. A tetra (short for tetralemma) is a logical value with four possible states or corners:
 
@@ -98,8 +98,8 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 ## Example
 
 ```solidity
-// a brainfuck interpreter implemented in doxa
-// mirror-shades
+# a brainfuck interpreter implemented in doxa
+# mirror-shades
 
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
 
@@ -126,7 +126,7 @@ function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], t
         } else {
             const loopPointer is loops - 1
             ip is loopSpot[loopPointer]
-            // cancels the ip += 1 from the main loop
+            # cancels the ip += 1 from the main loop
             ip -= 1
         }
     }
@@ -145,7 +145,7 @@ function checkClosingBracket(scan :: string) returns tetra {
 }
 
 function interpret(scan :: string) {
-    var tape :: byte[10] // increase if needed
+    var tape :: byte[10] # increase if needed
     var loops :: int
     var loopSpot :: int[]
     var tp :: int
