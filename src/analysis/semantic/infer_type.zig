@@ -90,6 +90,27 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     return type_info;
                 }
                 type_info.* = .{ .base = .Float };
+            } else if (std.mem.eql(u8, op, "//")) {
+                const left_is_int_or_byte = left_type.base == .Int or left_type.base == .Byte;
+                const right_is_int_or_byte = right_type.base == .Int or right_type.base == .Byte;
+
+                if (!left_is_int_or_byte or !right_is_int_or_byte) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.MODULO_REQUIRES_INTEGER_OR_BYTE_OPERANDS,
+                        "Integer division requires integer or byte operands",
+                        .{},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+
+                if (left_type.base == .Int or right_type.base == .Int) {
+                    type_info.* = .{ .base = .Int };
+                } else {
+                    type_info.* = .{ .base = .Byte };
+                }
             } else if (std.mem.eql(u8, op, "%")) {
                 if ((left_type.base != .Int and left_type.base != .Byte) or
                     (right_type.base != .Int and right_type.base != .Byte))

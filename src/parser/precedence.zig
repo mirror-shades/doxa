@@ -96,6 +96,7 @@ pub const rules = blk: {
     r.set(.MINUS, .{ .prefix = unary, .infix = binary, .precedence = .TERM });
     r.set(.ASTERISK, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.SLASH, .{ .infix = binary, .precedence = .FACTOR });
+    r.set(.DOUBLE_SLASH, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.MODULO, .{ .infix = binary, .precedence = .FACTOR });
     r.set(.POWER, .{ .infix = binary, .precedence = .EXPONENT, .associativity = .RIGHT }); // Right associative for exponentiation
 

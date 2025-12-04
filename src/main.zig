@@ -531,6 +531,11 @@ pub fn main() !void {
     profiler.startPhase(Phase.LEXIC_A);
     const lexedTokens = try lexicAnalysis(&memoryManager, source, path, &reporter);
     defer lexedTokens.deinit();
+    if (cli_options.reporter_options.debug_lexer) {
+        for (lexedTokens.items) |token| {
+            std.debug.print("{t} {s}\n", .{ token.type, token.lexeme });
+        }
+    }
     profiler.stopPhase();
 
     profiler.startPhase(Phase.PARSING);
