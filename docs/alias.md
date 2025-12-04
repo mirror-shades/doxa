@@ -4,15 +4,15 @@ Overview
 Alias parameters allow a function to modify a caller’s variable directly, without general-purpose pointers or references. They are opt-in at both the function signature and call site, making mutations explicit and safe. Aliases are stack-bound, cannot escape their defining function, and cannot be taken from partial subfields or array elements.
 
 Syntax
-
+```
 fn modify(^param :: int) {
-param += 1 // Directly mutates caller's variable
+param += 1 # Directly mutates caller's variable
 }
 
 var x = 0
-modify(^x) // Caller opts-in to mutation
-// x == 1
-
+modify(^x) # Caller opts-in to mutation
+# x == 1
+```
 Core Rules
 
     Parameter-only — ^T may only appear in function parameters, never in locals, returns, or stored types.
@@ -43,14 +43,14 @@ b is tmp
 
 var x is 1, y is 2
 swap(^x, ^y)
-// x == 2, y == 1
+# x == 2, y == 1
 
 Example: Compile-time Error Cases
 
-swap(^x, ^x) // ❌ same variable passed twice
-modify(^(x + 1)) // ❌ temporaries not allowed
-f(^obj.field) // ❌ partial object aliasing not allowed
-g(^x, x) // ❌ aliased and by-value in same call
+swap(^x, ^x) # ❌ same variable passed twice
+modify(^(x + 1)) # ❌ temporaries not allowed
+f(^obj.field) # ❌ partial object aliasing not allowed
+g(^x, x) # ❌ aliased and by-value in same call
 
 Design Intent
 This model offers mutation semantics without full pointers, preserving deterministic lifetime and memory safety under stack-based allocation. By forcing explicit syntax and disallowing escaping or partial aliasing, it avoids common pitfalls of traditional references while retaining enough flexibility for in-place updates.

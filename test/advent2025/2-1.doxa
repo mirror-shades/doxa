@@ -7,10 +7,11 @@ entry function main() {
         const split_pair is split(pair, "-")
         var current is @int(split_pair[0])
         var limit is @int(split_pair[1])
+        @print("checking {current}-{limit} (total {limit - current + 1})\n")
         while current <= limit do current += 1 {
             if isInvalid(current) then {
                 invalid_sum += current
-            }
+            } 
         }
     }
     @print("Invalid sum: {invalid_sum}\n")
@@ -33,7 +34,12 @@ function split(input :: string, separator :: string) returns string[] {
 }
 
 function isInvalid(number :: int) returns tetra {
-    // invalid numbers are always even
-    if(number % 2) != 0 then return false
+    # invalid numbers are always even
+    var s_number is @string(number)
+    if @length(s_number) % 2 != 0 then return false
+    var half_length is @int(@length(s_number) / 2)
+    for x while x < half_length do x += 1 {
+        if s_number[x] != s_number[half_length + x] then return false
+    }
     return true
 }

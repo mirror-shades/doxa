@@ -9,21 +9,21 @@ function add(a :: int, b :: int) returns int {
     return a + b
 }
 
-// Dice roll benchmark
+# Dice roll benchmark
 function diceRollBenchmark() {
     var count is 0
     var startTime is @tick()
     
     for i is 1 while i <= limit do i += 1 {
         const roll is diceRoll()
-        count is count + roll  // Prevent optimization
+        count is count + roll  # Prevent optimization
     }
     
     var endTime is @tick()
     @print("Dice rolls: {count}, Time: {(endTime - startTime) / 1000000000 }s\n")
 }
 
-// FizzBuzz benchmark
+# FizzBuzz benchmark
 function fizzbuzzBenchmark() {
     var startTime is @tick()
     
@@ -38,7 +38,7 @@ function fizzbuzzBenchmark() {
     @print("FizzBuzz time: {(endTime - startTime) / 1000000000 }s\n")
 }
 
-// Arithmetic benchmark
+# Arithmetic benchmark
 function arithmeticBenchmark() {
     var sum is 0
     var start is @tick()
@@ -50,7 +50,7 @@ function arithmeticBenchmark() {
     @print("Arithmetic: {sum}, Time: {(@tick() - start) / 1000000000}s\n")
 }
 
-// Function call benchmark  
+# Function call benchmark  
 function callBenchmark() {
     var sum is 0
     var start is @tick()
@@ -62,7 +62,7 @@ function callBenchmark() {
     @print("Function calls: {sum}, Time: {(@tick() - start) / 1000000000}s\n")
 }
 
-// Run all benchmarks
+# Run all benchmarks
 @print("=== DOXA BENCHMARK SUITE ===\n")
 diceRollBenchmark()
 fizzbuzzBenchmark()

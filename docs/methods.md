@@ -62,7 +62,7 @@ Mutable intrinsics require dynamic storage. Passing a fixed-size annotation (`in
 
 - **Input**: `array | string`, `value`
 - **Output**: `nothing` - modifies array/string in place by adding value to end
-- **Example**: `@push(arr, 3)` // adds 3 to arr, returns nothing
+- **Example**: `@push(arr, 3)` # adds 3 to arr, returns nothing
 
 ### @pop
 
@@ -74,7 +74,7 @@ Mutable intrinsics require dynamic storage. Passing a fixed-size annotation (`in
 
 - **Input**: `array | string`, `index`, `value`
 - **Output**: `nothing` - inserts value at index
-- **Example**: `@insert(arr, 1, 5)` // inserts 5 at index 1
+- **Example**: `@insert(arr, 1, 5)` # inserts 5 at index 1
 
 ### @remove
 
@@ -86,7 +86,7 @@ Mutable intrinsics require dynamic storage. Passing a fixed-size annotation (`in
 
 - **Input**: `array | string`
 - **Output**: `nothing` - removes all elements
-- **Example**: `@clear(arr)` // arr becomes []
+- **Example**: `@clear(arr)` # arr becomes []
 
 ### @find
 
@@ -140,7 +140,7 @@ Mutable intrinsics require dynamic storage. Passing a fixed-size annotation (`in
 
 - **Input**: `none`
 - **Output**: `float` - random number between 0.0 and 1.0, compile-time error if not supported
-- **Example**: `var num = @random()` // returns float like 0.123456
+- **Example**: `var num = @random()` # returns float like 0.123456
 
 ## System Methods
 
@@ -166,13 +166,13 @@ Mutable intrinsics require dynamic storage. Passing a fixed-size annotation (`in
 
 - **Input**: `none`
 - **Output**: `int` - current Unix timestamp in seconds
-- **Example**: `var now = @time()` // seconds since Unix epoch
+- **Example**: `var now = @time()` # seconds since Unix epoch
 
 ### @tick
 
 - **Input**: `none`
 - **Output**: `int` - monotonic high-resolution timestamp in nanoseconds
-- **Example**: `var start = @tick()` // for performance measurement
+- **Example**: `var start = @tick()` # for performance measurement
 
 ## I/O Methods
 
@@ -186,7 +186,7 @@ Mutable intrinsics require dynamic storage. Passing a fixed-size annotation (`in
 
 - **Input**: `none`
 - **Output**: `string` - reads line from stdin (including newline)
-- **Example**: `var name = @input()` // waits for user input
+- **Example**: `var name = @input()` # waits for user input
 
 ## Control Flow Methods
 
@@ -206,13 +206,13 @@ Mutable intrinsics require dynamic storage. Passing a fixed-size annotation (`in
 
 - **Input**: `int` (optional, defaults to 0)
 - **Output**: `never` - terminates program with exit code
-- **Example**: `@exit(1)` // exit with error code
+- **Example**: `@exit(1)` # exit with error code
 
 ### @sleep
 
 - **Input**: `int` (milliseconds)
 - **Output**: `nothing` - pauses execution
-- **Example**: `@sleep(1000)` // sleep for 1 second
+- **Example**: `@sleep(1000)` # sleep for 1 second
 
 ## Utility Methods
 

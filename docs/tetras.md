@@ -86,9 +86,9 @@ struct Call {
 
 const result :: Call is apiCall()
 
-if not result.valid then log(result) // if the result is not valid or ambigous it is logged 
-if result.valid then serveData(result) // if the result is valid or ambigous it is served
-// if no data the conditionals do not trigger and the result falls through
+if not result.valid then log(result) # if the result is not valid or ambigous it is logged 
+if result.valid then serveData(result) # if the result is valid or ambigous it is served
+# if no data the conditionals do not trigger and the result falls through
 ```
 
 ## Intentionality

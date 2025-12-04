@@ -1,6 +1,6 @@
 const limit is 1_000_000_000
 
-// FizzBuzz benchmark
+# FizzBuzz benchmark
 function fizzbuzzBenchmark() {
     var startTime is @tick()
     
@@ -15,6 +15,6 @@ function fizzbuzzBenchmark() {
     @print("FizzBuzz time: {(endTime - startTime) / 1000000000 }s\n")
 }
 
-// Run all benchmarks
+# Run all benchmarks
 @print("=== 1b fizzbuzz loops in Doxa ===\n")
 fizzbuzzBenchmark()

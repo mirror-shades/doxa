@@ -33,7 +33,7 @@ pub function lex(src :: string) {
         @print("{t.type}\n") 
     }
 
-    // add to source_manager @print("there are {line_breaks} lines")
+    # add to source_manager @print("there are {line_breaks} lines")
 }
 
 function makeString(^src :: string, ^i :: int) returns Token {

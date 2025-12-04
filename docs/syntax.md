@@ -36,12 +36,12 @@ union - can be handled with switch statements and type narrowing, see page on un
 Arrays are homogeneous collections with type inference:
 
 ```doxa
-var nums :: int[] is [1, 2, 3]    // Explicit typing
-var strs is ["a", "b"]            // Inferred as string[]
+var nums :: int[] is [1, 2, 3]    # Explicit typing
+var strs is ["a", "b"]            # Inferred as string[]
 
-// Invalid operations
-var mixed is [1, "two", true]     // Error: mixed types
-@push(nums, "four")                // Error: type mismatch
+# Invalid operations
+var mixed is [1, "two", true]     # Error: mixed types
+@push(nums, "four")                # Error: type mismatch
 ```
 
 #### Array Storage Kinds
@@ -56,7 +56,7 @@ Mutating methods like `@push`, `@insert`, `@remove`, or `@clear` require dynamic
 
 ```doxa
 const literal = [1, 2]
-var copy :: int[] is literal  // copy becomes dynamic and @push-friendly
+var copy :: int[] is literal  # copy becomes dynamic and @push-friendly
 ```
 ````
 
@@ -69,7 +69,7 @@ map scores {
     "alice" is 100,
     "bob" is 85
 }
-scores["alice"]                  // Access value
+scores["alice"]                  # Access value
 ```
 
 ## Control Flow
@@ -100,16 +100,16 @@ enum Error {
 
 const res is intOrError()
 res as int then {
-    intsOnly(res) // narrowed to int
+    intsOnly(res) # narrowed to int
 } else {
-    match res { // else blocks do not narrow
+    match res { # else blocks do not narrow
         Error.TOO_BIG then {
             @print("result was too big")
         }
         Error.TOO_SMALL then {
             @print("result was too small")
         }
-        else { // we know this will never be reached
+        else { # we know this will never be reached
             unreachable
         }
     }
@@ -127,7 +127,7 @@ Use the `unreachable` keyword when a control-flow path should be impossible. It 
 
 ```doxa
 var x is computeValue()
-x?                              // Prints value with location, name, and type
+x?                              # Prints value with location, name, and type
 ```
 ```
 [./test.doxa:2:2] x :: int is 62
@@ -138,7 +138,7 @@ Ranges are arrays which can be declared between two ints or bytes
 
 ```
 const range is 10 to 15
-@print("{range}") // [10, 11, 12, 13, 14, 15]
+@print("{range}") # [10, 11, 12, 13, 14, 15]
 ```
 
 ### Collection Quantifiers
@@ -146,10 +146,10 @@ const range is 10 to 15
 As with all formal logic operations, both symbolic notation and keyword notations are supported.
 
 ```doxa
-(∃x ∈ numbers : x > 10) // Logical notation
-(exists x in numbers where x > 10) // English prose
-(∀x ∈ numbers : x > 0) // Logical notation
-(forall x in numbers where x > 0) // English prose
+(∃x ∈ numbers : x > 10) # Logical notation
+(exists x in numbers where x > 10) # English prose
+(∀x ∈ numbers : x > 0) # Logical notation
+(forall x in numbers where x > 0) # English prose
 ```
 
 ## Conditional Expressions
@@ -166,7 +166,7 @@ var result is if condition then {
 
 Be aware assigning an expression without a value will assign `nothing`:
 ```doxa
-    var x is if (false) { y is 1 }  // x becomes nothing
+    var x is if (false) { y is 1 }  # x becomes nothing
 ```
 
 ### Function Return Types
@@ -183,7 +183,7 @@ Return types are optional and inferred by default:
 
 ```doxa
 fn add(a :: int, b :: int) {
-    return a + b // inferred as returning an int
+    return a + b # inferred as returning an int
 }
 ```
 
@@ -200,35 +200,35 @@ Doxa has extensive for traditional first order logics that work as expected with
 ```
 const arr :: int[] = [1, 2, 3, 4, 5]
 
-// existential quantifier ∃, element of ∈
-∃x ∈ arr : x > 3 // true
+# existential quantifier ∃, element of ∈
+∃x ∈ arr : x > 3 # true
 
-// universal quantifier ∀, where :
-∀x ∈ arr : x > 3 // false
+# universal quantifier ∀, where :
+∀x ∈ arr : x > 3 # false
 
-// NOT ¬
-¬false // true
+# NOT ¬
+¬false # true
 
-// biconditional ↔
-false ↔ false // true
+# biconditional ↔
+false ↔ false # true
 
-// XOR ⊕
-true ⊕ true // false
+# XOR ⊕
+true ⊕ true # false
 
-// AND ∧
-true ∧ false // false
+# AND ∧
+true ∧ false # false
 
-// OR ∨
-true ∨ false // true
+# OR ∨
+true ∨ false # true
 
-// NAND ↑
-true ↑ false // true
+# NAND ↑
+true ↑ false # true
 
-// NOR ↓
-true ↓ false // false
+# NOR ↓
+true ↓ false # false
 
-// implication →
-true → false // false
+# implication →
+true → false # false
 ```
 
 This unicode support is paired with plaintext keywords which act in an identical fashion:
@@ -253,8 +253,8 @@ This means formal logical representation can be written in either way:
 ```
 const arr :: int[] = [1, 2, 3, 4, 5]
 
-¬(∀x ∈ arr : x > 3) // true
-not (forall x in arr where x > 3) // true
+¬(∀x ∈ arr : x > 3) # true
+not (forall x in arr where x > 3) # true
 ```
 
 ### Paradoxical logic

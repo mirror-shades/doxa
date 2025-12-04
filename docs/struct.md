@@ -5,25 +5,25 @@ Struct instantiation uses a `$` sigil prefix to diferentiate it from a normal id
 ### Real world example
 
 struct Point {  
-    x :: int, // unless marked pub, values are private
+    x :: int, # unless marked pub, values are private
     y :: int,
 
     pub id :: int,
 
-    pub function New(x :: int, y :: int) { // fucntions and methods are private unless marked pub as well
-        return $Point { // note the $ prefix
+    pub function New(x :: int, y :: int) { # fucntions and methods are private unless marked pub as well
+        return $Point { # note the $ prefix
             x is x,
             y is y,
         }
     }
 
-    function safeSub(a :: int, b :: int) returns int { // normal functions within structs are static
+    function safeSub(a :: int, b :: int) returns int { # normal functions within structs are static
         result is a - b
         if result > 255 or result < 0 then return -1
         return result
     }
 
-    pub method get() { // the `method` keyword lets you access 
+    pub method get() { # the `method` keyword lets you access 
         return $Point {
             this.x,
             this.y
@@ -31,7 +31,7 @@ struct Point {
     }
 
     pub method getDelta() returns int {
-        return Point.safeSub(this.x, this.y) // static methods can be called within instance methods
+        return Point.safeSub(this.x, this.y) # static methods can be called within instance methods
     }
 
 }
@@ -44,7 +44,7 @@ struct Animal {
 }
 
 struct Dog {
-    // Composition instead of inheritance
+    # Composition instead of inheritance
     animal :: Animal,
     breed :: string,
 
@@ -60,5 +60,5 @@ var dog is $Dog {
     breed is "Labrador"
 }
 
-dog.bark() // Spot says woof!
+dog.bark() # Spot says woof!
 ```

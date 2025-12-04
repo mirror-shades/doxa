@@ -31,9 +31,9 @@ map MyMap {
 
 var entry is MyMap["foo"]
 
-entry? // union of string | nothing
+entry? # union of string | nothing
 const narrow_entry is entry as string else return MyEnum.FoundNothing
-narrow_entry? // "bar"
+narrow_entry? # "bar"
 ```
 
 ### Union Returns

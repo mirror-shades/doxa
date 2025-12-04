@@ -10,10 +10,10 @@ Every scope (function, block, loop body) has its own **arena allocator**. When a
 
 ```doxa
 function processData() {
-    var temp :: Buffer is allocateLargeBuffer()  // Allocated in function arena
+    var temp :: Buffer is allocateLargeBuffer()  # Allocated in function arena
     transformData(temp)
-    return temp  // temp gets copied to caller's scope
-} // Function arena deallocated here - temp freed
+    return temp  # temp gets copied to caller's scope
+} # Function arena deallocated here - temp freed
 ```
 
 ### Parameter Aliasing
@@ -22,11 +22,11 @@ Functions can mutate caller variables through **alias parameters** (`^param`):
 
 ```doxa
 fn increment(^value :: int) {
-    value += 1  // Directly modifies caller's variable
+    value += 1  # Directly modifies caller's variable
 }
 
 var x = 5
-increment(^x)  // x becomes 6
+increment(^x)  # x becomes 6
 ```
 
 **Safety rules:**
@@ -41,13 +41,13 @@ Return values are allocated directly in the caller's scope to avoid copying:
 
 ```doxa
 function createData() -> Data {
-    var result :: Data is Data{}  // Allocated in createData's arena
+    var result :: Data is Data{}  # Allocated in createData's arena
     populateData(result)
-    return result  // Gets copied to caller's scope
+    return result  # Gets copied to caller's scope
 }
 
 function caller() {
-    var data is createData()  // Space allocated here before call
+    var data is createData()  # Space allocated here before call
     useData(data)
 }
 ```
@@ -59,10 +59,10 @@ Use `defer` for guaranteed cleanup, even during errors:
 ```doxa
 function processFile(filename :: string) {
     var file is openFile(filename)
-    defer file.close()  // Guaranteed to run when scope exits
+    defer file.close()  # Guaranteed to run when scope exits
 
     var data is readFile(file)
-    processData(data)   // If this throws, file still gets closed
+    processData(data)   # If this throws, file still gets closed
     return data
 }
 ```
@@ -74,12 +74,12 @@ Defer actions run in reverse order (LIFO) when scope exits.
 Global variables are allocated in a **global arena** that persists for the entire program:
 
 ```doxa
-// Module/file level - allocated in global arena
+# Module/file level - allocated in global arena
 var globalCache :: Cache is Cache{}
 const config :: Config is loadConfig()
 
 function useGlobals() {
-    globalCache.add("key", "value")  // Accessible from anywhere
+    globalCache.add("key", "value")  # Accessible from anywhere
 }
 ```
 
@@ -108,17 +108,17 @@ Defer Actions
 
 ### Dynamic Arrays
 ```doxa
-var dynamic :: int[] is [1, 2, 3]     // Heap allocated, resizable
+var dynamic :: int[] is [1, 2, 3]     # Heap allocated, resizable
 ```
 
 ### Fixed Arrays
 ```doxa
-var fixed :: int[100] is [1, 2, 3]    // Stack allocated, fixed size
+var fixed :: int[100] is [1, 2, 3]    # Stack allocated, fixed size
 ```
 
 ### Constants
 ```doxa
-const data is [1, 2, 3]               // Read-only static data
+const data is [1, 2, 3]               # Read-only static data
 ```
 
 ## Performance Characteristics
@@ -143,11 +143,11 @@ Defer ensures cleanup even during exceptions:
 ```doxa
 function riskyOperation() {
     var resource = acquireResource()
-    defer resource.release()  // Runs even if error occurs
+    defer resource.release()  # Runs even if error occurs
 
-    doRiskyThing()            // Might throw
-    return result            // defer still runs
-} // resource.release() called here
+    doRiskyThing()            # Might throw
+    return result            # defer still runs
+} # resource.release() called here
 ```
 
 ## Best Practices
@@ -186,5 +186,3 @@ Mitigated by defer statements.
 
 ### Large Allocations
 Handled through scope-based cleanup timing.
-
-This system provides **C++-level performance** with **Rust-level safety** through simple, predictable rules.
