@@ -420,6 +420,9 @@ pub const ControlFlowHandler = struct {
         // Body - create scope that will be cleaned up each iteration
         try self.generator.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
 
+        // Push symbol table scope for loop body variables
+        try self.generator.symbol_table.pushScope();
+
         // Enter loop iteration scope
         const loop_scope_id = self.generator.label_generator.label_count + 2000; // Use offset to avoid conflicts
         try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = loop_scope_id, .var_count = 0 } });
@@ -432,6 +435,8 @@ pub const ControlFlowHandler = struct {
             // Step - exit scope here so continue jumps to clean state
             try self.generator.instructions.append(.{ .Label = .{ .name = loop_step_label, .vm_address = 0 } });
             try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
+            // Pop symbol table scope
+            self.generator.symbol_table.popScope();
 
             if (loop.step) |step_expr| {
                 try self.generator.generateExpression(step_expr, false, false);
@@ -439,6 +444,8 @@ pub const ControlFlowHandler = struct {
         } else {
             // No step - exit scope at start of next iteration
             try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
+            // Pop symbol table scope
+            self.generator.symbol_table.popScope();
         }
 
         try self.generator.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });

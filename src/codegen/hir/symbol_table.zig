@@ -6,7 +6,7 @@ const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 
 pub const SymbolTable = struct {
     variables: std.StringHashMap(u32),
-    local_variables: std.StringHashMap(u32),
+    local_scopes: std.array_list.Managed(std.StringHashMap(u32)),
     variable_count: u32,
     local_variable_count: u32,
 
@@ -27,7 +27,7 @@ pub const SymbolTable = struct {
     pub fn init(allocator: std.mem.Allocator) SymbolTable {
         return SymbolTable{
             .variables = std.StringHashMap(u32).init(allocator),
-            .local_variables = std.StringHashMap(u32).init(allocator),
+            .local_scopes = std.array_list.Managed(std.StringHashMap(u32)).init(allocator),
             .variable_count = 0,
             .local_variable_count = 0,
             .variable_types = std.StringHashMap(HIRType).init(allocator),
@@ -43,7 +43,11 @@ pub const SymbolTable = struct {
 
     pub fn deinit(self: *SymbolTable) void {
         self.variables.deinit();
-        self.local_variables.deinit();
+        for (self.local_scopes.items) |*scope| {
+            var mutable_scope = scope.*;
+            mutable_scope.deinit();
+        }
+        self.local_scopes.deinit();
         self.variable_types.deinit();
         self.variable_custom_types.deinit();
         self.variable_array_element_types.deinit();
@@ -57,8 +61,12 @@ pub const SymbolTable = struct {
         self.current_function = function_name;
 
         // Reset per-function local variable tracking to avoid cross-function collisions
-        self.local_variables.deinit();
-        self.local_variables = std.StringHashMap(u32).init(self.allocator);
+        for (self.local_scopes.items) |*scope| {
+            var mutable_scope = scope.*;
+            mutable_scope.deinit();
+        }
+        self.local_scopes.deinit();
+        self.local_scopes = std.array_list.Managed(std.StringHashMap(u32)).init(self.allocator);
         self.local_variable_count = 0;
 
         // Clear alias parameters for the new function scope
@@ -72,21 +80,46 @@ pub const SymbolTable = struct {
     }
 
     /// Get or create a variable index, handling local vs global scope
+    pub fn pushScope(self: *SymbolTable) !void {
+        try self.local_scopes.append(std.StringHashMap(u32).init(self.allocator));
+    }
+
+    pub fn popScope(self: *SymbolTable) void {
+        if (self.local_scopes.items.len > 0) {
+            var scope = self.local_scopes.pop() orelse return;
+            scope.deinit();
+        }
+    }
+
     pub fn getOrCreateVariable(self: *SymbolTable, name: []const u8) !u32 {
-        // When inside a function, check local variables first, then global
+        // When inside a function, check local scopes first (from innermost to outermost), then global
         if (self.current_function != null) {
-            if (self.local_variables.get(name)) |idx| {
-                return idx;
+            // Check local scopes from innermost to outermost
+            var i = self.local_scopes.items.len;
+            while (i > 0) {
+                i -= 1;
+                if (self.local_scopes.items[i].get(name)) |idx| {
+                    return idx;
+                }
             }
             // Check if variable exists globally
             if (self.variables.get(name)) |global_idx| {
                 return global_idx;
             }
-            // Variable doesn't exist anywhere, create new local variable
-            const idx = self.local_variable_count;
-            try self.local_variables.put(name, idx);
-            self.local_variable_count += 1;
-            return idx;
+            // Variable doesn't exist anywhere, create new local variable in current scope
+            if (self.local_scopes.items.len > 0) {
+                const idx = self.local_variable_count;
+                try self.local_scopes.items[self.local_scopes.items.len - 1].put(name, idx);
+                self.local_variable_count += 1;
+                return idx;
+            } else {
+                // No scopes pushed yet, create in a new scope
+                try self.pushScope();
+                const idx = self.local_variable_count;
+                try self.local_scopes.items[self.local_scopes.items.len - 1].put(name, idx);
+                self.local_variable_count += 1;
+                return idx;
+            }
         }
 
         // Global scope
@@ -104,10 +137,19 @@ pub const SymbolTable = struct {
     pub fn createVariable(self: *SymbolTable, name: []const u8) !u32 {
         if (self.current_function != null) {
             // Inside function: always create local variable to shadow any global
-            const idx = self.local_variable_count;
-            try self.local_variables.put(name, idx);
-            self.local_variable_count += 1;
-            return idx;
+            if (self.local_scopes.items.len > 0) {
+                const idx = self.local_variable_count;
+                try self.local_scopes.items[self.local_scopes.items.len - 1].put(name, idx);
+                self.local_variable_count += 1;
+                return idx;
+            } else {
+                // No scopes pushed yet, create in a new scope
+                try self.pushScope();
+                const idx = self.local_variable_count;
+                try self.local_scopes.items[self.local_scopes.items.len - 1].put(name, idx);
+                self.local_variable_count += 1;
+                return idx;
+            }
         } else {
             // Global scope: create global variable
             const idx = self.variable_count;
@@ -119,10 +161,15 @@ pub const SymbolTable = struct {
 
     /// Get existing variable index if it exists
     pub fn getVariable(self: *SymbolTable, name: []const u8) ?u32 {
-        // When in function scope, check local variables first, then global
+        // When in function scope, check local scopes first (from innermost to outermost), then global
         if (self.current_function != null) {
-            if (self.local_variables.get(name)) |idx| {
-                return idx;
+            // Check local scopes from innermost to outermost
+            var i = self.local_scopes.items.len;
+            while (i > 0) {
+                i -= 1;
+                if (self.local_scopes.items[i].get(name)) |idx| {
+                    return idx;
+                }
             }
             // Also check global variables for cross-scope access
             return self.variables.get(name);
@@ -138,11 +185,17 @@ pub const SymbolTable = struct {
     /// Determine the correct scope for a variable based on where it exists
     pub fn determineVariableScope(self: *SymbolTable, var_name: []const u8) ScopeKind {
         if (self.current_function != null) {
-            // Inside function: check if it's a local variable first
-            const in_local = self.local_variables.get(var_name);
+            // Inside function: check if it's a local variable first (in any scope)
+            var in_local = false;
+            for (self.local_scopes.items) |scope| {
+                if (scope.get(var_name)) |_| {
+                    in_local = true;
+                    break;
+                }
+            }
             const in_global = self.variables.get(var_name);
 
-            if (in_local) |_| {
+            if (in_local) {
                 return .Local;
             } else if (in_global) |_| {
                 // Found in global scope, but we're inside a function
@@ -162,11 +215,17 @@ pub const SymbolTable = struct {
     /// Determine the correct scope for a variable based on where it exists, with module context
     pub fn determineVariableScopeWithModuleContext(self: *SymbolTable, var_name: []const u8, is_module_context: bool) ScopeKind {
         if (self.current_function != null) {
-            // Inside function: check if it's a local variable first
-            const in_local = self.local_variables.get(var_name);
+            // Inside function: check if it's a local variable first (in any scope)
+            var in_local = false;
+            for (self.local_scopes.items) |scope| {
+                if (scope.get(var_name)) |_| {
+                    in_local = true;
+                    break;
+                }
+            }
             const in_global = self.variables.get(var_name);
 
-            if (in_local) |_| {
+            if (in_local) {
                 return .Local;
             } else if (in_global) |_| {
                 // Found in global scope, but we're inside a function

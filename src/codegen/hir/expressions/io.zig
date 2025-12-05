@@ -220,7 +220,14 @@ pub const IOHandler = struct {
                 var should_use_union_members = true;
                 if (self.generator.symbol_table.current_function != null) {
                     // Inside function: only use union members if this is a local variable
-                    if (self.generator.symbol_table.local_variables.get(var_name) == null) {
+                    var is_local = false;
+                    for (self.generator.symbol_table.local_scopes.items) |scope| {
+                        if (scope.get(var_name)) |_| {
+                            is_local = true;
+                            break;
+                        }
+                    }
+                    if (!is_local) {
                         // This is a global variable accessed from inside a function
                         // Don't use union member information to avoid scope confusion
                         should_use_union_members = false;
