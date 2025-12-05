@@ -1,0 +1,45 @@
+entry function main() {
+    const input is @read("./advent3.txt")
+    const split_input is split(input, "\n")
+    var total_power :: int
+    each line in split_input {
+        var highest_number :: int
+        var highest_number_index :: int
+        var following_number :: int
+        var following_number_index :: int
+        var peak_power :: int
+        for c while c < @length(line) - 1 do c += 1 {
+            if @int(line[c]) > highest_number then {
+                highest_number is @int(line[c])
+                highest_number_index is c
+            }
+        }
+        for h is highest_number_index + 1 while h < @length(line) do h += 1 {
+            if @int(line[h]) > following_number then {
+                following_number is @int(line[h])
+                following_number_index is h
+            }
+        }
+        peak_power is @int(line[highest_number_index] + line[following_number_index])
+        total_power += peak_power
+    }
+    total_power?
+}
+
+function split(input :: string, separator :: string) returns string[] {
+    if @length(input) == 0 then return []
+    
+    var result :: string[]
+    var start_idx is 0
+    var i is 0
+    
+    while i < @length(input) do i += 1 {
+        if input[i] == separator then {
+            @push(result, @slice(input, start_idx, i - start_idx))
+            start_idx is i + 1
+        }
+    }
+    
+    @push(result, @slice(input, start_idx, @length(input) - start_idx))
+    return result
+}
