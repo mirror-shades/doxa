@@ -509,6 +509,47 @@ tetraArr[9]?
 strArr[0]?
 strArr[9]?
 
+###
+# ARRAY OF ARRAYS
+##
+
+var arr_string_empty :: string[]
+var arr_nested_empty :: string[][]
+arr_string_empty?
+arr_nested_empty?
+
+@push(arr_string_empty, "hello")
+arr_string_empty?
+@push(arr_nested_empty, arr_string_empty)
+arr_string_empty?
+arr_nested_empty?
+
+@push(arr_nested_empty, ["world"])
+arr_nested_empty?
+
+each row in arr_nested_empty {
+    row?
+}
+
+for arr_index while arr_index < @length(arr_nested_empty) do arr_index += 1 {
+    arr_nested_empty[arr_index]?
+}
+
+var val_from_nested_empty is arr_nested_empty[0][0]
+val_from_nested_empty?
+
+var literal_arr_empty is [[]]
+literal_arr_empty?
+
+var literal_arr is [["hello", "world"], ["goodbye", "sun"]]
+literal_arr?
+
+var nested_string_array_empty :: string[][]
+nested_string_array_empty?
+@push(nested_string_array_empty, [])
+nested_string_array_empty?
+
+
 ##
 # ARRAY OF STRUCT
 ##

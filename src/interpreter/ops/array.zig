@@ -682,6 +682,11 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
                 };
             }
 
+            var coerced_element = element_value;
+            if (mutable_arr.element_type == .Array) {
+                coerced_element = coerceNestedArrayElement(element_value, mutable_arr.element_type);
+            }
+
             var insert_index: u32 = 0;
             for (mutable_arr.elements, 0..) |elem, i| {
                 if (elem == .nothing) {
@@ -702,7 +707,7 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
                 }
             }
 
-            mutable_arr.elements[insert_index] = element_value;
+            mutable_arr.elements[insert_index] = coerced_element;
 
             const updated_array = HIRValue{ .array = mutable_arr };
             try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
@@ -711,6 +716,22 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot push to non-array value: {s}", .{@tagName(array_frame.value)});
         },
     }
+}
+
+fn coerceNestedArrayElement(element_value: HIRValue, expected_element_type: HIRType) HIRValue {
+    if (expected_element_type != .Array) return element_value;
+
+    return switch (element_value) {
+        .array => |arr_value| blk: {
+            var coerced = arr_value;
+            const expected_child_ptr = expected_element_type.Array;
+            const expected_child_type = expected_child_ptr.*;
+            coerced.element_type = expected_child_type;
+            coerced.nested_element_type = SoxaTypes.arrayInnermostElementType(expected_child_type);
+            break :blk HIRValue{ .array = coerced };
+        },
+        else => element_value,
+    };
 }
 
 fn arrayRange(vm: anytype, r: anytype) !void {
