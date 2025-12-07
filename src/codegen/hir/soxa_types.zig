@@ -46,6 +46,25 @@ pub const HIRType = union(enum) {
     Poison, // Poison type for malformed/invalid types
 };
 
+pub fn arrayInnermostElementType(element_type: HIRType) ?HIRType {
+    var cursor = element_type;
+    var found_nested = false;
+    while (true) {
+        switch (cursor) {
+            .Array => |inner| {
+                cursor = inner.*;
+                found_nested = true;
+            },
+            else => {
+                if (found_nested) {
+                    return cursor;
+                }
+                return null;
+            },
+        }
+    }
+}
+
 // Additional type information for complex types
 pub const ArrayTypeInfo = struct {
     element_type: HIRType,

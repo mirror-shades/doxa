@@ -18,6 +18,21 @@ fn isLiteralExpression(expr: *ast.Expr) bool {
     };
 }
 
+const ArrayElementInfo = struct {
+    element_type: HIRType,
+    nested_element_type: ?HIRType,
+};
+
+fn resolveArrayElementInfo(self: *HIRGenerator, element_info: ?*const ast.TypeInfo) ArrayElementInfo {
+    if (element_info) |info| {
+        const element_type = self.convertTypeInfo(info.*);
+        const nested = SoxaTypes.arrayInnermostElementType(element_type);
+        return .{ .element_type = element_type, .nested_element_type = nested };
+    }
+
+    return .{ .element_type = .Unknown, .nested_element_type = null };
+}
+
 pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || ErrorList)!void {
     switch (stmt.data) {
         .Expression => |expr| {
@@ -82,13 +97,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     .String => .String,
                     .Tetra => .Tetra,
                     .Byte => .Byte,
-                    .Array => blk: {
-                        // For now, create a simple array type with Int element type
-                        // This should be improved to infer the actual element type
-                        const element_type = self.allocator.create(HIRType) catch return;
-                        element_type.* = .Int;
-                        break :blk HIRType{ .Array = element_type };
-                    },
+                    .Array => self.convertTypeInfo(decl.type_info),
                     .Union => blk: {
                         if (decl.type_info.union_type) |_| {
                             break :blk .Unknown;
@@ -145,44 +154,17 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 if (init_expr.data == .Array and decl.type_info.base == .Array) {
                     const elements_for_type_fix = init_expr.data.Array;
                     if (elements_for_type_fix.len == 0) {
-                        if (decl.type_info.array_type) |annot_elem| {
-                            var element_type_fix: HIRType = .Unknown;
-                            var nested_element_type_fix: ?HIRType = null;
-                            if (annot_elem.base == .Array) {
-                                element_type_fix = .Unknown;
-                                if (annot_elem.array_type) |inner| {
-                                    nested_element_type_fix = switch (inner.base) {
-                                        .Int => .Int,
-                                        .Float => .Float,
-                                        .String => .String,
-                                        .Byte => .Byte,
-                                        .Tetra => .Tetra,
-                                        .Array => .Unknown,
-                                        else => .Unknown,
-                                    };
-                                }
-                            } else {
-                                element_type_fix = switch (annot_elem.base) {
-                                    .Int => .Int,
-                                    .Float => .Float,
-                                    .String => .String,
-                                    .Byte => .Byte,
-                                    .Tetra => .Tetra,
-                                    else => .Unknown,
-                                };
-                            }
-
-                            if (element_type_fix != .Unknown and element_type_fix != .Nothing) {
-                                try self.instructions.append(.Pop);
-                                try self.instructions.append(.{ .ArrayNew = .{
-                                    .element_type = element_type_fix,
-                                    .size = 0,
-                                    .nested_element_type = nested_element_type_fix,
-                                    .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
-                                } });
-                                try self.trackArrayElementType(decl.name.lexeme, element_type_fix);
-                                var_type = HIRType.Nothing;
-                            }
+                        const resolved = resolveArrayElementInfo(self, decl.type_info.array_type);
+                        if (resolved.element_type != .Unknown and resolved.element_type != .Nothing) {
+                            try self.instructions.append(.Pop);
+                            try self.instructions.append(.{ .ArrayNew = .{
+                                .element_type = resolved.element_type,
+                                .size = 0,
+                                .nested_element_type = resolved.nested_element_type,
+                                .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
+                            } });
+                            try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
+                            var_type = HIRType.Nothing;
                         }
                     } else {
                         // Non-empty array - the expression has already been generated
@@ -278,22 +260,16 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             } else {
                 if (decl.type_info.base == .Array) {
                     const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
-                    const element_type: HIRType = if (decl.type_info.array_type) |at| switch (at.base) {
-                        .Byte => .Byte,
-                        .Int => .Int,
-                        .Float => .Float,
-                        .String => .String,
-                        .Tetra => .Tetra,
-                        else => .Nothing,
-                    } else .Nothing;
+                    const resolved = resolveArrayElementInfo(self, decl.type_info.array_type);
 
                     try self.instructions.append(.{ .ArrayNew = .{
-                        .element_type = element_type,
+                        .element_type = resolved.element_type,
                         .size = size,
+                        .nested_element_type = resolved.nested_element_type,
                         .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
                     } });
 
-                    try self.trackArrayElementType(decl.name.lexeme, element_type);
+                    try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
                 } else {
                     switch (var_type) {
                         .Int => {
@@ -323,18 +299,17 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         },
                         .Array => {
                             const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
-                            const element_type: HIRType = if (decl.type_info.array_type) |at| switch (at.base) {
-                                .Byte => .Byte,
-                                .Int => .Int,
-                                .Float => .Float,
-                                .String => .String,
-                                .Tetra => .Tetra,
-                                else => .Nothing,
-                            } else .Nothing;
+                            var element_type: HIRType = .Unknown;
+                            var nested_element_type: ?HIRType = null;
+                            if (var_type == .Array) {
+                                element_type = var_type.Array.*;
+                                nested_element_type = SoxaTypes.arrayInnermostElementType(element_type);
+                            }
 
                             try self.instructions.append(.{ .ArrayNew = .{
                                 .element_type = element_type,
                                 .size = size,
+                                .nested_element_type = nested_element_type,
                                 .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
                             } });
 

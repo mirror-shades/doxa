@@ -1065,7 +1065,17 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 const val_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
                 if (coll_t.base == .Array) {
                     if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@push")) return type_info;
-                    if (coll_t.array_type) |elem| try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(bc.arguments[1].base) });
+                    if (coll_t.array_type) |elem| {
+                        try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(bc.arguments[1].base) });
+                    } else if (val_t.base == .Array and val_t.array_type != null) {
+                        self.reporter.reportCompileError(
+                            getLocationFromBase(bc.arguments[1].base),
+                            ErrorCode.TYPE_MISMATCH,
+                            "Cannot push typed array into array with unspecified element type",
+                            .{},
+                        );
+                        self.fatal_error = true;
+                    }
                 } else if (coll_t.base != .String) {
                     self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@push requires array or string, got {s}", .{@tagName(coll_t.base)});
                     self.fatal_error = true;
@@ -1075,15 +1085,15 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                 if (bc.arguments[0].data == .Variable and std.mem.eql(u8, bc.arguments[0].data.Variable.lexeme, "list")) {
-                    std.debug.print("DEBUG: coll_t for list: base={s}", .{@tagName(coll_t.base)});
                     if (coll_t.base == .Array) {
-                        if (coll_t.array_type) |elem| {
-                            std.debug.print(" elem_type={s}", .{@tagName(elem.base)});
-                        } else {
-                            std.debug.print(" elem_type=null", .{});
-                        }
+                        if (coll_t.array_type) |elem| type_info.* = elem.*;
+                    } else if (coll_t.base == .String) {
+                        type_info.* = .{ .base = .String };
+                    } else {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@pop requires array or string, got {s}", .{@tagName(coll_t.base)});
+                        self.fatal_error = true;
+                        return type_info;
                     }
-                    std.debug.print("\n", .{});
                 }
                 if (coll_t.base == .Array) {
                     if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@pop")) return type_info;

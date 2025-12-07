@@ -13,6 +13,7 @@ pub const formatHIRValue = PrintOps.formatHIRValue;
 pub const formatHIRValueRaw = PrintOps.formatHIRValueRaw;
 pub const printHIRValue = PrintOps.printHIRValue;
 const SoxaTypes = @import("../codegen/hir/soxa_types.zig");
+const HIRType = SoxaTypes.HIRType;
 
 fn printToStdout(comptime format: []const u8, args: anytype) !void {
     var stdout_buffer: [1024]u8 = undefined;
@@ -348,7 +349,11 @@ pub const PrintOps = struct {
                             },
                         }
                     } else {
-                        if (arr.element_type != .Unknown) {
+                        if (arr.element_type == .Array) {
+                            const nested = arr.nested_element_type orelse HIRType.Unknown;
+                            const base = mapBaseTypeNameFromHIRType(nested);
+                            return writeTypeWithBrackets(base, depth + 1);
+                        } else if (arr.element_type != .Unknown) {
                             const base = mapBaseTypeNameFromHIRType(arr.element_type);
                             return writeTypeWithBrackets(base, depth);
                         } else {

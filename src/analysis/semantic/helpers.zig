@@ -472,7 +472,9 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
     // Complex shape recursion
     switch (expected.base) {
         .Array => {
-            if (expected.array_type) |e| if (actual.array_type) |a| try unifyTypes(self, e, a, span);
+            if (expected.array_type) |e|
+                if (actual.array_type) |a|
+                    try unifyTypes(self, e, a, span);
         },
         .Struct, .Custom => {
             if (expected.struct_fields) |efs| {
