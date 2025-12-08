@@ -156,7 +156,7 @@ pub const FunctionOps = struct {
 
             const prefixes = [_][]const u8{ "Render.", "render.", "Render.doxa.", "render.doxa." };
             for (prefixes) |prefix| {
-                const qualified_name = try std.fmt.allocPrint(vm.scopeAllocator(), "{s}{s}", .{ prefix, function_name });
+                const qualified_name = try std.fmt.allocPrint(vm.runtimeAllocator(), "{s}{s}", .{ prefix, function_name });
 
                 for (vm.program.function_table, 0..) |func, index| {
                     if (std.mem.eql(u8, func.name, qualified_name)) {
@@ -266,7 +266,7 @@ pub const FunctionOps = struct {
 
                 if (length >= mutable_arr.capacity) {
                     const new_capacity = mutable_arr.capacity * 2;
-                    const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, new_capacity);
+                    const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, new_capacity);
                     mutable_arr.elements = new_elements;
                     mutable_arr.capacity = new_capacity;
 
@@ -515,7 +515,7 @@ pub const FunctionOps = struct {
             clean_line = clean_line[0 .. clean_line.len - 1];
         }
 
-        const input_string = try vm.scopeAllocator().dupe(u8, clean_line);
+        const input_string = try vm.runtimeAllocator().dupe(u8, clean_line);
         try vm.stack.push(HIRFrame.initString(input_string));
     }
 
@@ -563,7 +563,7 @@ pub const FunctionOps = struct {
             .freestanding => "freestanding",
             .other => "other",
         };
-        try vm.stack.push(HIRFrame.initString(try vm.scopeAllocator().dupe(u8, os_name)));
+        try vm.stack.push(HIRFrame.initString(try vm.runtimeAllocator().dupe(u8, os_name)));
     }
 
     fn execBuiltinArch(vm: anytype) !void {
@@ -615,7 +615,7 @@ pub const FunctionOps = struct {
             .xcore => "xcore",
             .xtensa => "xtensa",
         };
-        try vm.stack.push(HIRFrame.initString(try vm.scopeAllocator().dupe(u8, arch_name)));
+        try vm.stack.push(HIRFrame.initString(try vm.runtimeAllocator().dupe(u8, arch_name)));
     }
 
     fn execBuiltinTime(vm: anytype) !void {
