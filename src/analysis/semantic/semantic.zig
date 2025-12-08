@@ -2470,7 +2470,7 @@ pub const SemanticAnalyzer = struct {
         defer all_return_types.deinit();
 
         // First pass: Find terminating return statements (outside conditionals)
-        try self.findTerminatingReturns(func.body, &terminating_return_type, &all_return_types);
+        try self.findTerminatingReturns(func.body, &terminating_return_type, &all_return_types, true);
 
         // Second pass: Collect all other return types
         try self.collectReturnTypes(func.body, &all_return_types);
@@ -2504,7 +2504,13 @@ pub const SemanticAnalyzer = struct {
         return inferred_return_type;
     }
 
-    fn findTerminatingReturns(self: *SemanticAnalyzer, statements: []ast.Stmt, terminating_return_type: *?*ast.TypeInfo, all_return_types: *std.array_list.Managed(*ast.TypeInfo)) ErrorList!void {
+    fn findTerminatingReturns(
+        self: *SemanticAnalyzer,
+        statements: []ast.Stmt,
+        terminating_return_type: *?*ast.TypeInfo,
+        all_return_types: *std.array_list.Managed(*ast.TypeInfo),
+        allow_implicit_return: bool,
+    ) ErrorList!void {
         for (statements, 0..) |stmt, idx| {
             const is_last_stmt = idx + 1 == statements.len;
             switch (stmt.data) {
@@ -2528,7 +2534,7 @@ pub const SemanticAnalyzer = struct {
                     return;
                 },
                 .Block => |block_stmts| {
-                    try self.findTerminatingReturns(block_stmts, terminating_return_type, all_return_types);
+                    try self.findTerminatingReturns(block_stmts, terminating_return_type, all_return_types, false);
                     // If we found a terminating return in the block, stop processing
                     if (terminating_return_type.* != null) {
                         return;
@@ -2541,12 +2547,12 @@ pub const SemanticAnalyzer = struct {
                             const if_expr = expression.data.If;
                             if (if_expr.then_branch) |then_branch| {
                                 if (then_branch.data == .Block) {
-                                    try self.findTerminatingReturns(then_branch.data.Block.statements, terminating_return_type, all_return_types);
+                                    try self.findTerminatingReturns(then_branch.data.Block.statements, terminating_return_type, all_return_types, false);
                                 }
                             }
                             if (if_expr.else_branch) |else_branch| {
                                 if (else_branch.data == .Block) {
-                                    try self.findTerminatingReturns(else_branch.data.Block.statements, terminating_return_type, all_return_types);
+                                    try self.findTerminatingReturns(else_branch.data.Block.statements, terminating_return_type, all_return_types, false);
                                 }
                             }
                             // If we found a terminating return in either branch, stop processing
@@ -2556,13 +2562,13 @@ pub const SemanticAnalyzer = struct {
                         } else if (expression.data == .Loop) {
                             // Handle each loops - check if they contain terminating returns
                             const loop_expr = expression.data.Loop;
-                            if (loop_expr.body.data == .Block) {
-                                try self.findTerminatingReturns(loop_expr.body.data.Block.statements, terminating_return_type, all_return_types);
+                        if (loop_expr.body.data == .Block) {
+                                try self.findTerminatingReturns(loop_expr.body.data.Block.statements, terminating_return_type, all_return_types, false);
                             } else {
                                 // Single expression loop body
                                 const loop_stmt = ast.Stmt{ .data = .{ .Expression = loop_expr.body }, .base = loop_expr.body.base };
                                 var stmts = [_]ast.Stmt{loop_stmt};
-                                try self.findTerminatingReturns(&stmts, terminating_return_type, all_return_types);
+                                try self.findTerminatingReturns(&stmts, terminating_return_type, all_return_types, false);
                             }
                             // For each loops, we should continue processing subsequent statements
                             // because each loops always execute their body, so the code after is reachable
@@ -2588,7 +2594,7 @@ pub const SemanticAnalyzer = struct {
                         } else if (expression.data == .Unreachable) {
                             // Hitting unreachable stops execution without contributing a return type
                             return;
-                        } else if (is_last_stmt) {
+                        } else if (allow_implicit_return and is_last_stmt) {
                             // Only treat the final expression in a function body as a potential implicit return.
                             const return_type = try infer_type.inferTypeFromExpr(self, expression);
                             if (terminating_return_type.* == null) {
