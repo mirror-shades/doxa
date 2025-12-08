@@ -1966,18 +1966,25 @@ pub const VM = struct {
 
     fn pushFrame(self: *VM, function_index: usize, stack_base: usize, return_ip: usize) VmError!*runtime.Frame {
         const func_ptr = &self.bytecode.functions[function_index];
-        var frame = try runtime.Frame.init(self.scopeAllocator(), func_ptr, stack_base, self.slot_refs.items.len, return_ip);
+        var frame = try runtime.Frame.init(self.allocator, func_ptr, stack_base, self.slot_refs.items.len, return_ip);
         errdefer frame.deinit();
 
-        const required_locals = 1000;
-
-        frame.arena.deinit();
-        frame.arena = std.heap.ArenaAllocator.init(self.scopeAllocator());
-        const frame_alloc = frame.arena.allocator();
-        frame.locals = try frame_alloc.alloc(HIRValue, required_locals);
-        frame.alias_refs = try frame_alloc.alloc(?runtime.SlotPointer, required_locals);
-        for (frame.locals) |*slot| slot.* = HIRValue.nothing;
-        for (frame.alias_refs) |*entry| entry.* = null;
+        // Expand locals if needed for dynamic allocation
+        const required_locals = @max(func_ptr.local_var_count, 1000);
+        if (required_locals > func_ptr.local_var_count) {
+            const frame_alloc = frame.arena.allocator();
+            if (required_locals > frame.locals.len) {
+                frame.locals = try frame_alloc.realloc(frame.locals, required_locals);
+                frame.alias_refs = try frame_alloc.realloc(frame.alias_refs, required_locals);
+                // Initialize new elements
+                for (frame.locals[func_ptr.local_var_count..required_locals]) |*slot| {
+                    slot.* = HIRValue.nothing;
+                }
+                for (frame.alias_refs[func_ptr.local_var_count..required_locals]) |*entry| {
+                    entry.* = null;
+                }
+            }
+        }
 
         frame.function.local_var_count = @intCast(required_locals);
 
@@ -2024,12 +2031,11 @@ pub const VM = struct {
                 .param_is_alias = &[_]bool{},
             };
 
-            var frame = try runtime.Frame.init(self.scopeAllocator(), &dummy_function, self.stack.len(), self.slot_refs.items.len, 0);
+            var frame = try runtime.Frame.init(self.allocator, &dummy_function, self.stack.len(), self.slot_refs.items.len, 0);
 
-            frame.allocator.free(frame.locals);
-            frame.allocator.free(frame.alias_refs);
-            frame.locals = try frame.allocator.alloc(HIRValue, required_locals);
-            frame.alias_refs = try frame.allocator.alloc(?runtime.SlotPointer, required_locals);
+            const frame_alloc = frame.arena.allocator();
+            frame.locals = try frame_alloc.realloc(frame.locals, required_locals);
+            frame.alias_refs = try frame_alloc.realloc(frame.alias_refs, required_locals);
             for (frame.locals) |*slot| slot.* = HIRValue.nothing;
             for (frame.alias_refs) |*entry| entry.* = null;
 

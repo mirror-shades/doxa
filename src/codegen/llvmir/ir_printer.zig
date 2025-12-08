@@ -4217,8 +4217,14 @@ pub const IRPrinter = struct {
         defer self.allocator.free(line);
         try w.writeAll(line);
 
-        const arr_val = StackVal{ .name = reg, .ty = .PTR, .array_type = inst.element_type };
-        try stack.append(arr_val);
+        // Mirror the VM semantics: ArrayNew pushes a single array value onto the stack.
+        // Callers that need to preserve the value (e.g. for declarations) should use
+        // explicit Dup instructions, just like in the bytecode backend.
+        const arr_val = StackVal{
+            .name = reg,
+            .ty = .PTR,
+            .array_type = inst.element_type,
+        };
         try stack.append(arr_val);
     }
 

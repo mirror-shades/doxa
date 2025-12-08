@@ -63,7 +63,7 @@ fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
 
     var converted = array;
     const element_count = array.elements.len;
-    const allocator = vm.scopeAllocator();
+    const allocator = vm.runtimeAllocator();
     const new_elements = try allocator.alloc(HIRValue, element_count);
 
     var i: usize = 0;
@@ -127,7 +127,7 @@ fn arrayNew(vm: anytype, a: anytype) !void {
         .dynamic => if (requested_len == 0) 8 else requested_len,
         else => requested_len,
     };
-    const elements = try vm.scopeAllocator().alloc(HIRValue, initial_capacity);
+    const elements = try vm.runtimeAllocator().alloc(HIRValue, initial_capacity);
 
     const default_value = getDefaultValue(a.element_type);
 
@@ -242,7 +242,7 @@ fn arraySet(vm: anytype, a: anytype) !void {
             if (index_val >= mutable_arr.capacity) {
                 mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
                 const new_capacity = @max(mutable_arr.capacity * 2, index_val + 1);
-                const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, new_capacity);
+                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, new_capacity);
                 mutable_arr.elements = new_elements;
                 mutable_arr.capacity = new_capacity;
 
@@ -384,7 +384,7 @@ fn arrayInsert(vm: anytype) !void {
 
             if (logical_len >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, logical_len + 1);
-                const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, new_capacity);
+                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, new_capacity);
                 for (new_elements[mutable_arr.capacity..new_capacity]) |*e| e.* = nothing_value;
                 mutable_arr.elements = new_elements;
                 mutable_arr.capacity = new_capacity;
@@ -413,7 +413,7 @@ fn arrayInsert(vm: anytype) !void {
             };
             const idx: usize = index_val;
             const new_len = s.len + insert_str.len;
-            const new_buf = try vm.scopeAllocator().alloc(u8, new_len);
+            const new_buf = try vm.runtimeAllocator().alloc(u8, new_len);
             @memcpy(new_buf[0..idx], s[0..idx]);
             @memcpy(new_buf[idx .. idx + insert_str.len], insert_str);
             @memcpy(new_buf[idx + insert_str.len ..], s[idx..]);
@@ -482,7 +482,7 @@ fn arrayRemove(vm: anytype) !void {
             const idx: usize = index_val;
             const removed_slice = s[idx .. idx + 1];
             const new_len = s.len - 1;
-            const new_buf = try vm.scopeAllocator().alloc(u8, new_len);
+            const new_buf = try vm.runtimeAllocator().alloc(u8, new_len);
             @memcpy(new_buf[0..idx], s[0..idx]);
             @memcpy(new_buf[idx..], s[idx + 1 ..]);
             try vm.stack.push(HIRFrame.initString(new_buf));
@@ -560,7 +560,7 @@ fn arraySlice(vm: anytype) !void {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array slice out of bounds: start={}, length={} (max length: {})", .{ start_val, length_val, logical_len - start_val });
             }
 
-            const sliced_elements = try vm.scopeAllocator().alloc(HIRValue, length_val);
+            const sliced_elements = try vm.runtimeAllocator().alloc(HIRValue, length_val);
             for (0..length_val) |i| {
                 sliced_elements[i] = arr.elements[start_val + i];
             }
@@ -631,7 +631,7 @@ fn arrayConcat(vm: anytype) !void {
                         len_b += 1;
                     }
 
-                    const new_elements = try vm.scopeAllocator().alloc(HIRValue, len_a + len_b);
+                    const new_elements = try vm.runtimeAllocator().alloc(HIRValue, len_a + len_b);
 
                     for (0..len_a) |i| {
                         new_elements[i] = arr_a.elements[i];
@@ -698,7 +698,7 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
 
             if (insert_index >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, insert_index + 1);
-                const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, new_capacity);
+                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, new_capacity);
                 mutable_arr.elements = new_elements;
                 mutable_arr.capacity = new_capacity;
 
@@ -757,7 +757,7 @@ fn arrayRange(vm: anytype, r: anytype) !void {
     else
         0;
 
-    const elements = try vm.scopeAllocator().alloc(HIRValue, size);
+    const elements = try vm.runtimeAllocator().alloc(HIRValue, size);
 
     var i: u32 = 0;
     var current = start_val;
@@ -863,7 +863,7 @@ fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
 
             var mutable_arr = arr;
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
                 for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
@@ -931,7 +931,7 @@ fn arrayGetAndSub(vm: anytype, a: anytype) !void {
 
             var mutable_arr = arr;
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
                 for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
@@ -999,7 +999,7 @@ fn arrayGetAndMul(vm: anytype, a: anytype) !void {
 
             var mutable_arr = arr;
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
                 for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
@@ -1087,7 +1087,7 @@ fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
 
             var mutable_arr = arr;
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
                 for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
@@ -1172,7 +1172,7 @@ fn arrayGetAndMod(vm: anytype, a: anytype) !void {
 
             var mutable_arr = arr;
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
                 for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
@@ -1250,7 +1250,7 @@ fn arrayGetAndPow(vm: anytype, a: anytype) !void {
 
             var mutable_arr = arr;
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.scopeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
                 for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
                     element.* = nothing_value;

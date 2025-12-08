@@ -171,10 +171,10 @@ pub fn exec(vm: anytype, s: anytype) !void {
     }
 
     if (s.op == .ToString) {
-        const value_ptr = try vm.scopeAllocator().create(HIRValue);
+        const value_ptr = try vm.runtimeAllocator().create(HIRValue);
         value_ptr.* = val.value;
-        defer vm.scopeAllocator().destroy(value_ptr);
-        const result = try vm.valueToString(vm.scopeAllocator(), value_ptr);
+        defer vm.runtimeAllocator().destroy(value_ptr);
+        const result = try vm.valueToString(vm.runtimeAllocator(), value_ptr);
         try vm.stack.push(HIRFrame.initString(result));
         return;
     }
@@ -254,7 +254,7 @@ pub fn exec(vm: anytype, s: anytype) !void {
                         return ErrorList.TypeError;
                     }
 
-                    const allocator = vm.scopeAllocator();
+                    const allocator = vm.runtimeAllocator();
                     const result = try std.fmt.allocPrint(allocator, "{s}{s}", .{ s_val, str2.value.string });
                     try vm.stack.push(HIRFrame.initString(result));
                 },
@@ -283,7 +283,7 @@ pub fn stringConcat(vm: anytype, a: HIRFrame, b: HIRFrame) !HIRFrame {
         else => return ErrorList.TypeError,
     };
 
-    const new_string = try vm.scopeAllocator().alloc(u8, a_str.len + b_str.len);
+    const new_string = try vm.runtimeAllocator().alloc(u8, a_str.len + b_str.len);
     // TODO: Integrate with string interning
 
     @memcpy(new_string[0..a_str.len], a_str);
@@ -308,7 +308,7 @@ pub fn stringBytes(vm: anytype, a: HIRFrame) !HIRFrame {
         else => return ErrorList.TypeError,
     };
 
-    const elements = try vm.scopeAllocator().alloc(HIRValue, str.len);
+    const elements = try vm.runtimeAllocator().alloc(HIRValue, str.len);
     for (str, 0..) |byte, i| {
         elements[i] = HIRValue{ .byte = byte };
     }
@@ -345,6 +345,6 @@ pub fn stringSubstring(vm: anytype, str_frame: HIRFrame, start_frame: HIRFrame, 
     const slice = str[start_idx .. start_idx + len_val];
 
     // TODO: Use string interning
-    const new_string = try vm.scopeAllocator().dupe(u8, slice);
+    const new_string = try vm.runtimeAllocator().dupe(u8, slice);
     return HIRFrame.initString(new_string);
 }

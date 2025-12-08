@@ -2,7 +2,7 @@
 
 
 const input is @read("./advent4.txt")
-const split_input :: string[][] is split(input, "\n")
+const split_input :: string[] is split(input, "\n")
 const rows is @length(split_input)
 const cols is @length(split_input[0])
 
@@ -12,12 +12,18 @@ struct Pair {
 }
 
 entry function main() {
+    var grid :: string[][]
+    for i while i < rows do i += 1 {
+        @push(grid, to_char_array(split_input[i]))
+    }
+
     var accessable_paper :: Pair[]
     do {
+        accessable_paper is []
         for i while i < rows do i += 1 {
             for j while j < cols do j += 1 {
-                if split_input[i][j] == "@" then {
-                    const maybe_pair is check(i, j, split_input, ^accessable_paper)
+                if grid[i][j] == "@" then {
+                    const maybe_pair is check(i, j, grid, ^accessable_paper)
                     maybe_pair as Pair then {
                         @push(accessable_paper, maybe_pair)
                     } else {}
@@ -27,7 +33,7 @@ entry function main() {
         if (@length(accessable_paper) == 0) then break
         each pair in accessable_paper {
             @print("Marking {pair.x}, {pair.y} as blocked\n")
-            split_input[pair.x][pair.y] is "."
+            grid[pair.x][pair.y] is "."
         }
     }
 
@@ -35,53 +41,53 @@ entry function main() {
     @length(accessable_paper)?
 }
 
-function check(i :: int, j :: int, split_input :: string[], ^accessable_paper :: Pair[]) returns Pair | nothing {
-    var blocked :: int
+function check(i :: int, j :: int, grid :: string[][], ^accessable_paper :: Pair[]) returns Pair | nothing {
+    var blocked :: int is 0
     var up_free is true
     var down_free is true
     var left_free is true
     var right_free is true
-    if j + 1 > cols then right_free is false
+    if j + 1 >= cols then right_free is false
     if j - 1 < 0 then left_free is false
     if i + 1 > rows - 1 then down_free is false
     if i - 1 < 0 then up_free is false
     if up_free then {
-        if split_input[i -  1][j] == "@" then {
+        if grid[i -  1][j] == "@" then {
             blocked += 1
         }
     }
     if down_free then {
-        if split_input[i + 1][j] == "@" then {
+        if grid[i + 1][j] == "@" then {
             blocked += 1
         }
     }
     if left_free then {
-        if split_input[i][j - 1] == "@" then {
+        if grid[i][j - 1] == "@" then {
             blocked += 1
         }
     }
     if right_free then {
-        if split_input[i][j + 1] == "@" then {
+        if grid[i][j + 1] == "@" then {
             blocked += 1
         }
     }
     if right_free and up_free then {
-        if split_input[i - 1][j + 1] == "@" then {
+        if grid[i - 1][j + 1] == "@" then {
             blocked += 1
         }
     }
     if right_free and down_free then {
-        if split_input[i + 1][j + 1] == "@" then {
+        if grid[i + 1][j + 1] == "@" then {
             blocked += 1
         }
     }
     if left_free and up_free then {
-        if split_input[i - 1][j - 1] == "@" then {
+        if grid[i - 1][j - 1] == "@" then {
             blocked += 1
         }
     }
     if left_free and down_free then {
-        if split_input[i + 1][j - 1] == "@" then {
+        if grid[i + 1][j - 1] == "@" then {
             blocked += 1
         }
     }
@@ -93,10 +99,19 @@ function check(i :: int, j :: int, split_input :: string[], ^accessable_paper ::
     return nothing
 }
 
-function split(input :: string, separator :: string) returns string[][] {
-    if @length(input) == 0 then return [[]]
+function to_char_array(line :: string) returns string[] {
+    var result :: string[]
+    var idx is 0
+    while idx < @length(line) do idx += 1 {
+        @push(result, line[idx])
+    }
+    return result
+}
+
+function split(input :: string, separator :: string) returns string[] {
+    if @length(input) == 0 then return []
     
-    var result :: string[][]
+    var result :: string[]
     var start_idx is 0
     var i is 0
     
