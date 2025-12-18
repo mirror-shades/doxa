@@ -219,9 +219,11 @@ pub fn exec(vm: anytype, s: anytype) !void {
 
                     const last_char = s_val[last_char_start..s_val.len];
                     const remaining = s_val[0..last_char_start];
+                    const remaining_copy = try vm.runtimeAllocator().dupe(u8, remaining);
+                    const last_char_copy = try vm.runtimeAllocator().dupe(u8, last_char);
 
-                    try vm.stack.push(HIRFrame.initString(remaining));
-                    try vm.stack.push(HIRFrame.initString(last_char));
+                    try vm.stack.push(HIRFrame.initString(remaining_copy));
+                    try vm.stack.push(HIRFrame.initString(last_char_copy));
                 },
                 .Substring => {
                     const length = try vm.stack.pop();
@@ -246,7 +248,8 @@ pub fn exec(vm: anytype, s: anytype) !void {
                     const end_idx = start_idx + len;
 
                     const substring = s_val[start_idx..end_idx];
-                    try vm.stack.push(HIRFrame.initString(substring));
+                    const substring_copy = try vm.runtimeAllocator().dupe(u8, substring);
+                    try vm.stack.push(HIRFrame.initString(substring_copy));
                 },
                 .Concat => {
                     const str2 = try vm.stack.pop();

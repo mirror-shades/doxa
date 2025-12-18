@@ -1,0 +1,5 @@
+
+var arr_string_empty :: string[]
+var arr_nested_empty :: string[][]
+arr_string_empty?
+arr_nested_empty?

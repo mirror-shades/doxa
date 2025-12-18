@@ -23,25 +23,32 @@ pub const SlotPointer = struct {
 pub const ModuleState = struct {
     allocator: std.mem.Allocator,
     values: []HIRValue,
+    initialized: []bool,
 
     pub fn init(allocator: std.mem.Allocator, slot_count: usize) !ModuleState {
         const slots = try allocator.alloc(HIRValue, slot_count);
         for (slots) |*slot| slot.* = HIRValue.nothing;
+        const flags = try allocator.alloc(bool, slot_count);
+        for (flags) |*flag| flag.* = false;
         return ModuleState{
             .allocator = allocator,
             .values = slots,
+            .initialized = flags,
         };
     }
 
     pub fn deinit(self: *ModuleState) void {
         self.allocator.free(self.values);
         self.values = &[_]HIRValue{};
+        self.allocator.free(self.initialized);
+        self.initialized = &[_]bool{};
     }
 
     pub fn pointer(self: *ModuleState, slot: module.SlotIndex) SlotPointer {
         const idx: usize = @intCast(slot);
         if (idx >= self.values.len) {
             const new_size = idx + 1;
+            const old_len = self.values.len;
             self.values = self.allocator.realloc(self.values, new_size) catch {
                 if (self.values.len > 0) {
                     return SlotPointer{ .value = &self.values[0] };
@@ -49,11 +56,33 @@ pub const ModuleState = struct {
                     unreachable;
                 }
             };
-            for (self.values[self.values.len..new_size]) |*value| {
+            self.initialized = self.allocator.realloc(self.initialized, new_size) catch {
+                if (self.initialized.len > 0) {
+                    return SlotPointer{ .value = &self.values[0] };
+                } else {
+                    unreachable;
+                }
+            };
+            for (self.values[old_len..new_size]) |*value| {
                 value.* = HIRValue.nothing;
+            }
+            for (self.initialized[old_len..new_size]) |*flag| {
+                flag.* = false;
             }
         }
         return SlotPointer{ .value = &self.values[idx] };
+    }
+
+    pub fn hasValue(self: *ModuleState, slot: module.SlotIndex) bool {
+        const idx: usize = @intCast(slot);
+        if (idx >= self.initialized.len) return false;
+        return self.initialized[idx];
+    }
+
+    pub fn markInitialized(self: *ModuleState, slot: module.SlotIndex) void {
+        const idx: usize = @intCast(slot);
+        if (idx >= self.initialized.len) return;
+        self.initialized[idx] = true;
     }
 };
 
@@ -99,8 +128,9 @@ pub const Frame = struct {
         const idx: usize = @intCast(slot);
         if (idx >= self.locals.len or idx >= self.alias_refs.len) {
             const new_size = idx + 1;
+            const arena_alloc = self.arena.allocator();
 
-            self.locals = self.allocator.realloc(self.locals, new_size) catch {
+            self.locals = arena_alloc.realloc(self.locals, new_size) catch {
                 if (self.locals.len > 0) {
                     return SlotPointer{ .value = &self.locals[0] };
                 } else {
@@ -108,7 +138,7 @@ pub const Frame = struct {
                 }
             };
 
-            self.alias_refs = self.allocator.realloc(self.alias_refs, new_size) catch {
+            self.alias_refs = arena_alloc.realloc(self.alias_refs, new_size) catch {
                 return SlotPointer{ .value = &self.locals[idx] };
             };
 

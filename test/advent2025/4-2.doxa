@@ -18,13 +18,16 @@ entry function main() {
     }
 
     var accessable_paper :: Pair[]
+    var total_accessable_paper :: int is 0
     do {
         accessable_paper is []
         for i while i < rows do i += 1 {
+            @print("Checking row {i}\n")
             for j while j < cols do j += 1 {
                 if grid[i][j] == "@" then {
                     const maybe_pair is check(i, j, grid, ^accessable_paper)
                     maybe_pair as Pair then {
+                        total_accessable_paper += 1
                         @push(accessable_paper, maybe_pair)
                     } else {}
                 }
@@ -36,9 +39,7 @@ entry function main() {
             grid[pair.x][pair.y] is "."
         }
     }
-
-    accessable_paper?
-    @length(accessable_paper)?
+    total_accessable_paper?
 }
 
 function check(i :: int, j :: int, grid :: string[][], ^accessable_paper :: Pair[]) returns Pair | nothing {

@@ -59,16 +59,34 @@ fn resolveArrayIndex(index: HIRFrame, array_length: usize) !u32 {
 }
 
 fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
-    if (array.storage_kind == .dynamic) return array;
-
     var converted = array;
-    const element_count = array.elements.len;
+
+    if (converted.owner != SoxaValues.ValueOwner.Runtime) {
+        const runtime_alloc = vm.runtimeAllocator();
+        const element_count = converted.elements.len;
+        const new_elements = try runtime_alloc.alloc(HIRValue, element_count);
+
+        var i: usize = 0;
+        while (i < element_count) : (i += 1) {
+            new_elements[i] = try vm.deepCopyValueToAllocator(runtime_alloc, &converted.elements[i], SoxaValues.ValueOwner.Runtime);
+        }
+
+        converted.elements = new_elements;
+        converted.capacity = @intCast(element_count);
+        converted.owner = SoxaValues.ValueOwner.Runtime;
+        converted.storage_kind = .dynamic;
+        return converted;
+    }
+
+    if (converted.storage_kind == .dynamic) return converted;
+
+    const element_count = converted.elements.len;
     const allocator = vm.runtimeAllocator();
     const new_elements = try allocator.alloc(HIRValue, element_count);
 
     var i: usize = 0;
     while (i < element_count) : (i += 1) {
-        new_elements[i] = try vm.deepCopyValueToAllocator(allocator, &array.elements[i]);
+        new_elements[i] = try vm.deepCopyValueToAllocator(allocator, &converted.elements[i], SoxaValues.ValueOwner.Runtime);
     }
 
     converted.elements = new_elements;
@@ -191,7 +209,8 @@ fn arrayGet(vm: anytype, a: anytype) !void {
                 return;
             }
             const char_str = s[resolved_index .. resolved_index + 1];
-            try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .string = char_str }));
+            const char_copy = try vm.runtimeAllocator().dupe(u8, char_str);
+            try vm.stack.push(HIRFrame.initString(char_copy));
         },
         .nothing => {
             try vm.stack.push(HIRFrame.initFromHIRValue(nothing_value));
@@ -241,8 +260,9 @@ fn arraySet(vm: anytype, a: anytype) !void {
 
             if (index_val >= mutable_arr.capacity) {
                 mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+                const allocator = try vm.arrayAllocator(mutable_arr);
                 const new_capacity = @max(mutable_arr.capacity * 2, index_val + 1);
-                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, new_capacity);
+                const new_elements = try allocator.realloc(mutable_arr.elements, new_capacity);
                 mutable_arr.elements = new_elements;
                 mutable_arr.capacity = new_capacity;
 
@@ -272,16 +292,17 @@ fn arrayPop(vm: anytype) !void {
 
     switch (array.value) {
         .array => |arr| {
-            const mutable_arr = arr;
+            var mutable_arr = arr;
+            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
 
             var last_index: ?u32 = null;
-            for (arr.elements, 0..) |elem, i| {
+            for (mutable_arr.elements, 0..) |elem, i| {
                 if (elem == .nothing) break;
                 last_index = @intCast(i);
             }
 
             if (last_index) |idx| {
-                const last_element = arr.elements[idx];
+                const last_element = mutable_arr.elements[idx];
 
                 mutable_arr.elements[idx] = nothing_value;
 
@@ -315,9 +336,11 @@ fn arrayPop(vm: anytype) !void {
 
             const last_char = s_val[last_char_start..s_val.len];
             const remaining = s_val[0..last_char_start];
+            const remaining_copy = try vm.runtimeAllocator().dupe(u8, remaining);
+            const last_char_copy = try vm.runtimeAllocator().dupe(u8, last_char);
 
-            try vm.stack.push(HIRFrame.initString(remaining));
-            try vm.stack.push(HIRFrame.initString(last_char));
+            try vm.stack.push(HIRFrame.initString(remaining_copy));
+            try vm.stack.push(HIRFrame.initString(last_char_copy));
         },
         else => {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from non-array value: {s}", .{@tagName(array.value)});
@@ -368,6 +391,7 @@ fn arrayInsert(vm: anytype) !void {
 
             var mutable_arr = arr;
             mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            const allocator = try vm.arrayAllocator(mutable_arr);
 
             if (mutable_arr.element_type == .Unknown or mutable_arr.element_type == .Nothing) {
                 mutable_arr.element_type = switch (value.value) {
@@ -384,7 +408,7 @@ fn arrayInsert(vm: anytype) !void {
 
             if (logical_len >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, logical_len + 1);
-                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, new_capacity);
+                const new_elements = try allocator.realloc(mutable_arr.elements, new_capacity);
                 for (new_elements[mutable_arr.capacity..new_capacity]) |*e| e.* = nothing_value;
                 mutable_arr.elements = new_elements;
                 mutable_arr.capacity = new_capacity;
@@ -485,8 +509,9 @@ fn arrayRemove(vm: anytype) !void {
             const new_buf = try vm.runtimeAllocator().alloc(u8, new_len);
             @memcpy(new_buf[0..idx], s[0..idx]);
             @memcpy(new_buf[idx..], s[idx + 1 ..]);
+            const removed_copy = try vm.runtimeAllocator().dupe(u8, removed_slice);
             try vm.stack.push(HIRFrame.initString(new_buf));
-            try vm.stack.push(HIRFrame.initString(removed_slice));
+            try vm.stack.push(HIRFrame.initString(removed_copy));
         },
         else => {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot remove from non-array value: {s}", .{@tagName(container.value)});
@@ -582,7 +607,8 @@ fn arraySlice(vm: anytype) !void {
             }
 
             const sliced_str = s[start_val .. start_val + length_val];
-            try vm.stack.push(HIRFrame.initString(sliced_str));
+            const duplicated = try vm.runtimeAllocator().dupe(u8, sliced_str);
+            try vm.stack.push(HIRFrame.initString(duplicated));
         },
         else => {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot slice non-array/non-string value: {s}", .{@tagName(container.value)});
@@ -668,6 +694,7 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
         .array => |arr| {
             var mutable_arr = arr;
             mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            const allocator = try vm.arrayAllocator(mutable_arr);
 
             if (mutable_arr.element_type == .Unknown or mutable_arr.element_type == .Nothing) {
                 mutable_arr.element_type = switch (element_value) {
@@ -698,7 +725,7 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
 
             if (insert_index >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, insert_index + 1);
-                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, new_capacity);
+                const new_elements = try allocator.realloc(mutable_arr.elements, new_capacity);
                 mutable_arr.elements = new_elements;
                 mutable_arr.capacity = new_capacity;
 
@@ -794,6 +821,7 @@ fn getDefaultValue(hir_type: HIRType) HIRValue {
         .Struct => HIRValue{ .struct_instance = .{
             .type_name = "",
             .fields = &[_]HIRStructField{},
+            .owner = SoxaValues.ValueOwner.Runtime,
         } },
         .Map => HIRValue{ .map = .{
             .entries = &[_]HIRMapEntry{},
@@ -834,11 +862,13 @@ fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
 
     switch (array_frame.value) {
         .array => |arr| {
-            if (index_val >= arr.capacity) {
+            var mutable_arr = arr;
+            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            if (index_val >= mutable_arr.capacity) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
             }
 
-            const current_element = if (index_val < arr.elements.len) arr.elements[index_val] else nothing_value;
+            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
 
             const result = switch (current_element) {
                 .int => |current| switch (value.value) {
@@ -861,11 +891,12 @@ fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
             };
 
-            var mutable_arr = arr;
+            const allocator = try vm.arrayAllocator(mutable_arr);
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const prev_len = mutable_arr.elements.len;
+                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
+                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
                 }
             }
@@ -902,11 +933,13 @@ fn arrayGetAndSub(vm: anytype, a: anytype) !void {
 
     switch (array_frame.value) {
         .array => |arr| {
-            if (index_val >= arr.capacity) {
+            var mutable_arr = arr;
+            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            if (index_val >= mutable_arr.capacity) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
             }
 
-            const current_element = if (index_val < arr.elements.len) arr.elements[index_val] else nothing_value;
+            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
 
             const result = switch (current_element) {
                 .int => |current| switch (value.value) {
@@ -929,11 +962,12 @@ fn arrayGetAndSub(vm: anytype, a: anytype) !void {
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
             };
 
-            var mutable_arr = arr;
+            const allocator = try vm.arrayAllocator(mutable_arr);
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const prev_len = mutable_arr.elements.len;
+                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
+                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
                 }
             }
@@ -970,11 +1004,13 @@ fn arrayGetAndMul(vm: anytype, a: anytype) !void {
 
     switch (array_frame.value) {
         .array => |arr| {
-            if (index_val >= arr.capacity) {
+            var mutable_arr = arr;
+            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            if (index_val >= mutable_arr.capacity) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
             }
 
-            const current_element = if (index_val < arr.elements.len) arr.elements[index_val] else nothing_value;
+            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
 
             const result = switch (current_element) {
                 .int => |current| switch (value.value) {
@@ -997,11 +1033,12 @@ fn arrayGetAndMul(vm: anytype, a: anytype) !void {
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
             };
 
-            var mutable_arr = arr;
+            const allocator = try vm.arrayAllocator(mutable_arr);
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const prev_len = mutable_arr.elements.len;
+                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
+                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
                 }
             }
@@ -1038,11 +1075,13 @@ fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
 
     switch (array_frame.value) {
         .array => |arr| {
-            if (index_val >= arr.capacity) {
+            var mutable_arr = arr;
+            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            if (index_val >= mutable_arr.capacity) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
             }
 
-            const current_element = if (index_val < arr.elements.len) arr.elements[index_val] else nothing_value;
+            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
 
             const result = switch (current_element) {
                 .int => |current| blk: {
@@ -1085,11 +1124,12 @@ fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
             };
 
-            var mutable_arr = arr;
+            const allocator = try vm.arrayAllocator(mutable_arr);
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const prev_len = mutable_arr.elements.len;
+                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
+                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
                 }
             }
@@ -1126,11 +1166,13 @@ fn arrayGetAndMod(vm: anytype, a: anytype) !void {
 
     switch (array_frame.value) {
         .array => |arr| {
-            if (index_val >= arr.capacity) {
+            var mutable_arr = arr;
+            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            if (index_val >= mutable_arr.capacity) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
             }
 
-            const current_element = if (index_val < arr.elements.len) arr.elements[index_val] else nothing_value;
+            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
 
             const result = switch (current_element) {
                 .int => |current| blk: {
@@ -1170,11 +1212,12 @@ fn arrayGetAndMod(vm: anytype, a: anytype) !void {
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
             };
 
-            var mutable_arr = arr;
+            const allocator = try vm.arrayAllocator(mutable_arr);
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const prev_len = mutable_arr.elements.len;
+                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
+                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
                 }
             }
@@ -1211,11 +1254,13 @@ fn arrayGetAndPow(vm: anytype, a: anytype) !void {
 
     switch (array_frame.value) {
         .array => |arr| {
-            if (index_val >= arr.capacity) {
+            var mutable_arr = arr;
+            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            if (index_val >= mutable_arr.capacity) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
             }
 
-            const current_element = if (index_val < arr.elements.len) arr.elements[index_val] else nothing_value;
+            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
 
             const result = switch (current_element) {
                 .int => |current| blk: {
@@ -1248,11 +1293,12 @@ fn arrayGetAndPow(vm: anytype, a: anytype) !void {
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
             };
 
-            var mutable_arr = arr;
+            const allocator = try vm.arrayAllocator(mutable_arr);
             if (index_val >= mutable_arr.elements.len) {
-                const new_elements = try vm.runtimeAllocator().realloc(mutable_arr.elements, index_val + 1);
+                const prev_len = mutable_arr.elements.len;
+                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
                 mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[arr.elements.len .. index_val + 1]) |*element| {
+                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
                     element.* = nothing_value;
                 }
             }
