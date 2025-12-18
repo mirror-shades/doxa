@@ -123,13 +123,13 @@ fn generateArtifactPath(memoryManager: *MemoryManager, source_path: []const u8, 
 
     if (last_dot) |dot| {
         const basename = filename[0..dot];
-        const new_path = try memoryManager.getAllocator().alloc(u8, "out/".len + basename.len + extension.len);
+        const new_path = try memoryManager.getExecutionAllocator().alloc(u8, "out/".len + basename.len + extension.len);
         @memcpy(new_path[0.."out/".len], "out/");
         @memcpy(new_path["out/".len..("out/".len + basename.len)], basename);
         @memcpy(new_path[("out/".len + basename.len)..], extension);
         return new_path;
     } else {
-        const new_path = try memoryManager.getAllocator().alloc(u8, "out/".len + filename.len + extension.len);
+        const new_path = try memoryManager.getExecutionAllocator().alloc(u8, "out/".len + filename.len + extension.len);
         @memcpy(new_path[0.."out/".len], "out/");
         @memcpy(new_path["out/".len..("out/".len + filename.len)], filename);
         @memcpy(new_path[("out/".len + filename.len)..], extension);
@@ -557,9 +557,8 @@ pub fn main() !void {
 
     profiler.startPhase(Phase.GENERATE_S);
 
-    // Generate the soxa path for intermediate files
+    // Generate the soxa path for intermediate files (freed when execution arena deinits)
     const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa");
-    defer memoryManager.getExecutionAllocator().free(soxa_path);
 
     const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, &parser, &semantic_analyzer, &reporter);
     // Emit textual HIR (.soxa) for debugging/inspection

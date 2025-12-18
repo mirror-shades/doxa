@@ -7,16 +7,23 @@ const Location = Reporting.Location;
 const Reporter = Reporting.Reporter;
 const hir_values = @import("../codegen/hir/soxa_values.zig");
 const HIRValue = hir_values.HIRValue;
+const HIRArray = hir_values.HIRArray;
 const HIRStructField = hir_values.HIRStructField;
 const HIRMapEntry = hir_values.HIRMapEntry;
 const HIRMap = hir_values.HIRMap;
 const HIRStruct = hir_values.HIRStruct;
+const ValueOwner = hir_values.ValueOwner;
 const core = @import("core.zig");
 const HIRFrame = core.HIRFrame;
 const runtime = @import("runtime.zig");
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
 const Memory = @import("../utils/memory.zig");
 const Managed = std.array_list.Managed;
+const ArrayTypeKey = struct {
+    base: module.BytecodeType,
+    nested: module.BytecodeType,
+    has_nested: bool,
+};
 const ops_arith = @import("ops/arith.zig");
 const ops_compare = @import("ops/compare.zig");
 const ops_logical = @import("ops/logical.zig");
@@ -90,6 +97,11 @@ pub const VM = struct {
     scope_stack: Managed(ScopeRecord),
     try_stack: Managed(usize),
     skip_next_enter_scope: bool = false,
+    // Track VM-owned allocations for cleanup
+    vm_token_variants: ?[]CustomTypeInfo.EnumVariant = null,
+    vm_tokentype_variants: ?[]CustomTypeInfo.EnumVariant = null,
+    array_type_cache: std.AutoHashMap(ArrayTypeKey, *hir_types.HIRType),
+    array_type_nodes: Managed(*hir_types.HIRType),
 
     pub fn init(allocator: std.mem.Allocator, bytecode: *module.BytecodeModule, reporter: *Reporter, memory_manager: *MemoryManager) !VM {
         const frame_list = Managed(runtime.Frame).init(allocator);
@@ -129,6 +141,8 @@ pub const VM = struct {
             .scope_stack = Managed(ScopeRecord).init(allocator),
             .try_stack = Managed(usize).init(allocator),
             .skip_next_enter_scope = false,
+            .array_type_cache = std.AutoHashMap(ArrayTypeKey, *hir_types.HIRType).init(allocator),
+            .array_type_nodes = Managed(*hir_types.HIRType).init(allocator),
         };
 
         vm.indexLabels();
@@ -153,10 +167,23 @@ pub const VM = struct {
         self.scope_stack.deinit();
         self.try_stack.deinit();
 
+        // Free VM-owned variant arrays (names are string literals, no freeing needed)
+        if (self.vm_token_variants) |variants| {
+            self.allocator.free(variants);
+        }
+        if (self.vm_tokentype_variants) |variants| {
+            self.allocator.free(variants);
+        }
         self.custom_type_registry.deinit();
+        while (self.array_type_nodes.pop()) |ptr| {
+            self.allocator.destroy(ptr);
+        }
+        self.array_type_nodes.deinit();
+        self.array_type_cache.deinit();
 
         self.slot_refs.deinit();
         for (self.module_state) |*state| {
+            self.freeModuleStateValues(state);
             state.deinit();
         }
         self.allocator.free(self.module_state);
@@ -277,33 +304,83 @@ pub const VM = struct {
             .StoreSlot => |payload| {
                 var value = try self.popValue();
                 const ptr = try self.resolveSlot(payload.target);
+                const owner = try self.ownerForStoreTarget(payload.target, ptr);
+                var allocator: std.mem.Allocator = undefined;
+                var module_state_ptr: ?*runtime.ModuleState = null;
+                var old_module_value: HIRValue = undefined;
+                var module_slot_index: ?module.SlotIndex = null;
+                var had_old_value = false;
 
-                // Promote value lifetime based on destination
-                switch (payload.target.kind) {
-                    .local => {
-                        const alloc = self.frameAllocator();
-                        const value_ptr = try self.runtimeAllocator().create(HIRValue);
-                        value_ptr.* = value;
-                        defer self.runtimeAllocator().destroy(value_ptr);
-                        value = try self.deepCopyValueToAllocator(alloc, value_ptr);
-                    },
-                    .module_global, .imported_module => {
-                        const module_id = payload.target.module_id orelse return error.MissingModule;
+                switch (owner) {
+                    .Runtime => allocator = self.runtimeAllocator(),
+                    .Scope => allocator = self.scopeAllocator(),
+                    .Module => |module_id| {
                         const state = try self.resolveModuleState(module_id);
-                        const value_ptr = try self.runtimeAllocator().create(HIRValue);
-                        value_ptr.* = value;
-                        defer self.runtimeAllocator().destroy(value_ptr);
-                        value = try self.deepCopyValueToAllocator(state.allocator, value_ptr);
+                        allocator = state.allocator;
+                        module_state_ptr = state;
+                        module_slot_index = self.moduleSlotIndexForStore(state, payload.target, ptr);
+                        if (module_slot_index) |slot_idx| {
+                            if (state.hasValue(slot_idx)) {
+                                old_module_value = ptr.load();
+                                had_old_value = true;
+                            }
+                        }
                     },
-                    .alias, .builtin => {},
                 }
+
+                const value_ptr = try self.runtimeAllocator().create(HIRValue);
+                value_ptr.* = value;
+                defer self.runtimeAllocator().destroy(value_ptr);
+                value = try self.deepCopyValueToAllocator(allocator, value_ptr, owner);
                 ptr.store(value);
+                if (module_state_ptr) |state| {
+                    if (module_slot_index) |slot_idx| {
+                        state.markInitialized(slot_idx);
+                    }
+                    if (had_old_value) {
+                        self.freeValueFromAllocator(state.allocator, &old_module_value);
+                    }
+                }
             },
             .StoreConstSlot => |operand| {
-                const value = try self.popValue();
+                var value = try self.popValue();
                 const ptr = try self.resolveSlot(operand);
+                const owner = try self.ownerForStoreTarget(operand, ptr);
+                var allocator: std.mem.Allocator = undefined;
+                var module_state_ptr: ?*runtime.ModuleState = null;
+                var old_module_value: HIRValue = undefined;
+                var module_slot_index: ?module.SlotIndex = null;
+                var had_old_value = false;
 
+                switch (owner) {
+                    .Runtime => allocator = self.runtimeAllocator(),
+                    .Scope => allocator = self.scopeAllocator(),
+                    .Module => |module_id| {
+                        const state = try self.resolveModuleState(module_id);
+                        allocator = state.allocator;
+                        module_state_ptr = state;
+                        module_slot_index = self.moduleSlotIndexForStore(state, operand, ptr);
+                        if (module_slot_index) |slot_idx| {
+                            if (state.hasValue(slot_idx)) {
+                                old_module_value = ptr.load();
+                                had_old_value = true;
+                            }
+                        }
+                    },
+                }
+                const value_ptr = try self.runtimeAllocator().create(HIRValue);
+                value_ptr.* = value;
+                defer self.runtimeAllocator().destroy(value_ptr);
+                value = try self.deepCopyValueToAllocator(allocator, value_ptr, owner);
                 ptr.store(value);
+                if (module_state_ptr) |state| {
+                    if (module_slot_index) |slot_idx| {
+                        state.markInitialized(slot_idx);
+                    }
+                    if (had_old_value) {
+                        self.freeValueFromAllocator(state.allocator, &old_module_value);
+                    }
+                }
             },
             .PushStorageRef => |operand| {
                 const ptr = try self.resolveSlot(operand);
@@ -329,10 +406,47 @@ pub const VM = struct {
                 try self.stack.pushValue(value);
             },
             .StoreAlias => |payload| {
-                const value = try self.popValue();
+                var value = try self.popValue();
                 const frame = try self.currentFrame();
                 const ptr = frame.pointer(payload.slot_index);
+                const owner = self.ownerForPointer(ptr);
+                var allocator: std.mem.Allocator = undefined;
+                var module_state_ptr: ?*runtime.ModuleState = null;
+                var old_module_value: HIRValue = undefined;
+                var module_slot_index: ?module.SlotIndex = null;
+                var had_old_value = false;
+
+                switch (owner) {
+                    .Runtime => allocator = self.runtimeAllocator(),
+                    .Scope => allocator = self.scopeAllocator(),
+                    .Module => |module_id| {
+                        const state = try self.resolveModuleState(module_id);
+                        allocator = state.allocator;
+                        module_state_ptr = state;
+                        module_slot_index = self.moduleSlotIndexForStore(state, null, ptr);
+                        if (module_slot_index) |slot_idx| {
+                            if (state.hasValue(slot_idx)) {
+                                old_module_value = ptr.load();
+                                had_old_value = true;
+                            }
+                        }
+                    },
+                }
+
+                const value_ptr = try self.runtimeAllocator().create(HIRValue);
+                value_ptr.* = value;
+                defer self.runtimeAllocator().destroy(value_ptr);
+                value = try self.deepCopyValueToAllocator(allocator, value_ptr, owner);
+
                 ptr.store(value);
+                if (module_state_ptr) |state| {
+                    if (module_slot_index) |slot_idx| {
+                        state.markInitialized(slot_idx);
+                    }
+                    if (had_old_value) {
+                        self.freeValueFromAllocator(state.allocator, &old_module_value);
+                    }
+                }
             },
             .ResolveAlias => |payload| {
                 const frame = try self.currentFrame();
@@ -647,6 +761,14 @@ pub const VM = struct {
         return &self.module_state[index];
     }
 
+    fn freeModuleStateValues(self: *VM, state: *runtime.ModuleState) void {
+        for (state.values, 0..) |*slot, idx| {
+            const slot_index: module.SlotIndex = @intCast(idx);
+            if (!state.hasValue(slot_index)) continue;
+            self.freeValueFromAllocator(state.allocator, slot);
+        }
+    }
+
     fn resolveSlot(self: *VM, operand: module.SlotOperand) VmError!runtime.SlotPointer {
         return switch (operand.kind) {
             .local => blk: {
@@ -677,6 +799,67 @@ pub const VM = struct {
             },
             .builtin => return error.UnimplementedInstruction,
         };
+    }
+
+    fn ownerForStoreTarget(self: *VM, operand: module.SlotOperand, ptr: runtime.SlotPointer) VmError!ValueOwner {
+        return switch (operand.kind) {
+            .local => ValueOwner.Runtime,
+            .module_global, .imported_module => ValueOwner{ .Module = operand.module_id orelse return error.MissingModule },
+            .alias => self.ownerForPointer(ptr),
+            .builtin => ValueOwner.Runtime,
+        };
+    }
+
+    fn ownerForPointer(self: *VM, ptr: runtime.SlotPointer) ValueOwner {
+        const addr = @intFromPtr(ptr.value);
+        for (self.module_state, 0..) |*state, idx| {
+            if (state.values.len == 0) continue;
+            const base = @intFromPtr(state.values.ptr);
+            const end = base + state.values.len * @sizeOf(HIRValue);
+            if (addr >= base and addr < end) {
+                return ValueOwner{ .Module = @intCast(idx) };
+            }
+        }
+        return ValueOwner.Runtime;
+    }
+
+    fn allocatorForOwner(self: *VM, owner: ValueOwner) VmError!std.mem.Allocator {
+        return switch (owner) {
+            .Runtime => self.runtimeAllocator(),
+            .Scope => self.scopeAllocator(),
+            .Module => |module_id| blk: {
+                const state = try self.resolveModuleState(module_id);
+                break :blk state.allocator;
+            },
+        };
+    }
+
+    fn moduleSlotIndexForStore(self: *VM, state: *runtime.ModuleState, operand: ?module.SlotOperand, ptr: runtime.SlotPointer) ?module.SlotIndex {
+        _ = self;
+        if (operand) |op| {
+            switch (op.kind) {
+                .module_global, .imported_module => return op.slot,
+                else => {},
+            }
+        }
+        if (state.values.len == 0) return null;
+        const base = @intFromPtr(state.values.ptr);
+        const addr = @intFromPtr(ptr.value);
+        if (addr < base) return null;
+        const stride = @sizeOf(HIRValue);
+        const offset = addr - base;
+        if (offset % stride != 0) return null;
+        const index = offset / stride;
+        if (index >= state.values.len) return null;
+        return @intCast(index);
+    }
+
+    pub fn arrayAllocator(self: *VM, array: HIRArray) VmError!std.mem.Allocator {
+        return self.allocatorForOwner(array.owner);
+    }
+
+    pub fn mapAllocator(self: *VM, map: HIRMap) VmError!std.mem.Allocator {
+        return self.allocatorForOwner(map.owner);
     }
 
     fn trackAlias(self: *VM, slot: module.SlotIndex) VmError!void {
@@ -1540,6 +1723,7 @@ pub const VM = struct {
             .fields = fields,
             .field_name = null,
             .path = null,
+            .owner = ValueOwner.Runtime,
         } };
 
         try self.stack.push(HIRFrame.initFromHIRValue(struct_value));
@@ -1663,13 +1847,16 @@ pub const VM = struct {
 
         switch (struct_frame.value) {
             .struct_instance => |struct_inst| {
+                const allocator = try self.allocatorForOwner(struct_inst.owner);
+
                 for (struct_inst.fields) |*field| {
                     if (std.mem.eql(u8, field.name, payload.field_name)) {
-                        const value_ptr = try self.scopeAllocator().create(HIRValue);
-                        value_ptr.* = value_frame.value;
-                        field.value = value_ptr;
-                        const modified = HIRFrame.initFromHIRValue(HIRValue{ .struct_instance = struct_inst });
-                        try self.stack.push(modified);
+                        var new_value = value_frame.value;
+                        const copied = try self.deepCopyValueToAllocator(allocator, &new_value, struct_inst.owner);
+                        self.freeValueFromAllocator(allocator, field.value);
+                        field.value.* = copied;
+                        const updated = HIRValue{ .struct_instance = struct_inst };
+                        try self.stack.push(HIRFrame.initFromHIRValue(updated));
                         return;
                     }
                 }
@@ -1681,7 +1868,7 @@ pub const VM = struct {
     }
 
     fn execMap(self: *VM, payload: anytype) VmError!void {
-        const alloc = self.scopeAllocator();
+        const alloc = self.runtimeAllocator();
         var entries = try alloc.alloc(HIRMapEntry, payload.entries.len);
         errdefer alloc.free(entries);
 
@@ -1691,12 +1878,15 @@ pub const VM = struct {
             const value_frame = try self.stack.pop();
             const key_frame = try self.stack.pop();
 
-            const normalized_key = key_frame.value;
-
+            var key_value = key_frame.value;
+            const normalized_key = try self.deepCopyValueToAllocator(alloc, &key_value, ValueOwner.Runtime);
             const key_ptr = try alloc.create(HIRValue);
             key_ptr.* = normalized_key;
+
+            var entry_value = value_frame.value;
+            const normalized_value = try self.deepCopyValueToAllocator(alloc, &entry_value, ValueOwner.Runtime);
             const value_ptr = try alloc.create(HIRValue);
-            value_ptr.* = value_frame.value;
+            value_ptr.* = normalized_value;
 
             entries[reverse_i] = HIRMapEntry{
                 .key = key_ptr,
@@ -1708,8 +1898,10 @@ pub const VM = struct {
         // Pop else value if present
         const else_value = if (payload.has_else_value) blk: {
             const else_frame = try self.stack.pop();
+            var else_value_raw = else_frame.value;
+            const normalized_else = try self.deepCopyValueToAllocator(alloc, &else_value_raw, ValueOwner.Runtime);
             const else_ptr = try alloc.create(HIRValue);
-            else_ptr.* = else_frame.value;
+            else_ptr.* = normalized_else;
             break :blk else_ptr;
         } else null;
 
@@ -1719,6 +1911,7 @@ pub const VM = struct {
             .value_type = toHIRType(payload.value_type),
             .path = null,
             .else_value = else_value,
+            .owner = ValueOwner.Runtime,
         } };
 
         try self.stack.push(HIRFrame.initFromHIRValue(map_value));
@@ -1766,19 +1959,19 @@ pub const VM = struct {
     }
 
     fn execMapSet(self: *VM, payload: anytype) VmError!void {
-        const alloc = self.scopeAllocator();
+        const runtime_alloc = self.runtimeAllocator();
         const value_frame = try self.stack.pop();
         const key_frame = try self.stack.pop();
         const map_frame = try self.stack.pop();
 
         switch (map_frame.value) {
-            .map => |orig| {
-                var entries = try alloc.alloc(HIRMapEntry, orig.entries.len);
-                errdefer alloc.free(entries);
-                @memcpy(entries, orig.entries);
+            .map => |_| {
+                var source_value = map_frame.value;
+                var detached_value = try self.deepCopyValueToAllocator(runtime_alloc, &source_value, ValueOwner.Runtime);
+                var mutable_map = detached_value.map;
 
                 var updated = false;
-                for (entries) |*entry| {
+                for (mutable_map.entries) |*entry| {
                     const keys_match = switch (entry.key.*) {
                         .string => |entry_str| switch (key_frame.value) {
                             .string => |key_str| std.mem.eql(u8, entry_str, key_str),
@@ -1796,32 +1989,39 @@ pub const VM = struct {
                     };
 
                     if (keys_match) {
-                        entry.value.* = value_frame.value;
+                        self.freeValueFromAllocator(runtime_alloc, entry.value);
+                        var new_value = value_frame.value;
+                        entry.value.* = try self.deepCopyValueToAllocator(runtime_alloc, &new_value, ValueOwner.Runtime);
                         updated = true;
                         break;
                     }
                 }
 
                 if (!updated) {
-                    var new_entries = try alloc.alloc(HIRMapEntry, entries.len + 1);
-                    @memcpy(new_entries[0..entries.len], entries);
-                    const key_ptr = try alloc.create(HIRValue);
-                    key_ptr.* = key_frame.value;
-                    const value_ptr = try alloc.create(HIRValue);
-                    value_ptr.* = value_frame.value;
-                    new_entries[entries.len] = HIRMapEntry{ .key = key_ptr, .value = value_ptr, .path = null };
-                    alloc.free(entries);
-                    entries = new_entries;
+                    const old_len = mutable_map.entries.len;
+                    var new_entries = try runtime_alloc.alloc(HIRMapEntry, old_len + 1);
+                    @memcpy(new_entries[0..old_len], mutable_map.entries);
+
+                    const key_ptr = try runtime_alloc.create(HIRValue);
+                    var new_key = key_frame.value;
+                    key_ptr.* = try self.deepCopyValueToAllocator(runtime_alloc, &new_key, ValueOwner.Runtime);
+
+                    const value_ptr = try runtime_alloc.create(HIRValue);
+                    var appended_value = value_frame.value;
+                    value_ptr.* = try self.deepCopyValueToAllocator(runtime_alloc, &appended_value, ValueOwner.Runtime);
+
+                    new_entries[old_len] = HIRMapEntry{ .key = key_ptr, .value = value_ptr, .path = null };
+
+                    runtime_alloc.free(mutable_map.entries);
+                    mutable_map.entries = new_entries;
                 }
 
-                const new_map = HIRValue{ .map = HIRMap{
-                    .entries = entries,
-                    .key_type = toHIRType(payload.key_type),
-                    .value_type = orig.value_type,
-                    .path = null,
-                } };
+                mutable_map.key_type = toHIRType(payload.key_type);
+                mutable_map.owner = ValueOwner.Runtime;
 
-                try self.stack.push(HIRFrame.initFromHIRValue(new_map));
+                detached_value = HIRValue{ .map = mutable_map };
+
+                try self.stack.push(HIRFrame.initFromHIRValue(detached_value));
             },
             else => {
                 return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot set index on non-map value: {s}", .{@tagName(map_frame.value)});
@@ -1926,10 +2126,10 @@ pub const VM = struct {
             var mut_val = val;
             if (caller_exists) {
                 const dest_alloc = self.frames.items[self.frames.items.len - 1].arena.allocator();
-                promoted_value = try self.deepCopyValueToAllocator(dest_alloc, &mut_val);
+                promoted_value = try self.deepCopyValueToAllocator(dest_alloc, &mut_val, ValueOwner.Runtime);
             } else {
                 // No caller: promote to VM allocator; program likely ends soon
-                promoted_value = try self.deepCopyValueToAllocator(self.allocator, &mut_val);
+                promoted_value = try self.deepCopyValueToAllocator(self.allocator, &mut_val, ValueOwner.Runtime);
             }
         }
 
@@ -2091,9 +2291,26 @@ pub const VM = struct {
     fn toHIRTypeWithNested(self: *VM, base: module.BytecodeType, nested: ?module.BytecodeType) hir_types.HIRType {
         // Currently only arrays use nested metadata from bytecode
         if (base == .Array) {
+            const key = ArrayTypeKey{
+                .base = base,
+                .nested = nested orelse .Nothing,
+                .has_nested = nested != null,
+            };
+            if (self.array_type_cache.get(key)) |ptr| {
+                return hir_types.HIRType{ .Array = ptr };
+            }
             const element_hir = if (nested) |n| toHIRType(n) else .Nothing;
             const elem_ptr = self.allocator.create(hir_types.HIRType) catch return element_hir;
             elem_ptr.* = element_hir;
+            self.array_type_nodes.append(elem_ptr) catch {
+                self.allocator.destroy(elem_ptr);
+                return element_hir;
+            };
+            self.array_type_cache.put(key, elem_ptr) catch {
+                _ = self.array_type_nodes.pop();
+                self.allocator.destroy(elem_ptr);
+                return element_hir;
+            };
             return hir_types.HIRType{ .Array = elem_ptr };
         }
         return toHIRType(base);
@@ -2111,17 +2328,18 @@ pub const VM = struct {
     }
 
     fn registerTokenEnum(self: *VM) !void {
-        // Create enum variants for Token enum
+        // Create enum variants for Token enum - use string literals (no allocation needed)
         const token_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, 6);
-        token_variants[0] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "INT_LITERAL"), .index = 0 };
-        token_variants[1] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FLOAT_LITERAL"), .index = 1 };
-        token_variants[2] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "BYTE_LITERAL"), .index = 2 };
-        token_variants[3] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "TETRA_LITERAL"), .index = 3 };
-        token_variants[4] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "STRING_LITERAL"), .index = 4 };
-        token_variants[5] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "NOTHING_LITERAL"), .index = 5 };
+        token_variants[0] = CustomTypeInfo.EnumVariant{ .name = "INT_LITERAL", .index = 0 };
+        token_variants[1] = CustomTypeInfo.EnumVariant{ .name = "FLOAT_LITERAL", .index = 1 };
+        token_variants[2] = CustomTypeInfo.EnumVariant{ .name = "BYTE_LITERAL", .index = 2 };
+        token_variants[3] = CustomTypeInfo.EnumVariant{ .name = "TETRA_LITERAL", .index = 3 };
+        token_variants[4] = CustomTypeInfo.EnumVariant{ .name = "STRING_LITERAL", .index = 4 };
+        token_variants[5] = CustomTypeInfo.EnumVariant{ .name = "NOTHING_LITERAL", .index = 5 };
+        self.vm_token_variants = token_variants;
 
         const token_enum_info = CustomTypeInfo{
-            .name = try self.allocator.dupe(u8, "Token"),
+            .name = "Token",
             .kind = .Enum,
             .enum_variants = token_variants,
         };
@@ -2130,25 +2348,26 @@ pub const VM = struct {
 
         // Create enum variants for TokenType enum
         const tokentype_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, 16);
-        tokentype_variants[0] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "INT_LITERAL"), .index = 0 };
-        tokentype_variants[1] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FLOAT_LITERAL"), .index = 1 };
-        tokentype_variants[2] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "BYTE_LITERAL"), .index = 2 };
-        tokentype_variants[3] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "TETRA_LITERAL"), .index = 3 };
-        tokentype_variants[4] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "STRING_LITERAL"), .index = 4 };
-        tokentype_variants[5] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "NOTHING_LITERAL"), .index = 5 };
-        tokentype_variants[6] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "VAR"), .index = 6 };
-        tokentype_variants[7] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "CONST"), .index = 7 };
-        tokentype_variants[8] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FUNCTION"), .index = 8 };
-        tokentype_variants[9] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "MAIN"), .index = 9 };
-        tokentype_variants[10] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "ENTRY"), .index = 10 };
-        tokentype_variants[11] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "ASSIGN"), .index = 11 };
-        tokentype_variants[12] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "MODULE"), .index = 12 };
-        tokentype_variants[13] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "IMPORT"), .index = 13 };
-        tokentype_variants[14] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "FROM"), .index = 14 };
-        tokentype_variants[15] = CustomTypeInfo.EnumVariant{ .name = try self.allocator.dupe(u8, "IDENTIFIER"), .index = 15 };
+        tokentype_variants[0] = CustomTypeInfo.EnumVariant{ .name = "INT_LITERAL", .index = 0 };
+        tokentype_variants[1] = CustomTypeInfo.EnumVariant{ .name = "FLOAT_LITERAL", .index = 1 };
+        tokentype_variants[2] = CustomTypeInfo.EnumVariant{ .name = "BYTE_LITERAL", .index = 2 };
+        tokentype_variants[3] = CustomTypeInfo.EnumVariant{ .name = "TETRA_LITERAL", .index = 3 };
+        tokentype_variants[4] = CustomTypeInfo.EnumVariant{ .name = "STRING_LITERAL", .index = 4 };
+        tokentype_variants[5] = CustomTypeInfo.EnumVariant{ .name = "NOTHING_LITERAL", .index = 5 };
+        tokentype_variants[6] = CustomTypeInfo.EnumVariant{ .name = "VAR", .index = 6 };
+        tokentype_variants[7] = CustomTypeInfo.EnumVariant{ .name = "CONST", .index = 7 };
+        tokentype_variants[8] = CustomTypeInfo.EnumVariant{ .name = "FUNCTION", .index = 8 };
+        tokentype_variants[9] = CustomTypeInfo.EnumVariant{ .name = "MAIN", .index = 9 };
+        tokentype_variants[10] = CustomTypeInfo.EnumVariant{ .name = "ENTRY", .index = 10 };
+        tokentype_variants[11] = CustomTypeInfo.EnumVariant{ .name = "ASSIGN", .index = 11 };
+        tokentype_variants[12] = CustomTypeInfo.EnumVariant{ .name = "MODULE", .index = 12 };
+        tokentype_variants[13] = CustomTypeInfo.EnumVariant{ .name = "IMPORT", .index = 13 };
+        tokentype_variants[14] = CustomTypeInfo.EnumVariant{ .name = "FROM", .index = 14 };
+        tokentype_variants[15] = CustomTypeInfo.EnumVariant{ .name = "IDENTIFIER", .index = 15 };
+        self.vm_tokentype_variants = tokentype_variants;
 
         const tokentype_enum_info = CustomTypeInfo{
-            .name = try self.allocator.dupe(u8, "TokenType"),
+            .name = "TokenType",
             .kind = .Enum,
             .enum_variants = tokentype_variants,
         };
@@ -2161,8 +2380,9 @@ pub const VM = struct {
         if (self.module_state.len > 0) {
             const module_state = &self.module_state[0];
             const token_slot = module_state.pointer(0); // Slot 0
-            const token_name = try self.allocator.dupe(u8, "Token");
+            const token_name = try module_state.allocator.dupe(u8, "Token");
             token_slot.store(HIRValue{ .string = token_name });
+            module_state.markInitialized(0);
         }
     }
 
@@ -2291,9 +2511,9 @@ pub const VM = struct {
                 try result.appendSlice(" }");
                 return try result.toOwnedSlice();
             },
-            .map => try self.allocator.dupe(u8, "{map}"),
-            .enum_variant => |e| try std.fmt.allocPrint(self.allocator, ".{s}", .{e.variant_name}),
-            .storage_id_ref => |storage_id| try std.fmt.allocPrint(self.allocator, "storage_id_ref({})", .{storage_id}),
+            .map => try allocator.dupe(u8, "{map}"),
+            .enum_variant => |e| try std.fmt.allocPrint(allocator, ".{s}", .{e.variant_name}),
+            .storage_id_ref => |storage_id| try std.fmt.allocPrint(allocator, "storage_id_ref({})", .{storage_id}),
         };
     }
 
@@ -2341,9 +2561,10 @@ pub const VM = struct {
                 allocator.free(e.variant_name);
             },
         }
+        value.* = hir_values.nothing_value;
     }
 
-    pub fn deepCopyValueToAllocator(self: *VM, allocator: std.mem.Allocator, value: *HIRValue) !HIRValue {
+    pub fn deepCopyValueToAllocator(self: *VM, allocator: std.mem.Allocator, value: *HIRValue, owner: ValueOwner) !HIRValue {
         return switch (value.*) {
             .int, .byte, .float, .tetra, .nothing, .storage_id_ref => value.*,
             .string => |s| blk: {
@@ -2354,7 +2575,7 @@ pub const VM = struct {
                 const type_name = try allocator.dupe(u8, s.type_name);
                 const fields = try allocator.alloc(HIRStructField, s.fields.len);
                 for (s.fields, 0..) |f, i| {
-                    const value_copy = try self.deepCopyValueToAllocator(allocator, f.value);
+                    const value_copy = try self.deepCopyValueToAllocator(allocator, f.value, owner);
                     const value_ptr = try allocator.create(HIRValue);
                     value_ptr.* = value_copy;
                     fields[i] = .{
@@ -2364,15 +2585,15 @@ pub const VM = struct {
                         .path = null,
                     };
                 }
-                break :blk HIRValue{ .struct_instance = .{ .type_name = type_name, .fields = fields, .field_name = null, .path = null } };
+                break :blk HIRValue{ .struct_instance = .{ .type_name = type_name, .fields = fields, .field_name = null, .path = null, .owner = owner } };
             },
             .map => |m| blk: {
                 const entries = try allocator.alloc(HIRMapEntry, m.entries.len);
                 for (m.entries, 0..) |e, i| {
-                    const key_copy = try self.deepCopyValueToAllocator(allocator, e.key);
+                    const key_copy = try self.deepCopyValueToAllocator(allocator, e.key, owner);
                     const key_ptr = try allocator.create(HIRValue);
                     key_ptr.* = key_copy;
-                    const value_copy = try self.deepCopyValueToAllocator(allocator, e.value);
+                    const value_copy = try self.deepCopyValueToAllocator(allocator, e.value, owner);
                     const value_ptr = try allocator.create(HIRValue);
                     value_ptr.* = value_copy;
                     entries[i] = .{
@@ -2382,19 +2603,19 @@ pub const VM = struct {
                     };
                 }
                 const else_copy = if (m.else_value) |else_val| blk_else: {
-                    const else_value_copy = try self.deepCopyValueToAllocator(allocator, else_val);
+                    const else_value_copy = try self.deepCopyValueToAllocator(allocator, else_val, owner);
                     const else_ptr = try allocator.create(HIRValue);
                     else_ptr.* = else_value_copy;
                     break :blk_else else_ptr;
                 } else null;
-                break :blk HIRValue{ .map = .{ .entries = entries, .key_type = m.key_type, .value_type = m.value_type, .path = null, .else_value = else_copy } };
+                break :blk HIRValue{ .map = .{ .entries = entries, .key_type = m.key_type, .value_type = m.value_type, .path = null, .else_value = else_copy, .owner = owner } };
             },
             .array => |a| blk: {
                 const elems = try allocator.alloc(HIRValue, a.elements.len);
                 for (a.elements, 0..) |_, i| {
-                    elems[i] = try self.deepCopyValueToAllocator(allocator, &a.elements[i]);
+                    elems[i] = try self.deepCopyValueToAllocator(allocator, &a.elements[i], owner);
                 }
-                break :blk HIRValue{ .array = .{ .elements = elems, .element_type = a.element_type, .capacity = a.capacity, .path = null, .nested_element_type = a.nested_element_type } };
+                break :blk HIRValue{ .array = .{ .elements = elems, .element_type = a.element_type, .capacity = a.capacity, .path = null, .nested_element_type = a.nested_element_type, .owner = owner } };
             },
             .enum_variant => |e| blk: {
                 const type_name = try allocator.dupe(u8, e.type_name);
@@ -2448,6 +2669,7 @@ pub const VM = struct {
             .struct_instance = HIRStruct{
                 .type_name = try self.allocator.dupe(u8, module_name),
                 .fields = fields,
+                .owner = ValueOwner.Runtime,
             },
         };
 

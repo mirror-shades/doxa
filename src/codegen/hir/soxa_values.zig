@@ -18,6 +18,12 @@ pub const HIRValue = union(enum) {
 
 pub const nothing_value = HIRValue{ .nothing = .{} };
 
+pub const ValueOwner = union(enum) {
+    Runtime,
+    Scope,
+    Module: u16,
+};
+
 pub const HIRArray = struct {
     elements: []HIRValue,
     element_type: HIRType,
@@ -25,6 +31,7 @@ pub const HIRArray = struct {
     path: ?[]const u8 = @as(?[]const u8, null),
     nested_element_type: ?HIRType = null, // For nested arrays: what type are the nested elements?
     storage_kind: ArrayStorageKind = .dynamic,
+    owner: ValueOwner = .Runtime,
 };
 
 pub const HIRStruct = struct {
@@ -32,6 +39,7 @@ pub const HIRStruct = struct {
     fields: []HIRStructField,
     field_name: ?[]const u8 = null, // Track field name for nested struct access
     path: ?[]const u8 = @as(?[]const u8, null),
+    owner: ValueOwner = .Runtime,
 };
 
 pub const HIRStructField = struct {
@@ -47,6 +55,7 @@ pub const HIRMap = struct {
     value_type: HIRType,
     path: ?[]const u8 = @as(?[]const u8, null),
     else_value: ?*HIRValue = null,
+    owner: ValueOwner = .Runtime,
 };
 
 pub const HIRMapEntry = struct {
