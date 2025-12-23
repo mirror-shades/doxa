@@ -555,6 +555,7 @@ pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
 
     if (hdr.data == null or hdr.len == 0) {
         _ = out.writeAll("]") catch return;
+        _ = out.flush() catch {};
         return;
     }
 
@@ -706,9 +707,9 @@ pub export fn doxa_forall_quantifier_eq(hdr: ?*ArrayHeader, comparison_bits: i64
 pub export fn doxa_type_check(value: i64, value_type: i64, target_type: ?[*:0]const u8) callconv(.c) i64 {
     _ = value; // Value itself is not needed for basic type checking
     if (target_type == null) return 0;
-    
+
     const target = std.mem.span(target_type.?);
-    
+
     // Map value_type to type string
     const actual_type: []const u8 = switch (value_type) {
         0 => "int",
@@ -720,12 +721,12 @@ pub export fn doxa_type_check(value: i64, value_type: i64, target_type: ?[*:0]co
         6 => "enum",
         else => "unknown",
     };
-    
+
     // Simple string comparison
     if (std.mem.eql(u8, actual_type, target)) {
         return 1; // true
     }
-    
+
     // Handle array types like "int[]", "string[]", etc.
     if (std.mem.endsWith(u8, target, "[]")) {
         if (value_type == 4) { // array
@@ -734,6 +735,6 @@ pub export fn doxa_type_check(value: i64, value_type: i64, target_type: ?[*:0]co
             return 1;
         }
     }
-    
+
     return 0; // false
 }

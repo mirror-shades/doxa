@@ -4983,11 +4983,9 @@ pub const IRPrinter = struct {
                 .PTR => blk: {
                     // Distinguish between arrays, structs, and raw strings
                     if (value.array_type) |element_type| {
-                        const elem_type_str = self.hirTypeToTypeString(element_type);
-                        var buf = std.ArrayListUnmanaged(u8){};
-                        defer buf.deinit(self.allocator);
-                        try buf.writer(self.allocator).print("{s}[]", .{elem_type_str});
-                        array_type_str_owned = try buf.toOwnedSlice(self.allocator);
+                        const elem_type_str = try self.hirTypeToTypeString(self.allocator, element_type);
+                        defer self.allocator.free(elem_type_str);
+                        array_type_str_owned = try std.fmt.allocPrint(self.allocator, "{s}[]", .{elem_type_str});
                         break :blk array_type_str_owned.?;
                     }
 
@@ -6079,26 +6077,25 @@ pub const IRPrinter = struct {
         };
     }
 
-    fn hirTypeToTypeString(self: *IRPrinter, hir_type: HIR.HIRType) []const u8 {
-        _ = self;
+    fn hirTypeToTypeString(self: *IRPrinter, allocator: std.mem.Allocator, hir_type: HIR.HIRType) ![]const u8 {
         return switch (hir_type) {
-            .Int => "int",
-            .Float => "float",
-            .Byte => "byte",
-            .Tetra => "tetra",
-            .String => "string",
+            .Int => try allocator.dupe(u8, "int"),
+            .Float => try allocator.dupe(u8, "float"),
+            .Byte => try allocator.dupe(u8, "byte"),
+            .Tetra => try allocator.dupe(u8, "tetra"),
+            .String => try allocator.dupe(u8, "string"),
             .Array => |inner| {
-                // This shouldn't happen in practice for array element types
-                _ = inner;
-                return "array";
+                const inner_str = try self.hirTypeToTypeString(allocator, inner.*);
+                defer allocator.free(inner_str);
+                return try std.fmt.allocPrint(allocator, "{s}[]", .{inner_str});
             },
-            .Map => "map",
-            .Struct => "struct",
-            .Enum => "enum",
-            .Function => "function",
-            .Union => "union",
-            .Nothing => "nothing",
-            else => "value",
+            .Map => try allocator.dupe(u8, "map"),
+            .Struct => try allocator.dupe(u8, "struct"),
+            .Enum => try allocator.dupe(u8, "enum"),
+            .Function => try allocator.dupe(u8, "function"),
+            .Union => try allocator.dupe(u8, "union"),
+            .Nothing => try allocator.dupe(u8, "nothing"),
+            else => try allocator.dupe(u8, "value"),
         };
     }
 
