@@ -587,7 +587,9 @@ pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
             3 => { // string (i8*)
                 const sp: *const ?[*:0]const u8 = @ptrCast(@alignCast(p));
                 const s = sp.* orelse "";
+                _ = out.writeAll("\"") catch return;
                 _ = out.writeAll(std.mem.span(s)) catch return;
+                _ = out.writeAll("\"") catch return;
             },
             4 => { // tetra (2-bit stored in u8)
                 const tp: *const u8 = @ptrCast(p);
