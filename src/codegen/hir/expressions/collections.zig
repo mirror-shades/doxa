@@ -43,12 +43,17 @@ pub const CollectionsHandler = struct {
                     else => .Unknown,
                 },
                 .Array => |nested_elements| {
-                    element_type = .Unknown; // For nested arrays, the top-level element is itself an array
-                    // For nested arrays, determine the nested element type using normal inference
+                    // For nested arrays, recursively determine the element type of the nested array
                     if (nested_elements.len > 0) {
                         const inferred_nested = self.generator.inferTypeFromExpression(nested_elements[0]);
-                        nested_element_type = SoxaTypes.arrayInnermostElementType(inferred_nested) orelse inferred_nested;
+                        // For nested arrays like [["hello"]], the element_type should be Array(String)
+                        element_type = inferred_nested;
+                    } else {
+                        // Empty nested array - assume unknown element type
+                        element_type = .Unknown;
                     }
+                    // For nested arrays, the nested_element_type is not used in the same way
+                    nested_element_type = null;
                 },
                 else => {
                     // Use the general type system to infer the element type.
