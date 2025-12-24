@@ -43,11 +43,13 @@ pub const CollectionsHandler = struct {
                     else => .Unknown,
                 },
                 .Array => |nested_elements| {
-                    // For nested arrays, recursively determine the element type of the nested array
+                    // For nested arrays, determine the element type of the nested array
                     if (nested_elements.len > 0) {
-                        const inferred_nested = self.generator.inferTypeFromExpression(nested_elements[0]);
+                        const inner_element_type = self.generator.inferTypeFromExpression(nested_elements[0]);
                         // For nested arrays like [["hello"]], the element_type should be Array(String)
-                        element_type = inferred_nested;
+                        const inner_type_ptr = self.generator.allocator.create(HIRType) catch return ErrorList.OutOfMemory;
+                        inner_type_ptr.* = inner_element_type;
+                        element_type = HIRType{ .Array = inner_type_ptr };
                     } else {
                         // Empty nested array - element type is Array with unknown inner type
                         const unknown_ptr = self.generator.allocator.create(HIRType) catch return ErrorList.OutOfMemory;
