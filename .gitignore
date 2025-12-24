@@ -6,12 +6,5 @@ venv
 .github
 site
 
-build.doxa
-built
-instructions.md
-pipeline.dot
-notes.md
-acli.exe
 last_diagnostics.log
 test.doxa
-plan.md
