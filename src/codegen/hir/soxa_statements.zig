@@ -167,11 +167,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                             var_type = HIRType.Nothing;
                         }
                     } else {
-                        // Non-empty array - the expression has already been generated
-                        // Just set the var_type to Array
-                        const element_type = self.allocator.create(HIRType) catch return;
-                        element_type.* = .Int; // For now, assume Int elements
-                        var_type = HIRType{ .Array = element_type };
+                        // Non-empty array - use the inferred type from the init expression
+                        var_type = self.inferTypeFromExpression(init_expr);
                     }
                 }
 

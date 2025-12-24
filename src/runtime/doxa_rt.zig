@@ -369,7 +369,7 @@ pub export fn doxa_str_len(ptr: ?[*:0]const u8) callconv(.c) i64 {
     return 0;
 }
 
-pub const ArrayHeader = extern struct {
+  pub const ArrayHeader = extern struct {
     data: ?*anyopaque,
     len: u64,
     cap: u64,
@@ -377,18 +377,19 @@ pub const ArrayHeader = extern struct {
     elem_tag: u64,
 };
 
-fn clampMin(a: u64, b: u64) u64 {
-    return if (a < b) b else a;
-}
-
-/// Allocate an ArrayHeader and backing buffer. elem_tag values mirror the
-/// compiler's mapping:
-/// 0=int(i64), 1=byte(u8), 2=float(f64), 3=string(i8*), 4=tetra(u8 lower 2 bits)
-pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *ArrayHeader {
-    const cap = clampMin(init_len, 8);
-    const hdr_ptr = std.heap.page_allocator.create(ArrayHeader) catch @panic("oom allocating ArrayHeader");
-    const data_bytes: usize = @intCast(elem_size * cap);
-    var data_ptr: ?*anyopaque = null;
+  fn clampMin(a: u64, b: u64) u64 {
+      return if (a < b) b else a;
+  }
+  
+  /// Allocate an ArrayHeader and backing buffer. elem_tag values mirror the
+  /// compiler's mapping:
+  /// 0=int(i64), 1=byte(u8), 2=float(f64), 3=string(i8*), 4=tetra(u8 lower 2 bits),
+  /// 5=nothing, 6=array(*ArrayHeader), 7=struct(ptr), 8=enum(i64 variant index).
+  pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *ArrayHeader {
+      const cap = clampMin(init_len, 8);
+      const hdr_ptr = std.heap.page_allocator.create(ArrayHeader) catch @panic("oom allocating ArrayHeader");
+      const data_bytes: usize = @intCast(elem_size * cap);
+      var data_ptr: ?*anyopaque = null;
     if (data_bytes != 0) {
         if (elem_size == 8) {
             const slice = std.heap.page_allocator.alloc(i64, @intCast(cap)) catch null;
@@ -412,7 +413,7 @@ pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callc
         .elem_tag = elem_tag,
     };
     return hdr_ptr;
-}
+  }
 
 pub export fn doxa_array_len(hdr: *ArrayHeader) callconv(.c) u64 {
     return hdr.len;
@@ -424,43 +425,52 @@ pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
     // Treat the backing buffer as raw bytes; decode per element tag to avoid
     // misaligned @alignCast when elem_size is smaller than 8 (bytes/tetras).
     const base: [*]const u8 = @ptrCast(hdr.data.?);
-    const off: usize = @intCast(idx * hdr.elem_size);
-    const p = base + off;
-
-    return switch (hdr.elem_tag) {
-        0 => blk_int: { // int (i64)
-            const ip: *const i64 = @ptrCast(@alignCast(p));
-            break :blk_int ip.*;
-        },
-        1 => blk_byte: { // byte (u8)
-            const bp: *const u8 = @ptrCast(p);
-            break :blk_byte @as(i64, bp.*);
-        },
-        2 => blk_float: { // float (f64)
-            const fp: *const f64 = @ptrCast(@alignCast(p));
-            const bits: i64 = @bitCast(fp.*);
-            break :blk_float bits;
-        },
-        3 => blk_str: { // string (i8* -> C string pointer encoded as bits)
-            const sp: *const ?[*:0]const u8 = @ptrCast(@alignCast(p));
-            const s_ptr = sp.* orelse null;
-            const addr: u64 = if (s_ptr) |ptr|
-                @intFromPtr(ptr)
-            else
-                0;
-            break :blk_str @bitCast(addr);
-        },
-        4 => blk_tetra: { // tetra (2-bit stored in u8)
-            const tp: *const u8 = @ptrCast(p);
-            const v: u8 = tp.* & 0x3;
-            break :blk_tetra @as(i64, v);
-        },
-        // Treat higher tags (array, struct, enum, unknown) as raw 64-bit slots.
-        else => blk_raw: {
-            const ip: *const i64 = @ptrCast(@alignCast(p));
-            break :blk_raw ip.*;
-        },
-    };
+      const off: usize = @intCast(idx * hdr.elem_size);
+      const p = base + off;
+  
+      return switch (hdr.elem_tag) {
+          0 => blk_int: { // int (i64)
+              const ip: *const i64 = @ptrCast(@alignCast(p));
+              break :blk_int ip.*;
+          },
+          1 => blk_byte: { // byte (u8)
+              const bp: *const u8 = @ptrCast(p);
+              break :blk_byte @as(i64, bp.*);
+          },
+          2 => blk_float: { // float (f64)
+              const fp: *const f64 = @ptrCast(@alignCast(p));
+              const bits: i64 = @bitCast(fp.*);
+              break :blk_float bits;
+          },
+          3 => blk_str: { // string (i8* -> C string pointer encoded as bits)
+              const sp: *const ?[*:0]const u8 = @ptrCast(@alignCast(p));
+              const s_ptr = sp.* orelse null;
+              const addr: u64 = if (s_ptr) |ptr|
+                  @intFromPtr(ptr)
+              else
+                  0;
+              break :blk_str @bitCast(addr);
+          },
+          4 => blk_tetra: { // tetra (2-bit stored in u8)
+              const tp: *const u8 = @ptrCast(p);
+              const v: u8 = tp.* & 0x3;
+              break :blk_tetra @as(i64, v);
+          },
+          6 => blk_array: { // array (*ArrayHeader pointer encoded as bits)
+              const ap: *const ?*ArrayHeader = @ptrCast(@alignCast(p));
+              const a_ptr = ap.* orelse null;
+              const addr: u64 = if (a_ptr) |ptr|
+                  @intFromPtr(ptr)
+              else
+                  0;
+              break :blk_array @bitCast(addr);
+          },
+          // Treat other tags (struct, enum, unknown) as raw 64-bit slots.
+          else => blk_raw: {
+              const ip: *const i64 = @ptrCast(@alignCast(p));
+              break :blk_raw ip.*;
+          },
+      };
 }
 
 pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callconv(.c) void {
@@ -468,39 +478,47 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
     if (idx >= hdr.cap) return; // no resize in minimal runtime
     if (idx >= hdr.len) hdr.len = idx + 1;
     const base: [*]u8 = @ptrCast(hdr.data.?);
-    const off: usize = @intCast(idx * hdr.elem_size);
-    const p = base + off;
-
-    switch (hdr.elem_tag) {
-        0 => { // int (i64)
-            const ip: *i64 = @ptrCast(@alignCast(p));
-            ip.* = value;
-        },
-        1 => { // byte (u8)
-            const bp: *u8 = @ptrCast(p);
-            bp.* = @intCast(@as(u8, @intCast(value)) & 0xff);
-        },
-        2 => { // float (f64)
-            const fp: *f64 = @ptrCast(@alignCast(p));
-            const f: f64 = @bitCast(value);
-            fp.* = f;
-        },
-        3 => { // string (i8* -> C string pointer encoded as bits)
-            const sp: *?[*:0]const u8 = @ptrCast(@alignCast(p));
-            const addr: u64 = @bitCast(value);
-            sp.* = if (addr == 0)
-                null
-            else
-                @ptrFromInt(@as(usize, addr));
-        },
-        4 => { // tetra (2-bit stored in u8)
-            const tp: *u8 = @ptrCast(p);
-            tp.* = @intCast(@as(u8, @intCast(value)) & 0x3);
-        },
-        // Default: store raw 64-bit payload (pointers/unknown)
-        else => {
-            const ip: *i64 = @ptrCast(@alignCast(p));
-            ip.* = value;
+      const off: usize = @intCast(idx * hdr.elem_size);
+      const p = base + off;
+  
+      switch (hdr.elem_tag) {
+          0 => { // int (i64)
+              const ip: *i64 = @ptrCast(@alignCast(p));
+              ip.* = value;
+          },
+          1 => { // byte (u8)
+              const bp: *u8 = @ptrCast(p);
+              bp.* = @intCast(@as(u8, @intCast(value)) & 0xff);
+          },
+          2 => { // float (f64)
+              const fp: *f64 = @ptrCast(@alignCast(p));
+              const f: f64 = @bitCast(value);
+              fp.* = f;
+          },
+          3 => { // string (i8* -> C string pointer encoded as bits)
+              const sp: *?[*:0]const u8 = @ptrCast(@alignCast(p));
+              const addr: u64 = @bitCast(value);
+              sp.* = if (addr == 0)
+                  null
+              else
+                  @ptrFromInt(@as(usize, addr));
+          },
+          4 => { // tetra (2-bit stored in u8)
+              const tp: *u8 = @ptrCast(p);
+              tp.* = @intCast(@as(u8, @intCast(value)) & 0x3);
+          },
+          6 => { // array (*ArrayHeader pointer encoded as bits)
+              const ap: *?*ArrayHeader = @ptrCast(@alignCast(p));
+              const addr: u64 = @bitCast(value);
+              ap.* = if (addr == 0)
+                  null
+              else
+                  @ptrFromInt(@as(usize, addr));
+          },
+          // Default: store raw 64-bit payload (pointers/unknown)
+          else => {
+              const ip: *i64 = @ptrCast(@alignCast(p));
+              ip.* = value;
         },
     }
 }
@@ -547,53 +565,54 @@ pub export fn doxa_clear(collection: ?*anyopaque) callconv(.c) void {
     // The compiler should prevent calling clear on strings, but if it happens, just return
 }
 
+// Shared array header printer for compiled programs and the VM.
+// This mirrors the VM's array printing, including support for nested arrays,
+// and uses a single writer so recursion composes correctly.
 pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
-    var out_buf: [1024]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&out_buf);
-    const out = &stdout_writer.interface;
-    _ = out.writeAll("[") catch return;
+    var buf: [1024]u8 = undefined;
+    var bw = std.fs.File.stdout().writer(&buf);
+    const out = &bw.interface;
+    printArrayHdrImpl(out, hdr) catch return;
+    _ = out.flush() catch {};
+}
 
-    if (hdr.data == null or hdr.len == 0) {
-        _ = out.writeAll("]") catch return;
-        _ = out.flush() catch {};
+fn printArrayHdrImpl(out: anytype, hdr: *ArrayHeader) !void {
+    try out.print("[", .{});
+
+    // If the array is logically empty, just print [] and exit.
+    if (hdr.len == 0) {
+        try out.print("]", .{});
         return;
     }
 
-    const base: [*]const u8 = @ptrCast(@alignCast(hdr.data.?));
     var i: u64 = 0;
     while (i < hdr.len) : (i += 1) {
-        if (i != 0) _ = out.writeAll(", ") catch return;
-        const off: usize = @intCast(i * hdr.elem_size);
-        const p = base + off;
+        if (i != 0) try out.print(", ", .{});
+        const elem_bits = doxa_array_get_i64(hdr, i);
         switch (hdr.elem_tag) {
             0 => { // int (i64)
-                const ip: *const i64 = @ptrCast(@alignCast(p));
-                var tmp: [64]u8 = undefined;
-                const s = std.fmt.bufPrint(&tmp, "{d}", .{ip.*}) catch return;
-                _ = out.writeAll(s) catch return;
+                try out.print("{d}", .{elem_bits});
             },
             1 => { // byte (u8)
-                const bp: *const u8 = @ptrCast(p);
-                var tmp: [32]u8 = undefined;
-                const s = std.fmt.bufPrint(&tmp, "{d}", .{bp.*}) catch return;
-                _ = out.writeAll(s) catch return;
+                const b: u8 = asByte(elem_bits);
+                try out.print("{d}", .{b});
             },
             2 => { // float (f64)
-                const fp: *const f64 = @ptrCast(@alignCast(p));
-                var tmp: [64]u8 = undefined;
-                const s = std.fmt.bufPrint(&tmp, "{d}", .{fp.*}) catch return;
-                _ = out.writeAll(s) catch return;
+                const f: f64 = asFloat(elem_bits);
+                try out.print("{d}", .{f});
             },
             3 => { // string (i8*)
-                const sp: *const ?[*:0]const u8 = @ptrCast(@alignCast(p));
-                const s = sp.* orelse "";
-                _ = out.writeAll("\"") catch return;
-                _ = out.writeAll(std.mem.span(s)) catch return;
-                _ = out.writeAll("\"") catch return;
+                const s_ptr = cStringFromBits(elem_bits);
+                if (s_ptr) |p| {
+                    const s = std.mem.span(p);
+                    try out.print("\"{s}\"", .{s});
+                } else {
+                    try out.print("\"\"", .{});
+                }
             },
             4 => { // tetra (2-bit stored in u8)
-                const tp: *const u8 = @ptrCast(p);
-                const v: u8 = tp.* & 0x3;
+                const t: u2 = asTetra(elem_bits);
+                const v: u8 = @intCast(t);
                 const name = switch (v) {
                     0 => "false",
                     1 => "true",
@@ -601,15 +620,27 @@ pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
                     3 => "neither",
                     else => "invalid",
                 };
-                _ = out.writeAll(name) catch return;
+                try out.print("{s}", .{name});
+            },
+            6 => { // array (ptr)
+                const addr: u64 = @bitCast(elem_bits);
+                if (addr == 0) {
+                    try out.print("[]", .{});
+                } else {
+                    const nested_hdr = @as(
+                        *ArrayHeader,
+                        @ptrCast(@alignCast(@as(?*anyopaque, @ptrFromInt(@as(usize, addr))))),
+                    );
+                    try printArrayHdrImpl(out, nested_hdr);
+                }
             },
             else => {
-                _ = out.writeAll("?") catch return;
+                try out.print("?", .{});
             },
         }
     }
-    _ = out.writeAll("]") catch return;
-    _ = out.flush() catch return;
+
+    try out.print("]", .{});
 }
 
 const QuantifierMode = enum { Greater, Equal };

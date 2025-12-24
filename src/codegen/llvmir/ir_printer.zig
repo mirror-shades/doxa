@@ -4955,7 +4955,11 @@ pub const IRPrinter = struct {
         state: *PeekEmitState,
     ) !void {
         var array_type_str_owned: ?[]const u8 = null;
-        defer if (array_type_str_owned) |s| self.allocator.free(s);
+        var peek_type_str_owned: ?[]const u8 = null;
+        defer {
+            if (array_type_str_owned) |s| self.allocator.free(s);
+            if (peek_type_str_owned) |s| self.allocator.free(s);
+        }
 
         const type_slice = blk_type: {
             // 1) Prefer explicit enum type names from HIR Peek (e.g., "Species")
@@ -4973,6 +4977,10 @@ pub const IRPrinter = struct {
                 .Byte => break :blk_type "byte",
                 .Tetra => break :blk_type "tetra",
                 .Enum => break :blk_type "enum",
+                .Array => {
+                    peek_type_str_owned = try self.hirTypeToTypeString(self.allocator, pk.value_type);
+                    break :blk_type peek_type_str_owned.?;
+                },
                 else => {},
             }
 
