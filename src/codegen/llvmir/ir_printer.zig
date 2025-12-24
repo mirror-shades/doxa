@@ -6103,6 +6103,7 @@ pub const IRPrinter = struct {
             .Function => try allocator.dupe(u8, "function"),
             .Union => try allocator.dupe(u8, "union"),
             .Nothing => try allocator.dupe(u8, "nothing"),
+            .Unknown => try allocator.dupe(u8, "nothing"),
             else => try allocator.dupe(u8, "value"),
         };
     }

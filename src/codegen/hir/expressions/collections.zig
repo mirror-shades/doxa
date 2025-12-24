@@ -49,8 +49,10 @@ pub const CollectionsHandler = struct {
                         // For nested arrays like [["hello"]], the element_type should be Array(String)
                         element_type = inferred_nested;
                     } else {
-                        // Empty nested array - assume unknown element type
-                        element_type = .Unknown;
+                        // Empty nested array - element type is Array with unknown inner type
+                        const unknown_ptr = self.generator.allocator.create(HIRType) catch return ErrorList.OutOfMemory;
+                        unknown_ptr.* = .Unknown;
+                        element_type = HIRType{ .Array = unknown_ptr };
                     }
                     // For nested arrays, the nested_element_type is not used in the same way
                     nested_element_type = null;
