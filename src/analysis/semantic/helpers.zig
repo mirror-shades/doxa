@@ -15,6 +15,7 @@ const StructField = Types.StructField;
 const Memory = @import("../../utils/memory.zig");
 const HIRTypeModule = @import("../../codegen/hir/soxa_types.zig");
 const HIRType = HIRTypeModule.HIRType;
+const UnionId = HIRTypeModule.UnionId;
 const StructId = HIRTypeModule.StructId;
 const HIREnum = @import("../../codegen/hir/soxa_values.zig").HIREnum;
 
@@ -152,6 +153,20 @@ fn canonicalizeUnion(
     return try list.toOwnedSlice(allocator);
 }
 
+/// Assign or look up a stable id for a canonical union type within this
+/// SemanticAnalyzer instance. The key is the canonical ast.UnionType pointer
+/// (after flattening/canonicalization), so structurally distinct unions get
+/// distinct ids.
+pub fn getOrAssignUnionId(self: *SemanticAnalyzer, ut: *ast.UnionType) !UnionId {
+    if (self.union_ids.get(ut)) |existing| {
+        return existing;
+    }
+    const id: UnionId = self.next_union_id;
+    self.next_union_id += 1;
+    try self.union_ids.put(ut, id);
+    return id;
+}
+
 pub fn structIdForName(self: *SemanticAnalyzer, type_name: []const u8) ?StructId {
     const resolved = self.resolveTypeAlias(type_name);
     return self.struct_table.getIdByName(resolved);
@@ -281,8 +296,10 @@ fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType 
                 mptr.* = mh;
                 try lowered.append(self.allocator, mptr);
             }
-            // Union expects []const *const HIRType, so use the pointers directly
-            break :blk HIRType{ .Union = try lowered.toOwnedSlice(self.allocator) };
+            // Register union type and attach a stable id
+            const union_id = try getOrAssignUnionId(self, flat);
+            const members_slice = try lowered.toOwnedSlice(self.allocator);
+            break :blk HIRType{ .Union = .{ .id = union_id, .members = members_slice } };
         },
     };
 }

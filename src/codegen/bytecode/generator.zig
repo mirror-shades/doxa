@@ -430,6 +430,10 @@ pub const BytecodeGenerator = struct {
                     try self.alias_slots.put(alias_slot, {});
                     try self.instructions.append(self.allocator, .{ .BindAlias = .{ .alias_slot = alias_slot, .type_tag = try module.typeFromHIR(payload.param_type) } });
                 },
+                .UnionConstruct => |_| {
+                    // Bytecode VM does not yet model unions as a distinct runtime
+                    // representation; treat this as a no-op.
+                },
                 .LoadAlias => |payload| {
                     // For alias parameters, we need to load from the alias slot
                     // This will be handled by the VM using the alias reference

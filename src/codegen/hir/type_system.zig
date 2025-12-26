@@ -484,7 +484,7 @@ pub const TypeSystem = struct {
                         const members = self.allocator.alloc(*const HIRType, 2) catch break :blk .Unknown;
                         members[0] = value_ptr;
                         members[1] = nothing_ptr;
-                        break :blk HIRType{ .Union = members };
+                        break :blk HIRType{ .Union = .{ .id = 0, .members = members } };
                     },
                     else => .String,
                 };

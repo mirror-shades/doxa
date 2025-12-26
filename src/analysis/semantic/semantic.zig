@@ -63,6 +63,9 @@ pub const SemanticAnalyzer = struct {
     parser: ?*const Parser = null,
     struct_table: StructTable,
     enum_table: EnumTable,
+    // Union type registry: assigns a stable id per canonical ast.UnionType
+    union_ids: std.AutoHashMap(*ast.UnionType, u32),
+    next_union_id: u32,
 
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager, parser: ?*const Parser) SemanticAnalyzer {
         return .{
@@ -81,6 +84,8 @@ pub const SemanticAnalyzer = struct {
             .parser = parser,
             .struct_table = StructTable.init(allocator),
             .enum_table = EnumTable.init(allocator),
+            .union_ids = std.AutoHashMap(*ast.UnionType, u32).init(allocator),
+            .next_union_id = 1,
         };
     }
 
@@ -102,6 +107,7 @@ pub const SemanticAnalyzer = struct {
         self.current_function_returns.deinit();
         self.struct_table.deinit();
         self.enum_table.deinit();
+        self.union_ids.deinit();
     }
 
     pub const StructMethodInfo = struct {
@@ -309,16 +315,16 @@ pub const SemanticAnalyzer = struct {
                                         const ret_type2 = try allocator.create(HIRType);
                                         ret_type2.* = .Unknown;
                                         break :blk4 HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type2 } };
-                                    },
-                                    .Union => blk5: {
-                                        const unknown_type = try allocator.create(HIRType);
-                                        unknown_type.* = .Unknown;
-                                        break :blk5 HIRType{ .Union = &[_]*const HIRType{unknown_type} };
-                                    },
-                                };
-                                member_types[in] = member_type;
-                            }
-                            break :blk HIRType{ .Union = member_types };
+                                },
+                                .Union => blk5: {
+                                    const unknown_type = try allocator.create(HIRType);
+                                    unknown_type.* = .Unknown;
+                                    break :blk5 HIRType{ .Union = .{ .id = 0, .members = &[_]*const HIRType{unknown_type} } };
+                                },
+                            };
+                            member_types[in] = member_type;
+                        }
+                        break :blk HIRType{ .Union = .{ .id = 0, .members = member_types } };
                         } else {
                             break :blk .Unknown;
                         }

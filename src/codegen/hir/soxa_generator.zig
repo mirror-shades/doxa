@@ -1502,7 +1502,7 @@ pub const HIRGenerator = struct {
 
     pub fn collectUnionMemberNamesFromHIRType(self: *HIRGenerator, hir_type: HIRType) ![][]const u8 {
         if (hir_type != .Union) return &[_][]const u8{};
-        const union_members = hir_type.Union;
+        const union_members = hir_type.Union.members;
         var names = try self.allocator.alloc([]const u8, union_members.len);
         for (union_members, 0..) |member_ptr, i| {
             const member_type = member_ptr.*;

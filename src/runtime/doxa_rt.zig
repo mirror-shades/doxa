@@ -249,6 +249,14 @@ pub const DoxaPeekInfo = extern struct {
     column: u32,
 };
 
+/// View for C/LLVM callers to construct a `DoxaValue` without knowing its full
+/// Zig definition. This mirrors the `%DoxaValue` layout in the LLVM IR.
+pub const DoxaValueC = extern struct {
+    tag: u32,
+    reserved: u32,
+    payload_bits: i64,
+};
+
 pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void {
     const info = info_ptr orelse return;
 
@@ -733,41 +741,224 @@ pub export fn doxa_forall_quantifier_eq(hdr: ?*ArrayHeader, comparison_bits: i64
     return forallQuantifier(hdr, comparison_bits, .Equal);
 }
 
-// Type checking for union types and as expressions
-// Returns 1 (true) if the value matches the target type, 0 (false) otherwise
-// value_type: 0=int, 1=float, 2=byte, 3=string (ptr), 4=array (ptr), 5=struct (ptr), 6=enum (i64 variant index)
-// For now, we use a simplified type checking that works with the LLVM representation
+/// Canonical runtime representation for Doxa values.
+/// This is the single, shared value model for the interpreter, native
+/// (LLVM) backend, and any C callers. The layout must stay in sync
+/// with `%DoxaValue` in `src/codegen/llvmir/ir_printer.zig`.
+///
+/// Tag values:
+///   0 = Int      (payload_bits = i64)
+///   1 = Float    (payload_bits = bitcast f64)
+///   2 = Byte     (payload_bits[0..8] = u8)
+///   3 = String   (payload_bits = pointer to string storage / C-string)
+///   4 = Array    (payload_bits = *ArrayHeader as bits)
+///   5 = Struct   (payload_bits = pointer to struct instance)
+///   6 = Enum     (payload_bits = i64 variant index; type via metadata)
+///   7 = Tetra    (payload_bits[0..2] = u2)
+///   8 = Nothing  (payload_bits ignored)
+///   9 = Function (payload_bits = pointer to function closure/descriptor)
+///  10 = Map      (payload_bits = *MapHeader as bits)
+///
+/// Boxing rules:
+///   - Unboxed: Int, Float, Byte, Tetra, Enum discriminant
+///   - Boxed:   String, Array, Struct, Function, Map
+///   - Sentinel: Nothing (tag = 8, payload_bits = 0)
+///
+/// Union encoding:
+///   - For non-union values, `reserved == 0`.
+///   - For union values, `reserved` packs:
+///       bit 31        : is_union flag
+///       bits 16..30   : union_id (up to 32k unions)
+///       bits 0..15    : active_member_index (0-based, up to 65k members)
+///   - `tag` always describes the active payload kind (Int, Float, Struct, …).
+pub const DoxaValue = extern struct {
+    /// Discriminant for the active variant / type.
+    /// See `DoxaTag` for the full set of tags.
+    tag: u32,
+    /// Packed flags and sub-tags. See `DoxaUnionMeta` helpers for how this is
+    /// used to encode union membership.
+    reserved: u32,
+    /// Payload bits. For small types, stores the value directly. For heap-backed
+    /// types, stores a pointer as bits.
+    payload_bits: i64,
+};
+
+/// High-level tag enumeration for `DoxaValue.tag`. The numeric values are part
+/// of the ABI and must stay in sync with the documentation above.
+pub const DoxaTag = enum(u32) {
+    Int = 0,
+    Float = 1,
+    Byte = 2,
+    String = 3,
+    Array = 4,
+    Struct = 5,
+    Enum = 6,
+    Tetra = 7,
+    Nothing = 8,
+    Function = 9,
+    Map = 10,
+};
+
+/// Helpers for encoding and decoding union metadata into the `reserved` field
+/// of a `DoxaValue`. This keeps union representation consistent across the
+/// interpreter, runtime helpers, and native code.
+pub const DoxaUnionMeta = struct {
+    pub const is_union_bit: u32 = 1 << 31;
+    pub const union_id_shift: u5 = 16;
+    pub const union_id_mask: u32 = 0x7FFF << union_id_shift; // 15 bits
+    pub const member_index_mask: u32 = 0xFFFF; // 16 bits
+
+    pub fn pack(union_id: u32, member_index: u32) u32 {
+        const uid: u32 = union_id & 0x7FFF;
+        const mid: u32 = member_index & member_index_mask;
+        return is_union_bit | (uid << union_id_shift) | mid;
+    }
+
+    pub fn isUnion(reserved: u32) bool {
+        return (reserved & is_union_bit) != 0;
+    }
+
+    pub fn unionId(reserved: u32) u32 {
+        return (reserved & union_id_mask) >> union_id_shift;
+    }
+
+    pub fn memberIndex(reserved: u32) u32 {
+        return reserved & member_index_mask;
+    }
+};
+
+/// Print a value described by the canonical `DoxaValueC` layout. This is the
+/// primary entry point for native code that wants to render values without
+/// going through the interpreter.
+pub export fn doxa_print_value(val: DoxaValueC) callconv(.c) void {
+    const tag: DoxaTag = @enumFromInt(val.tag);
+    switch (tag) {
+        .Int => {
+            doxa_print_i64(val.payload_bits);
+        },
+        .Float => {
+            const f = asFloat(val.payload_bits);
+            doxa_print_f64(f);
+        },
+        .Byte => {
+            const b: i64 = @intCast(asByte(val.payload_bits));
+            doxa_print_byte(b);
+        },
+        .String => {
+            const s_ptr = cStringFromBits(val.payload_bits);
+            doxa_peek_string(s_ptr);
+        },
+        .Array => {
+            const addr: u64 = @bitCast(val.payload_bits);
+            if (addr == 0) {
+                writeStdout("[]");
+            } else {
+                const any_ptr: ?*anyopaque = @ptrFromInt(@as(usize, addr));
+                const hdr = @as(*ArrayHeader, @ptrCast(@alignCast(any_ptr.?)));
+                doxa_print_array_hdr(hdr);
+            }
+        },
+        .Struct => {
+            writeStdout("<struct>");
+        },
+        .Enum => {
+            // Without a type name we fall back to generic variant labels.
+            doxa_print_enum(null, val.payload_bits);
+        },
+        .Tetra => {
+            const t: u2 = asTetra(val.payload_bits);
+            const v: u8 = @intCast(t);
+            const name = switch (v) {
+                0 => "false",
+                1 => "true",
+                2 => "both",
+                3 => "neither",
+                else => "invalid",
+            };
+            writeStdout(name);
+        },
+        .Nothing => {
+            // Nothing has no textual payload; render as "nothing" for now.
+            writeStdout("nothing");
+        },
+        .Function => {
+            writeStdout("<function>");
+        },
+        .Map => {
+            writeStdout("<map>");
+        },
+    }
+}
+
+/// Type checking for union types and `as` expressions.
+/// Returns 1 (true) if the value matches the target type, 0 (false) otherwise.
+///
+/// Legacy ABI used by generated LLVM:
+///   - `value`      : payload bits (i64), interpreted according to `value_type`
+///   - `value_type` : legacy tag (0=int, 1=float, 2=byte, 3=string, 4=array,
+///                    5=struct, 6=enum, 7=tetra/bool, 8=nothing)
+///   - `target_type`: C string with a type name like "int", "string", "int[]", …
+///
+/// This is now implemented as a thin shim that constructs a canonical
+/// `DoxaValue` and delegates to `doxa_type_check_value`. New code should
+/// prefer calling `doxa_type_check_value` directly.
 pub export fn doxa_type_check(value: i64, value_type: i64, target_type: ?[*:0]const u8) callconv(.c) i64 {
-    _ = value; // Value itself is not needed for basic type checking
+    // Map legacy `value_type` to canonical tag. Values outside the known range
+    // are treated as `Nothing` to keep behaviour predictable.
+    const tag_raw: u32 = switch (value_type) {
+        0 => @intFromEnum(DoxaTag.Int),
+        1 => @intFromEnum(DoxaTag.Float),
+        2 => @intFromEnum(DoxaTag.Byte),
+        3 => @intFromEnum(DoxaTag.String),
+        4 => @intFromEnum(DoxaTag.Array),
+        5 => @intFromEnum(DoxaTag.Struct),
+        6 => @intFromEnum(DoxaTag.Enum),
+        7 => @intFromEnum(DoxaTag.Tetra),
+        8 => @intFromEnum(DoxaTag.Nothing),
+        else => @intFromEnum(DoxaTag.Nothing),
+    };
+
+    const val = DoxaValueC{
+        .tag = tag_raw,
+        .reserved = 0, // legacy path has no union metadata
+        .payload_bits = value,
+    };
+
+    return doxa_type_check_value(val, target_type);
+}
+
+/// New entry point that works directly with the canonical value representation.
+/// This will eventually replace `doxa_type_check` in generated LLVM IR.
+pub export fn doxa_type_check_value(val: DoxaValueC, target_type: ?[*:0]const u8) callconv(.c) i64 {
     if (target_type == null) return 0;
 
     const target = std.mem.span(target_type.?);
 
-    // Map value_type to type string
-    const actual_type: []const u8 = switch (value_type) {
-        0 => "int",
-        1 => "float",
-        2 => "byte",
-        3 => "string",
-        4 => "array",
-        5 => "struct",
-        6 => "enum",
-        else => "unknown",
+    const tag: DoxaTag = @enumFromInt(val.tag);
+
+    const actual_type: []const u8 = switch (tag) {
+        .Int => "int",
+        .Float => "float",
+        .Byte => "byte",
+        .String => "string",
+        .Array => "array",
+        .Struct => "struct",
+        .Enum => "enum",
+        .Tetra => "tetra",
+        .Nothing => "nothing",
+        .Function => "function",
+        .Map => "map",
     };
 
-    // Simple string comparison
     if (std.mem.eql(u8, actual_type, target)) {
-        return 1; // true
+        return 1;
     }
 
-    // Handle array types like "int[]", "string[]", etc.
     if (std.mem.endsWith(u8, target, "[]")) {
-        if (value_type == 4) { // array
-            // For now, accept any array type
-            // TODO: Check element type more precisely
+        if (tag == .Array) {
             return 1;
         }
     }
 
-    return 0; // false
+    return 0;
 }

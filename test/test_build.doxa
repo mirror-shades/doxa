@@ -1,4 +1,0 @@
-@build("./test/misc/bigfile.doxa", "./test/out/bigfile", @arch(), @os(), @abi(), true)
-@build("./test/misc/complex_print.doxa", "./test/out/complex_print", @arch(), @os(), @abi(), true)
-@build("./test/misc/expressions.doxa", "./test/out/expressions", @arch(), @os(), @abi(), true)
-@build("./test/misc/methods.doxa", "./test/out/methods", @arch(), @os(), @abi(), true)

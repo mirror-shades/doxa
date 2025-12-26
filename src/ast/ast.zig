@@ -1379,9 +1379,10 @@ pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*Ty
             type_info.* = .{ .base = .Function };
         },
 
-        .Union => |member_ptrs| {
-            var member_types = try allocator.alloc(*TypeInfo, member_ptrs.len);
-            for (member_ptrs, 0..) |member_ptr, i| {
+        .Union => |union_info| {
+            const members = union_info.members;
+            var member_types = try allocator.alloc(*TypeInfo, members.len);
+            for (members, 0..) |member_ptr, i| {
                 member_types[i] = try typeInfoFromHIRType(allocator, member_ptr.*);
             }
 

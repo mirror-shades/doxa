@@ -184,7 +184,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     }
 
                     if (var_type == .Union) {
-                        const union_members = var_type.Union;
+                        const union_members = var_type.Union.members;
                         const member_names = try self.allocator.alloc([]const u8, union_members.len);
                         for (union_members, 0..) |member_type, i| {
                             member_names[i] = switch (member_type.*) {
