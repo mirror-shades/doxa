@@ -184,7 +184,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
-        .Const, .LoadVar, .StoreVar, .StoreConst, .Jump, .JumpCond, .Call, .TailCall => 2, // opcode + operand
+        .Const, .LoadVar, .StoreVar, .StoreConst, .Jump, .JumpCond, .Call, .TailCall, .UnionConstruct => 2, // opcode + operand
         .IntArith, .FloatArith, .Convert, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail, .Unreachable => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
@@ -519,6 +519,10 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeInt(u32, @as(u32, @intCast(s.param_name.len)), .little);
             try writer.writeAll(s.param_name);
         },
+        .UnionConstruct => |u| {
+            try writer.writeByte(26); // Instruction tag (new)
+            try writer.writeInt(u32, u.member_index, .little);
+        },
         .IntArith => |a| {
             try writer.writeByte(3); // Instruction tag
             try writer.writeByte(@intFromEnum(a.op));
@@ -733,6 +737,10 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             const type_byte = try reader.readByte();
             const operand_type = @as(HIRType, @enumFromInt(type_byte));
             return HIRInstruction{ .Compare = .{ .op = op, .operand_type = operand_type } };
+        },
+        26 => { // UnionConstruct
+            const member_index = try reader.readInt(u32, .little);
+            return HIRInstruction{ .UnionConstruct = .{ .union_type = .Unknown, .member_index = member_index } };
         },
         5 => { // Jump
             const label_len = try reader.readInt(u32, .little);
@@ -1137,7 +1145,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             try writer.print("    LogicalOp {s}                ; Logical operation\n", .{op_name});
         },
 
-        .TypeCheck => |tc| try writer.print("    TypeCheck \"{s}\"              ; Type check\n", .{tc.target_type}),
+            .TypeCheck => |tc| try writer.print("    TypeCheck \"{s}\"              ; Type check\n", .{tc.target_type}),
+            .UnionConstruct => |uc| try writer.print("    UnionConstruct member:{d}   ; union value construct\n", .{uc.member_index}),
 
         .Range => |r| try writer.print("    Range {s}                    ; Create array from range\n", .{@tagName(r.element_type)}),
 

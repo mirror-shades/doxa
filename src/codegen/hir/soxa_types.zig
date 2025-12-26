@@ -8,6 +8,7 @@ const HIRValue = @import("soxa_values.zig").HIRValue;
 
 pub const StructId = u32;
 pub const EnumId = u32;
+pub const UnionId = u32;
 
 pub const ArrayStorageKind = enum {
     dynamic,
@@ -39,8 +40,11 @@ pub const HIRType = union(enum) {
         ret: *const HIRType,
     },
 
-    // OK: slice is a pointer+len; members are pointers (no by-value recursion)
-    Union: []const *const HIRType,
+    // Union types: carry a stable per-union id and the member types.
+    Union: struct {
+        id: UnionId,
+        members: []const *const HIRType,
+    },
 
     Unknown,
     Poison, // Poison type for malformed/invalid types

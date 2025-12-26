@@ -192,6 +192,15 @@ pub const HIRInstruction = union(enum) {
         target_type: []const u8, // The type name to check against
     },
 
+    /// Construct a union value from the current top-of-stack value.
+    /// VM: Currently a no-op (union semantics are handled structurally).
+    /// LLVM: Build a canonical %DoxaValue with union_id + active member index
+    ///       encoded into the reserved field.
+    UnionConstruct: struct {
+        union_type: HIRType,
+        member_index: u32,
+    },
+
     //==================================================================
     // LOGICAL OPERATIONS (From old VM - proven implementations)
     //==================================================================

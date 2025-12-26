@@ -98,7 +98,7 @@ fn internPeekString(
     return info;
 }
 
-pub const IRPrinter = struct {
+    pub const IRPrinter = struct {
     /// Lightweight metadata used to render enum values by name in native code.
     /// Collected once from the constant pool and reused by `emitEnumPrint`.
     const EnumVariantMeta = struct {
@@ -119,10 +119,13 @@ pub const IRPrinter = struct {
     function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
     function_struct_return_type_names: std.StringHashMap([]const u8),
     struct_field_names_by_type: std.StringHashMap([]const []const u8),
-    last_emitted_enum_value: ?u64 = null,
-    enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
-
-    const StackType = enum { I64, F64, I8, I1, I2, PTR, Nothing };
+      last_emitted_enum_value: ?u64 = null,
+      enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
+  
+      /// Stack-level type used during IR emission. Most user values are
+      /// currently represented as I64/F64/PTR; `Value` is reserved for
+      /// future use when passing the canonical `%DoxaValue` directly.
+      const StackType = enum { I64, F64, I8, I1, I2, PTR, Value, Nothing };
     const StackVal = struct {
         name: []const u8,
         ty: StackType,
@@ -393,7 +396,12 @@ pub const IRPrinter = struct {
         try w.writeAll("declare double @doxa_random()\n");
         try w.writeAll("declare i64 @doxa_tick()\n");
         try w.writeAll("declare i64 @doxa_int(double)\n");
+        // Legacy type check ABI (i64 + tag + ptr). Implemented as a shim over
+        // the canonical DoxaValue-based helper so older IR keeps working.
         try w.writeAll("declare i64 @doxa_type_check(i64, i64, ptr)\n");
+        // Canonical DoxaValue-based ABI for type checking and value printing.
+        try w.writeAll("declare i64 @doxa_type_check_value(%DoxaValue, ptr)\n");
+        try w.writeAll("declare void @doxa_print_value(%DoxaValue)\n");
         try w.writeAll("declare i64 @doxa_find(ptr, i64)\n");
         try w.writeAll("declare ptr @malloc(i64)\n");
         try w.writeAll("declare i8 @doxa_exists_quantifier_gt(ptr, i64)\n");
@@ -434,6 +442,9 @@ pub const IRPrinter = struct {
         // (globals emitted later once discovered)
 
         try w.writeAll("%DoxaPeekInfo = type { ptr, ptr, ptr, ptr, i32, i32, i32, i32, i32 }\n");
+        // Canonical value representation shared with the runtime. The layout
+        // must stay in sync with `DoxaValue` in `src/runtime/doxa_rt.zig`.
+        try w.writeAll("%DoxaValue = type { i32, i32, i64 }\n");
         try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64 }\n\n");
         try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n");
 
@@ -1428,7 +1439,8 @@ pub const IRPrinter = struct {
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
 
-                    // Determine value type tag: 0=int, 1=float, 2=byte, 3=string, 4=array, 5=struct, 6=enum
+                    // Determine value tag for DoxaValue: 0=int, 1=float, 2=byte, 3=string,
+                    // 4=array, 5=struct, 6=enum, 7=tetra/bool, 8=nothing.
                     const value_type_tag: i64 = switch (value.ty) {
                         .I64 => if (value.enum_type_name != null) 6 else 0, // enum or int
                         .F64 => 1,
@@ -1437,9 +1449,10 @@ pub const IRPrinter = struct {
                         .I2 => 7, // tetra - not used in type checking
                         .I1 => 7, // bool - not used in type checking
                         .Nothing => 8,
+                        .Value => 8,
                     };
 
-                    // Convert value to i64 for the runtime call
+                    // Convert value to i64 payload bits for DoxaValue.
                     const value_i64 = try self.ensureI64(w, value, &id);
 
                     // Create target type string constant
@@ -1461,21 +1474,64 @@ pub const IRPrinter = struct {
                     defer self.allocator.free(target_gep);
                     try w.writeAll(target_gep);
 
-                    // Call runtime type check function
-                    // Allocate type_tag_name first so it gets a lower instruction number
-                    const type_tag_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                    // Materialize a %DoxaValue with tag=value_type_tag, reserved=0, payload_bits=value_i64.
+                    const tag_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                     id += 1;
-                    const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ type_tag_name, value_type_tag });
+                    const tag_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  {s} = add i32 0, {d}\n",
+                        .{ tag_name, value_type_tag },
+                    );
                     defer self.allocator.free(tag_line);
                     try w.writeAll(tag_line);
 
-                    // Now allocate result_name so it gets a higher instruction number
+                    const reserved_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                    id += 1;
+                    const reserved_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  {s} = add i32 0, 0\n",
+                        .{ reserved_name },
+                    );
+                    defer self.allocator.free(reserved_line);
+                    try w.writeAll(reserved_line);
+
+                    const dv0 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                    id += 1;
+                    const dv0_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  {s} = insertvalue %DoxaValue undef, i32 {s}, 0\n",
+                        .{ dv0, tag_name },
+                    );
+                    defer self.allocator.free(dv0_line);
+                    try w.writeAll(dv0_line);
+
+                    const dv1 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                    id += 1;
+                    const dv1_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n",
+                        .{ dv1, dv0, reserved_name },
+                    );
+                    defer self.allocator.free(dv1_line);
+                    try w.writeAll(dv1_line);
+
+                    const dv2 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                    id += 1;
+                    const dv2_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  {s} = insertvalue %DoxaValue {s}, i64 {s}, 2\n",
+                        .{ dv2, dv1, value_i64.name },
+                    );
+                    defer self.allocator.free(dv2_line);
+                    try w.writeAll(dv2_line);
+
+                    // Call canonical DoxaValue-based type check helper.
                     const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                     id += 1;
                     const call_line = try std.fmt.allocPrint(
                         self.allocator,
-                        "  {s} = call i64 @doxa_type_check(i64 {s}, i64 {s}, ptr {s})\n",
-                        .{ result_name, value_i64.name, type_tag_name, target_type_ptr },
+                        "  {s} = call i64 @doxa_type_check_value(%DoxaValue {s}, ptr {s})\n",
+                        .{ result_name, dv2, target_type_ptr },
                     );
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
@@ -3465,6 +3521,7 @@ pub const IRPrinter = struct {
                         .I2 => 7, // tetra - not used in type checking
                         .I1 => 7, // bool - not used in type checking
                         .Nothing => 8,
+                        .Value => 8,
                     };
 
                     // Convert value to i64 for the runtime call
@@ -4816,6 +4873,17 @@ pub const IRPrinter = struct {
                 try w.writeAll(line);
                 return .{ .name = name, .ty = .I1 };
             },
+            .Value => {
+                // For now, treat Value as truthy if its payload is non-zero when
+                // viewed as i64. This path is not yet used, but keeps the switch
+                // exhaustive as we start introducing Value-typed stack entries.
+                const as_i64 = try self.ensureI64(w, value, id);
+                const name = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ name, as_i64.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                return .{ .name = name, .ty = .I1 };
+            },
         }
     }
 
@@ -5021,6 +5089,7 @@ pub const IRPrinter = struct {
                 .I1 => "value",
                 .I2 => "tetra",
                 .Nothing => "nothing",
+                .Value => "value",
             };
         };
         const type_info = try internPeekString(
@@ -5793,6 +5862,10 @@ pub const IRPrinter = struct {
                         store_val = try self.ensurePointer(w, field_val, id);
                     }
                 },
+                .Value => {
+                    // Not yet used for struct fields; treat as raw pointer/value.
+                    // For now, leave store_val as-is.
+                },
                 .F64 => {
                     if (field_val.ty != .F64) {
                         const as_i64 = try self.ensureI64(w, field_val, id);
@@ -6117,6 +6190,7 @@ pub const IRPrinter = struct {
             .I1 => "i1",
             .I2 => "i2",
             .PTR => "ptr",
+            .Value => "%DoxaValue",
             .Nothing => "{}", // Zero-sized type
         };
     }
