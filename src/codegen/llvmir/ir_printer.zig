@@ -1882,7 +1882,8 @@ fn internPeekString(
                     else
                         null;
 
-                    for (raw_args.items, 0..) |arg, i| {
+                    for (raw_args.items, 0..) |*arg_ptr, i| {
+                        var arg = arg_ptr.*;
                         var declared_type: ?HIR.HIRType = null;
                         var is_alias = false;
                         if (func_info) |info| {
@@ -1891,6 +1892,14 @@ fn internPeekString(
                             }
                             if (i < info.param_is_alias.len) {
                                 is_alias = info.param_is_alias[i];
+                            }
+                        }
+                        if (!is_alias) {
+                            if (declared_type) |decl| {
+                                if (arg.ty == .Value and decl != .Union) {
+                                    arg = try self.unwrapDoxaValueToType(w, arg, decl, &id);
+                                    arg_ptr.* = arg;
+                                }
                             }
                         }
                         const llvm_ty = blk: {
@@ -3461,11 +3470,16 @@ fn internPeekString(
                     else
                         null;
 
-                    for (raw_args.items, 0..) |arg, idx| {
+                    for (raw_args.items, 0..) |*arg_ptr, idx| {
+                        var arg = arg_ptr.*;
                         const llvm_ty = blk: {
                             if (func_info) |info| {
                                 if (idx < info.param_types.len) {
                                     const is_alias = if (idx < info.param_is_alias.len) info.param_is_alias[idx] else false;
+                                    if (!is_alias and arg.ty == .Value and info.param_types[idx] != .Union) {
+                                        arg = try self.unwrapDoxaValueToType(w, arg, info.param_types[idx], &id);
+                                        arg_ptr.* = arg;
+                                    }
                                     break :blk self.hirTypeToLLVMType(info.param_types[idx], is_alias);
                                 }
                             }
@@ -4292,6 +4306,54 @@ fn internPeekString(
             },
             else => return value,
         }
+    }
+
+    fn unwrapDoxaValueToType(
+        self: *IRPrinter,
+        w: anytype,
+        value: StackVal,
+        target: HIR.HIRType,
+        id: *usize,
+    ) !StackVal {
+        if (value.ty != .Value) return value;
+
+        const payload = try self.nextTemp(id);
+        const extract_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload, value.name });
+        defer self.allocator.free(extract_line);
+        try w.writeAll(extract_line);
+
+        return switch (target) {
+            .Int, .Enum => .{ .name = payload, .ty = .I64 },
+            .Float => blk: {
+                const as_f64 = try self.nextTemp(id);
+                const bitcast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast i64 {s} to double\n", .{ as_f64, payload });
+                defer self.allocator.free(bitcast_line);
+                try w.writeAll(bitcast_line);
+                break :blk StackVal{ .name = as_f64, .ty = .F64 };
+            },
+            .Byte => blk: {
+                const narrowed = try self.nextTemp(id);
+                const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i8\n", .{ narrowed, payload });
+                defer self.allocator.free(trunc_line);
+                try w.writeAll(trunc_line);
+                break :blk StackVal{ .name = narrowed, .ty = .I8 };
+            },
+            .Tetra => blk: {
+                const narrowed = try self.nextTemp(id);
+                const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i2\n", .{ narrowed, payload });
+                defer self.allocator.free(trunc_line);
+                try w.writeAll(trunc_line);
+                break :blk StackVal{ .name = narrowed, .ty = .I2 };
+            },
+            .String, .Array, .Map, .Struct, .Function => blk: {
+                const as_ptr = try self.nextTemp(id);
+                const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
+                defer self.allocator.free(cast_line);
+                try w.writeAll(cast_line);
+                break :blk StackVal{ .name = as_ptr, .ty = .PTR };
+            },
+            else => StackVal{ .name = payload, .ty = .I64 },
+        };
     }
 
     fn findUnionMemberIndex(_: *IRPrinter, union_type: HIR.HIRType, value: StackVal) u32 {
