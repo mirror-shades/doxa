@@ -100,9 +100,9 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     .Array => self.convertTypeInfo(decl.type_info),
                     .Union => blk: {
                         if (decl.type_info.union_type) |_| {
-                            break :blk .Unknown;
+                            break :blk self.convertTypeInfo(decl.type_info);
                         }
-                        break :blk .Nothing;
+                        break :blk .Unknown;
                     },
                     .Enum => blk: {
                         custom_type_name = decl.type_info.custom_type;
@@ -349,7 +349,11 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
             if (!decl.type_info.is_mutable) {
                 // Check if the initializer is a literal (compile-time constant)
-                const is_literal = if (decl.initializer) |init_expr| isLiteralExpression(init_expr) else false;
+                var is_literal = if (decl.initializer) |init_expr| isLiteralExpression(init_expr) else false;
+                // Union types need the canonical value wrapper even for literals
+                if (var_type == .Union) {
+                    is_literal = false;
+                }
 
                 const is_module_ctx = self.current_function == null and self.isModuleContext();
                 const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);

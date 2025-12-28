@@ -201,12 +201,131 @@ fn internPeekString(
         };
     }
 
+    fn coerceForMerge(
+        self: *IRPrinter,
+        incoming: StackVal,
+        target: StackType,
+        id: *usize,
+        w: anytype,
+    ) !StackVal {
+        if (incoming.ty == target) return incoming;
+
+        // Extract payload from canonical value into the requested scalar/pointer form.
+        if (incoming.ty == .Value) {
+            const payload = try self.nextTemp(id);
+            const payload_extract = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = extractvalue %DoxaValue {s}, 2\n",
+                .{ payload, incoming.name },
+            );
+            defer self.allocator.free(payload_extract);
+            try w.writeAll(payload_extract);
+
+            return switch (target) {
+                .I64 => .{ .name = payload, .ty = .I64 },
+                .F64 => blk: {
+                    const as_f64 = try self.nextTemp(id);
+                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast i64 {s} to double\n", .{ as_f64, payload });
+                    defer self.allocator.free(line);
+                    try w.writeAll(line);
+                    break :blk .{ .name = as_f64, .ty = .F64 };
+                },
+                .I8 => blk: {
+                    const narrowed = try self.nextTemp(id);
+                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i8\n", .{ narrowed, payload });
+                    defer self.allocator.free(line);
+                    try w.writeAll(line);
+                    break :blk .{ .name = narrowed, .ty = .I8 };
+                },
+                .I2 => blk: {
+                    const narrowed = try self.nextTemp(id);
+                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i2\n", .{ narrowed, payload });
+                    defer self.allocator.free(line);
+                    try w.writeAll(line);
+                    break :blk .{ .name = narrowed, .ty = .I2 };
+                },
+                .I1 => blk: {
+                    const narrowed = try self.nextTemp(id);
+                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i1\n", .{ narrowed, payload });
+                    defer self.allocator.free(line);
+                    try w.writeAll(line);
+                    break :blk .{ .name = narrowed, .ty = .I1 };
+                },
+                .PTR => blk: {
+                    const as_ptr = try self.nextTemp(id);
+                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
+                    defer self.allocator.free(line);
+                    try w.writeAll(line);
+                    break :blk .{ .name = as_ptr, .ty = .PTR };
+                },
+                else => incoming,
+            };
+        }
+
+        // If the target expects a canonical value, wrap the incoming scalar/pointer.
+        if (target == .Value and incoming.ty != .Value) {
+            const tag_const: i32 = switch (incoming.ty) {
+                .I64 => 0,
+                .F64 => 1,
+                .I8 => 2,
+                .PTR => 3,
+                .I2, .I1 => 7,
+                else => 8,
+            };
+            const tag_reg = try self.nextTemp(id);
+            const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ tag_reg, tag_const });
+            defer self.allocator.free(tag_line);
+            try w.writeAll(tag_line);
+
+            const reserved_reg = try self.nextTemp(id);
+            const reserved_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, 0\n", .{ reserved_reg });
+            defer self.allocator.free(reserved_line);
+            try w.writeAll(reserved_line);
+
+            const payload = try self.ensureI64(w, incoming, id);
+
+            const dv0 = try self.nextTemp(id);
+            const dv0_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = insertvalue %DoxaValue undef, i32 {s}, 0\n",
+                .{ dv0, tag_reg },
+            );
+            defer self.allocator.free(dv0_line);
+            try w.writeAll(dv0_line);
+
+            const dv1 = try self.nextTemp(id);
+            const dv1_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n",
+                .{ dv1, dv0, reserved_reg },
+            );
+            defer self.allocator.free(dv1_line);
+            try w.writeAll(dv1_line);
+
+            const dv2 = try self.nextTemp(id);
+            const dv2_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = insertvalue %DoxaValue {s}, i64 {s}, 2\n",
+                .{ dv2, dv1, payload.name },
+            );
+            defer self.allocator.free(dv2_line);
+            try w.writeAll(dv2_line);
+
+            return .{ .name = dv2, .ty = .Value };
+        }
+
+        // Fallback: if we cannot coerce, leave as-is to avoid losing information.
+        return incoming;
+    }
+
     fn recordStackForLabel(
         self: *IRPrinter,
         map: *std.StringHashMap(StackMergeState),
         label: []const u8,
         stack: []const StackVal,
         current_block: []const u8,
+        id: *usize,
+        w: anytype,
     ) !void {
         var entry = try map.getOrPut(label);
         if (!entry.found_existing) {
@@ -223,7 +342,12 @@ fn internPeekString(
         // Note: If incoming stack is shorter, we only record up to its length
 
         for (entry.value_ptr.slots[0..stack.len], stack) |*slot, value| {
-            try slot.append(self.allocator, .{ .block = current_block, .value = value });
+            var coerced = value;
+            if (slot.items.len > 0) {
+                const target_type = slot.items[0].value.ty;
+                coerced = try self.coerceForMerge(value, target_type, id, w);
+            }
+            try slot.append(self.allocator, .{ .block = current_block, .value = coerced });
         }
     }
 
@@ -267,8 +391,12 @@ fn internPeekString(
                 }
 
                 for (slot.items) |incoming_val| {
+                    var adjusted = incoming_val.value;
+                    if (adjusted.ty != target_type) {
+                        adjusted = try self.coerceForMerge(adjusted, target_type, id, w);
+                    }
                     const blk_name: []const u8 = if (std.mem.startsWith(u8, incoming_val.block, "func_")) "entry" else incoming_val.block;
-                    const value_name = incoming_val.value.name;
+                    const value_name = adjusted.name;
                     const pair = try std.fmt.allocPrint(self.allocator, "[ {s}, %{s} ]", .{ value_name, blk_name });
                     try incoming.append(pair);
                 }
@@ -401,7 +529,7 @@ fn internPeekString(
         try w.writeAll("declare i64 @doxa_type_check(i64, i64, ptr)\n");
         // Canonical DoxaValue-based ABI for type checking and value printing.
         try w.writeAll("declare i64 @doxa_type_check_value(%DoxaValue, ptr)\n");
-        try w.writeAll("declare void @doxa_print_value(%DoxaValue)\n");
+        try w.writeAll("declare void @doxa_print_value(ptr)\n");
         try w.writeAll("declare i64 @doxa_find(ptr, i64)\n");
         try w.writeAll("declare ptr @malloc(i64)\n");
         try w.writeAll("declare i8 @doxa_exists_quantifier_gt(ptr, i64)\n");
@@ -1253,6 +1381,18 @@ fn internPeekString(
                         const call_val = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s})\n", .{val.name});
                         defer self.allocator.free(call_val);
                         try w.writeAll(call_val);
+                    } else if (val.ty == .Value) {
+                        // Store to stack and pass pointer to avoid ABI quirks
+                        const tmp_ptr = try self.nextTemp(&id);
+                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{tmp_ptr});
+                        defer self.allocator.free(alloca_line);
+                        try w.writeAll(alloca_line);
+                        const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ val.name, tmp_ptr });
+                        defer self.allocator.free(store_line);
+                        try w.writeAll(store_line);
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
                     } else if (should_print_as_float and val.ty == .I64) {
                         // Float stored as I64 bit pattern - convert to double for printing
                         const double_val = try self.nextTemp(&id);
@@ -1427,7 +1567,7 @@ fn internPeekString(
                     try self.restoreStackForLabel(&merge_map, lbl.name, &stack, &id, w);
                 },
                 .Jump => |j| {
-                    try self.recordStackForLabel(&merge_map, j.label, stack.items, current_block);
+                    try self.recordStackForLabel(&merge_map, j.label, stack.items, current_block, &id, w);
                     const line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{j.label});
                     defer self.allocator.free(line);
                     try w.writeAll(line);
@@ -1703,8 +1843,8 @@ fn internPeekString(
                     const v = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
                     const bool_val = try self.ensureBool(w, v, &id);
-                    try self.recordStackForLabel(&merge_map, jc.label_true, stack.items, current_block);
-                    try self.recordStackForLabel(&merge_map, jc.label_false, stack.items, current_block);
+                    try self.recordStackForLabel(&merge_map, jc.label_true, stack.items, current_block, &id, w);
+                    try self.recordStackForLabel(&merge_map, jc.label_false, stack.items, current_block, &id, w);
                     const br_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ bool_val.name, jc.label_true, jc.label_false });
                     defer self.allocator.free(br_line);
                     try w.writeAll(br_line);
@@ -2498,9 +2638,13 @@ fn internPeekString(
                 .StoreVar => |sv| {
                     if (variables_to_allocate.get(sv.var_name) == null) {
                         // We need to determine the type from the HIR context
-                        // For now, assume i64 as default - this should be improved
+                        // For now, prefer the expected type from HIR when available
+                        const declared_stack_type = if (sv.expected_type != .Unknown)
+                            self.hirTypeToStackType(sv.expected_type)
+                        else
+                            .I64;
                         const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sv.var_name});
-                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = .I64, .array_type = null };
+                        const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = declared_stack_type, .array_type = null };
                         try variables_to_allocate.put(sv.var_name, info);
                     }
                 },
@@ -2528,21 +2672,8 @@ fn internPeekString(
         }
 
         // Generate function signature
-        const return_type_str = switch (func.return_type) {
-            .Int => "i64",
-            .Float => "double",
-            .Byte => "i8",
-            .Tetra => "i2",
-            .String => "ptr",
-            .Array => "ptr",
-            .Map => "ptr",
-            .Struct => "ptr",
-            .Enum => "ptr",
-            .Function => "ptr",
-            .Union => "ptr",
-            .Nothing => "void",
-            else => "i64",
-        };
+        const return_type_str = self.hirTypeToLLVMType(func.return_type, false);
+        const target_return_stack_type = self.hirTypeToStackType(func.return_type);
 
         var param_strs = std.array_list.Managed([]const u8).init(self.allocator);
         defer {
@@ -2554,20 +2685,8 @@ fn internPeekString(
 
         for (func.param_types, 0..) |param_type, param_idx| {
             const is_alias = if (param_idx < func.param_is_alias.len) func.param_is_alias[param_idx] else false;
-            const param_type_str = if (is_alias) "ptr" else switch (param_type) {
-                .Int => "i64",
-                .Float => "double",
-                .Byte => "i8",
-                .Tetra => "i2",
-                .String => "ptr",
-                .Array => "ptr",
-                .Map => "ptr",
-                .Struct => "ptr",
-                .Enum => "ptr",
-                .Function => "ptr",
-                .Union => "ptr",
-                else => "i64",
-            };
+            const param_stack_type = if (is_alias) .PTR else self.hirTypeToStackType(param_type);
+            const param_type_str = self.stackTypeToLLVMType(param_stack_type);
             const param_str = try std.fmt.allocPrint(self.allocator, "{s} %{d}", .{ param_type_str, param_idx });
             try param_strs.append(param_str);
         }
@@ -2778,8 +2897,11 @@ fn internPeekString(
                 },
                 .Return => |ret| {
                     if (ret.has_value and stack.items.len > 0) {
-                        const v = stack.items[stack.items.len - 1];
+                        var v = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
+                        if (v.ty != target_return_stack_type) {
+                            v = try self.coerceForMerge(v, target_return_stack_type, &id, w);
+                        }
                         const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, v.name });
                         defer self.allocator.free(ret_line);
                         try w.writeAll(ret_line);
@@ -2800,8 +2922,8 @@ fn internPeekString(
                     const v = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
                     const bool_val = try self.ensureBool(w, v, &id);
-                    try self.recordStackForLabel(&merge_map, jc.label_true, stack.items, current_block);
-                    try self.recordStackForLabel(&merge_map, jc.label_false, stack.items, current_block);
+                    try self.recordStackForLabel(&merge_map, jc.label_true, stack.items, current_block, &id, w);
+                    try self.recordStackForLabel(&merge_map, jc.label_false, stack.items, current_block, &id, w);
                     const br_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ bool_val.name, jc.label_true, jc.label_false });
                     defer self.allocator.free(br_line);
                     try w.writeAll(br_line);
@@ -2824,7 +2946,7 @@ fn internPeekString(
                             }
                         }
                     }
-                    try self.recordStackForLabel(&merge_map, j.label, stack.items, current_block);
+                    try self.recordStackForLabel(&merge_map, j.label, stack.items, current_block, &id, w);
                     const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{j.label});
                     defer self.allocator.free(br_line);
                     try w.writeAll(br_line);
@@ -3518,20 +3640,63 @@ fn internPeekString(
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
 
-                    // Determine value type tag: 0=int, 1=float, 2=byte, 3=string, 4=array, 5=struct, 6=enum
-                    const value_type_tag: i64 = switch (value.ty) {
-                        .I64 => if (value.enum_type_name != null) 6 else 0, // enum or int
-                        .F64 => 1,
-                        .I8 => 2,
-                        .PTR => if (value.array_type != null) 4 else if (value.struct_field_types != null) 5 else 3, // array, struct, or string
-                        .I2 => 7, // tetra - not used in type checking
-                        .I1 => 7, // bool - not used in type checking
-                        .Nothing => 8,
-                        .Value => 8,
-                    };
+                    // Compute tag and payload bits; handle canonical %DoxaValue values specially.
+                    var value_i64 = StackVal{ .name = "", .ty = .I64 };
+                    var tag_reg: []const u8 = undefined;
+                    if (value.ty == .Value) {
+                        const tag_i32 = try self.nextTemp(&id);
+                        const tag_extract = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = extractvalue %DoxaValue {s}, 0\n",
+                            .{ tag_i32, value.name },
+                        );
+                        defer self.allocator.free(tag_extract);
+                        try w.writeAll(tag_extract);
 
-                    // Convert value to i64 for the runtime call
-                    const value_i64 = try self.ensureI64(w, value, &id);
+                        const tag_i64 = try self.nextTemp(&id);
+                        const tag_zext = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = zext i32 {s} to i64\n",
+                            .{ tag_i64, tag_i32 },
+                        );
+                        defer self.allocator.free(tag_zext);
+                        try w.writeAll(tag_zext);
+                        tag_reg = tag_i64;
+
+                        const payload = try self.nextTemp(&id);
+                        const payload_extract = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = extractvalue %DoxaValue {s}, 2\n",
+                            .{ payload, value.name },
+                        );
+                        defer self.allocator.free(payload_extract);
+                        try w.writeAll(payload_extract);
+                        value_i64 = .{ .name = payload, .ty = .I64 };
+                    } else {
+                        const value_type_tag: i64 = switch (value.ty) {
+                            .I64 => if (value.enum_type_name != null) 6 else 0, // enum or int
+                            .F64 => 1,
+                            .I8 => 2,
+                            .PTR => if (value.array_type != null) 4 else if (value.struct_field_types != null) 5 else 3, // array, struct, or string
+                            .I2 => 7, // tetra - not used in type checking
+                            .I1 => 7, // bool - not used in type checking
+                            .Nothing => 8,
+                            .Value => 8,
+                        };
+
+                        const tag_tmp = try self.nextTemp(&id);
+                        const tag_line2 = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = add i64 0, {d}\n",
+                            .{ tag_tmp, value_type_tag },
+                        );
+                        defer self.allocator.free(tag_line2);
+                        try w.writeAll(tag_line2);
+                        tag_reg = tag_tmp;
+
+                        // Convert value to i64 payload bits for DoxaValue.
+                        value_i64 = try self.ensureI64(w, value, &id);
+                    }
 
                     // Create target type string constant
                     const target_type_info = try internPeekString(
@@ -3554,19 +3719,12 @@ fn internPeekString(
 
                     // Call runtime type check function
                     // Allocate type_tag_name first so it gets a lower instruction number
-                    const type_tag_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ type_tag_name, value_type_tag });
-                    defer self.allocator.free(tag_line);
-                    try w.writeAll(tag_line);
-
-                    // Now allocate result_name so it gets a higher instruction number
                     const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                     id += 1;
                     const call_line = try std.fmt.allocPrint(
                         self.allocator,
                         "  {s} = call i64 @doxa_type_check(i64 {s}, i64 {s}, ptr {s})\n",
-                        .{ result_name, value_i64.name, type_tag_name, target_type_ptr },
+                        .{ result_name, value_i64.name, tag_reg, target_type_ptr },
                     );
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
@@ -3618,6 +3776,18 @@ fn internPeekString(
                             const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
+                        },
+                        .Value => {
+                        const tmp_ptr = try self.nextTemp(&id);
+                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{tmp_ptr});
+                        defer self.allocator.free(alloca_line);
+                        try w.writeAll(alloca_line);
+                        const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ v.name, tmp_ptr });
+                        defer self.allocator.free(store_line);
+                        try w.writeAll(store_line);
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
                         },
                         .PTR => {
                             if (v.struct_field_types) |fts| {
@@ -5372,82 +5542,114 @@ fn internPeekString(
 
         var member_count: i32 = 0;
         var active_index: i32 = -1;
+        var active_index_var: ?[]const u8 = null;
 
         if (pk.union_members) |members| {
-            if (members.len > 1) {
-                member_count = @intCast(members.len);
+            member_count = @intCast(members.len);
 
-                // Intern all union member strings
-                var member_infos = try self.allocator.alloc(PeekStringInfo, members.len);
-                defer self.allocator.free(member_infos);
-                for (members, 0..) |member, idx| {
-                    member_infos[idx] = try internPeekString(
-                        self.allocator,
-                        &state.string_map,
-                        &state.strings,
-                        state.next_id_ptr,
-                        &state.globals,
-                        member,
-                    );
-
-                    // Determine active member based on the value's runtime type
-                    switch (value.ty) {
-                        .I64 => if (std.mem.eql(u8, "int", member)) {
-                            active_index = @intCast(idx);
-                        },
-                        .F64 => if (std.mem.eql(u8, "float", member)) {
-                            active_index = @intCast(idx);
-                        },
-                        .I8 => if (std.mem.eql(u8, "byte", member)) {
-                            active_index = @intCast(idx);
-                        },
-                        else => {}, // Keep active_index = -1 for unknown types
-                    }
-                }
-
-                // Create array of pointers to union member strings
-                const array_name = try std.fmt.allocPrint(self.allocator, "@.peek.union.{d}", .{state.next_id_ptr.*});
-                defer self.allocator.free(array_name);
-                state.next_id_ptr.* += 1;
-
-                // Emit global array definition
-                var array_def = std.array_list.Managed(u8).init(self.allocator);
-                defer array_def.deinit();
-                try array_def.writer().print("  {s} = constant [{d} x ptr] [", .{ array_name, members.len });
-                for (member_infos, 0..) |mi, idx| {
-                    if (idx > 0) try array_def.writer().print(", ", .{});
-                    try array_def.writer().print("ptr getelementptr inbounds ([{d} x i8], ptr {s}, i64 0, i64 0)", .{ mi.length, mi.name });
-                }
-                try array_def.writer().print("]\n", .{});
-                try state.globals.append(try array_def.toOwnedSlice());
-
-                // Get pointer to array
-                const array_ptr = try self.nextTemp(id);
-                defer self.allocator.free(array_ptr);
-                const array_gep = try std.fmt.allocPrint(
+            // Intern all union member strings
+            var member_infos = try self.allocator.alloc(PeekStringInfo, members.len);
+            defer self.allocator.free(member_infos);
+            for (members, 0..) |member, idx| {
+                member_infos[idx] = try internPeekString(
                     self.allocator,
-                    "  {s} = getelementptr inbounds [{d} x ptr], ptr {s}, i64 0, i64 0\n",
-                    .{ array_ptr, members.len, array_name },
+                    &state.string_map,
+                    &state.strings,
+                    state.next_id_ptr,
+                    &state.globals,
+                    member,
                 );
-                defer self.allocator.free(array_gep);
-                try w.writeAll(array_gep);
-
-                const store_members = try std.fmt.allocPrint(
-                    self.allocator,
-                    "  store ptr {s}, ptr {s}\n",
-                    .{ array_ptr, members_field_ptr },
-                );
-                defer self.allocator.free(store_members);
-                try w.writeAll(store_members);
-            } else {
-                const store_members = try std.fmt.allocPrint(
-                    self.allocator,
-                    "  store ptr null, ptr {s}\n",
-                    .{members_field_ptr},
-                );
-                defer self.allocator.free(store_members);
-                try w.writeAll(store_members);
             }
+
+            // If the value is a canonical union, derive active index from reserved bits
+            if (value.ty == .Value) {
+                const reserved = try self.nextTemp(id);
+                const reserved_extract = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = extractvalue %DoxaValue {s}, 1\n",
+                    .{ reserved, value.name },
+                );
+                defer self.allocator.free(reserved_extract);
+                try w.writeAll(reserved_extract);
+
+                const is_union = try self.nextTemp(id);
+                const is_union_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = and i32 {s}, 2147483648\n",
+                    .{ is_union, reserved },
+                );
+                defer self.allocator.free(is_union_line);
+                try w.writeAll(is_union_line);
+
+                const cmp = try self.nextTemp(id);
+                const cmp_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = icmp ne i32 {s}, 0\n",
+                    .{ cmp, is_union },
+                );
+                defer self.allocator.free(cmp_line);
+                try w.writeAll(cmp_line);
+
+                const member_bits = try self.nextTemp(id);
+                const member_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = and i32 {s}, 65535\n",
+                    .{ member_bits, reserved },
+                );
+                defer self.allocator.free(member_line);
+                try w.writeAll(member_line);
+
+                const member_i32 = try self.nextTemp(id);
+                const member_sel = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = select i1 {s}, i32 {s}, i32 -1\n",
+                    .{ member_i32, cmp, member_bits },
+                );
+                defer self.allocator.free(member_sel);
+                try w.writeAll(member_sel);
+
+                active_index_var = member_i32;
+            }
+
+            if (active_index_var == null and pk.value_type == .Union) {
+                const idx = self.findUnionMemberIndex(pk.value_type, value);
+                active_index = @intCast(idx);
+            }
+
+            // Create array of pointers to union member strings
+            const array_name = try std.fmt.allocPrint(self.allocator, "@.peek.union.{d}", .{state.next_id_ptr.*});
+            defer self.allocator.free(array_name);
+            state.next_id_ptr.* += 1;
+
+            // Emit global array definition
+            var array_def = std.array_list.Managed(u8).init(self.allocator);
+            defer array_def.deinit();
+            try array_def.writer().print("  {s} = constant [{d} x ptr] [", .{ array_name, members.len });
+            for (member_infos, 0..) |mi, idx| {
+                if (idx > 0) try array_def.writer().print(", ", .{});
+                try array_def.writer().print("ptr getelementptr inbounds ([{d} x i8], ptr {s}, i64 0, i64 0)", .{ mi.length, mi.name });
+            }
+            try array_def.writer().print("]\n", .{});
+            try state.globals.append(try array_def.toOwnedSlice());
+
+            // Get pointer to array
+            const array_ptr = try self.nextTemp(id);
+            defer self.allocator.free(array_ptr);
+            const array_gep = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds [{d} x ptr], ptr {s}, i64 0, i64 0\n",
+                .{ array_ptr, members.len, array_name },
+            );
+            defer self.allocator.free(array_gep);
+            try w.writeAll(array_gep);
+
+            const store_members = try std.fmt.allocPrint(
+                self.allocator,
+                "  store ptr {s}, ptr {s}\n",
+                .{ array_ptr, members_field_ptr },
+            );
+            defer self.allocator.free(store_members);
+            try w.writeAll(store_members);
         } else {
             const store_members = try std.fmt.allocPrint(
                 self.allocator,
@@ -5486,13 +5688,23 @@ fn internPeekString(
         defer self.allocator.free(active_field_line);
         try w.writeAll(active_field_line);
 
-        const store_active = try std.fmt.allocPrint(
-            self.allocator,
-            "  store i32 {d}, ptr {s}\n",
-            .{ active_index, active_field_ptr },
-        );
-        defer self.allocator.free(store_active);
-        try w.writeAll(store_active);
+        if (active_index_var) |active_var| {
+            const store_active = try std.fmt.allocPrint(
+                self.allocator,
+                "  store i32 {s}, ptr {s}\n",
+                .{ active_var, active_field_ptr },
+            );
+            defer self.allocator.free(store_active);
+            try w.writeAll(store_active);
+        } else {
+            const store_active = try std.fmt.allocPrint(
+                self.allocator,
+                "  store i32 {d}, ptr {s}\n",
+                .{ active_index, active_field_ptr },
+            );
+            defer self.allocator.free(store_active);
+            try w.writeAll(store_active);
+        }
 
         const has_loc_ptr = try self.nextTemp(id);
         defer self.allocator.free(has_loc_ptr);
@@ -6328,7 +6540,7 @@ fn internPeekString(
             .Struct => "ptr",
             .Enum => "ptr",
             .Function => "ptr",
-            .Union => "ptr",
+            .Union => "%DoxaValue",
             .Nothing => "void",
             else => "i64",
         };

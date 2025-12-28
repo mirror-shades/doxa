@@ -830,7 +830,7 @@ pub const DoxaUnionMeta = struct {
 /// Print a value described by the canonical `DoxaValueC` layout. This is the
 /// primary entry point for native code that wants to render values without
 /// going through the interpreter.
-pub export fn doxa_print_value(val: DoxaValueC) callconv(.c) void {
+pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
     const tag: DoxaTag = @enumFromInt(val.tag);
     switch (tag) {
         .Int => {
