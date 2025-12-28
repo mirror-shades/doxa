@@ -1,0 +1,10 @@
+pub struct Pair {
+    a :: int
+    b :: int
+}
+
+pub enum NumberType {
+    INT,
+    FLOAT,
+    BYTE
+}

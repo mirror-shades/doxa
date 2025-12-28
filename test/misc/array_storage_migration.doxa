@@ -1,0 +1,6 @@
+const literal is [1, 2]
+var copy :: int[] is literal
+
+copy[2] is 77
+
+@print("{@string(@length(literal))} {@string(@length(copy))}\n")

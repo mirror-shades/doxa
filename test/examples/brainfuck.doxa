@@ -1,0 +1,77 @@
+# a brainfuck interpreter implemented in doxa
+# mirror-shades
+
+const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
+
+function getInput() returns byte {
+    @print("Input: ")
+    var userInput :: string is @input()
+    var newByte :: byte is @byte(userInput[0])
+    return newByte
+}
+
+function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {
+    if @length(loopSpot) == loops then {
+        @push(loopSpot, ip)
+    } else {
+        loopSpot[loops] is ip
+    }
+    loops += 1
+}
+
+function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], tp :: int) {
+    if loops >= 0 then {
+        if tape[tp] == 0 then {
+            loops -= 1
+        } else {
+            const loopPointer is loops - 1
+            ip is loopSpot[loopPointer]
+            # cancels the ip += 1 from the main loop
+            ip -= 1
+        }
+    }
+}
+
+function checkClosingBracket(scan :: string) returns tetra {
+    var pointer :: int
+    var openBrackets :: int
+    while(pointer < @length(scan)) {
+        if(scan[pointer] == "[") then openBrackets += 1
+        if(scan[pointer] == "]") then openBrackets -= 1
+        pointer += 1
+        if openBrackets < 0 then return false
+    }
+    return(openBrackets == 0)
+}
+
+function interpret(scan :: string) {
+    var tape :: byte[10] # increase if needed
+    var loops :: int
+    var loopSpot :: int[]
+    var tp :: int
+    var ip :: int
+
+    const scanLength is @length(scan)
+
+    var closedBrackets :: tetra is checkClosingBracket(scan)
+    @assert(closedBrackets, "Unmatched brackets")
+
+    while(ip < scanLength) do ip += 1 {
+        var currentInstruction is scan[ip]
+        if(currentInstruction == ">") then tp += 1
+        if(currentInstruction == "<") then tp -= 1
+        if(currentInstruction == "+") then tape[tp] += 0x01
+        if(currentInstruction == "-") then tape[tp] -= 0x01
+        if(currentInstruction == ".") then @print("Output: {tape[tp]}\n")
+        if(currentInstruction == ",") then tape[tp] is getInput()
+        if(currentInstruction == "[") then startLoop(^loopSpot, ^loops, ip)
+        if(currentInstruction == "]") then endLoop(loopSpot, ^loops, ^ip, tape, tp)
+    }
+}
+
+entry function main() {
+    interpret("++.")
+    interpret("++++.")
+    interpret("++.>+++.")
+    interpret("+++[>+++<-]>.")
+}

@@ -1,0 +1,75 @@
+const limit :: int is 100_000_000;
+
+function diceRoll() returns int {
+    const randomFloat is @random() * 6 + 1
+    return @int(randomFloat)
+}
+
+function add(a :: int, b :: int) returns int {
+    return a + b
+}
+
+# Dice roll benchmark
+function diceRollBenchmark() {
+    var count is 0
+    var startTime is @tick()
+    
+    for i is 1 while i <= limit do i += 1 {
+        const roll is diceRoll()
+        count is count + roll  # Prevent optimization
+    }
+    
+    var endTime is @tick()
+    @print("Dice rolls: {count}, Time: {(endTime - startTime) / 1000000000 }s\n")
+}
+
+# FizzBuzz benchmark
+function fizzbuzzBenchmark() {
+    var startTime is @tick()
+    
+    for i is 1 while i <= limit do i += 1 {
+        if i % 15 == 0 then "FizzBuzz"
+        else if i % 3 == 0 then "Fizz" 
+        else if i % 5 == 0 then "Buzz"
+        else @string(i)
+    }
+    
+    var endTime is @tick()
+    @print("FizzBuzz time: {(endTime - startTime) / 1000000000 }s\n")
+}
+
+# Arithmetic benchmark
+function arithmeticBenchmark() {
+    var sum is 0
+    var start is @tick()
+    
+    each i in 1 to limit {
+        sum += i * 2 + 1
+    }
+    
+    @print("Arithmetic: {sum}, Time: {(@tick() - start) / 1000000000}s\n")
+}
+
+# Function call benchmark  
+function callBenchmark() {
+    var sum is 0
+    var start is @tick()
+    
+    each i in 1 to limit {
+        sum += add(i, i + 1)
+    }
+    
+    @print("Function calls: {sum}, Time: {(@tick() - start) / 1000000000}s\n")
+}
+
+# Run all benchmarks
+@print("=== DOXA BENCHMARK SUITE ===\n")
+diceRollBenchmark()
+fizzbuzzBenchmark()
+arithmeticBenchmark()
+callBenchmark()
+
+
+
+
+

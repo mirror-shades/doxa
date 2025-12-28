@@ -1,0 +1,65 @@
+entry function main() {
+    const input is @read("./advent2.txt")
+    const split_input is split(input, ",")
+    var invalid_sum :: int
+    
+
+    each pair in split_input {
+        const split_pair is split(pair, "-")
+        var current is @int(split_pair[0])
+        var limit is @int(split_pair[1])
+        @print("checking {current}-{limit} (total {limit - current + 1})\n")
+        var start_time is @tick()
+        while current <= limit do current += 1 {
+            if isInvalid(current) then {
+                invalid_sum += current
+            } 
+        }
+        var end_time is @tick()
+        @print("Time taken: {(end_time - start_time) / 1000000000} s\n")
+    }
+    @print("Invalid sum: {invalid_sum}\n")
+}
+
+function split(input :: string, separator :: string) returns string[] {
+    if @length(input) == 0 then return []
+    
+    var result :: string[]
+    var start_idx is 0
+    var i is 0
+    
+    while i < @length(input) do i += 1 {
+        if input[i] == separator then {
+            @push(result, @slice(input, start_idx, i - start_idx))
+            start_idx is i + 1
+        }
+    }
+    
+    @push(result, @slice(input, start_idx, @length(input) - start_idx))
+    return result
+}
+
+function isInvalid(number :: int) returns tetra {
+    # invalid numbers have repeating digit segments
+    var s_number is @string(number)
+    const length is @length(s_number)
+    if length == 1 then return false
+    var segment_length is 1
+    while segment_length <= length // 2 do segment_length += 1 {
+        if length % segment_length != 0 then continue
+        const limit is length // segment_length
+        var segment_literal is @slice(s_number, 0, segment_length)
+        var has_repeating_segments is true
+        for x is 1 while x < limit do x += 1 {
+            const pos is x * segment_length
+            if @slice(s_number, pos, segment_length) != segment_literal then {
+                has_repeating_segments is false
+                break
+            }
+        }
+        if has_repeating_segments then {
+            return true
+        }
+    }
+    return false
+}

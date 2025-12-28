@@ -1,0 +1,7 @@
+import safeMath from "./badSafeMath.doxa";
+
+# complex import statement
+var import1 is safeMath.safeAdd(1, 2);
+import1?;
+var import2 is safeMath.safeAdd(1000, 2);
+import2?;

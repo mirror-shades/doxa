@@ -1,0 +1,23 @@
+entry function main() {
+    const input is @read("./advent1.txt")
+    var count is 50
+    var zeroes_hit :: int
+    
+    for c while c < @length(input) do c += 1 {
+        if input[c] == "L" or input[c] == "R" then {
+            var mod is if input[c] == "R" then 1 else -1
+            var s_num :: string
+            c += 1
+            while input[c] != "\n" do c += 1 {
+                s_num += input[c]
+            }
+            const num is @int(s_num)
+            count += num * mod
+            const rotation is count % 100
+            if rotation == 0 then {
+                zeroes_hit += 1
+            }
+        }
+    } 
+    @print("Zeroes hit: {zeroes_hit}\n")
+}

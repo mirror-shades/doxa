@@ -1,0 +1,11 @@
+function hopeless() returns int {
+    unreachable
+}
+
+entry function main() {
+    if (true) {
+        unreachable
+    }
+    const never is hopeless()
+    @print("never: {never}\n")
+}

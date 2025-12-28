@@ -1,0 +1,14 @@
+pub function imported_function() {
+    "imported function"?;
+    return;
+}
+
+pub function imported_function_input(x :: int) {
+    x?;
+    return;
+}
+
+pub function imported_function_output() returns int {
+    return 100;
+}
+

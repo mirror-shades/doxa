@@ -1439,21 +1439,63 @@ fn internPeekString(
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
 
-                    // Determine value tag for DoxaValue: 0=int, 1=float, 2=byte, 3=string,
-                    // 4=array, 5=struct, 6=enum, 7=tetra/bool, 8=nothing.
-                    const value_type_tag: i64 = switch (value.ty) {
-                        .I64 => if (value.enum_type_name != null) 6 else 0, // enum or int
-                        .F64 => 1,
-                        .I8 => 2,
-                        .PTR => if (value.array_type != null) 4 else if (value.struct_field_types != null) 5 else 3, // array, struct, or string
-                        .I2 => 7, // tetra - not used in type checking
-                        .I1 => 7, // bool - not used in type checking
-                        .Nothing => 8,
-                        .Value => 8,
-                    };
+                    // Compute tag and payload bits; handle canonical %DoxaValue values specially.
+                    var value_i64 = StackVal{ .name = "", .ty = .I64 };
+                    var tag_reg: []const u8 = undefined;
+                    if (value.ty == .Value) {
+                        const tag_i32 = try self.nextTemp(&id);
+                        const tag_extract = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = extractvalue %DoxaValue {s}, 0\n",
+                            .{ tag_i32, value.name },
+                        );
+                        defer self.allocator.free(tag_extract);
+                        try w.writeAll(tag_extract);
 
-                    // Convert value to i64 payload bits for DoxaValue.
-                    const value_i64 = try self.ensureI64(w, value, &id);
+                        const tag_i64 = try self.nextTemp(&id);
+                        const tag_zext = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = zext i32 {s} to i64\n",
+                            .{ tag_i64, tag_i32 },
+                        );
+                        defer self.allocator.free(tag_zext);
+                        try w.writeAll(tag_zext);
+                        tag_reg = tag_i64;
+
+                        const payload = try self.nextTemp(&id);
+                        const payload_extract = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = extractvalue %DoxaValue {s}, 2\n",
+                            .{ payload, value.name },
+                        );
+                        defer self.allocator.free(payload_extract);
+                        try w.writeAll(payload_extract);
+                        value_i64 = .{ .name = payload, .ty = .I64 };
+                    } else {
+                        const value_type_tag: i64 = switch (value.ty) {
+                            .I64 => if (value.enum_type_name != null) 6 else 0, // enum or int
+                            .F64 => 1,
+                            .I8 => 2,
+                            .PTR => if (value.array_type != null) 4 else if (value.struct_field_types != null) 5 else 3, // array, struct, or string
+                            .I2 => 7, // tetra - not used in type checking
+                            .I1 => 7, // bool - not used in type checking
+                            .Nothing => 8,
+                            .Value => 8,
+                        };
+
+                        const tag_tmp = try self.nextTemp(&id);
+                        const tag_line2 = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = add i64 0, {d}\n",
+                            .{ tag_tmp, value_type_tag },
+                        );
+                        defer self.allocator.free(tag_line2);
+                        try w.writeAll(tag_line2);
+                        tag_reg = tag_tmp;
+
+                        // Convert value to i64 payload bits for DoxaValue.
+                        value_i64 = try self.ensureI64(w, value, &id);
+                    }
 
                     // Create target type string constant
                     const target_type_info = try internPeekString(
@@ -1474,64 +1516,15 @@ fn internPeekString(
                     defer self.allocator.free(target_gep);
                     try w.writeAll(target_gep);
 
-                    // Materialize a %DoxaValue with tag=value_type_tag, reserved=0, payload_bits=value_i64.
-                    const tag_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const tag_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = add i32 0, {d}\n",
-                        .{ tag_name, value_type_tag },
-                    );
-                    defer self.allocator.free(tag_line);
-                    try w.writeAll(tag_line);
-
-                    const reserved_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const reserved_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = add i32 0, 0\n",
-                        .{ reserved_name },
-                    );
-                    defer self.allocator.free(reserved_line);
-                    try w.writeAll(reserved_line);
-
-                    const dv0 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const dv0_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = insertvalue %DoxaValue undef, i32 {s}, 0\n",
-                        .{ dv0, tag_name },
-                    );
-                    defer self.allocator.free(dv0_line);
-                    try w.writeAll(dv0_line);
-
-                    const dv1 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const dv1_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n",
-                        .{ dv1, dv0, reserved_name },
-                    );
-                    defer self.allocator.free(dv1_line);
-                    try w.writeAll(dv1_line);
-
-                    const dv2 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const dv2_line = try std.fmt.allocPrint(
-                        self.allocator,
-                        "  {s} = insertvalue %DoxaValue {s}, i64 {s}, 2\n",
-                        .{ dv2, dv1, value_i64.name },
-                    );
-                    defer self.allocator.free(dv2_line);
-                    try w.writeAll(dv2_line);
-
-                    // Call canonical DoxaValue-based type check helper.
+                    // Call the legacy ABI helper that takes value bits + type tag +
+                    // target type string. This avoids platform-specific struct
+                    // passing issues with %DoxaValue on MSVC ABIs.
                     const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                     id += 1;
                     const call_line = try std.fmt.allocPrint(
                         self.allocator,
-                        "  {s} = call i64 @doxa_type_check_value(%DoxaValue {s}, ptr {s})\n",
-                        .{ result_name, dv2, target_type_ptr },
+                        "  {s} = call i64 @doxa_type_check(i64 {s}, i64 {s}, ptr {s})\n",
+                        .{ result_name, value_i64.name, tag_reg, target_type_ptr },
                     );
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
@@ -2082,8 +2075,11 @@ fn internPeekString(
                 },
                 .StoreVar => |sv| {
                     if (stack.items.len < 1) continue;
-                    const value = stack.items[stack.items.len - 1];
+                    var value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
+                    if (sv.expected_type == .Union) {
+                        value = try self.buildDoxaValue(w, value, sv.expected_type, &id);
+                    }
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
 
                     if (sv.scope_kind == .GlobalLocal) {
@@ -2154,8 +2150,11 @@ fn internPeekString(
                         }
                         continue;
                     }
-                    const value = stack.items[stack.items.len - 1];
+                    var value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
+                    if (sd.declared_type == .Union) {
+                        value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
+                    }
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     if (sd.scope_kind == .GlobalLocal) {
                         // Record global type and emit store to module-level global
@@ -3422,8 +3421,11 @@ fn internPeekString(
                 },
                 .StoreVar => |sv| {
                     if (stack.items.len < 1) continue;
-                    const value = stack.items[stack.items.len - 1];
+                    var value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
+                    if (sv.expected_type == .Union) {
+                        value = try self.buildDoxaValue(w, value, sv.expected_type, &id);
+                    }
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     var info_ptr = variables.getPtr(sv.var_name);
                     if (info_ptr == null) {
@@ -3449,8 +3451,11 @@ fn internPeekString(
                 },
                 .StoreDecl => |sd| {
                     if (stack.items.len < 1) continue;
-                    const value = stack.items[stack.items.len - 1];
+                    var value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
+                    if (sd.declared_type == .Union) {
+                        value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
+                    }
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     var info_ptr = variables.getPtr(sd.var_name);
                     if (info_ptr == null) {
@@ -3478,6 +3483,7 @@ fn internPeekString(
                     if (stack.items.len < 1) continue;
                     const value = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
+                    // Consts do not carry expected type; leave as-is for now.
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     var info_ptr = variables.getPtr(sc.var_name);
                     if (info_ptr == null) {
@@ -4116,6 +4122,119 @@ fn internPeekString(
             },
             else => return value,
         }
+    }
+
+    fn findUnionMemberIndex(_: *IRPrinter, union_type: HIR.HIRType, value: StackVal) u32 {
+        if (union_type != .Union) return 0;
+        const members = union_type.Union.members;
+        for (members, 0..) |m_ptr, idx| {
+            const m = m_ptr.*;
+            switch (value.ty) {
+                .I64 => {
+                    if (m == .Int) return @intCast(idx);
+                    if (m == .Enum) return @intCast(idx);
+                },
+                .F64 => if (m == .Float) return @intCast(idx),
+                .I8 => if (m == .Byte) return @intCast(idx),
+                .I2, .I1 => if (m == .Tetra) return @intCast(idx),
+                .PTR => {
+                    if (value.array_type != null and m == .Array) return @intCast(idx);
+                    if (value.struct_field_types != null and m == .Struct) return @intCast(idx);
+                    if (value.struct_type_name != null and m == .Struct) return @intCast(idx);
+                    if (m == .String) return @intCast(idx);
+                    if (m == .Map) return @intCast(idx);
+                    if (m == .Function) return @intCast(idx);
+                },
+                .Nothing => if (m == .Nothing) return @intCast(idx),
+                .Value => {},
+            }
+        }
+        return 0;
+    }
+
+    fn buildDoxaValue(
+        self: *IRPrinter,
+        w: anytype,
+        value: StackVal,
+        target_union: ?HIR.HIRType,
+        id: *usize,
+    ) !StackVal {
+        // If it's already a canonical value, reuse it.
+        if (value.ty == .Value) return value;
+
+        // Determine tag based on stack type (align with DoxaTag values)
+        var tag_const: i32 = 8; // default to Nothing
+        switch (value.ty) {
+            .I64 => {
+                // Distinguish enums vs ints when metadata exists
+                tag_const = if (value.enum_type_name != null) 6 else 0;
+            },
+            .F64 => tag_const = 1,
+            .I8 => tag_const = 2,
+            .PTR => {
+                if (value.array_type != null) {
+                    tag_const = 4;
+                } else if (value.struct_field_types != null or value.struct_type_name != null) {
+                    tag_const = 5;
+                } else {
+                    tag_const = 3; // string by default
+                }
+            },
+            .I2, .I1 => tag_const = 7,
+            .Nothing => tag_const = 8,
+            .Value => tag_const = 8,
+        }
+
+        // Compute reserved bits if targeting a union
+        var reserved_const: u32 = 0;
+        if (target_union) |ut| {
+            if (ut == .Union) {
+                const idx = self.findUnionMemberIndex(ut, value);
+                const uid = ut.Union.id & 0x7FFF;
+                reserved_const = 0x80000000 | (uid << 16) | (idx & 0xFFFF);
+            }
+        }
+
+        const tag_reg = try self.nextTemp(id);
+        const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ tag_reg, tag_const });
+        defer self.allocator.free(tag_line);
+        try w.writeAll(tag_line);
+
+        const reserved_reg = try self.nextTemp(id);
+        const reserved_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ reserved_reg, reserved_const });
+        defer self.allocator.free(reserved_line);
+        try w.writeAll(reserved_line);
+
+        const payload = try self.ensureI64(w, value, id);
+
+        const dv0 = try self.nextTemp(id);
+        const dv0_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = insertvalue %DoxaValue undef, i32 {s}, 0\n",
+            .{ dv0, tag_reg },
+        );
+        defer self.allocator.free(dv0_line);
+        try w.writeAll(dv0_line);
+
+        const dv1 = try self.nextTemp(id);
+        const dv1_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n",
+            .{ dv1, dv0, reserved_reg },
+        );
+        defer self.allocator.free(dv1_line);
+        try w.writeAll(dv1_line);
+
+        const dv2 = try self.nextTemp(id);
+        const dv2_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = insertvalue %DoxaValue {s}, i64 {s}, 2\n",
+            .{ dv2, dv1, payload.name },
+        );
+        defer self.allocator.free(dv2_line);
+        try w.writeAll(dv2_line);
+
+        return .{ .name = dv2, .ty = .Value };
     }
 
     fn arrayElementSize(_: *IRPrinter, element_type: HIR.HIRType) u64 {
@@ -6152,7 +6271,7 @@ fn internPeekString(
             .Struct => .PTR,
             .Enum => .I64,
             .Function => .PTR,
-            .Union => .PTR,
+            .Union => .Value,
             .Nothing => .Nothing,
             else => .I64,
         };

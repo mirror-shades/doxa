@@ -1,0 +1,10 @@
+# Basic test without aliases
+function testBasic() {
+    var result is 42
+    return result
+}
+
+function main() {
+    var x is testBasic()
+    @print("x: {x}\n")
+}
