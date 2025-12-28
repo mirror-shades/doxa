@@ -22,6 +22,8 @@ pub const TypeSystem = struct {
     semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
     struct_table: ?*const StructTable = null,
     enum_table: ?*const EnumTable = null,
+    union_id_map: std.StringHashMap(u32),
+    next_union_id: u32,
 
     pub const CustomTypeInfo = struct {
         name: []const u8,
@@ -97,10 +99,17 @@ pub const TypeSystem = struct {
             .semantic_analyzer = semantic_analyzer,
             .struct_table = if (semantic_analyzer) |sa| sa.getStructTable() else null,
             .enum_table = if (semantic_analyzer) |sa| sa.getEnumTable() else null,
+            .union_id_map = std.StringHashMap(u32).init(allocator),
+            .next_union_id = 1,
         };
     }
 
     pub fn deinit(self: *TypeSystem) void {
+        var it = self.union_id_map.iterator();
+        while (it.next()) |entry| {
+            self.allocator.free(entry.key_ptr.*);
+        }
+        self.union_id_map.deinit();
         self.custom_types.deinit();
     }
 
@@ -164,6 +173,82 @@ pub const TypeSystem = struct {
         return .Unknown;
     }
 
+    fn appendTypeLabel(self: *TypeSystem, buf: *std.ArrayListUnmanaged(u8), ti: *const ast.TypeInfo) !void {
+        switch (ti.base) {
+            .Array => {
+                if (ti.array_type) |elem| {
+                    try self.appendTypeLabel(buf, elem);
+                    try buf.appendSlice(self.allocator, "[]");
+                } else {
+                    try buf.appendSlice(self.allocator, "array");
+                }
+            },
+            .Map => {
+                try buf.appendSlice(self.allocator, "map<");
+                if (ti.map_key_type) |k| {
+                    try self.appendTypeLabel(buf, k);
+                } else {
+                    try buf.appendSlice(self.allocator, "unknown");
+                }
+                try buf.appendSlice(self.allocator, ":");
+                if (ti.map_value_type) |v| {
+                    try self.appendTypeLabel(buf, v);
+                } else {
+                    try buf.appendSlice(self.allocator, "unknown");
+                }
+                try buf.appendSlice(self.allocator, ">");
+            },
+            .Union => {
+                if (ti.union_type) |ut| {
+                    // Flatten nested unions into the buffer with '|' separators
+                    var first = true;
+                    for (ut.types) |member| {
+                        if (first) {
+                            first = false;
+                        } else {
+                            try buf.append(self.allocator, '|');
+                        }
+                        try self.appendTypeLabel(buf, member);
+                    }
+                } else {
+                    try buf.appendSlice(self.allocator, "union");
+                }
+            },
+            else => {
+                const label = if (ti.custom_type) |name| name else @tagName(ti.base);
+                try buf.appendSlice(self.allocator, label);
+            },
+        }
+    }
+
+    fn collectUnionMembers(self: *TypeSystem, list: *std.ArrayListUnmanaged(*const ast.TypeInfo), ut: *const ast.UnionType) !void {
+        for (ut.types) |member| {
+            if (member.base == .Union) {
+                if (member.union_type) |nested| {
+                    try self.collectUnionMembers(list, nested);
+                } else {
+                    try list.append(self.allocator, member);
+                }
+            } else {
+                try list.append(self.allocator, member);
+            }
+        }
+    }
+
+    fn buildUnionKey(self: *TypeSystem, ut: *ast.UnionType) ![]u8 {
+        var members = std.ArrayListUnmanaged(*const ast.TypeInfo){};
+        defer members.deinit(self.allocator);
+        try self.collectUnionMembers(&members, ut);
+
+        var buf = std.ArrayListUnmanaged(u8){};
+        defer buf.deinit(self.allocator);
+        for (members.items, 0..) |member, idx| {
+            if (idx > 0) try buf.append(self.allocator, '|');
+            try self.appendTypeLabel(&buf, member);
+        }
+        return buf.toOwnedSlice(self.allocator);
+    }
+
     pub fn convertTypeInfo(self: *TypeSystem, type_info: ast.TypeInfo) HIRType {
         return switch (type_info.base) {
             .Int => .Int,
@@ -200,7 +285,36 @@ pub const TypeSystem = struct {
 
                 return HIRType{ .Map = .{ .key = key_type, .value = value_type } };
             },
-            .Union => .Unknown,
+            .Union => blk: {
+                if (type_info.union_type) |ut| {
+                    const key = self.buildUnionKey(ut) catch return .Unknown;
+                    errdefer self.allocator.free(key);
+                    const entry = self.union_id_map.getOrPut(key) catch return .Unknown;
+                    if (!entry.found_existing) {
+                        entry.key_ptr.* = key;
+                        entry.value_ptr.* = self.next_union_id;
+                        self.next_union_id += 1;
+                    } else {
+                        self.allocator.free(key);
+                    }
+                    const union_id = entry.value_ptr.*;
+
+                    var lowered = std.ArrayListUnmanaged(*const HIRType){};
+                    defer lowered.deinit(self.allocator);
+                    var members = std.ArrayListUnmanaged(*const ast.TypeInfo){};
+                    defer members.deinit(self.allocator);
+                    self.collectUnionMembers(&members, ut) catch return .Unknown;
+                    for (members.items) |member| {
+                        const member_ptr = self.allocator.create(HIRType) catch return .Unknown;
+                        member_ptr.* = self.convertTypeInfo(member.*);
+                        lowered.append(self.allocator, member_ptr) catch return .Unknown;
+                    }
+
+                    const members_slice = lowered.toOwnedSlice(self.allocator) catch return .Unknown;
+                    break :blk HIRType{ .Union = .{ .id = union_id, .members = members_slice } };
+                }
+                break :blk .Unknown;
+            },
             .Custom => self.structTypeFromOptional(type_info.custom_type),
             else => .Nothing,
         };
