@@ -1,0 +1,58 @@
+import Pair from "./types.doxa"
+
+pub struct Context {
+    name :: string
+    literal :: string
+    line_breaks :: int[]
+    # TODO: add hash :: int for caching
+
+    pub function new(_name :: string, _literal :: string, _line_breaks :: int[]) returns Context {
+        return $Context {
+            name is _name
+            literal is _literal
+            line_breaks is _line_breaks
+        }
+    }
+}
+
+pub struct SourceManager {
+    var map FileToContext :: string returns Context
+
+    pub function new() returns SourceManager {
+        return $SourceManager {
+            FileToContext is {}
+        }
+    }
+
+    pub method addFile(_name :: string, _literal :: string, _line_breaks :: int[]) {
+        this.FileToContext[_name] is Context.new(_name, _literal, _line_breaks)
+    }
+
+    pub method getFile(_name :: string) returns Context {
+        return this.FileToContext[_name]
+    }
+
+    pub method getLineColumn(file :: string, offset :: int) returns Pair {
+        const line_break_context is this.FileToContext[file].line_breaks
+        var line_number is 1
+        each lb in line_break_context {
+            if offset > lb then {
+                line_number is line_number + 1
+            } else {
+                break
+            }
+        }
+        # TODO: bug here, must be typed as int or type error
+        # something to do with inference being done too late
+        const prev_line_break :: int is if line_number > 1 then line_break_context[line_number - 2] else 0
+        const column is offset - prev_line_break
+        return $Pair { a is line_number, b is column }
+    }
+
+    pub method hasFile(_name :: string) returns tetra {
+        each context in FileToContext {
+            if context.name == _name then return true
+        }
+        return false
+    }
+}

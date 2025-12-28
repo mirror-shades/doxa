@@ -1,0 +1,261 @@
+enum Error {
+    FailedToEvaluate,
+    FailedToShunt,
+    MismatchedParentheses,
+    DivisionByZero,
+}
+
+enum TokenType {
+    NUMBER,
+    OPERATOR,
+    LPAREN,
+    RPAREN,
+}
+
+struct CalcToken {
+    pub token_type :: TokenType,
+    pub value :: string,
+}
+
+function precedence(op :: string) returns int {
+    return match op {
+        "(" then 0,
+        ")" then 0,
+        "+" then 1,
+        "-" then 1,
+        "*" then 2,
+        "/" then 2,
+        else -1,
+    }
+}
+
+
+
+function calculate(input :: string) {
+    const splitInput is split(input)
+    @assert(verifyParens(splitInput), "parens don't match")
+    const tokens is tokenize(splitInput)
+    const rpn is shunt(tokens)
+
+    rpn as CalcToken[] then {
+        const result is evaluate(rpn)
+        result as int then {
+            @print("Output: {result}\n")
+        }
+        else {
+            @print("{result}\n")
+            @print("evaluation failed\n")
+        }
+    } else {
+        @print("{rpn}\n")
+        @print("tokens failed to shunt\n")
+    }
+}
+
+function evaluate(rpn :: CalcToken[]) returns int | Error {
+    if @length(rpn) == 0 then return Error.FailedToEvaluate
+    
+    var stack :: int[]
+    each t in rpn {
+        if t.token_type == TokenType.NUMBER then {
+            const valid_number is @int(t.value)
+            @push(stack, valid_number)
+        } else if t.token_type == TokenType.OPERATOR then {
+            if @length(stack) < 2 then return Error.FailedToEvaluate
+            const rh is @pop(stack) 
+            const lh is @pop(stack) 
+            if t.value == "+" then @push(stack, lh + rh)
+            if t.value == "-" then @push(stack, lh - rh)
+            if t.value == "/" then {
+                if rh == 0 then return Error.DivisionByZero
+                const result is @int(lh / rh)
+                @push(stack, result)
+            }
+            if t.value == "*" then @push(stack, lh * rh)
+        } else {
+            return Error.FailedToEvaluate
+        }
+    }
+    if @length(stack) != 1 then return Error.FailedToEvaluate
+    return stack[0]
+}
+
+function split(input :: string) returns string[] {
+    if @length(input) == 0 then return []
+    
+    var result :: string[]
+    var current is ""
+
+    const lin is @length(input)
+
+    each c at i in input {
+        if c == " " then {
+            if current != "" then {
+                @push(result, current)
+                current is ""
+            }
+        }
+
+        else if c == "+" or c == "*" or c == "/" or c == "(" or c == ")" then {
+            if current != "" then {
+                @push(result, current)
+                current is ""
+            }
+            @push(result, c)
+        }
+
+        else if c == "-"  {
+            var is_unary_minus is false
+            if @length(current) == 0 then {
+                is_unary_minus is true 
+            } else {
+                if i > 0 then {
+                    is_unary_minus is isUnaryMinus(input[i - 1])
+                }
+            }
+            if is_unary_minus then {
+                current is current + c  # Add to current number
+            } else {
+                if current != "" then {
+                    @push(result, current)
+                    current is ""
+                }
+                @push(result, c)  # Binary minus operator
+            }
+        }
+        else if c != " " {
+            current is current + c
+        } else {
+            unreachable
+        }
+    }
+    if current != "" then @push(result, current)
+    return result
+}
+
+function isUnaryMinus(_input :: string) returns tetra {
+    if _input == " " then return true
+    if _input == "(" then return true
+    if _input == "+" then return true
+    if _input == "*" then return true
+    if _input == "/" then return true
+    return false
+}
+
+function verifyParens(input :: string[]) returns tetra {
+    if @length(input) == 0 then return true
+    
+    var depth is 0
+    var passed :: tetra is true
+    each s in input {
+        if s == "(" then depth += 1
+        if s == ")" then depth -= 1
+        if depth < 0 then {
+            passed is false
+        }
+    }
+    if depth > 0 then {
+        passed is false
+    }
+    return passed
+}
+
+function tokenize(input :: string[]) returns CalcToken[] {
+    if @length(input) == 0 then return []
+    
+    var tokens :: CalcToken[]
+
+    each token in input {
+        if token == "+" or token == "-" or token == "*" or token == "/" then {
+            @push(tokens, $CalcToken {
+                token_type is .OPERATOR,
+                value is token,
+            })
+        }
+        else if token == "(" then {
+            @push(tokens, $CalcToken {
+                token_type is .LPAREN,
+                value is token,
+            })
+        }
+        else if token == ")" then {
+            @push(tokens, $CalcToken {
+                token_type is .RPAREN,
+                value is token,
+            })
+        } else {
+            if token != "" {
+                @push(tokens, $CalcToken {
+                    token_type is .NUMBER,
+                    value is token,
+                })
+            }
+        }
+    }
+    return tokens
+}
+
+function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
+    var output :: CalcToken[]
+    var operators :: CalcToken[]
+
+    each t in tokens {
+        if t.token_type == TokenType.NUMBER then {
+            @push(output, t)
+        }
+        else if t.token_type == TokenType.OPERATOR then {
+            while @length(operators) > 0 {
+                const top_op is operators[@length(operators) - 1]
+                if top_op.token_type != TokenType.OPERATOR then break
+
+                const top_prec is precedence(top_op.value)
+                const current_prec is precedence(t.value)
+
+                if top_prec == -1 or current_prec == -1 then return Error.FailedToShunt
+
+                if top_prec > current_prec or 
+                ...(top_prec == current_prec and 
+                ...t.value == top_op.value) then {
+                    const popped is @pop(operators)
+                    @push(output, popped)
+                } else {
+                    break
+                }
+            }
+
+            @push(operators, t)
+        }
+        else if t.token_type == TokenType.LPAREN then {
+            @push(operators, t)
+        }
+        else if t.token_type == TokenType.RPAREN then {
+            while @length(operators) > 0 and operators[@length(operators) - 1].token_type != TokenType.LPAREN {
+                const popped is @pop(operators)
+                @push(output, popped)
+            }
+
+            if @length(operators) > 0 and operators[@length(operators) - 1].token_type == TokenType.LPAREN then {
+                @pop(operators)
+            } else {
+                @print("Error: Mismatched parentheses\n")
+                return Error.MismatchedParentheses
+            }
+        }
+    }
+
+    while @length(operators) > 0 {
+        const popped is @pop(operators)
+        if popped.token_type == TokenType.LPAREN or 
+        ...popped.token_type == TokenType.RPAREN then {
+            return Error.MismatchedParentheses
+        }
+        @push(output, popped)
+    }
+
+    return output
+}
+
+entry function main() {
+    const expr is @input()
+    calculate(expr)
+}

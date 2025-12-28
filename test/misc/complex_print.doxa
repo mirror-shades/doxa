@@ -1,0 +1,7 @@
+# complex print statement
+var number is 10
+var variable_name is "number"
+@print("The variable \"{variable_name}\" is equal to {@string(number)}\n")
+@print("The variable name \"{variable_name}\" has {@string(@length(variable_name))} letters\n")
+@print("The variable \"{variable_name}\" is equal to {@string(number)} and the name has {@string(@length(variable_name))} letters\n")
+@print("end\n")

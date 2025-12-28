@@ -1,0 +1,15 @@
+# Test file with undefined variable error
+function main() {
+    var x is undefined_variable
+    @print("x: {x}\n")
+}
+
+
+
+
+
+
+
+
+
+

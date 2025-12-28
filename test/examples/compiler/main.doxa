@@ -1,0 +1,22 @@
+/*
+step 1 discovery
+step 2 
+*/
+
+
+module Lexer from "./lexer/lexer.doxa"
+
+
+entry function main() {
+    var program_src is "
+    ...var hello is \"hello... world\"\n
+    ...\n
+    ...entry function main() {\n
+    ...    hello?\n
+    ...}\n"
+
+    @print("{program_src}")
+
+    var result is Lexer.lex(program_src)
+    @print("{result}")
+}
