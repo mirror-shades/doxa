@@ -1,6 +1,6 @@
 .{
     .name = .doxa,
-    .version = "0.0.0",
+    .version = "0.3.0-alpha",
     .minimum_zig_version = "0.15.2",
     .fingerprint = 0xbd891657afd13d1,
     .paths = .{
