@@ -1,0 +1,105 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, ${{ matrix.zig_version }}, ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Ubuntu x86_64
+          - os: ubuntu-latest
+            zig_version: '0.15.2'
+            arch: x86_64
+            target: x86_64-linux-gnu
+          - os: ubuntu-latest
+            zig_version: master
+            arch: x86_64
+            target: x86_64-linux-gnu
+          # Ubuntu ARM64
+          - os: ubuntu-latest
+            zig_version: '0.15.2'
+            arch: aarch64
+            target: aarch64-linux-gnu
+          - os: ubuntu-latest
+            zig_version: master
+            arch: aarch64
+            target: aarch64-linux-gnu
+
+          # macOS x86_64 (Intel)
+          - os: macos-latest
+            zig_version: '0.15.2'
+            arch: x86_64
+            target: x86_64-macos-none
+          - os: macos-latest
+            zig_version: master
+            arch: x86_64
+            target: x86_64-macos-none
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-latest
+            zig_version: '0.15.2'
+            arch: aarch64
+            target: aarch64-macos-none
+          - os: macos-latest
+            zig_version: master
+            arch: aarch64
+            target: aarch64-macos-none
+
+          # Windows x86_64
+          - os: windows-latest
+            zig_version: '0.15.2'
+            arch: x86_64
+            target: x86_64-windows-gnu
+          - os: windows-latest
+            zig_version: master
+            arch: x86_64
+            target: x86_64-windows-gnu
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Zig
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: ${{ matrix.zig_version }}
+
+    - name: Check Zig version
+      run: zig version
+
+    - name: Build project
+      run: zig build -Dtarget=${{ matrix.target }}
+
+    - name: Run tests
+      run: zig build test -Dtarget=${{ matrix.target }}
+
+  # Additional job for Windows ARM64 testing (if supported)
+  test-windows-arm64:
+    name: Test Windows ARM64
+    runs-on: windows-latest
+    if: false  # Disabled until Windows ARM64 runners are available
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Zig
+      uses: goto-bus-stop/setup-zig@v2
+      with:
+        version: 0.15.2
+
+    - name: Check Zig version
+      run: zig version
+
+    - name: Build project (ARM64)
+      run: zig build -Dtarget=aarch64-windows-gnu
+
+    - name: Run tests (ARM64)
+      run: zig build test -Dtarget=aarch64-windows-gnu

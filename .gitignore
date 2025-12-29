@@ -3,7 +3,6 @@ zig-out
 out/
 test/out/
 venv
-.github
 site
 
 last_diagnostics.log
