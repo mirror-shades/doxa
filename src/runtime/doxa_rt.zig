@@ -233,6 +233,10 @@ pub export fn doxa_map_set_i64(map: *MapRuntime.MapHeader, key: i64, value: i64)
     MapRuntime.mapSetI64(map, key, value);
 }
 
+pub export fn doxa_map_set_else_i64(map: *MapRuntime.MapHeader, value: i64) callconv(.c) void {
+    MapRuntime.mapSetElseI64(map, value);
+}
+
 pub export fn doxa_map_get_i64(map: *MapRuntime.MapHeader, key: i64) callconv(.c) i64 {
     return MapRuntime.mapGetI64(map, key);
 }

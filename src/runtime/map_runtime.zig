@@ -26,6 +26,8 @@ pub const MapHeader = struct {
     capacity: usize,
     key_tag: u64,
     value_tag: u64,
+    else_value: i64 = 0,
+    has_else_value: bool = false,
 };
 
 fn mapAllocator() std.mem.Allocator {
@@ -52,6 +54,8 @@ pub fn mapNew(capacity_raw: i64, key_tag: i64, value_tag: i64) *MapHeader {
     header.capacity = if (cap == 0) 0 else cap;
     header.key_tag = @intCast(key_tag);
     header.value_tag = @intCast(value_tag);
+    header.else_value = 0;
+    header.has_else_value = false;
     return header;
 }
 
@@ -109,6 +113,11 @@ pub fn mapSetI64(map: *MapHeader, key: i64, value: i64) void {
     map.len += 1;
 }
 
+pub fn mapSetElseI64(map: *MapHeader, value: i64) void {
+    map.else_value = value;
+    map.has_else_value = true;
+}
+
 pub fn mapTryGetI64(map: *MapHeader, key: i64, out_value: *i64) bool {
     var i: usize = 0;
     while (i < map.len) : (i += 1) {
@@ -117,6 +126,11 @@ pub fn mapTryGetI64(map: *MapHeader, key: i64, out_value: *i64) bool {
             out_value.* = entry.value;
             return true;
         }
+    }
+
+    if (map.has_else_value) {
+        out_value.* = map.else_value;
+        return true;
     }
 
     // No entry found – initialize output to a neutral payload.
@@ -131,6 +145,10 @@ pub fn mapGetI64(map: *MapHeader, key: i64) i64 {
         if (keysEqual(map.key_tag, entry.key, key)) {
             return entry.value;
         }
+    }
+
+    if (map.has_else_value) {
+        return map.else_value;
     }
 
     // No entry found – return 0 as a generic "nothing" payload; the
