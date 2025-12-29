@@ -127,17 +127,9 @@ fn copyBinToInstallDir(step: *std.Build.Step, options: std.Build.Step.MakeOption
 
     const allocator = b.allocator;
 
-    // Resolve and create the target directory
+    // Resolve the target directory (build system should create it)
     const install_dir = try std.fs.path.resolve(allocator, &.{install_path});
     defer allocator.free(install_dir);
-
-    std.fs.makeDirAbsolute(install_dir) catch |err| {
-        std.debug.print("Error creating install directory '{s}': {s}\n", .{
-            install_dir,
-            @errorName(err),
-        });
-        return err;
-    };
 
     // `getInstallPath(.bin, "")` points at zig-out/bin for this build.
     const bin_dir_path = b.getInstallPath(.bin, "");
