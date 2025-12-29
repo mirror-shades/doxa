@@ -57,6 +57,28 @@ zig build
 zig build test
 ```
 
+### Creating Releases
+
+To build optimized release binaries for multiple platforms:
+
+```bash
+# Build all platforms
+zig run release.zig -- v1.0.0
+
+# Build specific platforms
+zig run release.zig -- v1.0.0 x86_64-linux-gnu aarch64-linux-gnu
+
+# Build with compressed archives
+zig run release.zig -- v1.0.0 --create-archives
+```
+
+This creates a `doxa-v1.0.0/` directory with executables for each platform:
+- `doxa-v1.0.0-linux-x64` (Linux x86_64)
+- `doxa-v1.0.0-linux-arm64` (Linux ARM64)
+- `doxa-v1.0.0-macos-x64` (macOS x86_64)
+- `doxa-v1.0.0-macos-arm64` (macOS ARM64)
+- `doxa-v1.0.0-windows-x64.exe` (Windows x86_64)
+
 ## Native Types
 
 Doxa is based upon a very small number of types with enums, structs, and type unions providing a huge degree of flexibility to how these core types can be used. Exhaustive match statements and union type narrowing allow for extremly simple yet powerful error handling patterns that takes the idea of errors as values very literally.
