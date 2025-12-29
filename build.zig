@@ -29,6 +29,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("test/answers.zig"),
     }));
     const run_test_run = b.addRunArtifact(test_run_exe);
+    run_test_run.skip_foreign_checks = true;
 
     // Compilation tests
     const test_compile_exe = b.addTest(.{
@@ -41,6 +42,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("test/answers.zig"),
     }));
     const run_test_compile = b.addRunArtifact(test_compile_exe);
+    run_test_compile.skip_foreign_checks = true;
 
     // LSP tests
     const reporting_module = b.createModule(.{
@@ -55,6 +57,7 @@ pub fn build(b: *std.Build) void {
     });
     test_lsp_exe.root_module.addImport("reporting", reporting_module);
     const run_test_lsp = b.addRunArtifact(test_lsp_exe);
+    run_test_lsp.skip_foreign_checks = true;
 
     // Run all tests
     const test_step = b.step("test", "Run all tests");
