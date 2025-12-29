@@ -519,6 +519,7 @@ fn internPeekString(
         try w.writeAll("declare ptr @doxa_array_concat(ptr, ptr, i64, i64)\n");
         try w.writeAll("declare ptr @doxa_map_new(i64, i64, i64)\n");
         try w.writeAll("declare void @doxa_map_set_i64(ptr, i64, i64)\n");
+        try w.writeAll("declare void @doxa_map_set_else_i64(ptr, i64)\n");
         try w.writeAll("declare i64 @doxa_map_get_i64(ptr, i64)\n");
         try w.writeAll("declare i8 @doxa_map_try_get_i64(ptr, i64, ptr)\n");
         try w.writeAll("declare double @llvm.pow.f64(double, double)\n");
@@ -4645,10 +4646,23 @@ fn internPeekString(
         inst: std.meta.TagPayload(HIRInstruction, .Map),
     ) !void {
         const entry_count: usize = inst.entries.len;
+        const else_inputs: usize = if (inst.has_else_value) @as(usize, 1) else 0;
+        const expected_inputs: usize = entry_count * 2 + else_inputs;
+        if (stack.items.len < expected_inputs) return;
+
+        const key_tag = self.arrayElementTag(inst.key_type);
+        const val_tag = self.arrayElementTag(inst.value_type);
+
+        var else_storage: ?StackVal = null;
+
         if (entry_count == 0) {
+            if (inst.has_else_value) {
+                const else_val = stack.items[stack.items.len - 1];
+                stack.items.len -= 1;
+                else_storage = try self.convertValueToArrayStorage(w, else_val, inst.value_type, id);
+            }
+
             // Empty map – still create a header so subsequent MapGet/MapSet work.
-            const key_tag = self.arrayElementTag(inst.key_type);
-            const val_tag = self.arrayElementTag(inst.value_type);
             const reg = try self.nextTemp(id);
             const line = try std.fmt.allocPrint(
                 self.allocator,
@@ -4657,14 +4671,20 @@ fn internPeekString(
             );
             defer self.allocator.free(line);
             try w.writeAll(line);
+
+            if (else_storage) |else_val| {
+                const set_else_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  call void @doxa_map_set_else_i64(ptr {s}, i64 {s})\n",
+                    .{ reg, else_val.name },
+                );
+                defer self.allocator.free(set_else_line);
+                try w.writeAll(set_else_line);
+            }
+
             try stack.append(.{ .name = reg, .ty = .PTR, .array_type = inst.value_type });
             return;
         }
-
-        if (stack.items.len < entry_count * 2) return;
-
-        const key_tag = self.arrayElementTag(inst.key_type);
-        const val_tag = self.arrayElementTag(inst.value_type);
 
         const map_reg = try self.nextTemp(id);
         const new_line = try std.fmt.allocPrint(
@@ -4692,6 +4712,22 @@ fn internPeekString(
             );
             defer self.allocator.free(set_line);
             try w.writeAll(set_line);
+        }
+
+        if (inst.has_else_value) {
+            const else_val = stack.items[stack.items.len - 1];
+            stack.items.len -= 1;
+            else_storage = try self.convertValueToArrayStorage(w, else_val, inst.value_type, id);
+
+            if (else_storage) |else_bits| {
+                const set_else_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  call void @doxa_map_set_else_i64(ptr {s}, i64 {s})\n",
+                    .{ map_reg, else_bits.name },
+                );
+                defer self.allocator.free(set_else_line);
+                try w.writeAll(set_else_line);
+            }
         }
 
         try stack.append(.{ .name = map_reg, .ty = .PTR, .array_type = inst.value_type });
