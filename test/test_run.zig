@@ -1,6 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const answers = @import("answers");
+const answers = @import("./answers.zig");
 const testing = std.testing;
 const process = std.process;
 const fs = std.fs;

@@ -170,7 +170,7 @@ const Server = struct {
 
     fn loop(self: *Server) !void {
         var stdin_buffer: [4096]u8 = undefined;
-        const stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+        var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
         const reader = &stdin_reader.interface;
 
         while (!self.should_exit) {
