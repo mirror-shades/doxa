@@ -98,7 +98,7 @@ fn internPeekString(
     return info;
 }
 
-    pub const IRPrinter = struct {
+pub const IRPrinter = struct {
     /// Lightweight metadata used to render enum values by name in native code.
     /// Collected once from the constant pool and reused by `emitEnumPrint`.
     const EnumVariantMeta = struct {
@@ -119,13 +119,13 @@ fn internPeekString(
     function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
     function_struct_return_type_names: std.StringHashMap([]const u8),
     struct_field_names_by_type: std.StringHashMap([]const []const u8),
-      last_emitted_enum_value: ?u64 = null,
-      enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
-  
-      /// Stack-level type used during IR emission. Most user values are
-      /// currently represented as I64/F64/PTR; `Value` is reserved for
-      /// future use when passing the canonical `%DoxaValue` directly.
-      const StackType = enum { I64, F64, I8, I1, I2, PTR, Value, Nothing };
+    last_emitted_enum_value: ?u64 = null,
+    enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
+
+    /// Stack-level type used during IR emission. Most user values are
+    /// currently represented as I64/F64/PTR; `Value` is reserved for
+    /// future use when passing the canonical `%DoxaValue` directly.
+    const StackType = enum { I64, F64, I8, I1, I2, PTR, Value, Nothing };
     const StackVal = struct {
         name: []const u8,
         ty: StackType,
@@ -278,7 +278,7 @@ fn internPeekString(
             try w.writeAll(tag_line);
 
             const reserved_reg = try self.nextTemp(id);
-            const reserved_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, 0\n", .{ reserved_reg });
+            const reserved_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, 0\n", .{reserved_reg});
             defer self.allocator.free(reserved_line);
             try w.writeAll(reserved_line);
 
@@ -3794,16 +3794,16 @@ fn internPeekString(
                             try w.writeAll(call_line);
                         },
                         .Value => {
-                        const tmp_ptr = try self.nextTemp(&id);
-                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{tmp_ptr});
-                        defer self.allocator.free(alloca_line);
-                        try w.writeAll(alloca_line);
-                        const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ v.name, tmp_ptr });
-                        defer self.allocator.free(store_line);
-                        try w.writeAll(store_line);
-                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
-                        defer self.allocator.free(call_line);
-                        try w.writeAll(call_line);
+                            const tmp_ptr = try self.nextTemp(&id);
+                            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{tmp_ptr});
+                            defer self.allocator.free(alloca_line);
+                            try w.writeAll(alloca_line);
+                            const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ v.name, tmp_ptr });
+                            defer self.allocator.free(store_line);
+                            try w.writeAll(store_line);
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
+                            defer self.allocator.free(call_line);
+                            try w.writeAll(call_line);
                         },
                         .PTR => {
                             if (v.struct_field_types) |fts| {
