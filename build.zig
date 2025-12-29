@@ -1,11 +1,13 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+
     const exe = b.addExecutable(.{
         .name = "doxa",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/main.zig"),
-            .target = b.graph.host,
+            .target = target,
         }),
     });
 
@@ -20,7 +22,7 @@ pub fn build(b: *std.Build) void {
     const test_run_exe = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/test_run.zig"),
-            .target = b.graph.host,
+            .target = target,
         }),
     });
     test_run_exe.root_module.addImport("answers", b.createModule(.{
@@ -32,7 +34,7 @@ pub fn build(b: *std.Build) void {
     const test_compile_exe = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/test_compile.zig"),
-            .target = b.graph.host,
+            .target = target,
         }),
     });
     test_compile_exe.root_module.addImport("answers", b.createModule(.{
@@ -48,7 +50,7 @@ pub fn build(b: *std.Build) void {
     const test_lsp_exe = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/test_lsp.zig"),
-            .target = b.graph.host,
+            .target = target,
         }),
     });
     test_lsp_exe.root_module.addImport("reporting", reporting_module);
