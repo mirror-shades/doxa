@@ -2,10 +2,6 @@ const std = @import("std");
 const HIRInstruction = @import("soxa_instructions.zig").HIRInstruction;
 const HIRValue = @import("soxa_values.zig").HIRValue;
 
-//==================================================================
-// SUPPORTING TYPES
-//==================================================================
-
 pub const StructId = u32;
 pub const EnumId = u32;
 pub const UnionId = u32;
@@ -24,30 +20,24 @@ pub const HIRType = union(enum) {
     Tetra,
     Nothing,
 
-    // Arrays carry element type metadata
     Array: *const HIRType,
-
-    // Map carries both key & value types
     Map: struct { key: *const HIRType, value: *const HIRType },
 
-    // Store IDs; look up details in a table
     Struct: StructId,
     Enum: EnumId,
 
-    // Optional: carry function sig by pointers/ids
     Function: struct {
         params: []const *const HIRType,
         ret: *const HIRType,
     },
 
-    // Union types: carry a stable per-union id and the member types.
     Union: struct {
         id: UnionId,
         members: []const *const HIRType,
     },
 
     Unknown,
-    Poison, // Poison type for malformed/invalid types
+    Poison,
 };
 
 pub fn arrayInnermostElementType(element_type: HIRType) ?HIRType {
@@ -69,11 +59,10 @@ pub fn arrayInnermostElementType(element_type: HIRType) ?HIRType {
     }
 }
 
-// Additional type information for complex types
 pub const ArrayTypeInfo = struct {
     element_type: HIRType,
-    size: ?u32, // null = dynamic array
-    nested_element_type: ?*ArrayTypeInfo = null, // For nested arrays like int[][]
+    size: ?u32,
+    nested_element_type: ?*ArrayTypeInfo = null,
 };
 
 pub const StructTypeInfo = struct {
@@ -84,7 +73,7 @@ pub const StructTypeInfo = struct {
 pub const StructFieldInfo = struct {
     name: []const u8,
     field_type: HIRType,
-    offset: u32, // Byte offset for efficient access
+    offset: u32,
 };
 
 pub const MapTypeInfo = struct {
@@ -99,36 +88,31 @@ pub const EnumTypeInfo = struct {
 };
 
 pub const ScopeKind = enum {
-    Local, // Function-local variable
-    GlobalLocal, // Script-level global (accessible from functions, but local to script execution)
-    ModuleGlobal, // Module-level global (persistent across modules)
-    ImportedModule, // Variable from imported module
-    Builtin, // Built-in system variable
+    Local,
+    GlobalLocal,
+    ModuleGlobal,
+    ImportedModule,
+    Builtin,
 };
 
 pub const CallKind = enum {
-    LocalFunction, // Function in current module
-    ModuleFunction, // Function in imported module
-    BuiltinFunction, // Built-in function
+    LocalFunction,
+    ModuleFunction,
+    BuiltinFunction,
 };
-
-//==================================================================
-// HIR PROGRAM REPRESENTATION
-//==================================================================
 
 pub const HIRProgram = struct {
     instructions: []HIRInstruction,
-    constant_pool: []HIRValue, // VM: Direct constant access
-    string_pool: [][]const u8, // Shared string literals
-    function_table: []HIRProgram.HIRFunction, // VM: Function metadata
-    module_map: std.StringHashMap(ModuleInfo), // LLVM: Module context
-    allocator: std.mem.Allocator, // NEW: Keep allocator for cleanup
+    constant_pool: []HIRValue,
+    string_pool: [][]const u8,
+    function_table: []HIRProgram.HIRFunction,
+    module_map: std.StringHashMap(ModuleInfo),
+    allocator: std.mem.Allocator,
 
     pub fn deinit(self: *HIRProgram) void {
         self.allocator.free(self.instructions);
         self.allocator.free(self.constant_pool);
 
-        // Free individual strings
         for (self.string_pool) |str| {
             self.allocator.free(str);
         }
@@ -140,18 +124,17 @@ pub const HIRProgram = struct {
 
     pub const HIRFunction = struct {
         name: []const u8,
-        qualified_name: []const u8, // module.function for LLVM
+        qualified_name: []const u8,
         arity: u32,
         return_type: HIRType,
         start_label: []const u8,
-        body_label: ?[]const u8 = null, // For tail call optimization - jumps here to skip parameter setup
-        // Cached instruction indices for fast calls (filled by VM at init)
+        body_label: ?[]const u8 = null,
         start_ip: u32 = 0,
         body_ip: ?u32 = null,
-        local_var_count: u32, // VM: stack frame sizing
+        local_var_count: u32,
         is_entry: bool,
-        param_is_alias: []bool, // NEW: Track which parameters are aliases
-        param_types: []HIRType, // NEW: Track parameter types for VM binding
+        param_is_alias: []bool,
+        param_types: []HIRType,
     };
 
     pub const ModuleInfo = struct {
