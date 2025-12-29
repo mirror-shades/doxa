@@ -237,6 +237,10 @@ pub export fn doxa_map_get_i64(map: *MapRuntime.MapHeader, key: i64) callconv(.c
     return MapRuntime.mapGetI64(map, key);
 }
 
+pub export fn doxa_map_try_get_i64(map: *MapRuntime.MapHeader, key: i64, out_value: *i64) callconv(.c) u8 {
+    return if (MapRuntime.mapTryGetI64(map, key, out_value)) 1 else 0;
+}
+
 pub const DoxaPeekInfo = extern struct {
     file: ?[*:0]const u8,
     name: ?[*:0]const u8,

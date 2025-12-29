@@ -637,6 +637,7 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Generate map lookup
     MapGet: struct {
         key_type: HIRType,
+        value_type: HIRType,
     },
 
     /// Set map value by key

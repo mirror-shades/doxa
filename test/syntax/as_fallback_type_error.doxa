@@ -1,0 +1,6 @@
+const newun :: int | float is 3
+
+# Fallback must match the target type (float), so using an int should fail
+const resfloat is newun as float else 0 # float
+
+resfloat? # unreachable

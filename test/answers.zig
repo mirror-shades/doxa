@@ -513,7 +513,7 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "3" },
     .{ .type = "int", .value = "0" },
     .{ .type = "int", .value = "3" },
-    .{ .type = "int", .value = "0" },
+    .{ .type = "float", .value = "0.0" },
     .{ .type = ">float | nothing", .value = "1.5" },
     .{ .type = ">float | nothing", .value = "3.5" },
     .{ .type = ">float | nothing", .value = "4.5" },

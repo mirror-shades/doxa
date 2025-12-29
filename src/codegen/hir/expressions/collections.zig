@@ -182,7 +182,9 @@ pub const CollectionsHandler = struct {
     }
 
     /// Generate HIR for index access expressions
-    pub fn generateIndex(self: *CollectionsHandler, index: ast.Index, preserve_result: bool, should_pop_after_use: bool) !void {
+    pub fn generateIndex(self: *CollectionsHandler, expr: *ast.Expr, preserve_result: bool, should_pop_after_use: bool) !void {
+        const index = expr.data.Index;
+
         // Generate array/map expression
         try self.generator.generateExpression(index.array, true, false);
 
@@ -193,11 +195,17 @@ pub const CollectionsHandler = struct {
                 // Generate index expression
                 try self.generator.generateExpression(index.index, true, false);
 
+                // Infer the result type of this index expression (e.g., float | nothing)
+                const result_type = self.generator.inferTypeFromExpression(expr);
+
                 // Map access - use MapGet with key type inferred from index
                 _ = self.generator.inferTypeFromExpression(index.index);
                 // For now, use String as default since HIRType comparisons are not supported
                 const key_type = HIRType.String;
-                try self.generator.instructions.append(.{ .MapGet = .{ .key_type = key_type } });
+                try self.generator.instructions.append(.{ .MapGet = .{
+                    .key_type = key_type,
+                    .value_type = result_type,
+                } });
             },
             .Array, .String => {
                 // Generate index expression

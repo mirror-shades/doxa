@@ -520,6 +520,7 @@ fn internPeekString(
         try w.writeAll("declare ptr @doxa_map_new(i64, i64, i64)\n");
         try w.writeAll("declare void @doxa_map_set_i64(ptr, i64, i64)\n");
         try w.writeAll("declare i64 @doxa_map_get_i64(ptr, i64)\n");
+        try w.writeAll("declare i8 @doxa_map_try_get_i64(ptr, i64, ptr)\n");
         try w.writeAll("declare double @llvm.pow.f64(double, double)\n");
         try w.writeAll("declare double @doxa_random()\n");
         try w.writeAll("declare i64 @doxa_tick()\n");
@@ -4714,20 +4715,162 @@ fn internPeekString(
 
         const key_storage = try self.convertValueToArrayStorage(w, key_val, inst.key_type, id);
 
-        const res_reg = try self.nextTemp(id);
-        const get_line = try std.fmt.allocPrint(
+        // Retrieve the value and whether the key existed
+        const val_ptr = try self.nextTemp(id);
+        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{val_ptr});
+        defer self.allocator.free(alloca_line);
+        try w.writeAll(alloca_line);
+
+        const init_line = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{val_ptr});
+        defer self.allocator.free(init_line);
+        try w.writeAll(init_line);
+
+        const found_i8 = try self.nextTemp(id);
+        const try_line = try std.fmt.allocPrint(
             self.allocator,
-            "  {s} = call i64 @doxa_map_get_i64(ptr {s}, i64 {s})\n",
-            .{ res_reg, map_val.name, key_storage.name },
+            "  {s} = call i8 @doxa_map_try_get_i64(ptr {s}, i64 {s}, ptr {s})\n",
+            .{ found_i8, map_val.name, key_storage.name, val_ptr },
         );
-        defer self.allocator.free(get_line);
-        try w.writeAll(get_line);
+        defer self.allocator.free(try_line);
+        try w.writeAll(try_line);
+
+        const found = try self.nextTemp(id);
+        const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i8 {s} to i1\n", .{ found, found_i8 });
+        defer self.allocator.free(trunc_line);
+        try w.writeAll(trunc_line);
+
+        const res_reg = try self.nextTemp(id);
+        const load_line = try std.fmt.allocPrint(
+            self.allocator,
+            "  {s} = load i64, ptr {s}\n",
+            .{ res_reg, val_ptr },
+        );
+        defer self.allocator.free(load_line);
+        try w.writeAll(load_line);
 
         const storage_val = StackVal{ .name = res_reg, .ty = .I64 };
-        const value_type = map_val.array_type orelse HIR.HIRType.Int;
 
-        const actual_val = try self.convertArrayStorageToValue(w, storage_val, value_type, id);
-        try stack.append(actual_val);
+        // Determine the logical value type for this lookup
+        var inferred_value_type: HIR.HIRType = inst.value_type;
+        if (inferred_value_type == .Unknown) {
+            inferred_value_type = map_val.array_type orelse HIR.HIRType.Int;
+        }
+
+        var has_nothing_branch = false;
+        var concrete_value_type: HIR.HIRType = inferred_value_type;
+        if (inferred_value_type == .Union) {
+            const members = inferred_value_type.Union.members;
+            for (members) |member_ptr| {
+                const m = member_ptr.*;
+                if (m == .Nothing) {
+                    has_nothing_branch = true;
+                    continue;
+                }
+                concrete_value_type = m;
+            }
+        }
+
+        if (has_nothing_branch) {
+            const actual_val = try self.convertArrayStorageToValue(w, storage_val, concrete_value_type, id);
+            const dv_present = try self.buildDoxaValue(w, actual_val, inferred_value_type, id);
+
+            const dv_absent = try self.buildDoxaValue(
+                w,
+                StackVal{ .name = "0", .ty = .Nothing },
+                inferred_value_type,
+                id,
+            );
+
+            const tag_present = try self.nextTemp(id);
+            const tag_present_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 0\n", .{ tag_present, dv_present.name });
+            defer self.allocator.free(tag_present_line);
+            try w.writeAll(tag_present_line);
+
+            const tag_absent = try self.nextTemp(id);
+            const tag_absent_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 0\n", .{ tag_absent, dv_absent.name });
+            defer self.allocator.free(tag_absent_line);
+            try w.writeAll(tag_absent_line);
+
+            const tag_sel = try self.nextTemp(id);
+            const tag_sel_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = select i1 {s}, i32 {s}, i32 {s}\n",
+                .{ tag_sel, found, tag_present, tag_absent },
+            );
+            defer self.allocator.free(tag_sel_line);
+            try w.writeAll(tag_sel_line);
+
+            const res_present = try self.nextTemp(id);
+            const res_present_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 1\n", .{ res_present, dv_present.name });
+            defer self.allocator.free(res_present_line);
+            try w.writeAll(res_present_line);
+
+            const res_absent = try self.nextTemp(id);
+            const res_absent_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 1\n", .{ res_absent, dv_absent.name });
+            defer self.allocator.free(res_absent_line);
+            try w.writeAll(res_absent_line);
+
+            const res_sel = try self.nextTemp(id);
+            const res_sel_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = select i1 {s}, i32 {s}, i32 {s}\n",
+                .{ res_sel, found, res_present, res_absent },
+            );
+            defer self.allocator.free(res_sel_line);
+            try w.writeAll(res_sel_line);
+
+            const payload_present = try self.nextTemp(id);
+            const payload_present_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload_present, dv_present.name });
+            defer self.allocator.free(payload_present_line);
+            try w.writeAll(payload_present_line);
+
+            const payload_absent = try self.nextTemp(id);
+            const payload_absent_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload_absent, dv_absent.name });
+            defer self.allocator.free(payload_absent_line);
+            try w.writeAll(payload_absent_line);
+
+            const payload_sel = try self.nextTemp(id);
+            const payload_sel_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = select i1 {s}, i64 {s}, i64 {s}\n",
+                .{ payload_sel, found, payload_present, payload_absent },
+            );
+            defer self.allocator.free(payload_sel_line);
+            try w.writeAll(payload_sel_line);
+
+            const dv0 = try self.nextTemp(id);
+            const dv0_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = insertvalue %DoxaValue undef, i32 {s}, 0\n",
+                .{ dv0, tag_sel },
+            );
+            defer self.allocator.free(dv0_line);
+            try w.writeAll(dv0_line);
+
+            const dv1 = try self.nextTemp(id);
+            const dv1_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n",
+                .{ dv1, dv0, res_sel },
+            );
+            defer self.allocator.free(dv1_line);
+            try w.writeAll(dv1_line);
+
+            const dv2 = try self.nextTemp(id);
+            const dv2_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = insertvalue %DoxaValue {s}, i64 {s}, 2\n",
+                .{ dv2, dv1, payload_sel },
+            );
+            defer self.allocator.free(dv2_line);
+            try w.writeAll(dv2_line);
+
+            try stack.append(.{ .name = dv2, .ty = .Value });
+        } else {
+            const value_type = map_val.array_type orelse concrete_value_type;
+            const actual_val = try self.convertArrayStorageToValue(w, storage_val, value_type, id);
+            try stack.append(actual_val);
+        }
     }
 
     fn emitMapSet(
