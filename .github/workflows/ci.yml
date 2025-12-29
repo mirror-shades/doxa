@@ -13,51 +13,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Ubuntu x86_64
           - os: ubuntu-latest
             zig_version: '0.15.2'
             arch: x86_64
             target: x86_64-linux-gnu
           - os: ubuntu-latest
-            zig_version: master
-            arch: x86_64
-            target: x86_64-linux-gnu
-          # Ubuntu ARM64
-          - os: ubuntu-latest
             zig_version: '0.15.2'
             arch: aarch64
             target: aarch64-linux-gnu
-          - os: ubuntu-latest
-            zig_version: master
-            arch: aarch64
-            target: aarch64-linux-gnu
-
-          # macOS x86_64 (Intel)
           - os: macos-latest
             zig_version: '0.15.2'
             arch: x86_64
             target: x86_64-macos-none
           - os: macos-latest
-            zig_version: master
-            arch: x86_64
-            target: x86_64-macos-none
-          # macOS ARM64 (Apple Silicon)
-          - os: macos-latest
             zig_version: '0.15.2'
             arch: aarch64
             target: aarch64-macos-none
-          - os: macos-latest
-            zig_version: master
-            arch: aarch64
-            target: aarch64-macos-none
-
-          # Windows x86_64
           - os: windows-latest
             zig_version: '0.15.2'
-            arch: x86_64
-            target: x86_64-windows-gnu
-          - os: windows-latest
-            zig_version: master
             arch: x86_64
             target: x86_64-windows-gnu
 
