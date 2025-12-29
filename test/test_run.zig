@@ -407,6 +407,15 @@ test "unified runner" {
             .expected_error = .{ .exit_code = 1, .contains_message = "Undefined variable", .error_code = "E1001" },
         },
         .{
+            .name = "as fallback type mismatch",
+            .path = "./test/syntax/as_fallback_type_error.doxa",
+            .mode = .ERROR,
+            .input = null,
+            .expected_print = null,
+            .expected_peek = null,
+            .expected_error = .{ .exit_code = 1, .contains_message = "Fallback for 'as' must produce type float, got int", .error_code = "E1003" },
+        },
+        .{
             .name = "fixed array push requires dynamic storage",
             .path = "./test/syntax/fixed_array_push_error.doxa",
             .mode = .ERROR,

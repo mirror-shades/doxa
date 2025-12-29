@@ -930,10 +930,12 @@ pub const SoxaTextParser = struct {
             } });
         } else if (std.mem.eql(u8, op, "MapGet")) {
             const key_type_str = tokens.next() orelse return;
+            const value_type_str = tokens.next();
             const key_type = parseTypeFromToken(key_type_str);
-
+            const value_type = if (value_type_str) |vt| parseTypeFromToken(vt) else .Unknown;
             try self.instructions.append(HIRInstruction{ .MapGet = .{
                 .key_type = key_type,
+                .value_type = value_type,
             } });
         } else if (std.mem.eql(u8, op, "MapSet")) {
             const key_type_str = tokens.next() orelse return;

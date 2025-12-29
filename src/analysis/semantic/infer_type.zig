@@ -2343,6 +2343,36 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
             }
 
+            if (else_type) |et| {
+                const label = struct {
+                    fn run(t: *ast.TypeInfo) []const u8 {
+                        if (t.custom_type) |ct| return ct;
+                        return switch (t.base) {
+                            .Int => "int",
+                            .Byte => "byte",
+                            .Float => "float",
+                            .String => "string",
+                            .Tetra => "tetra",
+                            .Nothing => "nothing",
+                            else => @tagName(t.base),
+                        };
+                    }
+                }.run;
+
+                const fallback_matches_target = et.base == .Nothing or helpers.typesEqual(self, target_type_info, et);
+                if (!fallback_matches_target) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.TYPE_MISMATCH,
+                        "Fallback for 'as' must produce type {s}, got {s}",
+                        .{ label(target_type_info), label(et) },
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+            }
+
             type_info.* = target_type_info.*;
 
             if (then_type) |tt| {

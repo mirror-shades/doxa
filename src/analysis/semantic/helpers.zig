@@ -20,7 +20,7 @@ const StructId = HIRTypeModule.StructId;
 const HIREnum = @import("../../codegen/hir/soxa_values.zig").HIREnum;
 
 /// Helper: structural equality for TypeInfo (avoid collapsing by .base only)
-fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
+pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
     if (a.base != b.base) return false;
 
     switch (a.base) {

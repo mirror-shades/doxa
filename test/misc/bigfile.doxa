@@ -319,7 +319,8 @@ function onlyUsesInt(x :: int) {
 
 const x :: int | float is 17
 
-x as int then onlyUsesInt(x) else "failure"?
+# ensure the fallback matches the narrowed type
+x as int then onlyUsesInt(x) else 0?
 
 
 ##
@@ -641,7 +642,7 @@ function process_number_union_return_union(value :: int | float) returns int | f
 const newun :: int | float is process_number_union_return_union(un1)
 
 const resint is newun as int else 0 # integer
-const resfloat is newun as float else 0 # float
+const resfloat is newun as float else 0.0 # float
 
 resint? # 3
 resfloat? # 0

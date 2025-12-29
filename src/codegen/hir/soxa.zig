@@ -1104,7 +1104,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             "    Map {} {s} {s} else:{s}       ; Create map with {} entries\n",
             .{ m.entries.len, @tagName(m.key_type), @tagName(m.value_type), if (m.has_else_value) "true" else "false", m.entries.len },
         ),
-        .MapGet => |m| try writer.print("    MapGet {s}                   ; Get map value by key\n", .{@tagName(m.key_type)}),
+        .MapGet => |m| try writer.print("    MapGet {s} {s}              ; Get map value by key\n", .{ @tagName(m.key_type), @tagName(m.value_type) }),
         .MapSet => |m| try writer.print("    MapSet {s}                   ; Set map value by key\n", .{@tagName(m.key_type)}),
 
         // Struct operations

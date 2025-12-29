@@ -109,6 +109,21 @@ pub fn mapSetI64(map: *MapHeader, key: i64, value: i64) void {
     map.len += 1;
 }
 
+pub fn mapTryGetI64(map: *MapHeader, key: i64, out_value: *i64) bool {
+    var i: usize = 0;
+    while (i < map.len) : (i += 1) {
+        const entry = map.entries[i];
+        if (keysEqual(map.key_tag, entry.key, key)) {
+            out_value.* = entry.value;
+            return true;
+        }
+    }
+
+    // No entry found – initialize output to a neutral payload.
+    out_value.* = 0;
+    return false;
+}
+
 pub fn mapGetI64(map: *MapHeader, key: i64) i64 {
     var i: usize = 0;
     while (i < map.len) : (i += 1) {
