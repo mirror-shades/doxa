@@ -21,16 +21,32 @@ jobs:
             zig_version: '0.15.2'
             arch: aarch64
             target: aarch64-linux-gnu
+          - os: ubuntu-latest
+            zig_version: master
+            arch: aarch64
+            target: aarch64-linux-gnu
           - os: macos-latest
             zig_version: '0.15.2'
+            arch: x86_64
+            target: x86_64-macos-none
+          - os: macos-latest
+            zig_version: master
             arch: x86_64
             target: x86_64-macos-none
           - os: macos-latest
             zig_version: '0.15.2'
             arch: aarch64
             target: aarch64-macos-none
+          - os: macos-latest
+            zig_version: master
+            arch: aarch64
+            target: aarch64-macos-none
           - os: windows-latest
             zig_version: '0.15.2'
+            arch: x86_64
+            target: x86_64-windows-gnu
+          - os: windows-latest
+            zig_version: master
             arch: x86_64
             target: x86_64-windows-gnu
 
