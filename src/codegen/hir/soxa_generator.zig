@@ -323,8 +323,8 @@ pub const HIRGenerator = struct {
                                 var param_types = try self.allocator.alloc(HIRType, arity);
                                 var param_idx: usize = 0;
                                 if (!method.is_static) {
-                                    param_is_alias[param_idx] = true; // 'this' is an alias
-                                    param_types[param_idx] = HIRType{ .Struct = 0 }; // 'this' is a struct pointer
+                                    param_is_alias[param_idx] = true;
+                                    param_types[param_idx] = HIRType{ .Struct = 0 };
                                     param_idx += 1;
                                 }
                                 for (method.params) |param| {
@@ -482,7 +482,6 @@ pub const HIRGenerator = struct {
                             };
 
                             if (!self.function_signatures.contains(sym_name)) {
-                                // Initialize parameter metadata for imported symbol
                                 for (func_params, 0..) |p, i| {
                                     function_info2.param_is_alias[i] = p.is_alias;
                                     var pt2: HIRType = if (p.type_expr) |te|
@@ -573,7 +572,6 @@ pub const HIRGenerator = struct {
 
                     try self.trackVariableType(param.name.lexeme, param_type);
 
-                    // Track array element type for array alias parameters
                     if (param_type == .Array) {
                         try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
                         const storage_kind = if (declared_type_info) |info| convertArrayStorageKind(info.array_storage) else SoxaTypes.ArrayStorageKind.dynamic;
@@ -589,14 +587,12 @@ pub const HIRGenerator = struct {
                                 try self.trackVariableCustomType(param.name.lexeme, struct_type_name_for_param);
                                 try self.trackVariableType(param.name.lexeme, HIRType{ .Struct = 0 });
                             }
-                            // If generic Struct token without a name, reject
                             if (type_info_for_custom.custom_type == null) return error.InvalidAliasType;
                         } else if (type_info_for_custom.base == .Enum) {
                             if (type_info_for_custom.custom_type) |enum_type_name_for_param| {
                                 try self.trackVariableCustomType(param.name.lexeme, enum_type_name_for_param);
                                 try self.trackVariableType(param.name.lexeme, HIRType{ .Enum = 0 });
                             }
-                            // If generic Enum token without a name, reject
                             if (type_info_for_custom.custom_type == null) return error.InvalidAliasType;
                         } else if (type_info_for_custom.base == .Custom) {
                             if (type_info_for_custom.custom_type) |custom_type_name_for_param| {
@@ -640,7 +636,6 @@ pub const HIRGenerator = struct {
 
                     try self.trackVariableType(param.name.lexeme, param_type);
 
-                    // Track array element type for array parameters
                     if (param_type == .Array) {
                         try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
                         const storage_kind = if (declared_type_info) |info| convertArrayStorageKind(info.array_storage) else SoxaTypes.ArrayStorageKind.dynamic;
@@ -664,14 +659,12 @@ pub const HIRGenerator = struct {
                 }
             }
 
-            // Process 'this' parameter for non-static methods (it's pushed first, so popped last)
             if (std.mem.indexOfScalar(u8, function_body.function_info.name, '.')) |dot_idx| {
                 const struct_name = function_body.function_info.name[0..dot_idx];
                 const method_name = function_body.function_info.name[dot_idx + 1 ..];
                 if (self.struct_methods.get(struct_name)) |method_table| {
                     if (method_table.get(method_name)) |mi| {
                         if (!mi.is_static) {
-                            // 'this' is an alias parameter (struct pointer)
                             try self.trackVariableType("this", HIRType{ .Struct = 0 });
                             try self.symbol_table.trackAliasParameter("this");
 
@@ -709,8 +702,6 @@ pub const HIRGenerator = struct {
                 has_returned = self.statementAlwaysReturns(body_stmt);
             }
 
-            // Don't add unconditional ExitScope here - generateReturn adds it before returns
-            // Only add ExitScope if function doesn't have explicit returns
             if (!has_returned) {
                 try self.instructions.append(.{ .ExitScope = .{ .scope_id = function_scope_id } });
             }
@@ -731,7 +722,6 @@ pub const HIRGenerator = struct {
 
             var needs_implicit_return = true;
 
-            // Check if we already have a return instruction in the function
             if (has_returned) {
                 needs_implicit_return = false;
             } else if (self.instructions.items.len > 0) {
@@ -771,7 +761,6 @@ pub const HIRGenerator = struct {
             }
         }
 
-        // Find the entry function by checking is_entry flag
         var entry_function: ?FunctionInfo = null;
         var entry_function_name: ?[]const u8 = null;
         var it = self.function_signatures.iterator();
@@ -823,7 +812,6 @@ pub const HIRGenerator = struct {
                     var variants: []const []const u8 = undefined;
 
                     if (std.mem.eql(u8, symbol_name, "Token")) {
-                        // Token enum from token.doxa
                         variants = &[_][]const u8{
                             "INT_LITERAL",
                             "FLOAT_LITERAL",
@@ -833,17 +821,14 @@ pub const HIRGenerator = struct {
                             "NOTHING_LITERAL",
                         };
                     } else {
-                        // For other enums, use placeholder variants
                         variants = &[_][]const u8{"PLACEHOLDER"};
                     }
 
                     try self.registerEnumType(symbol_name, variants);
 
-                    // Register the enum type name as a variable so Token.INT_LITERAL works
                     const var_idx = try self.getOrCreateVariable(symbol_name);
                     try self.trackVariableType(symbol_name, HIRType{ .Enum = 0 });
 
-                    // Create a special enum type value and store it
                     const enum_type_value = HIRValue{ .string = symbol_name };
                     const const_idx = try self.addConstant(enum_type_value);
                     try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
@@ -955,59 +940,59 @@ pub const HIRGenerator = struct {
     }
 
     pub const TETRA_AND_LUT: [4][4]u8 = [4][4]u8{
-        [4]u8{ 0, 0, 0, 0 }, // FALSE AND x = FALSE
-        [4]u8{ 0, 1, 2, 3 }, // TRUE AND x = x
-        [4]u8{ 0, 2, 2, 0 }, // BOTH AND x = special logic
-        [4]u8{ 0, 3, 0, 3 }, // NEITHER AND x = special logic
+        [4]u8{ 0, 0, 0, 0 },
+        [4]u8{ 0, 1, 2, 3 },
+        [4]u8{ 0, 2, 2, 0 },
+        [4]u8{ 0, 3, 0, 3 },
     };
 
     pub const TETRA_OR_LUT: [4][4]u8 = [4][4]u8{
-        [4]u8{ 0, 1, 2, 3 }, // FALSE OR x = x
-        [4]u8{ 1, 1, 1, 1 }, // TRUE OR x = TRUE
-        [4]u8{ 2, 1, 2, 2 }, // BOTH OR x = special logic
-        [4]u8{ 3, 1, 2, 3 }, // NEITHER OR x = special logic
+        [4]u8{ 0, 1, 2, 3 },
+        [4]u8{ 1, 1, 1, 1 },
+        [4]u8{ 2, 1, 2, 2 },
+        [4]u8{ 3, 1, 2, 3 },
     };
 
     pub const TETRA_NOT_LUT: [4]u8 = [4]u8{ 1, 0, 3, 2 }; // NOT lookup: false->true, true->false, both->neither, neither->both
 
     // IFF (if and only if): A ↔ B - true when A and B have same truth value
     pub const TETRA_IFF_LUT: [4][4]u8 = [4][4]u8{
-        [4]u8{ 1, 0, 3, 2 }, // FALSE IFF x: same as NOT x
-        [4]u8{ 0, 1, 2, 3 }, // TRUE IFF x: same as x
-        [4]u8{ 3, 2, 2, 3 }, // BOTH IFF x: complex logic
-        [4]u8{ 2, 3, 3, 2 }, // NEITHER IFF x: complex logic
+        [4]u8{ 1, 0, 3, 2 },
+        [4]u8{ 0, 1, 2, 3 },
+        [4]u8{ 3, 2, 2, 3 },
+        [4]u8{ 2, 3, 3, 2 },
     };
 
     // XOR (exclusive or): A ⊕ B - true when A and B have different truth values
     pub const TETRA_XOR_LUT: [4][4]u8 = [4][4]u8{
-        [4]u8{ 0, 1, 2, 3 }, // FALSE XOR x: same as x
-        [4]u8{ 1, 0, 3, 2 }, // TRUE XOR x: same as NOT x
-        [4]u8{ 2, 3, 2, 3 }, // BOTH XOR x: complex logic
-        [4]u8{ 3, 2, 3, 2 }, // NEITHER XOR x: complex logic
+        [4]u8{ 0, 1, 2, 3 },
+        [4]u8{ 1, 0, 3, 2 },
+        [4]u8{ 2, 3, 2, 3 },
+        [4]u8{ 3, 2, 3, 2 },
     };
 
     // NAND: A ↑ B - NOT(A AND B)
     pub const TETRA_NAND_LUT: [4][4]u8 = [4][4]u8{
-        [4]u8{ 1, 1, 1, 1 }, // FALSE NAND x = NOT(FALSE AND x) = NOT(FALSE) = TRUE
-        [4]u8{ 1, 0, 3, 2 }, // TRUE NAND x = NOT(TRUE AND x) = NOT(x)
-        [4]u8{ 1, 3, 3, 1 }, // BOTH NAND x = complex logic
-        [4]u8{ 1, 2, 1, 2 }, // NEITHER NAND x = complex logic
+        [4]u8{ 1, 1, 1, 1 },
+        [4]u8{ 1, 0, 3, 2 },
+        [4]u8{ 1, 3, 3, 1 },
+        [4]u8{ 1, 2, 1, 2 },
     };
 
     // NOR: A ↓ B - NOT(A OR B)
     pub const TETRA_NOR_LUT: [4][4]u8 = [4][4]u8{
-        [4]u8{ 1, 0, 3, 2 }, // FALSE NOR x = NOT(FALSE OR x) = NOT(x)
-        [4]u8{ 0, 0, 0, 0 }, // TRUE NOR x = NOT(TRUE OR x) = NOT(TRUE) = FALSE
-        [4]u8{ 3, 0, 3, 3 }, // BOTH NOR x = complex logic
-        [4]u8{ 2, 0, 3, 2 }, // NEITHER NOR x = complex logic
+        [4]u8{ 1, 0, 3, 2 },
+        [4]u8{ 0, 0, 0, 0 },
+        [4]u8{ 3, 0, 3, 3 },
+        [4]u8{ 2, 0, 3, 2 },
     };
 
     // IMPLIES: A → B - NOT A OR B
     pub const TETRA_IMPLIES_LUT: [4][4]u8 = [4][4]u8{
-        [4]u8{ 1, 1, 1, 1 }, // FALSE IMPLIES x = NOT(FALSE) OR x = TRUE OR x = TRUE
-        [4]u8{ 0, 1, 2, 3 }, // TRUE IMPLIES x = NOT(TRUE) OR x = FALSE OR x = x
-        [4]u8{ 2, 1, 2, 2 }, // BOTH IMPLIES x = complex logic
-        [4]u8{ 3, 1, 2, 3 }, // NEITHER IMPLIES x = complex logic
+        [4]u8{ 1, 1, 1, 1 },
+        [4]u8{ 0, 1, 2, 3 },
+        [4]u8{ 2, 1, 2, 2 },
+        [4]u8{ 3, 1, 2, 3 },
     };
 
     pub fn tetraFromEnum(tetra_enum: anytype) u8 {
@@ -1030,7 +1015,6 @@ pub const HIRGenerator = struct {
         var io_handler = IOHandler.init(self);
 
         switch (expr.data) {
-            // Basic expressions
             .This => try basic_handler.generateThis(),
             .Literal => |lit| try basic_handler.generateLiteral(lit, preserve_result, should_pop_after_use),
             .Variable => |var_token| try basic_handler.generateVariable(var_token),
@@ -1038,12 +1022,10 @@ pub const HIRGenerator = struct {
             .EnumMember => |member| try basic_handler.generateEnumMember(member),
             .DefaultArgPlaceholder => try basic_handler.generateDefaultArgPlaceholder(),
 
-            // Binary and unary operations
             .Binary => |bin| try binary_handler.generateBinary(bin, should_pop_after_use),
             .Logical => |log| try binary_handler.generateLogical(log, should_pop_after_use),
             .Unary => |unary| try binary_handler.generateUnary(unary),
 
-            // Control flow
             .If => |if_expr| try control_flow_handler.generateIf(if_expr, preserve_result, should_pop_after_use),
             .Match => |match_expr| try control_flow_handler.generateMatch(match_expr, preserve_result),
             .Loop => |loop| try control_flow_handler.generateLoop(loop, preserve_result),
@@ -1052,7 +1034,6 @@ pub const HIRGenerator = struct {
             .Unreachable => try control_flow_handler.generateUnreachable(expr),
             .Cast => try control_flow_handler.generateCast(expr.data, preserve_result),
 
-            // Collections
             .Array => |elements| {
                 if (self.is_generating_nested_array) {
                     try collections_handler.generateArrayInternal(elements, preserve_result);
@@ -1070,23 +1051,19 @@ pub const HIRGenerator = struct {
             .Decrement => |operand| try collections_handler.generateDecrement(operand),
             .Range => |range| try collections_handler.generateRange(.{ .start = range.start, .end = range.end }, preserve_result),
 
-            // Function and method calls
             .FunctionCall => try calls_handler.generateFunctionCall(expr.data, should_pop_after_use),
             .BuiltinCall => try calls_handler.generateBuiltinCall(expr.data, preserve_result),
             .InternalCall => try calls_handler.generateInternalCall(expr.data),
 
-            // Struct and type operations
             .StructLiteral => try structs_handler.generateStructLiteral(expr.data),
             .FieldAccess => |field| try structs_handler.generateFieldAccess(field),
             .FieldAssignment => try structs_handler.generateFieldAssignment(expr.data),
             .EnumDecl => try structs_handler.generateEnumDecl(expr.data),
             .StructDecl => try structs_handler.generateStructDecl(expr.data),
 
-            // Assignments
             .Assignment => |assign| try assignments_handler.generateAssignment(assign, preserve_result),
             .CompoundAssign => |compound| try assignments_handler.generateCompoundAssign(compound, preserve_result),
 
-            // I/O and debugging
             .Print => |print| try io_handler.generatePrint(print, preserve_result),
             .Peek => |peek| try io_handler.generatePeek(peek, preserve_result),
             .PeekStruct => try io_handler.generatePeekStruct(expr.data, preserve_result),
@@ -1463,9 +1440,7 @@ pub const HIRGenerator = struct {
                 }
 
                 const inferred = self.inferCallReturnType(function_name, call_kind) catch {
-                    // Fall back to type system inference for complex builtins
                     const fallback_result = self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-                    // std.debug.print("Fallback for {s}: {s}\n", .{function_name, @tagName(fallback_result)});
                     return fallback_result;
                 };
                 return inferred;

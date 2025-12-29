@@ -104,21 +104,6 @@ pub export fn doxa_print_byte(value: i64) callconv(.c) void {
     writeStdout(rendered);
 }
 
-pub export fn doxa_print_enum(type_name: ?[*:0]const u8, variant_index: i64) callconv(.c) void {
-    if (type_name) |tn| {
-        const type_str = std.mem.span(tn);
-        const variant_name = getEnumVariantName(type_str, variant_index);
-        var buf: [128]u8 = undefined;
-        const rendered = std.fmt.bufPrint(&buf, ".{s}", .{variant_name}) catch return;
-        writeStdout(rendered);
-    } else {
-        // Fallback: use generic variant names when type name is not available
-        const variant_name = getEnumVariantName("", variant_index);
-        var buf: [128]u8 = undefined;
-        const rendered = std.fmt.bufPrint(&buf, ".{s}", .{variant_name}) catch return;
-        writeStdout(rendered);
-    }
-}
 
 fn getEnumVariantName(type_name: []const u8, variant_index: i64) []const u8 {
     // For now, we'll implement a simple mapping for common enum types
@@ -870,8 +855,8 @@ pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
             writeStdout("<struct>");
         },
         .Enum => {
-            // Without a type name we fall back to generic variant labels.
-            doxa_print_enum(null, val.payload_bits);
+            // Enum printing is now handled natively by the IR printer
+            writeStdout("<enum>");
         },
         .Tetra => {
             const t: u2 = asTetra(val.payload_bits);
