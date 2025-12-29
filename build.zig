@@ -131,7 +131,7 @@ fn copyBinToInstallDir(step: *std.Build.Step, options: std.Build.Step.MakeOption
     const install_dir = try std.fs.path.resolve(allocator, &.{install_path});
     defer allocator.free(install_dir);
 
-    std.fs.cwd().makePath(install_dir) catch |err| {
+    std.fs.makeDirAbsolute(install_dir) catch |err| {
         std.debug.print("Error creating install directory '{s}': {s}\n", .{
             install_dir,
             @errorName(err),
@@ -142,10 +142,10 @@ fn copyBinToInstallDir(step: *std.Build.Step, options: std.Build.Step.MakeOption
     // `getInstallPath(.bin, "")` points at zig-out/bin for this build.
     const bin_dir_path = b.getInstallPath(.bin, "");
 
-    var src_dir = try std.fs.cwd().openDir(bin_dir_path, .{ .iterate = true });
+    var src_dir = try std.fs.openDirAbsolute(bin_dir_path, .{ .iterate = true });
     defer src_dir.close();
 
-    var dst_dir = try std.fs.cwd().openDir(install_dir, .{ .iterate = true });
+    var dst_dir = try std.fs.openDirAbsolute(install_dir, .{ .iterate = true });
     defer dst_dir.close();
 
     // Copy all regular files from zig-out/bin into the install directory.
