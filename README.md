@@ -1,6 +1,8 @@
-# Doxa Programming Language [[Docs]](https:#mirror-shades.github.io/doxa/)[![Ask DeepWiki](https:#deepwiki.com/badge.svg)](https:#deepwiki.com/mirror-shades/doxa)
+# Doxa Programming Language  
+[Documentation](https:#mirror-shades.github.io/doxa/)  
+[![DeepWiki](https:#deepwiki.com/badge.svg)](https:#deepwiki.com/mirror-shades/doxa)  
 
-Doxa is inspired by Nagarjuna's four cornered logic, known as Catuṣkoṭi. Doxa does not use bools but instead tetras. A tetra (short for tetralemma) is a logical value with four possible states or corners:
+Doxa is inspired by Nagarjuna's four cornered logic, known as Catuṣkoṭi. Doxa does not use bools but instead a novel logical type called a tetra. A tetra (short for tetralemma) has four possible states or corners:
 
 ```
 P (true)
@@ -42,12 +44,12 @@ Examples:
 
 ### Building from source
 
-Current build uses Zig 0.15.1, there are no other dependancies.
+Current build uses Zig 0.15.2, there are no other dependancies.
 
 compile from source and run a file
 
 ```bash
-zig build run -- [--debug] ./path/to/file.doxa
+zig build run -- run ./path/to/file.doxa
 ```
 
 for consistent results be sure to build before running compiler tests
@@ -56,28 +58,6 @@ for consistent results be sure to build before running compiler tests
 zig build
 zig build test
 ```
-
-### Creating Releases
-
-To build optimized release binaries for multiple platforms:
-
-```bash
-# Build all platforms
-zig run release.zig -- v1.0.0
-
-# Build specific platforms
-zig run release.zig -- v1.0.0 x86_64-linux-gnu aarch64-linux-gnu
-
-# Build with compressed archives
-zig run release.zig -- v1.0.0 --create-archives
-```
-
-This creates a `doxa-v1.0.0/` directory with executables for each platform:
-- `doxa-v1.0.0-linux-x64` (Linux x86_64)
-- `doxa-v1.0.0-linux-arm64` (Linux ARM64)
-- `doxa-v1.0.0-macos-x64` (macOS x86_64)
-- `doxa-v1.0.0-macos-arm64` (macOS ARM64)
-- `doxa-v1.0.0-windows-x64.exe` (Windows x86_64)
 
 ## Native Types
 
@@ -100,22 +80,13 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - map
 - union
 
-## Components
-
 ![Pipeline](./pipeline.png)
-
-- **Lexer**: Tokenizes source code
-- **Parser**: Builds an AST from tokens
-- **Soxa** A stack based HIR for high level optimization
-- **VM**: Stack based, operates from Soxa IR
-- **LLVM IR** Code generator to turn Soxa into LLVM IR for native compilation
 
 ## TODO:
 
 - standard lib
-- add instrospective key access while using each loops over maps using `at`
-- finish the last few internal methods 
-- SOXA to LLVMIR code gen
+- finish the last few internal methods
+- zig code blocks
 
 ## Example
 
