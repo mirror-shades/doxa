@@ -443,11 +443,16 @@ pub const CallsHandler = struct {
         } else if (std.mem.eql(u8, name, "length")) {
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            const t = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
-            if (t == .String) {
-                try self.generator.instructions.append(.{ .StringOp = .{ .op = .Length } });
-            } else {
-                try self.generator.instructions.append(.ArrayLen);
+            var t = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
+            if (t == .Unknown and builtin_data.arguments[0].data == .Variable) {
+                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+                if (self.generator.getTrackedVariableType(var_name)) |tracked| {
+                    t = tracked;
+                }
+            }
+            switch (t) {
+                .Array => try self.generator.instructions.append(.ArrayLen),
+                else => try self.generator.instructions.append(.{ .StringOp = .{ .op = .Length } }),
             }
         } else if (std.mem.eql(u8, name, "int")) {
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);

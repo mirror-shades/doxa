@@ -316,6 +316,12 @@ pub const CollectionsHandler = struct {
                     try self.generator.instructions.append(.{ .ArrayGetAndAdd = .{ .bounds_check = true } });
                 },
             }
+
+            // Keep stack balanced across control-flow merges for statement-style
+            // compound assignments (the result value is unused).
+            if (!preserve_result) {
+                try self.generator.instructions.append(.Pop);
+            }
         } else {
             // Regular assignment: array[index] = value
             // Generate array expression
