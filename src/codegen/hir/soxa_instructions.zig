@@ -509,6 +509,10 @@ pub const HIRInstruction = union(enum) {
         type_name: []const u8, // Human-readable struct name
         struct_id: StructId,
         field_count: u32,
+        /// Field names aligned with `field_types` / initialization order.
+        /// This is used by the native backend for debug printing; the VM still
+        /// reads the runtime-pushed field-name values.
+        field_names: [][]const u8,
         field_types: []HIRType,
         size_bytes: u32, // Pre-calculated for VM efficiency
     },

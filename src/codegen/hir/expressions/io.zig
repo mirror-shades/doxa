@@ -260,7 +260,7 @@ pub const IOHandler = struct {
         // because the Peek instruction already handles the stack properly.
         // The value is pushed back and will be consumed by the next operation or
         // cleaned up at the end of the statement.
-        _ = preserve_result; // Acknowledge the parameter is intentionally unused
+        _ = preserve_result; // used by PeekStruct, not by Peek
     }
 
     /// Generate HIR for struct peek expressions

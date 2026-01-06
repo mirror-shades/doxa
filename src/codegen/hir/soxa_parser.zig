@@ -961,7 +961,9 @@ pub const SoxaTextParser = struct {
             const type_name = try self.parseQuotedString(type_name_quoted);
             const field_count = std.fmt.parseInt(u32, field_count_str, 10) catch return;
 
+            const field_names = try self.allocator.alloc([]const u8, field_count);
             const field_types = try self.allocator.alloc(HIRType, field_count);
+            for (field_names) |*name| name.* = "";
             for (field_types) |*field_type| {
                 field_type.* = HIRType.Nothing;
             }
@@ -969,7 +971,9 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{
                 .StructNew = .{
                     .type_name = type_name,
+                    .struct_id = 0,
                     .field_count = field_count,
+                    .field_names = field_names,
                     .field_types = field_types,
                     .size_bytes = 0,
                 },
