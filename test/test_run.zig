@@ -46,21 +46,28 @@ const CommandResult = struct {
     exit_code: u8,
 };
 
+fn repoRootFromEnv(allocator: std.mem.Allocator) !?[]const u8 {
+    return process.getEnvVarOwned(allocator, "DOXA_REPO_ROOT") catch null;
+}
+
 fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]const u8) !CommandResult {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const child_allocator = arena.allocator();
 
+    const repo_root = try repoRootFromEnv(child_allocator);
+
     const exe_path = blk: {
         if (process.getEnvVarOwned(allocator, "DOXA_BIN") catch null) |custom| {
             break :blk custom;
         }
-        break :blk try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", "doxa" });
+        const exe_name = if (builtin.os.tag == .windows) "doxa.exe" else "doxa";
+        break :blk try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", exe_name });
     };
     defer allocator.free(exe_path);
 
     var child = process.Child.init(&[_][]const u8{ exe_path, "run", path }, child_allocator);
-    child.cwd = ".";
+    child.cwd = repo_root orelse ".";
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     if (input != null) child.stdin_behavior = .Pipe;

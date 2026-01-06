@@ -167,6 +167,29 @@ pub export fn doxa_tick() callconv(.c) i64 {
     return @intCast(std.time.nanoTimestamp());
 }
 
+pub export fn doxa_input() callconv(.c) ?[*:0]u8 {
+    const stdin_file = std.fs.File.stdin();
+    var tmp: [256]u8 = undefined;
+    var bytes = std.array_list.Managed(u8).init(std.heap.page_allocator);
+    defer bytes.deinit();
+
+    while (true) {
+        const n = stdin_file.read(&tmp) catch return null;
+        if (n == 0) break;
+        for (tmp[0..n]) |ch| {
+            if (ch == '\n') break;
+            if (ch == '\r') continue;
+            bytes.append(ch) catch return null;
+        }
+        if (std.mem.indexOfScalar(u8, tmp[0..n], '\n') != null) break;
+        if (bytes.items.len >= 1024 * 1024) break;
+    }
+
+    const out = std.heap.page_allocator.allocSentinel(u8, bytes.items.len, 0) catch return null;
+    @memcpy(out[0..bytes.items.len], bytes.items);
+    return out.ptr;
+}
+
 /// Find value in array or substring in string
 /// For arrays: collection is ArrayHeader*, value is i64 (or other type encoded as i64)
 /// For strings: collection is ptr to string, value is ptr to substring

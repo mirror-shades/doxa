@@ -37,13 +37,19 @@ const CommandResult = struct {
     exit_code: u8,
 };
 
+fn repoRootFromEnv(allocator: std.mem.Allocator) !?[]const u8 {
+    return process.getEnvVarOwned(allocator, "DOXA_REPO_ROOT") catch null;
+}
+
 fn runCompiledBinaryEx(allocator: std.mem.Allocator, binary_path: []const u8, input: ?[]const u8) !CommandResult {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const child_allocator = arena.allocator();
 
+    const repo_root = try repoRootFromEnv(child_allocator);
+
     var child = process.Child.init(&[_][]const u8{binary_path}, child_allocator);
-    child.cwd = ".";
+    child.cwd = repo_root orelse ".";
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
     if (input != null) child.stdin_behavior = .Pipe;
@@ -132,16 +138,19 @@ fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
     defer arena.deinit();
     const child_allocator = arena.allocator();
 
+    const repo_root = try repoRootFromEnv(child_allocator);
+
     const exe_path = blk: {
         if (process.getEnvVarOwned(allocator, "DOXA_BIN") catch null) |custom| {
             break :blk custom;
         }
-        break :blk try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", "doxa" });
+        const exe_name = if (builtin.os.tag == .windows) "doxa.exe" else "doxa";
+        break :blk try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", exe_name });
     };
     defer allocator.free(exe_path);
 
     var child = process.Child.init(&[_][]const u8{ exe_path, "run", path }, child_allocator);
-    child.cwd = ".";
+    child.cwd = repo_root orelse ".";
     child.stdout_behavior = .Pipe;
     child.stderr_behavior = .Pipe;
 
@@ -363,6 +372,7 @@ test "compile and run tests" {
     const bigfile_path = try getBinaryPath(allocator, "./test/out/bigfile");
     const complex_print_path = try getBinaryPath(allocator, "./test/out/complex_print");
     const expressions_path = try getBinaryPath(allocator, "./test/out/expressions");
+    const brainfuck_path = try getBinaryPath(allocator, "./test/out/brainfuck");
 
     const test_cases = [_]TestCase{
         .{
@@ -388,6 +398,14 @@ test "compile and run tests" {
             .input = null,
             .expected_print = null,
             .expected_peek = answers.expected_expressions_results[0..],
+        },
+        .{
+            .name = "brainfuck",
+            .binary_path = brainfuck_path,
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_brainfuck_results[0..],
+            .expected_peek = null,
         },
     };
 
