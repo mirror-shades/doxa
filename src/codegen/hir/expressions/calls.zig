@@ -681,13 +681,17 @@ pub const CallsHandler = struct {
 
             var field_types = try self.generator.allocator.alloc(HIRType, field_count);
             defer self.generator.allocator.free(field_types);
+            var field_names = try self.generator.allocator.alloc([]const u8, field_count);
+            defer self.generator.allocator.free(field_names);
 
             var i: usize = 0;
             while (i < field_count and i < arguments.len) : (i += 1) {
                 const arg_expr = arguments[i].expr;
                 try self.generator.generateExpression(arg_expr, true, false);
-                field_types[field_count - 1 - i] = self.generator.inferTypeFromExpression(arg_expr);
+                const slot = field_count - 1 - i;
+                field_types[slot] = self.generator.inferTypeFromExpression(arg_expr);
                 const fname = fields_info[i].name;
+                field_names[slot] = fname;
                 const fname_const = try self.generator.addConstant(HIRValue{ .string = fname });
                 try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
             }
@@ -695,8 +699,10 @@ pub const CallsHandler = struct {
             while (i < field_count) : (i += 1) {
                 const nothing_id = try self.generator.addConstant(HIRValue.nothing);
                 try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_id } });
-                field_types[field_count - 1 - i] = .Unknown;
+                const slot = field_count - 1 - i;
+                field_types[slot] = .Unknown;
                 const fname = fields_info[i].name;
+                field_names[slot] = fname;
                 const fname_const = try self.generator.addConstant(HIRValue{ .string = fname });
                 try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
             }
@@ -706,6 +712,7 @@ pub const CallsHandler = struct {
                     .type_name = type_name,
                     .struct_id = 0, // TODO: look up real StructId from struct table
                     .field_count = @intCast(field_count),
+                    .field_names = try self.generator.allocator.dupe([]const u8, field_names),
                     .field_types = try self.generator.allocator.dupe(HIRType, field_types),
                     .size_bytes = 0,
                 },

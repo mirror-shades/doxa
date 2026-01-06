@@ -584,6 +584,7 @@ pub const BytecodeGenerator = struct {
                 .StructNew => |payload| try self.instructions.append(self.allocator, .{ .StructNew = .{
                     .type_name = payload.type_name,
                     .field_count = payload.field_count,
+                    .field_names = payload.field_names,
                     .field_types = payload.field_types,
                     .size_bytes = payload.size_bytes,
                 } }),

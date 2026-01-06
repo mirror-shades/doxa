@@ -21,6 +21,8 @@ pub const StructsHandler = struct {
         // Track field types for type checking
         var field_types = try self.generator.allocator.alloc(HIRType, struct_data.fields.len);
         defer self.generator.allocator.free(field_types);
+        var field_names = try self.generator.allocator.alloc([]const u8, struct_data.fields.len);
+        defer self.generator.allocator.free(field_names);
 
         // Generate field values and names in reverse order for stack-based construction
         var reverse_i = struct_data.fields.len;
@@ -58,6 +60,7 @@ pub const StructsHandler = struct {
 
             // Infer and store field type
             field_types[reverse_i] = self.generator.inferTypeFromExpression(field.value);
+            field_names[reverse_i] = field.name.lexeme;
 
             // Push field name as constant
             const field_name_const = try self.generator.addConstant(HIRValue{ .string = field.name.lexeme });
@@ -75,6 +78,7 @@ pub const StructsHandler = struct {
                 .type_name = struct_data.name.lexeme,
                 .struct_id = struct_id,
                 .field_count = @intCast(struct_data.fields.len),
+                .field_names = try self.generator.allocator.dupe([]const u8, field_names),
                 .field_types = try self.generator.allocator.dupe(HIRType, field_types),
                 .size_bytes = 0, // Size will be calculated by VM
             },

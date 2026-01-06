@@ -10,8 +10,17 @@ const debug_print = @import("../../runtime/print.zig");
 pub const TypeOps = struct {
     pub fn execTypeCheck(vm: anytype, tc: anytype) !void {
         const value = try vm.stack.pop();
-        const runtime_type = debug_print.getTypeString(vm, value.value);
-        const type_match = std.mem.eql(u8, runtime_type, tc.target_type);
+        // The HIR `as` lowering uses broad runtime categories (like "struct"/"enum")
+        // for custom types so the native backend can type-check without full RTTI.
+        // The VM, however, may provide a more specific type name (e.g. "Employee").
+        // Accept both forms here to keep semantics consistent across backends.
+        const type_match = switch (value.value) {
+            .struct_instance => std.mem.eql(u8, tc.target_type, "struct") or
+                std.mem.eql(u8, debug_print.getTypeString(vm, value.value), tc.target_type),
+            .enum_variant => std.mem.eql(u8, tc.target_type, "enum") or
+                std.mem.eql(u8, debug_print.getTypeString(vm, value.value), tc.target_type),
+            else => std.mem.eql(u8, debug_print.getTypeString(vm, value.value), tc.target_type),
+        };
         try vm.stack.push(HIRFrame.initTetra(if (type_match) 1 else 0));
     }
 
