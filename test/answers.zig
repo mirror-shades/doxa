@@ -24,10 +24,6 @@ pub const expected_array_storage_results = [_]print_result{
     .{ .value = "2 3" },
 };
 
-pub const expected_tetra_implies_results = [_]peek_result{
-    .{ .type = "tetra", .value = "false" },
-};
-
 pub const expected_complex_print_results = [_]print_result{
     .{ .value = "The variable \"number\" is equal to 10" },
     .{ .value = "The variable name \"number\" has 6 letters" },
