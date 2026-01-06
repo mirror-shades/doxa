@@ -198,10 +198,14 @@ pub const CollectionsHandler = struct {
                 // Infer the result type of this index expression (e.g., float | nothing)
                 const result_type = self.generator.inferTypeFromExpression(expr);
 
-                // Map access - use MapGet with key type inferred from index
-                _ = self.generator.inferTypeFromExpression(index.index);
-                // For now, use String as default since HIRType comparisons are not supported
-                const key_type = HIRType.String;
+                // Map access - choose a compatible key type for the runtime map (i64 storage).
+                // Treat enums/bytes/tetra/etc as Int keys; only String stays String.
+                const raw_key_type = self.generator.inferTypeFromExpression(index.index);
+                const key_type: HIRType = switch (raw_key_type) {
+                    .String => .String,
+                    .Enum => .Int,
+                    .Int, .Byte, .Tetra, .Float, .Nothing, .Unknown, .Array, .Map, .Struct, .Function, .Union, .Poison => .Int,
+                };
                 try self.generator.instructions.append(.{ .MapGet = .{
                     .key_type = key_type,
                     .value_type = result_type,
@@ -327,8 +331,12 @@ pub const CollectionsHandler = struct {
             const container_type = self.generator.inferTypeFromExpression(assign_data.array);
             if (container_type == .Map) {
                 const idx_type = self.generator.inferTypeFromExpression(assign_data.index);
-                _ = if (idx_type == .Int) HIRType.Int else HIRType.String;
-                try self.generator.instructions.append(.{ .MapSet = .{ .key_type = HIRType.String } });
+                const key_type: HIRType = switch (idx_type) {
+                    .String => .String,
+                    .Enum => .Int,
+                    .Int, .Byte, .Tetra, .Float, .Nothing, .Unknown, .Array, .Map, .Struct, .Function, .Union, .Poison => .Int,
+                };
+                try self.generator.instructions.append(.{ .MapSet = .{ .key_type = key_type } });
             } else {
                 // Generate ArraySet instruction
                 // Stack order expected by VM (top to bottom): value, index, array

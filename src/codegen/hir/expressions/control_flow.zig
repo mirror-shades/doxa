@@ -532,7 +532,18 @@ pub const ControlFlowHandler = struct {
                     .Tetra => break :blk "tetra",
                     .Nothing => break :blk "nothing",
                 },
-                .Custom => |tok| break :blk tok.lexeme,
+                .Custom => |tok| {
+                    // The runtime type checker currently distinguishes only broad categories
+                    // like "struct" and "enum". For custom types, map to the appropriate
+                    // runtime category so `as Employee` works for compiled code.
+                    if (self.generator.isCustomType(tok.lexeme)) |ct| {
+                        break :blk switch (ct.kind) {
+                            .Struct => "struct",
+                            .Enum => "enum",
+                        };
+                    }
+                    break :blk tok.lexeme;
+                },
                 .Array => |arr_type| {
                     // Map array element types to the strings produced by VM.getTypeString
                     switch (arr_type.element_type.data) {
