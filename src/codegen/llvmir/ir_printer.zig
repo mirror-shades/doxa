@@ -622,10 +622,10 @@ pub const IRPrinter = struct {
         try w.writeAll("  [4 x i8] [i8 2, i8 0, i8 3, i8 2]\n");
         try w.writeAll("]\n");
         try w.writeAll("@tetra_implies_lut = private constant [4 x [4 x i8]] [\n");
-        try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 3, i8 2],\n");
         try w.writeAll("  [4 x i8] [i8 1, i8 1, i8 1, i8 1],\n");
-        try w.writeAll("  [4 x i8] [i8 1, i8 1, i8 2, i8 2],\n");
-        try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 3, i8 3]\n");
+        try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 2, i8 3],\n");
+        try w.writeAll("  [4 x i8] [i8 2, i8 1, i8 2, i8 2],\n");
+        try w.writeAll("  [4 x i8] [i8 3, i8 1, i8 2, i8 3]\n");
         try w.writeAll("]\n\n");
 
         try self.emitQuantifierWrappers(w);
@@ -5399,6 +5399,10 @@ pub const IRPrinter = struct {
 
             // 2) Then prefer enum type names attached to the value (for plain enums)
             if (value.enum_type_name) |enum_type_name| break :blk_type enum_type_name;
+
+            // 2.5) Hard guard: if the value is a tetra on the stack, never label it as something else.
+            // This prevents incorrect "string" labels when the peek's HIR type is missing/mismatched.
+            if (value.ty == .I2) break :blk_type "tetra";
 
             // 3) Next, prefer the HIR Peek value_type when it carries more precise
             //    information than the raw stack type.
