@@ -113,6 +113,7 @@ pub const IRPrinter = struct {
     global_struct_field_names: std.StringHashMap([]const []const u8),
     global_struct_type_names: std.StringHashMap([]const u8),
     struct_fields_by_id: std.AutoHashMap(HIR.StructId, []HIR.HIRType),
+    struct_type_names_by_id: std.AutoHashMap(HIR.StructId, []const u8),
     defined_globals: std.StringHashMap(bool),
     function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
     function_struct_return_type_names: std.StringHashMap([]const u8),
@@ -397,10 +398,39 @@ pub const IRPrinter = struct {
                 defer self.allocator.free(phi_line);
                 try w.writeAll(phi_line);
 
+                // Preserve the richest metadata across incoming values so that
+                // downstream printing/type checks don't lose struct/enum context.
+                var merged_array_type: ?HIR.HIRType = slot.items[0].value.array_type;
+                var merged_enum_type_name: ?[]const u8 = slot.items[0].value.enum_type_name;
+                var merged_struct_field_types: ?[]HIR.HIRType = slot.items[0].value.struct_field_types;
+                var merged_struct_field_names: ?[]const []const u8 = slot.items[0].value.struct_field_names;
+                var merged_struct_type_name: ?[]const u8 = slot.items[0].value.struct_type_name;
+                for (slot.items) |incoming_val| {
+                    if (merged_array_type == null and incoming_val.value.array_type != null) {
+                        merged_array_type = incoming_val.value.array_type;
+                    }
+                    if (merged_enum_type_name == null and incoming_val.value.enum_type_name != null) {
+                        merged_enum_type_name = incoming_val.value.enum_type_name;
+                    }
+                    if (merged_struct_field_types == null and incoming_val.value.struct_field_types != null) {
+                        merged_struct_field_types = incoming_val.value.struct_field_types;
+                    }
+                    if (merged_struct_field_names == null and incoming_val.value.struct_field_names != null) {
+                        merged_struct_field_names = incoming_val.value.struct_field_names;
+                    }
+                    if (merged_struct_type_name == null and incoming_val.value.struct_type_name != null) {
+                        merged_struct_type_name = incoming_val.value.struct_type_name;
+                    }
+                }
+
                 try stack.append(.{
                     .name = phi_name,
                     .ty = target_type,
-                    .array_type = slot.items[0].value.array_type,
+                    .array_type = merged_array_type,
+                    .enum_type_name = merged_enum_type_name,
+                    .struct_field_types = merged_struct_field_types,
+                    .struct_field_names = merged_struct_field_names,
+                    .struct_type_name = merged_struct_type_name,
                 });
             }
         }
@@ -417,6 +447,7 @@ pub const IRPrinter = struct {
             .global_struct_field_names = std.StringHashMap([]const []const u8).init(allocator),
             .global_struct_type_names = std.StringHashMap([]const u8).init(allocator),
             .struct_fields_by_id = std.AutoHashMap(HIR.StructId, []HIR.HIRType).init(allocator),
+            .struct_type_names_by_id = std.AutoHashMap(HIR.StructId, []const u8).init(allocator),
             .defined_globals = std.StringHashMap(bool).init(allocator),
             .last_emitted_enum_value = null,
             .function_struct_return_fields = std.StringHashMap([]HIR.HIRType).init(allocator),
@@ -435,6 +466,7 @@ pub const IRPrinter = struct {
         self.global_struct_field_names.deinit();
         self.global_struct_type_names.deinit();
         self.struct_fields_by_id.deinit();
+        self.struct_type_names_by_id.deinit();
         self.defined_globals.deinit();
         var ret_it = self.function_struct_return_fields.iterator();
         while (ret_it.next()) |entry| {
@@ -444,6 +476,7 @@ pub const IRPrinter = struct {
         self.function_struct_return_type_names.deinit();
         var names_it = self.struct_field_names_by_type.iterator();
         while (names_it.next()) |entry| {
+            for (entry.value_ptr.*) |n| self.allocator.free(n);
             self.allocator.free(entry.value_ptr.*);
         }
         self.struct_field_names_by_type.deinit();
@@ -521,7 +554,9 @@ pub const IRPrinter = struct {
         try w.writeAll("declare void @doxa_clear(ptr)\n");
 
         try self.buildEnumPrintMap(hir);
-        try self.collectStructFieldNames(hir);
+        // Struct field names are captured directly from StructNew name/value pairs
+        // during codegen; the old backward-scan heuristic was brittle and could
+        // associate unrelated string constants (like "name") with a struct type.
 
         for (hir.string_pool, 0..) |s, idx| {
             const str_line = try std.fmt.allocPrint(self.allocator, "@.str.{d} = private constant [{d} x i8] c\"{s}\\00\"\n", .{ idx, s.len + 1, s });
@@ -611,6 +646,9 @@ pub const IRPrinter = struct {
                 }
                 if (!self.struct_fields_by_id.contains(sn.struct_id)) {
                     _ = try self.struct_fields_by_id.put(sn.struct_id, try self.allocator.dupe(HIR.HIRType, sn.field_types));
+                }
+                if (!self.struct_type_names_by_id.contains(sn.struct_id)) {
+                    _ = try self.struct_type_names_by_id.put(sn.struct_id, sn.type_name);
                 }
             }
         }
@@ -2246,6 +2284,17 @@ pub const IRPrinter = struct {
                     stack.items.len -= 1;
                     if (sd.declared_type == .Union) {
                         value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
+                    }
+                    if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
+                        value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
+                        if (self.struct_fields_by_id.get(sd.declared_type.Struct)) |fts| {
+                            value.struct_field_types = fts;
+                        }
+                        if (value.struct_type_name) |tname| {
+                            if (self.struct_field_names_by_type.get(tname)) |names| {
+                                value.struct_field_names = names;
+                            }
+                        }
                     }
                     const llvm_ty = self.stackTypeToLLVMType(value.ty);
                     if (sd.scope_kind == .GlobalLocal) {
@@ -4456,12 +4505,22 @@ pub const IRPrinter = struct {
                 try w.writeAll(line);
                 break :blk_float StackVal{ .name = tmp, .ty = .F64 };
             },
-            .String, .Map, .Struct, .Enum, .Function, .Union => blk_ptr: {
+            .String, .Map, .Enum, .Function, .Union => blk_ptr: {
                 const tmp = try self.nextTemp(id);
                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ tmp, as_i64.name });
                 defer self.allocator.free(line);
                 try w.writeAll(line);
                 break :blk_ptr StackVal{ .name = tmp, .ty = .PTR };
+            },
+            .Struct => blk_struct_ptr: {
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ tmp, as_i64.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                // Preserve the fact that this pointer is a struct value even when we
+                // don't have concrete struct field metadata available (e.g., values
+                // retrieved from a map and wrapped into a union).
+                break :blk_struct_ptr StackVal{ .name = tmp, .ty = .PTR, .struct_type_name = "struct" };
             },
             .Array => |inner| blk_arr: {
                 const tmp = try self.nextTemp(id);
@@ -5926,6 +5985,23 @@ pub const IRPrinter = struct {
                 }
             }
         }
+
+        // If we recovered a concrete struct type name (e.g., "Employee"), try to
+        // populate field metadata from type-level tables so that peeks can render
+        // the struct body even when the value itself came from an untyped source
+        // (like a map lookup payload).
+        if (val.struct_type_name) |tn| {
+            if (val.struct_field_types == null) {
+                if (self.global_struct_field_types.get(tn)) |fts| {
+                    val.struct_field_types = fts;
+                }
+            }
+            if (val.struct_field_names == null) {
+                if (self.struct_field_names_by_type.get(tn)) |names| {
+                    val.struct_field_names = names;
+                }
+            }
+        }
     }
 
     fn resolveStructFieldNames(self: *IRPrinter, value: StackVal) ?[]const []const u8 {
@@ -6059,9 +6135,28 @@ pub const IRPrinter = struct {
                     try w.writeAll(call_line);
                 },
                 .PTR => {
-                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s})\n", .{field_val});
-                    defer self.allocator.free(call_line);
-                    try w.writeAll(call_line);
+                    if (field_type == .Struct) {
+                        const nested_id = field_type.Struct;
+                        const nested_types = self.struct_fields_by_id.get(nested_id);
+                        const nested_name = self.struct_type_names_by_id.get(nested_id);
+                        if (nested_types) |nts| {
+                            const nm = nested_name orelse "struct";
+                            const nested_names = self.struct_field_names_by_type.get(nm);
+                            try self.emitStructValuePeek(w, field_val, nts, nested_names, id, peek_state, nm);
+                        } else {
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s})\n", .{field_val});
+                            defer self.allocator.free(call_line);
+                            try w.writeAll(call_line);
+                        }
+                    } else if (field_type == .Array) {
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{field_val});
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                    } else {
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s})\n", .{field_val});
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                    }
                 },
                 .I8 => {
                     const byte_i64 = try self.nextTemp(id);
@@ -6270,12 +6365,13 @@ pub const IRPrinter = struct {
         defer self.allocator.free(cast_malloc_line);
         try w.writeAll(cast_malloc_line);
 
-        // Pop name/value pairs off the stack in forward field order (see HIR push order)
-        const existing_names = self.struct_field_names_by_type.get(sn.type_name);
-        const capture_names = existing_names == null;
-        var pending_names: ?[][]const u8 = null;
-        if (capture_names) {
-            pending_names = try self.allocator.alloc([]const u8, @intCast(sn.field_count));
+        // Pop name/value pairs off the stack in forward field order (see HIR push order).
+        // Always capture names from the actual StructNew operands so we don't rely on
+        // fragile pre-pass heuristics.
+        var pending_names = try self.allocator.alloc([]const u8, @intCast(sn.field_count));
+        errdefer {
+            for (pending_names) |n| self.allocator.free(n);
+            self.allocator.free(pending_names);
         }
         var idx_usize: usize = 0;
         while (idx_usize < @as(usize, @intCast(sn.field_count))) : (idx_usize += 1) {
@@ -6289,13 +6385,8 @@ pub const IRPrinter = struct {
             const field_val = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
 
-            if (capture_names) {
-                if (pending_names) |buf| {
-                    const literal = field_name_val.string_literal_value orelse "";
-                    const mut_buf = @constCast(buf);
-                    mut_buf[idx_usize] = literal;
-                }
-            }
+            const literal = field_name_val.string_literal_value orelse "";
+            pending_names[idx_usize] = try self.allocator.dupe(u8, literal);
 
             // Field type for this index
             const field_type = sn.field_types[idx_usize];
@@ -6382,19 +6473,17 @@ pub const IRPrinter = struct {
             try w.writeAll(store_line);
         }
 
-        // Push struct pointer onto stack, remember field types for later GEPs
-        var struct_field_names: ?[]const []const u8 = null;
-        if (existing_names) |names| {
-            struct_field_names = names;
-            if (capture_names) {
-                if (pending_names) |buf| {
-                    self.allocator.free(buf);
-                }
-            }
-        } else if (pending_names) |buf| {
-            try self.struct_field_names_by_type.put(sn.type_name, buf);
-            struct_field_names = buf;
-        }
+        // Cache type-level field names only once (first observed StructNew).
+        // Other code may retain references to the stored slice, so replacing it
+        // can create dangling pointers.
+        const struct_field_names: ?[]const []const u8 = if (self.struct_field_names_by_type.get(sn.type_name)) |existing| blk: {
+            for (pending_names) |n| self.allocator.free(n);
+            self.allocator.free(pending_names);
+            break :blk existing;
+        } else blk: {
+            try self.struct_field_names_by_type.put(sn.type_name, pending_names);
+            break :blk pending_names;
+        };
 
         const field_type_copy = try self.allocator.dupe(HIR.HIRType, sn.field_types);
         try stack.append(.{

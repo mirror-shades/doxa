@@ -65,10 +65,15 @@ pub const StructsHandler = struct {
         }
 
         // Generate StructNew instruction with field types
+        const struct_id: u32 = blk: {
+            const st = self.generator.type_system.structTypeForName(struct_data.name.lexeme);
+            if (st == .Struct) break :blk st.Struct;
+            break :blk 0;
+        };
         try self.generator.instructions.append(.{
             .StructNew = .{
                 .type_name = struct_data.name.lexeme,
-                .struct_id = 0, // TODO: look up real StructId from struct table
+                .struct_id = struct_id,
                 .field_count = @intCast(struct_data.fields.len),
                 .field_types = try self.generator.allocator.dupe(HIRType, field_types),
                 .size_bytes = 0, // Size will be calculated by VM

@@ -213,6 +213,16 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         try self.trackVariableCustomType(decl.name.lexeme, struct_lit.name.lexeme);
                     }
 
+                    // If the initializer is an `as`/cast expression targeting a custom struct
+                    // type, keep the concrete type name so peeks print `Employee` instead of
+                    // generic `struct`.
+                    if (var_type == .Struct and init_expr.data == .Cast) {
+                        const cast_expr = init_expr.data.Cast;
+                        if (cast_expr.target_type.data == .Custom) {
+                            try self.trackVariableCustomType(decl.name.lexeme, cast_expr.target_type.data.Custom.lexeme);
+                        }
+                    }
+
                     if (var_type == .Enum and init_expr.data == .FieldAccess) {
                         const fa = init_expr.data.FieldAccess;
                         if (fa.object.data == .Variable) {

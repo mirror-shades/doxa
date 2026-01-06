@@ -75,7 +75,7 @@ pub const TypeSystem = struct {
 
     pub const FieldResolveResult = struct { t: HIRType, custom_type_name: ?[]const u8 = null };
 
-    fn structTypeForName(self: *TypeSystem, name: []const u8) HIRType {
+    pub fn structTypeForName(self: *TypeSystem, name: []const u8) HIRType {
         if (self.struct_table) |table| {
             if (table.getIdByName(name)) |id| {
                 return HIRType{ .Struct = id };
@@ -480,6 +480,11 @@ pub const TypeSystem = struct {
     pub fn inferTypeFromExpression(self: *TypeSystem, expr: *ast.Expr, symbol_table: *SymbolTable) HIRType {
         const result = switch (expr.data) {
             .Literal => |lit| self.inferTypeFromLiteral(lit),
+            .StructLiteral => |struct_lit| blk: {
+                // Struct literals evaluate to the concrete struct type.
+                // Prefer semantic struct IDs when available.
+                break :blk self.structTypeForName(struct_lit.name.lexeme);
+            },
             .Map => |map_expr| {
                 const entries = map_expr.entries;
                 const key_type_ptr = self.allocator.create(HIRType) catch return .Unknown;
