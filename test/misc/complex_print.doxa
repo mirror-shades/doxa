@@ -4,4 +4,7 @@ var variable_name is "number"
 @print("The variable \"{variable_name}\" is equal to {@string(number)}\n")
 @print("The variable name \"{variable_name}\" has {@string(@length(variable_name))} letters\n")
 @print("The variable \"{variable_name}\" is equal to {@string(number)} and the name has {@string(@length(variable_name))} letters\n")
+var chars :: string[]
+each c in "1 + 2" { @push(chars, c) }
+@print("{chars}\n")
 @print("end\n")

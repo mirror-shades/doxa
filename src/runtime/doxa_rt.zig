@@ -75,6 +75,36 @@ pub export fn doxa_str_eq(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) boo
     return std.mem.eql(u8, as, bs);
 }
 
+pub export fn doxa_str_concat(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const as = if (a) |p| std.mem.span(p) else "";
+    const bs = if (b) |p| std.mem.span(p) else "";
+
+    const total_len: usize = as.len + bs.len;
+    const buf = std.heap.page_allocator.alloc(u8, total_len + 1) catch return null;
+    @memcpy(buf[0..as.len], as);
+    @memcpy(buf[as.len .. as.len + bs.len], bs);
+    buf[total_len] = 0;
+
+    return buf[0..total_len :0].ptr;
+}
+
+pub export fn doxa_str_clone(a: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const as = if (a) |p| std.mem.span(p) else "";
+
+    const buf = std.heap.page_allocator.alloc(u8, as.len + 1) catch return null;
+    @memcpy(buf[0..as.len], as);
+    buf[as.len] = 0;
+
+    return buf[0..as.len :0].ptr;
+}
+
+pub export fn doxa_char_to_string(ch: u8) callconv(.c) ?[*:0]u8 {
+    const buf = std.heap.page_allocator.alloc(u8, 2) catch return null;
+    buf[0] = ch;
+    buf[1] = 0;
+    return buf[0..1 :0].ptr;
+}
+
 pub export fn doxa_print_i64(value: i64) callconv(.c) void {
     var buf: [64]u8 = undefined;
     const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
@@ -521,10 +551,13 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
         3 => { // string (i8* -> C string pointer encoded as bits)
             const sp: *?[*:0]const u8 = @ptrCast(@alignCast(p));
             const addr: u64 = @bitCast(value);
-            sp.* = if (addr == 0)
-                null
-            else
-                @ptrFromInt(@as(usize, addr));
+            if (addr == 0) {
+                sp.* = null;
+            } else {
+                const src: ?[*:0]const u8 = @ptrFromInt(@as(usize, addr));
+                // Clone on write so arrays don't retain pointers to stack temporaries.
+                sp.* = doxa_str_clone(src);
+            }
         },
         4 => { // tetra (2-bit stored in u8)
             const tp: *u8 = @ptrCast(p);

@@ -82,31 +82,28 @@ pub const CallsHandler = struct {
                             if (method_table.get(field_access.field.lexeme)) |mi| {
                                 const qualified_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ struct_name, field_access.field.lexeme });
 
-                                if (!mi.is_static) {
-                                    // For non-static methods, 'this' is an alias parameter
-                                    // We need to push a storage reference, not the value
-                                    if (field_access.object.data == .Variable) {
-                                        const var_token = field_access.object.data.Variable;
-                                        const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
-                                        if (maybe_idx) |var_idx| {
-                                            // Determine scope based on where the variable was found
-                                            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-                                            try self.generator.instructions.append(.{
-                                                .PushStorageId = .{
-                                                    .var_index = var_idx,
-                                                    .var_name = var_token.lexeme,
-                                                    .scope_kind = scope_kind,
-                                                },
-                                            });
-                                        } else {
-                                            // Fallback: generate expression normally
-                                            try self.generator.generateExpression(field_access.object, true, false);
-                                        }
-                                    } else {
-                                        // For non-variable receivers (like field access), generate normally
-                                        try self.generator.generateExpression(field_access.object, true, false);
-                                    }
-                                }
+                                 if (!mi.is_static) {
+                                     // For non-static methods, 'this' is an alias parameter
+                                     // We need to push a storage reference, not the value
+                                     if (field_access.object.data == .Variable) {
+                                         const var_token = field_access.object.data.Variable;
+                                         // Always push a storage reference for alias semantics, even for globals.
+                                         // `getOrCreateVariable` is safe here because undefined variables should
+                                         // already be rejected by semantic analysis.
+                                         const var_idx = try self.generator.getOrCreateVariable(var_token.lexeme);
+                                         const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+                                         try self.generator.instructions.append(.{
+                                             .PushStorageId = .{
+                                                 .var_index = var_idx,
+                                                 .var_name = var_token.lexeme,
+                                                 .scope_kind = scope_kind,
+                                             },
+                                         });
+                                     } else {
+                                         // For non-variable receivers (like field access), generate normally
+                                         try self.generator.generateExpression(field_access.object, true, false);
+                                     }
+                                 }
                                 for (call_data.arguments) |arg| {
                                     try self.generator.generateExpression(arg.expr, true, false);
                                 }
