@@ -437,6 +437,9 @@ pub const IRPrinter = struct {
                     try w.writeAll(line);
                     return .{ .name = as_ptr, .ty = .PTR };
                 },
+                .I1, .I2, .I8, .F64 => {
+                    return self.ensurePointer(w, incoming, id);
+                },
                 else => {},
             },
             else => {},
@@ -657,6 +660,9 @@ pub const IRPrinter = struct {
         try w.writeAll("declare void @doxa_print_f64(double)\n");
         try w.writeAll("declare void @doxa_print_byte(i64)\n");
         try w.writeAll("declare i64 @doxa_str_len(ptr)\n");
+        try w.writeAll("declare ptr @doxa_str_concat(ptr, ptr)\n");
+        try w.writeAll("declare ptr @doxa_str_clone(ptr)\n");
+        try w.writeAll("declare ptr @doxa_char_to_string(i8)\n");
         try w.writeAll("declare i64 @doxa_byte_from_cstr(ptr)\n");
         try w.writeAll("declare void @doxa_debug_peek(ptr)\ndeclare void @doxa_peek_string(ptr)\n");
         try w.writeAll("declare void @doxa_print_array_hdr(ptr)\n");
@@ -1946,8 +1952,17 @@ pub const IRPrinter = struct {
                     const args_str = if (arg_strings.items.len == 0) "" else try std.mem.join(self.allocator, ", ", arg_strings.items);
                     defer if (arg_strings.items.len > 0) self.allocator.free(args_str);
 
-                    // Determine actual return type: prefer Call's return_type, fall back to function's return_type
-                    const actual_return_type = if (c.return_type != .Nothing) c.return_type else if (func_info) |info| info.return_type else .Nothing;
+                    // Determine actual return type:
+                    // - Prefer the Call's return_type when it's specific
+                    // - Fall back to the function signature when Call's type is missing/too-generic (e.g. arrays typed as String/PTR)
+                    var actual_return_type: HIR.HIRType = if (c.return_type != .Nothing) c.return_type else .Nothing;
+                    if (func_info) |info| {
+                        if (actual_return_type == .Nothing) {
+                            actual_return_type = info.return_type;
+                        } else if ((actual_return_type == .Unknown or actual_return_type == .String) and (info.return_type == .Array or info.return_type == .Map)) {
+                            actual_return_type = info.return_type;
+                        }
+                    }
 
                     if (actual_return_type != .Nothing) {
                         const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -1959,6 +1974,13 @@ pub const IRPrinter = struct {
                         try w.writeAll(call_line);
                         const stack_ty = self.hirTypeToStackType(actual_return_type);
                         var pushed = StackVal{ .name = result_name, .ty = stack_ty };
+                        if (stack_ty == .PTR) {
+                            switch (actual_return_type) {
+                                .Array => |inner| pushed.array_type = inner.*,
+                                .Map => |kv| pushed.array_type = kv.value.*,
+                                else => {},
+                            }
+                        }
                         if (stack_ty == .PTR and actual_return_type == .Struct) {
                             if (self.function_struct_return_fields.get(c.qualified_name)) |fts| {
                                 pushed.struct_field_types = fts;
@@ -1980,6 +2002,30 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .StringOp => |sop| {
+                    if (sop.op == .Concat) {
+                        if (stack.items.len < 2) continue;
+                        const a = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        const b = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+
+                        const a_ptr = try self.ensurePointer(w, a, &id);
+                        const b_ptr = try self.ensurePointer(w, b, &id);
+
+                        const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                        id += 1;
+                        const call_line = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = call ptr @doxa_str_concat(ptr {s}, ptr {s})\n",
+                            .{ result_name, a_ptr.name, b_ptr.name },
+                        );
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                        try stack.append(.{ .name = result_name, .ty = .PTR });
+                        last_instruction_was_terminator = false;
+                        continue;
+                    }
+
                     if (stack.items.len < 1) continue;
                     const arg = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
@@ -2194,26 +2240,16 @@ pub const IRPrinter = struct {
                         // Get the global pointer name
                         const gptr = try self.mangleGlobalName(gname);
 
-                        // If the global stores a pointer (like a struct pointer), we need to load it first
-                        // because methods expect a pointer to the struct, not a pointer to the global variable
+                        // IMPORTANT: PushStorageId must always push the *storage address* (the variable's
+                        // location), even if the variable itself stores a pointer (strings/arrays/structs).
+                        // Alias parameters (including `this` in instance methods) expect an address they can
+                        // load/store through; loading here would pass the pointee value and break aliasing.
                         const struct_fields = self.global_struct_field_types.get(gname);
                         const struct_names = self.global_struct_field_names.get(gname);
                         const struct_type_name = self.global_struct_type_names.get(gname);
-                        if (st == .PTR) {
-                            // Load the pointer value from the global
-                            const loaded_ptr = try self.nextTemp(&id);
-                            const llty = self.stackTypeToLLVMType(st);
-                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ loaded_ptr, llty, gptr });
-                            defer self.allocator.free(load_line);
-                            try w.writeAll(load_line);
-                            self.allocator.free(gptr);
-                            try stack.append(.{ .name = loaded_ptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
-                        } else {
-                            // For non-pointer globals, push the global pointer directly
-                            // Note: We don't free gptr here because it will be used in the call instruction
-                            // The memory will be cleaned up when the IR printer is destroyed
-                            try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
-                        }
+                        // Note: We intentionally don't free gptr here because it can be referenced later
+                        // (e.g. by a call instruction). It's cleaned up when the IR printer is destroyed.
+                        try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                     } else if (variables.get(psid.var_name)) |entry| {
                         // Push the local variable pointer directly (not loaded)
                         try stack.append(.{
@@ -2321,6 +2357,50 @@ pub const IRPrinter = struct {
                             const gptr = try self.mangleGlobalName(sd.var_name);
                             defer self.allocator.free(gptr);
                             // Don't emit store instruction, just declare the global
+                        } else {
+                            // For local declarations without an initializer, ensure arrays/maps are initialized
+                            // so subsequent operations like @push/@set have a valid header to mutate.
+                            if (sd.declared_type == .Array or sd.declared_type == .Map) {
+                                const info_ptr = variables.getPtr(sd.var_name) orelse continue;
+                                switch (sd.declared_type) {
+                                    .Array => |inner| {
+                                        const elem_type = inner.*;
+                                        const elem_size = self.arrayElementSize(elem_type);
+                                        const elem_tag = self.arrayElementTag(elem_type);
+                                        const reg = try self.nextTemp(&id);
+                                        const new_line = try std.fmt.allocPrint(
+                                            self.allocator,
+                                            "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 0)\n",
+                                            .{ reg, elem_size, elem_tag },
+                                        );
+                                        defer self.allocator.free(new_line);
+                                        try w.writeAll(new_line);
+                                        const store_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ reg, info_ptr.ptr_name });
+                                        defer self.allocator.free(store_line);
+                                        try w.writeAll(store_line);
+                                        info_ptr.stack_type = .PTR;
+                                        info_ptr.array_type = elem_type;
+                                    },
+                                    .Map => |kv| {
+                                        const key_tag = self.arrayElementTag(kv.key.*);
+                                        const val_tag = self.arrayElementTag(kv.value.*);
+                                        const reg = try self.nextTemp(&id);
+                                        const new_line = try std.fmt.allocPrint(
+                                            self.allocator,
+                                            "  {s} = call ptr @doxa_map_new(i64 0, i64 {d}, i64 {d})\n",
+                                            .{ reg, key_tag, val_tag },
+                                        );
+                                        defer self.allocator.free(new_line);
+                                        try w.writeAll(new_line);
+                                        const store_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ reg, info_ptr.ptr_name });
+                                        defer self.allocator.free(store_line);
+                                        try w.writeAll(store_line);
+                                        info_ptr.stack_type = .PTR;
+                                        info_ptr.array_type = kv.value.*;
+                                    },
+                                    else => {},
+                                }
+                            }
                         }
                         continue;
                     }
@@ -3108,9 +3188,15 @@ pub const IRPrinter = struct {
                             try w.writeAll(line);
                         },
                         .PTR => {
-                            const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
+                            if (v.array_type) |_| {
+                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(line);
+                                try w.writeAll(line);
+                            } else {
+                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
+                                defer self.allocator.free(line);
+                                try w.writeAll(line);
+                            }
                         },
                         else => {},
                     }
@@ -3570,17 +3656,33 @@ pub const IRPrinter = struct {
                     const args_str = if (arg_strings.items.len == 0) "" else try std.mem.join(self.allocator, ", ", arg_strings.items);
                     defer if (arg_strings.items.len > 0) self.allocator.free(args_str);
 
-                    if (c.return_type != .Nothing) {
+                    var actual_return_type: HIR.HIRType = c.return_type;
+                    if (func_info) |info| {
+                        if (actual_return_type == .Nothing) {
+                            actual_return_type = info.return_type;
+                        } else if ((actual_return_type == .Unknown or actual_return_type == .String) and (info.return_type == .Array or info.return_type == .Map)) {
+                            actual_return_type = info.return_type;
+                        }
+                    }
+
+                    if (actual_return_type != .Nothing) {
                         const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                         id += 1;
-                        const ret_ty = self.hirTypeToLLVMType(c.return_type, false);
+                        const ret_ty = self.hirTypeToLLVMType(actual_return_type, false);
                         const runtime_name = mapBuiltinToRuntime(c.qualified_name);
                         const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call {s} @{s}({s})\n", .{ result_name, ret_ty, runtime_name, args_str });
                         defer self.allocator.free(call_line);
                         try w.writeAll(call_line);
-                        const stack_ty = self.hirTypeToStackType(c.return_type);
+                        const stack_ty = self.hirTypeToStackType(actual_return_type);
                         var pushed = StackVal{ .name = result_name, .ty = stack_ty };
-                        if (stack_ty == .PTR and c.return_type == .Struct) {
+                        if (stack_ty == .PTR) {
+                            switch (actual_return_type) {
+                                .Array => |inner| pushed.array_type = inner.*,
+                                .Map => |kv| pushed.array_type = kv.value.*,
+                                else => {},
+                            }
+                        }
+                        if (stack_ty == .PTR and actual_return_type == .Struct) {
                             if (self.function_struct_return_fields.get(c.qualified_name)) |fts| {
                                 pushed.struct_field_types = fts;
                             }
@@ -3595,6 +3697,30 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .StringOp => |sop| {
+                    if (sop.op == .Concat) {
+                        if (stack.items.len < 2) continue;
+                        const a = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        const b = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+
+                        const a_ptr = try self.ensurePointer(w, a, &id);
+                        const b_ptr = try self.ensurePointer(w, b, &id);
+
+                        const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                        id += 1;
+                        const call_line = try std.fmt.allocPrint(
+                            self.allocator,
+                            "  {s} = call ptr @doxa_str_concat(ptr {s}, ptr {s})\n",
+                            .{ result_name, a_ptr.name, b_ptr.name },
+                        );
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                        try stack.append(.{ .name = result_name, .ty = .PTR });
+                        last_instruction_was_terminator = false;
+                        continue;
+                    }
+
                     if (stack.items.len < 1) continue;
                     const arg = stack.items[stack.items.len - 1];
                     stack.items.len -= 1;
@@ -3858,17 +3984,78 @@ pub const IRPrinter = struct {
                     last_instruction_was_terminator = false;
                 },
                 .LogicalOp => |lop| {
-                    _ = lop;
                     if (stack.items.len < 2) continue;
                     const rhs = stack.items[stack.items.len - 1];
                     const lhs = stack.items[stack.items.len - 2];
                     stack.items.len -= 2;
-                    const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                    id += 1;
-                    const op_line = try std.fmt.allocPrint(self.allocator, "  {s} = or i1 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                    defer self.allocator.free(op_line);
-                    try w.writeAll(op_line);
-                    try stack.append(.{ .name = name, .ty = .I1 });
+
+                    // Match the main logical-op emission: if both operands are tetra (i2), use LUTs;
+                    // otherwise, coerce to i1 and emit boolean ops.
+                    if (lhs.ty == .I2 and rhs.ty == .I2) {
+                        // Tetra operations - use LUTs
+                        const lhs_i64 = try self.nextTemp(&id);
+                        const lhs_zext = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i64\n", .{ lhs_i64, lhs.name });
+                        defer self.allocator.free(lhs_zext);
+                        try w.writeAll(lhs_zext);
+
+                        const rhs_i64 = try self.nextTemp(&id);
+                        const rhs_zext = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i64\n", .{ rhs_i64, rhs.name });
+                        defer self.allocator.free(rhs_zext);
+                        try w.writeAll(rhs_zext);
+
+                        const lut_name = switch (lop.op) {
+                            .And => "@tetra_and_lut",
+                            .Or => "@tetra_or_lut",
+                            .Iff => "@tetra_iff_lut",
+                            .Xor => "@tetra_xor_lut",
+                            .Nand => "@tetra_nand_lut",
+                            .Nor => "@tetra_nor_lut",
+                            .Implies => "@tetra_implies_lut",
+                            else => unreachable,
+                        };
+
+                        const row_ptr = try self.nextTemp(&id);
+                        const row_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [4 x [4 x i8]], ptr {s}, i64 0, i64 {s}\n", .{ row_ptr, lut_name, lhs_i64 });
+                        defer self.allocator.free(row_gep);
+                        try w.writeAll(row_gep);
+
+                        const elem_ptr = try self.nextTemp(&id);
+                        const elem_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [4 x i8], ptr {s}, i64 0, i64 {s}\n", .{ elem_ptr, row_ptr, rhs_i64 });
+                        defer self.allocator.free(elem_gep);
+                        try w.writeAll(elem_gep);
+
+                        const result_i8 = try self.nextTemp(&id);
+                        const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i8, ptr {s}\n", .{ result_i8, elem_ptr });
+                        defer self.allocator.free(load_line);
+                        try w.writeAll(load_line);
+
+                        const result_i2 = try self.nextTemp(&id);
+                        const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i8 {s} to i2\n", .{ result_i2, result_i8 });
+                        defer self.allocator.free(trunc_line);
+                        try w.writeAll(trunc_line);
+
+                        try stack.append(.{ .name = result_i2, .ty = .I2 });
+                    } else {
+                        const lhs_bool = try self.ensureBool(w, lhs, &id);
+                        const rhs_bool = try self.ensureBool(w, rhs, &id);
+
+                        const result = try self.nextTemp(&id);
+                        const op_str = switch (lop.op) {
+                            .And => "and",
+                            .Or => "or",
+                            .Xor => "xor",
+                            else => blk: {
+                                // For complex boolean operations, fall back to AND of truthiness.
+                                break :blk "and";
+                            },
+                        };
+
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = {s} i1 {s}, {s}\n", .{ result, op_str, lhs_bool.name, rhs_bool.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+
+                        try stack.append(.{ .name = result, .ty = .I1 });
+                    }
                     last_instruction_was_terminator = false;
                 },
                 .Peek => |pk| {
@@ -3942,24 +4129,13 @@ pub const IRPrinter = struct {
                         // Get the global pointer name
                         const gptr = try self.mangleGlobalName(gname);
 
-                        // If the global stores a pointer (like a struct pointer), we need to load it first
-                        // because methods expect a pointer to the struct, not a pointer to the global variable
+                        // IMPORTANT: PushStorageId must always push the *storage address* (the variable's
+                        // location), even if the variable itself stores a pointer (strings/arrays/structs).
+                        // Alias parameters expect an address they can load/store through; loading here would
+                        // pass the pointee value and break aliasing.
                         const struct_fields = self.global_struct_field_types.get(gname);
-                        if (st == .PTR) {
-                            // Load the pointer value from the global
-                            const loaded_ptr = try self.nextTemp(&id);
-                            const llty = self.stackTypeToLLVMType(st);
-                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ loaded_ptr, llty, gptr });
-                            defer self.allocator.free(load_line);
-                            try w.writeAll(load_line);
-                            self.allocator.free(gptr);
-                            try stack.append(.{ .name = loaded_ptr, .ty = .PTR, .struct_field_types = struct_fields });
-                        } else {
-                            // For non-pointer globals, push the global pointer directly
-                            // Note: We don't free gptr here because it will be used in the call instruction
-                            // The memory will be cleaned up when the IR printer is destroyed
-                            try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields });
-                        }
+                        // Note: We intentionally don't free gptr here because it can be referenced later.
+                        try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields });
                     } else if (variables.get(psid.var_name)) |entry| {
                         // Push the local variable pointer directly (not loaded)
                         try stack.append(.{ .name = entry.ptr_name, .ty = .PTR, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name });
@@ -4581,7 +4757,24 @@ pub const IRPrinter = struct {
                 break :blk StackVal{ .name = tmp, .ty = .I64 };
             },
             .Enum => try self.ensureI64(w, value, id),
-            .String, .Array, .Map, .Struct, .Function, .Union => blk_ptr: {
+            .String => blk_ptr: {
+                var ptr_val = value;
+                if (ptr_val.ty != .PTR) {
+                    ptr_val = try self.ensurePointer(w, value, id);
+                }
+                // Strings may be stack temporaries (e.g. from `each c in someString`),
+                // so clone before storing into arrays/maps to avoid dangling pointers.
+                const cloned = try self.nextTemp(id);
+                const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_str_clone(ptr {s})\n", .{ cloned, ptr_val.name });
+                defer self.allocator.free(clone_line);
+                try w.writeAll(clone_line);
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ tmp, cloned });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                break :blk_ptr StackVal{ .name = tmp, .ty = .I64 };
+            },
+            .Array, .Map, .Struct, .Function, .Union => blk_ptr: {
                 var ptr_val = value;
                 if (ptr_val.ty != .PTR) {
                     ptr_val = try self.ensurePointer(w, value, id);
@@ -5103,54 +5296,16 @@ pub const IRPrinter = struct {
             defer self.allocator.free(load_line);
             try w.writeAll(load_line);
 
-            // Allocate a 2-byte buffer on the stack: [char, 0]
-            const buf_ptr = try self.nextTemp(id);
-            const alloca_line = try std.fmt.allocPrint(
+            // Convert byte to a stable 1-char heap string.
+            const str_ptr = try self.nextTemp(id);
+            const call_line = try std.fmt.allocPrint(
                 self.allocator,
-                "  {s} = alloca [2 x i8]\n",
-                .{buf_ptr},
+                "  {s} = call ptr @doxa_char_to_string(i8 {s})\n",
+                .{ str_ptr, ch_val },
             );
-            defer self.allocator.free(alloca_line);
-            try w.writeAll(alloca_line);
-
-            // Store the character at index 0
-            const dst0_ptr = try self.nextTemp(id);
-            const dst0_gep = try std.fmt.allocPrint(
-                self.allocator,
-                "  {s} = getelementptr inbounds [2 x i8], ptr {s}, i64 0, i64 0\n",
-                .{ dst0_ptr, buf_ptr },
-            );
-            defer self.allocator.free(dst0_gep);
-            try w.writeAll(dst0_gep);
-
-            const store_ch = try std.fmt.allocPrint(
-                self.allocator,
-                "  store i8 {s}, ptr {s}\n",
-                .{ ch_val, dst0_ptr },
-            );
-            defer self.allocator.free(store_ch);
-            try w.writeAll(store_ch);
-
-            // Store null terminator at index 1
-            const dst1_ptr = try self.nextTemp(id);
-            const dst1_gep = try std.fmt.allocPrint(
-                self.allocator,
-                "  {s} = getelementptr inbounds [2 x i8], ptr {s}, i64 0, i64 1\n",
-                .{ dst1_ptr, buf_ptr },
-            );
-            defer self.allocator.free(dst1_gep);
-            try w.writeAll(dst1_gep);
-
-            const store_nul = try std.fmt.allocPrint(
-                self.allocator,
-                "  store i8 0, ptr {s}\n",
-                .{dst1_ptr},
-            );
-            defer self.allocator.free(store_nul);
-            try w.writeAll(store_nul);
-
-            // Return pointer to start of temporary C string
-            try stack.append(.{ .name = dst0_ptr, .ty = .PTR });
+            defer self.allocator.free(call_line);
+            try w.writeAll(call_line);
+            try stack.append(.{ .name = str_ptr, .ty = .PTR });
         }
     }
 

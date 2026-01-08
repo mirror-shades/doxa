@@ -28,6 +28,7 @@ pub const expected_complex_print_results = [_]print_result{
     .{ .value = "The variable \"number\" is equal to 10" },
     .{ .value = "The variable name \"number\" has 6 letters" },
     .{ .value = "The variable \"number\" is equal to 10 and the name has 6 letters" },
+    .{ .value = "[\"1\", \" \", \"+\", \" \", \"2\"]" },
     .{ .value = "end" },
 };
 

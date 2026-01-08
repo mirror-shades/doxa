@@ -248,7 +248,11 @@ pub const HIRGenerator = struct {
 
                     if (self.semantic_function_return_types) |semantic_types| {
                         if (semantic_types.get(stmt.base.id)) |semantic_return_type| {
-                            return_type = self.convertTypeInfo(semantic_return_type.*);
+                            // Only use the semantic analyzer's inferred return type when the user did not
+                            // provide an explicit return type annotation.
+                            if (func.return_type_info.base == .Nothing) {
+                                return_type = self.convertTypeInfo(semantic_return_type.*);
+                            }
                         }
                     }
 
