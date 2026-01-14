@@ -115,6 +115,7 @@ pub const VM = struct {
     pub const ZigRuntimeModule = struct {
         lib_path: []const u8,
         lib: ?std.DynLib = null,
+        free_cstr_symbol: ?[]const u8 = null,
         functions: std.StringHashMap(ZigRuntimeFn),
 
         pub fn deinit(self: *ZigRuntimeModule, allocator: std.mem.Allocator) void {
@@ -130,6 +131,7 @@ pub const VM = struct {
                 allocator.free(fnv.param_types);
             }
             self.functions.deinit();
+            if (self.free_cstr_symbol) |sym| allocator.free(@constCast(sym));
             allocator.free(@constCast(self.lib_path));
         }
     };
@@ -2211,6 +2213,15 @@ pub const VM = struct {
             }
 
             const lib = &mod_ptr.lib.?;
+
+            const FreeCStrFn = *const fn (?[*:0]u8) callconv(.c) void;
+            const free_cstr: ?FreeCStrFn = blk: {
+                const sym = mod_ptr.free_cstr_symbol orelse break :blk null;
+                const sym_z = self.allocator.dupeZ(u8, sym) catch break :blk null;
+                defer self.allocator.free(sym_z);
+                break :blk lib.lookup(FreeCStrFn, sym_z);
+            };
+
             if (arg_count == 0) {
                 // No-arg function
                 switch (fn_entry.return_type) {
@@ -2242,6 +2253,24 @@ pub const VM = struct {
                         };
                         const res = f();
                         try self.pushValue(.{ .int = res });
+                        return;
+                    },
+                    .String => {
+                        const Fn = *const fn () callconv(.c) ?[*:0]u8;
+                        const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                            self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                            return ErrorList.RuntimeError;
+                        };
+                        defer self.allocator.free(sym_z);
+                        const f = lib.lookup(Fn, sym_z) orelse {
+                            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                            return ErrorList.RuntimeError;
+                        };
+                        const ptr = f();
+                        defer if (ptr != null and free_cstr != null) free_cstr.?(ptr);
+                        const slice = if (ptr) |p| std.mem.span(p) else "";
+                        const duped = try self.scopeAllocator().dupe(u8, slice);
+                        try self.pushValue(.{ .string = duped });
                         return;
                     },
                     else => {
@@ -2279,6 +2308,23 @@ pub const VM = struct {
                             const res = f(x);
                             try self.pushValue(.{ .float = res });
                         },
+                        .String => {
+                            const Fn = *const fn (f64) callconv(.c) ?[*:0]u8;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            const ptr = f(x);
+                            defer if (ptr != null and free_cstr != null) free_cstr.?(ptr);
+                            const slice = if (ptr) |p| std.mem.span(p) else "";
+                            const duped = try self.scopeAllocator().dupe(u8, slice);
+                            try self.pushValue(.{ .string = duped });
+                        },
                         else => {
                             self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Unsupported return type for inline zig VM call: {s}", .{qualified_name});
                             return ErrorList.RuntimeError;
@@ -2310,12 +2356,98 @@ pub const VM = struct {
                             const res = f(x);
                             try self.pushValue(.{ .int = res });
                         },
+                        .String => {
+                            const Fn = *const fn (i64) callconv(.c) ?[*:0]u8;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            const ptr = f(x);
+                            defer if (ptr != null and free_cstr != null) free_cstr.?(ptr);
+                            const slice = if (ptr) |p| std.mem.span(p) else "";
+                            const duped = try self.scopeAllocator().dupe(u8, slice);
+                            try self.pushValue(.{ .string = duped });
+                        },
                         else => {
                             self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Unsupported return type for inline zig VM call: {s}", .{qualified_name});
                             return ErrorList.RuntimeError;
                         },
                     }
                     return;
+                },
+                .String => {
+                    const s = switch (arg0) {
+                        .string => |v| v,
+                        else => {
+                            self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
+                            return ErrorList.RuntimeError;
+                        },
+                    };
+                    // VM strings are slices (not sentinel-terminated). Convert to a temporary C string for the call.
+                    const tmp = try self.runtimeAllocator().allocSentinel(u8, s.len, 0);
+                    defer self.runtimeAllocator().free(tmp);
+                    @memcpy(tmp[0..s.len], s);
+                    const cptr: ?[*:0]const u8 = tmp.ptr;
+
+                    switch (fn_entry.return_type) {
+                        .String => {
+                            const Fn = *const fn (?[*:0]const u8) callconv(.c) ?[*:0]u8;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            const ptr = f(cptr);
+                            defer if (ptr != null and free_cstr != null) free_cstr.?(ptr);
+                            const slice = if (ptr) |p| std.mem.span(p) else "";
+                            const duped = try self.scopeAllocator().dupe(u8, slice);
+                            try self.pushValue(.{ .string = duped });
+                            return;
+                        },
+                        .Int => {
+                            const Fn = *const fn (?[*:0]const u8) callconv(.c) i64;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            const res = f(cptr);
+                            try self.pushValue(.{ .int = res });
+                            return;
+                        },
+                        .Float => {
+                            const Fn = *const fn (?[*:0]const u8) callconv(.c) f64;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            const res = f(cptr);
+                            try self.pushValue(.{ .float = res });
+                            return;
+                        },
+                        else => {
+                            self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Unsupported return type for inline zig VM call: {s}", .{qualified_name});
+                            return ErrorList.RuntimeError;
+                        },
+                    }
                 },
                 else => {
                     self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Unsupported parameter type for inline zig VM call: {s}", .{qualified_name});

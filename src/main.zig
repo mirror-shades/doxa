@@ -303,14 +303,14 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
         try file_buf.appendSlice("\n\n");
 
         const zigTypeName = struct {
-            fn fromTypeInfo(t: ast.TypeInfo) ?[]const u8 {
+            fn fromParamTypeInfo(t: ast.TypeInfo) ?[]const u8 {
                 return switch (t.base) {
                     .Int => "i64",
                     .Float => "f64",
                     .Byte => "u8",
                     .Tetra => "bool",
                     .Nothing => "void",
-                    // String and complex types not supported in VM dynlib bridge yet.
+                    .String => "?[*:0]const u8",
                     else => null,
                 };
             }
@@ -322,14 +322,51 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
                     .Byte => .Byte,
                     .Tetra => .Tetra,
                     .Nothing => .Nothing,
+                    .String => .String,
                     else => .Nothing,
+                };
+            }
+
+            fn fromReturnTypeInfo(t: ast.TypeInfo) ?[]const u8 {
+                return switch (t.base) {
+                    .Int => "i64",
+                    .Float => "f64",
+                    .Byte => "u8",
+                    .Tetra => "bool",
+                    .Nothing => "void",
+                    .String => "?[*:0]u8",
+                    else => null,
                 };
             }
         };
 
+        // Helpers used by wrapper shims (string boundary conversion + free)
+        try file_buf.appendSlice("const __doxa_std = @import(\"std\");\n\n");
+        try file_buf.appendSlice("fn __doxa_to_cstr(s: []const u8) ?[*:0]u8 {\n");
+        try file_buf.appendSlice("    const buf = __doxa_std.heap.page_allocator.allocSentinel(u8, s.len, 0) catch return null;\n");
+        try file_buf.appendSlice("    @memcpy(buf[0..s.len], s);\n");
+        try file_buf.appendSlice("    return buf.ptr;\n");
+        try file_buf.appendSlice("}\n\n");
+        // Give this symbol a stable, per-module unique name so multiple inline-zig objects
+        // can be linked into one executable without duplicate symbol errors.
+        const free_sym = try std.fmt.allocPrint(memoryManager.getAllocator(), "__doxa_inlinezig_free_cstr__{s}_{s}", .{ module_name, short_hex });
+        defer memoryManager.getAllocator().free(free_sym);
+
+        const free_sym_owned = try memoryManager.getAllocator().dupe(u8, free_sym);
+
+        try file_buf.appendSlice("pub export fn ");
+        try file_buf.appendSlice(free_sym);
+        try file_buf.appendSlice("(p: ?[*:0]u8) callconv(.c) void {\n");
+        try file_buf.appendSlice("    if (p) |ptr| {\n");
+        try file_buf.appendSlice("        const n: usize = __doxa_std.mem.len(ptr);\n");
+        try file_buf.appendSlice("        const bytes: [*]u8 = @as([*]u8, @ptrCast(ptr));\n");
+        try file_buf.appendSlice("        __doxa_std.heap.page_allocator.free(bytes[0 .. n + 1]);\n");
+        try file_buf.appendSlice("    }\n");
+        try file_buf.appendSlice("}\n\n");
+
         for (sigs) |sig| {
             // Only support small subset in VM bridge for now
-            const ret_zig = zigTypeName.fromTypeInfo(sig.return_type) orelse {
+            const ret_zig = zigTypeName.fromReturnTypeInfo(sig.return_type) orelse {
                 reporter.reportCompileError(s.base.location(), ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in VM bridge for '{s}.{s}'", .{ module_name, sig.name });
                 return error.NotImplemented;
             };
@@ -350,13 +387,17 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
             try sig_buf.appendSlice(sym_ident);
             try sig_buf.appendSlice("(");
 
+            // We'll build a shim body that converts C-string params to slices for user code.
+            var prelude_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
+            defer prelude_buf.deinit();
+
             var call_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
             defer call_buf.deinit();
             try call_buf.appendSlice(sig.name);
             try call_buf.appendSlice("(");
 
             for (sig.param_types, 0..) |pt, i| {
-                const pt_zig = zigTypeName.fromTypeInfo(pt) orelse {
+                const pt_zig = zigTypeName.fromParamTypeInfo(pt) orelse {
                     reporter.reportCompileError(s.base.location(), ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in VM bridge for '{s}.{s}'", .{ module_name, sig.name });
                     return error.NotImplemented;
                 };
@@ -371,7 +412,19 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
                 try sig_buf.appendSlice(arg_name);
                 try sig_buf.appendSlice(": ");
                 try sig_buf.appendSlice(pt_zig);
-                try call_buf.appendSlice(arg_name);
+
+                if (pt.base == .String) {
+                    const var_name = try std.fmt.allocPrint(memoryManager.getAllocator(), "__doxa_s{}", .{i});
+                    defer memoryManager.getAllocator().free(var_name);
+                    try prelude_buf.appendSlice("    const ");
+                    try prelude_buf.appendSlice(var_name);
+                    try prelude_buf.appendSlice(" = if (");
+                    try prelude_buf.appendSlice(arg_name);
+                    try prelude_buf.appendSlice(") |p| __doxa_std.mem.span(p) else \"\";\n");
+                    try call_buf.appendSlice(var_name);
+                } else {
+                    try call_buf.appendSlice(arg_name);
+                }
             }
             try sig_buf.appendSlice(") callconv(.c) ");
             try sig_buf.appendSlice(ret_zig);
@@ -379,11 +432,21 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
 
             try call_buf.appendSlice(")");
 
+            // Inject conversion prelude (string params)
+            try sig_buf.appendSlice("\n");
+            if (prelude_buf.items.len > 0) try sig_buf.appendSlice(prelude_buf.items);
+
             if (std.mem.eql(u8, ret_zig, "void")) {
+                try sig_buf.appendSlice("    ");
                 try sig_buf.appendSlice(call_buf.items);
                 try sig_buf.appendSlice(";\n}\n\n");
+            } else if (sig.return_type.base == .String) {
+                try sig_buf.appendSlice("    const __doxa_out = ");
+                try sig_buf.appendSlice(call_buf.items);
+                try sig_buf.appendSlice(";\n");
+                try sig_buf.appendSlice("    return __doxa_to_cstr(__doxa_out);\n}\n\n");
             } else {
-                try sig_buf.appendSlice("return ");
+                try sig_buf.appendSlice("    return ");
                 try sig_buf.appendSlice(call_buf.items);
                 try sig_buf.appendSlice(";\n}\n\n");
             }
@@ -452,6 +515,7 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
         try modules.put(key_owned, .{
             .lib_path = lib_owned,
             .lib = null,
+            .free_cstr_symbol = free_sym_owned,
             .functions = functions,
         });
     }
