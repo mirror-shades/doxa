@@ -22,6 +22,14 @@ pub const StructField = struct {
     is_public: bool = false,
 };
 
+pub const ZigModule = struct {
+    name: []const u8,
+    path: []const u8,
+    size: u32,
+    offset: u32,
+    functions: std.StringHashMap([]const u8),
+};
+
 pub const ModuleEnvironment = struct {
     module_name: []const u8,
     environment: *Environment,

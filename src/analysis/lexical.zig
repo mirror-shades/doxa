@@ -71,6 +71,7 @@ pub const LexicalAnalyzer = struct {
     pub fn initKeywords(self: *LexicalAnalyzer) !void {
         try self.keywords.put("pub", .PUBLIC);
         try self.keywords.put("public", .PUBLIC);
+        try self.keywords.put("zig", .ZIG);
         try self.keywords.put("true", .LOGIC);
         try self.keywords.put("false", .LOGIC);
         try self.keywords.put("both", .LOGIC);
@@ -130,7 +131,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("at", .AT);
         try self.keywords.put("to", .RANGE);
         try self.keywords.put("∃", .EXISTS);
-
         try self.keywords.put("∀", .FORALL);
         try self.keywords.put("∈", .IN);
         try self.keywords.put("¬", .NOT);
@@ -169,6 +169,7 @@ pub const LexicalAnalyzer = struct {
             const sequence_length = try std.unicode.utf8ByteSequenceLength(c);
             if (sequence_length <= self.source[self.current..].len) {
                 const symbol = self.source[self.current .. self.current + sequence_length];
+
                 if (self.keywords.get(symbol)) |keyword_type| {
                     var i: usize = 0;
                     while (i < sequence_length) : (i += 1) {
@@ -533,6 +534,40 @@ pub const LexicalAnalyzer = struct {
         const text = self.source[self.start..self.current];
         if (self.keywords.get(text)) |keyword_type| {
             switch (keyword_type) {
+                .ZIG => {
+                    // `zig <ModuleName> { ... }` is lexed as:
+                    // - ZIG keyword token
+                    // - IDENTIFIER token (module name)
+                    // - ZIG_BLOCK token (raw zig source inside braces)
+                    try self.addMinimalToken(.ZIG);
+
+                    // Skip whitespace/newlines between `zig` and module name
+                    while (!self.isAtEnd() and isWhitespace(self.peekAt(0))) {
+                        self.advance();
+                    }
+
+                    // Parse module name as identifier
+                    if (self.isAtEnd() or !isAlpha(self.peekAt(0))) {
+                        return error.ExpectedIdentifier;
+                    }
+
+                    self.start = self.current;
+                    self.token_line = self.line;
+                    while (!self.isAtEnd() and (isAlpha(self.peekAt(0)) or isDigit(self.peekAt(0)) or self.peekAt(0) == '_')) {
+                        self.advance();
+                    }
+                    const module_name = self.source[self.start..self.current];
+                    try self.addToken(.IDENTIFIER, .{ .string = module_name });
+
+                    // Skip whitespace/newlines between module name and '{'
+                    while (!self.isAtEnd() and isWhitespace(self.peekAt(0))) {
+                        self.advance();
+                    }
+
+                    // Now lex the zig block payload
+                    self.token_line = self.line;
+                    try self.addZigBlock();
+                },
                 .LOGIC => {
                     if (std.mem.eql(u8, text, "true") or std.mem.eql(u8, text, "false")) {
                         const value = if (std.mem.eql(u8, text, "true"))
@@ -692,6 +727,123 @@ pub const LexicalAnalyzer = struct {
         const lexeme = self.source[self.start..self.current];
         const string_content = try result.toOwnedSlice();
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
+    }
+
+    fn addZigBlock(self: *LexicalAnalyzer) !void {
+        if (self.isAtEnd() or self.peekAt(0) != '{') {
+            return error.ExpectedLeftBrace;
+        }
+
+        const block_start = self.current; // points at '{'
+        const block_line = self.line;
+
+        _ = self.match('{');
+        const content_start = self.current; // first char inside the braces
+
+        var depth: usize = 1;
+        var in_string = false;
+        var string_escape = false;
+        var line_comment = false;
+        var block_comment_depth: usize = 0;
+
+        var content_end: usize = content_start;
+
+        while (!self.isAtEnd() and depth > 0) {
+            const ch = self.peekAt(0);
+
+            if (line_comment) {
+                if (ch == '\n') {
+                    line_comment = false;
+                }
+                self.advance();
+                continue;
+            }
+
+            if (block_comment_depth > 0) {
+                if (ch == '/' and self.peekAt(1) == '*') {
+                    block_comment_depth += 1;
+                    self.advance();
+                    self.advance();
+                    continue;
+                }
+                if (ch == '*' and self.peekAt(1) == '/') {
+                    block_comment_depth -= 1;
+                    self.advance();
+                    self.advance();
+                    continue;
+                }
+                self.advance();
+                continue;
+            }
+
+            if (in_string) {
+                if (string_escape) {
+                    string_escape = false;
+                    self.advance();
+                    continue;
+                }
+                if (ch == '\\') {
+                    string_escape = true;
+                    self.advance();
+                    continue;
+                }
+                if (ch == '"') {
+                    in_string = false;
+                    self.advance();
+                    continue;
+                }
+                self.advance();
+                continue;
+            }
+
+            // Not in string/comment
+            if (ch == '/' and self.peekAt(1) == '/') {
+                line_comment = true;
+                self.advance();
+                self.advance();
+                continue;
+            }
+            if (ch == '/' and self.peekAt(1) == '*') {
+                block_comment_depth = 1;
+                self.advance();
+                self.advance();
+                continue;
+            }
+            if (ch == '"') {
+                in_string = true;
+                self.advance();
+                continue;
+            }
+
+            if (ch == '{') {
+                depth += 1;
+                self.advance();
+                continue;
+            }
+
+            if (ch == '}') {
+                depth -= 1;
+                if (depth == 0) {
+                    content_end = self.current;
+                    self.advance();
+                    break;
+                }
+                self.advance();
+                continue;
+            }
+
+            self.advance();
+        }
+
+        if (depth != 0) {
+            return error.UnterminatedZigBlock;
+        }
+
+        self.start = block_start;
+        self.token_line = block_line;
+        const lexeme = self.source[block_start..self.current];
+        const inner_source = self.source[content_start..content_end];
+        try self.addLongToken(.ZIG_BLOCK, .{ .string = inner_source }, lexeme);
     }
 
     fn internalMethod(self: *LexicalAnalyzer) !void {

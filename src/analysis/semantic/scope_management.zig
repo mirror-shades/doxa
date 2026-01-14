@@ -111,6 +111,25 @@ pub fn handleModuleFieldAccess(
                 // Return appropriate type based on the imported symbol kind
                 switch (imported_symbol.kind) {
                     .Function => {
+                        // Prefer imported metadata when present (works for inline zig modules too).
+                        if (imported_symbol.param_count != null or imported_symbol.return_type_info != null) {
+                            const pc: usize = if (imported_symbol.param_count) |x| @intCast(x) else 0;
+                            var params_buf = try allocator.alloc(ast.TypeInfo, pc);
+                            if (imported_symbol.param_types) |pts| {
+                                const n = @min(pts.len, params_buf.len);
+                                @memcpy(params_buf[0..n], pts[0..n]);
+                                for (params_buf[n..]) |*ti| ti.* = ast.TypeInfo{ .base = .Nothing };
+                            } else {
+                                for (params_buf) |*ti| ti.* = ast.TypeInfo{ .base = .Nothing };
+                            }
+                            const ret_ptr = try ast.TypeInfo.createDefault(allocator);
+                            ret_ptr.* = if (imported_symbol.return_type_info) |ri| ri else ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
+                            const ft_ptr = try allocator.create(ast.FunctionType);
+                            ft_ptr.* = ast.FunctionType{ .params = params_buf, .return_type = ret_ptr };
+                            type_info.* = ast.TypeInfo{ .base = .Function, .is_mutable = false, .function_type = ft_ptr };
+                            return type_info;
+                        }
+
                         // Try to find the actual function definition to get its return type
                         var found_func_type: ?*ast.FunctionType = null;
 

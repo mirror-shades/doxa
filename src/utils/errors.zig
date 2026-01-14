@@ -92,6 +92,7 @@ pub const ErrorList = error{
     IndexOutOfBounds,
     UnterminatedArray,
     UnterminatedString,
+    UnterminatedZigBlock,
     UnterminatedParenthesis,
     ExpectedComma,
     ExpectedDot,
@@ -128,6 +129,11 @@ pub const ErrorList = error{
     ExpectedCommaOrClosingBracket,
     ExpectedCommaOrClosingParenthesis,
     InvalidNumber,
+    // Inline Zig blocks
+    EmptyInput,
+    InvalidParamType,
+    InvalidReturnType,
+    InlineZigNotValid,
     InvalidEscapeSequence,
     UnexpectedCharacter,
     InvalidCharacter,
@@ -377,6 +383,7 @@ pub const ErrorCode = struct {
     pub const INVALID_ARGUMENT_COUNT = "E2024";
     pub const UNKNOWN_TYPE = "E2025";
     pub const NOT_TRUTHY = "E2026";
+    pub const EXPECTED_OPEN_BRACE = "E2027";
 
     // 3xxx - Memory & Ownership
     pub const MEMORY_ERROR = "E3001";

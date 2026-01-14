@@ -49,6 +49,8 @@ pub const TokenType = enum {
     MODULE, // module
     PUBLIC, // public
     RETURN, // return
+    ZIG, // zig
+    ZIG_BLOCK, // zig { ... } payload (raw zig source)
     BREAK, // break
     FUNCTION, // function
     METHOD, // method

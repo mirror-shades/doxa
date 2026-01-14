@@ -1,0 +1,26 @@
+(true and false)? # false
+(true or false)? # true
+(true xor false)? # true
+(true implies false)? # false
+(true iff false)? # false
+(true and true)? # true
+(true or true)? # true
+(true xor true)? # false
+(true implies true)? # true
+(true iff true)? # true
+(false and false)? # false
+(false or false)? # false
+(false xor false)? # false
+(false implies false)? # true
+(false iff false)? # true
+@print("\n")
+(both and false)? # false
+(both and true)? # true
+(both or false)? # true
+(both or true)? # true
+(both xor false)? # true 
+(both xor true)? # true should be false
+(both implies false)? # false 
+(both implies true)? # true
+(both iff false)? # false 
+(both iff true)? # true
