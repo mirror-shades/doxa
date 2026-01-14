@@ -1,18 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const answers = @import("answers");
-const testing = std.testing;
-const process = std.process;
-const fs = std.fs;
+
+const harness = @import("harness.zig");
 
 const peek_result = answers.peek_result;
 const print_result = answers.print_result;
 
-const test_results = struct {
-    passed: usize,
-    failed: usize,
-    untested: usize,
-};
+const test_results = harness.Counts;
 
 const Mode = enum {
     PEEK,
@@ -28,180 +23,51 @@ const TestCase = struct {
     expected_peek: ?[]const peek_result,
 };
 
-var total_passed: usize = 0;
-var total_failed: usize = 0;
-
-const CommandResult = struct {
-    stdout: []const u8,
-    stderr: []const u8,
-    exit_code: u8,
-};
-
-fn repoRootFromEnv(allocator: std.mem.Allocator) !?[]const u8 {
-    return process.getEnvVarOwned(allocator, "DOXA_REPO_ROOT") catch null;
-}
+const CommandResult = harness.CommandResult;
 
 fn runCompiledBinaryEx(allocator: std.mem.Allocator, binary_path: []const u8, input: ?[]const u8) !CommandResult {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const child_allocator = arena.allocator();
+    const repo_root = try harness.repoRootFromEnv(allocator);
+    defer if (repo_root) |rr| allocator.free(rr);
 
-    const repo_root = try repoRootFromEnv(child_allocator);
-
-    var child = process.Child.init(&[_][]const u8{binary_path}, child_allocator);
-    child.cwd = repo_root orelse ".";
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    if (input != null) child.stdin_behavior = .Pipe;
-
-    try child.spawn();
-
-    if (input) |input_data| {
-        var stdin_buffer: [1024]u8 = undefined;
-        var stdin_writer = child.stdin.?.writer(&stdin_buffer);
-        const stdin = &stdin_writer.interface;
-        try stdin.writeAll(input_data);
-        try stdin.flush();
-        child.stdin.?.close();
-        child.stdin = null;
-    }
-
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
-    defer stdout.deinit();
-    while (true) {
-        const bytes_read = child.stdout.?.read(&stdout_buffer) catch |err| switch (err) {
-            error.BrokenPipe => break,
-            else => return err,
-        };
-        if (bytes_read == 0) break;
-        stdout.appendSlice(stdout_buffer[0..bytes_read]) catch return error.OutOfMemory;
-    }
-
-    var stderr_buffer: [4096]u8 = undefined;
-    var stderr = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
-    defer stderr.deinit();
-    while (true) {
-        const bytes_read = child.stderr.?.read(&stderr_buffer) catch |err| switch (err) {
-            error.BrokenPipe => break,
-            else => return err,
-        };
-        if (bytes_read == 0) break;
-        stderr.appendSlice(stderr_buffer[0..bytes_read]) catch return error.OutOfMemory;
-    }
-    const term = try child.wait();
-
-    const exit_code = switch (term) {
-        .Exited => |code| code,
-        .Signal => |signal| {
-            std.debug.print("Command terminated with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
-            return error.CommandFailed;
-        },
-        .Stopped => |signal| {
-            std.debug.print("Command stopped with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
-            return error.CommandFailed;
-        },
-        .Unknown => {
-            std.debug.print("Command failed with unknown error:\n", .{});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
-            return error.CommandFailed;
-        },
-    };
-
-    return CommandResult{
-        .stdout = try allocator.dupe(u8, stdout.items),
-        .stderr = try allocator.dupe(u8, stderr.items),
-        .exit_code = @intCast(exit_code),
-    };
+    const argv = [_][]const u8{binary_path};
+    return try harness.runCommandCapture(allocator, &argv, repo_root, input);
 }
 
 fn runCompiledBinary(allocator: std.mem.Allocator, binary_path: []const u8) ![]const u8 {
     const result = try runCompiledBinaryEx(allocator, binary_path, null);
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) return error.CommandFailed;
-    return allocator.dupe(u8, result.stdout);
+    allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        return error.CommandFailed;
+    }
+    return result.stdout;
 }
 
 fn runCompiledBinaryWithInput(allocator: std.mem.Allocator, binary_path: []const u8, input: []const u8) ![]const u8 {
     const result = try runCompiledBinaryEx(allocator, binary_path, input);
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) return error.CommandFailed;
-    return allocator.dupe(u8, result.stdout);
+    allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        return error.CommandFailed;
+    }
+    return result.stdout;
 }
 
 fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const child_allocator = arena.allocator();
+    const repo_root = try harness.repoRootFromEnv(allocator);
+    defer if (repo_root) |rr| allocator.free(rr);
 
-    const repo_root = try repoRootFromEnv(child_allocator);
-
-    const exe_path = blk: {
-        if (process.getEnvVarOwned(allocator, "DOXA_BIN") catch null) |custom| {
-            break :blk custom;
-        }
-        const exe_name = if (builtin.os.tag == .windows) "doxa.exe" else "doxa";
-        break :blk try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", exe_name });
-    };
+    const exe_path = try harness.doxaExePath(allocator);
     defer allocator.free(exe_path);
 
-    var child = process.Child.init(&[_][]const u8{ exe_path, "run", path }, child_allocator);
-    child.cwd = repo_root orelse ".";
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-
-    try child.spawn();
-
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
-    defer stdout.deinit();
-    while (true) {
-        const bytes_read = child.stdout.?.read(&stdout_buffer) catch |err| switch (err) {
-            error.BrokenPipe => break,
-            else => return err,
-        };
-        if (bytes_read == 0) break;
-        stdout.appendSlice(stdout_buffer[0..bytes_read]) catch return error.OutOfMemory;
+    const argv = [_][]const u8{ exe_path, "run", path };
+    const result = try harness.runCommandCapture(allocator, &argv, repo_root, null);
+    allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        return error.CommandFailed;
     }
-
-    var stderr_buffer: [4096]u8 = undefined;
-    var stderr = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
-    defer stderr.deinit();
-    while (true) {
-        const bytes_read = child.stderr.?.read(&stderr_buffer) catch |err| switch (err) {
-            error.BrokenPipe => break,
-            else => return err,
-        };
-        if (bytes_read == 0) break;
-        stderr.appendSlice(stderr_buffer[0..bytes_read]) catch return error.OutOfMemory;
-    }
-    const term = try child.wait();
-
-    const exit_code = switch (term) {
-        .Exited => |code| code,
-        .Signal => |signal| {
-            std.debug.print("Command terminated with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
-            return error.CommandFailed;
-        },
-        .Stopped => |signal| {
-            std.debug.print("Command stopped with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
-            return error.CommandFailed;
-        },
-        .Unknown => {
-            std.debug.print("Command failed with unknown error:\n", .{});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
-            return error.CommandFailed;
-        },
-    };
-
-    if (exit_code != 0) return error.CommandFailed;
-    return allocator.dupe(u8, stdout.items);
+    return result.stdout;
 }
 
 fn validatePrintResults(output: []const u8, expected_results: []const print_result, allocator: std.mem.Allocator) !test_results {
@@ -287,8 +153,8 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     if (output.len == 0) return .{ .passed = 0, .untested = 0, .failed = 0 };
 
     return switch (tc.mode) {
-        .PRINT => try validatePrintResults(output, tc.expected_print.?, allocator),
-        .PEEK => try validatePeekResults(output, tc.expected_peek.?, allocator),
+        .PRINT => try harness.validatePrintResults(output, tc.expected_print.?, allocator),
+        .PEEK => try harness.validatePeekResults(output, tc.expected_peek.?, allocator),
     };
 }
 
@@ -343,15 +209,11 @@ fn grabValue(output: []const u8) []const u8 {
 }
 
 fn getBinaryPath(alloc: std.mem.Allocator, base: []const u8) ![]const u8 {
-    if (builtin.os.tag == .windows) {
-        if (std.mem.endsWith(u8, base, ".exe")) return try alloc.dupe(u8, base);
-        return try std.fmt.allocPrint(alloc, "{s}.exe", .{base});
-    }
-    return try alloc.dupe(u8, base);
+    return harness.getBinaryPath(alloc, base);
 }
 
-test "compile and run tests" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
+    var arena = std.heap.ArenaAllocator.init(parent_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
@@ -359,20 +221,20 @@ test "compile and run tests" {
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
 
-    // First, run test_build.doxa to compile the files
-    std.debug.print("\n=== Building test files ===\n", .{});
-    std.debug.print("Running doxa command with ./test/test_build.doxa...\n", .{});
+    harness.printSection("COMPILE");
+
     _ = runDoxaCommand(allocator, "./test/test_build.doxa") catch |err| {
-        std.debug.print("Failed to build test files: {}\n", .{err});
+        std.debug.print("Build step failed: {}\n", .{err});
         return err;
     };
-    std.debug.print("Build complete\n", .{});
+    harness.printCase("build test files", .{ .passed = 1, .failed = 0, .untested = 0 });
 
     // Test cases for compiled binaries
     const bigfile_path = try getBinaryPath(allocator, "./test/out/bigfile");
     const complex_print_path = try getBinaryPath(allocator, "./test/out/complex_print");
     const expressions_path = try getBinaryPath(allocator, "./test/out/expressions");
     const brainfuck_path = try getBinaryPath(allocator, "./test/out/brainfuck");
+    const inline_zig_string_path = try getBinaryPath(allocator, "./test/out/inline_zig_string");
 
     const test_cases = [_]TestCase{
         .{
@@ -407,38 +269,34 @@ test "compile and run tests" {
             .expected_print = answers.expected_brainfuck_results[0..],
             .expected_peek = null,
         },
+        .{
+            .name = "inline zig string",
+            .binary_path = inline_zig_string_path,
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = &[_]print_result{
+                .{ .value = "abc" },
+                .{ .value = "hi" },
+            },
+            .expected_peek = null,
+        },
     };
 
-    std.debug.print("\n=== Running compiled binary tests ===\n", .{});
     var passed: usize = 0;
     var failed: usize = 0;
     var untested: usize = 0;
     for (test_cases) |tc| {
-        std.debug.print("  Running: {s}\n", .{tc.name});
-        std.debug.print("\n=== Running {s} test ===\n", .{tc.name});
-        std.debug.print("Running compiled binary {s}...\n", .{tc.binary_path});
         const result = try runTestCase(allocator, tc);
-        std.debug.print("Parsing output...\n", .{});
-        if (result.failed == 0 and result.untested == 0) {
-            std.debug.print("✓ All {d} test cases passed\n", .{result.passed});
-        } else {
-            std.debug.print("Results: {d} passed, {d} failed, {d} untested\n", .{ result.passed, result.failed, result.untested });
+        harness.printCase(tc.name, result);
+        if (!harness.isClean(result)) {
+            std.debug.print("  bin: {s}\n", .{tc.binary_path});
         }
-        std.debug.print("\n=== {s} test complete ===\n", .{tc.name});
         passed += result.passed;
         failed += result.failed;
         untested += result.untested;
     }
 
-    std.debug.print("\nSuite summary: {d} passed, {d} failed, {d} untested\n", .{ passed, failed, untested });
-    total_passed += passed;
-    total_failed += failed;
-}
-
-test "summary" {
-    std.debug.print("\n=============================\n", .{});
-    std.debug.print(" COMPILE TEST SUMMARY\n", .{});
-    std.debug.print("=============================\n", .{});
-    std.debug.print("Total: {d} passed, {d} failed\n", .{ total_passed, total_failed });
-    std.debug.print("=============================\n", .{});
+    const summary = test_results{ .passed = passed, .failed = failed, .untested = untested };
+    harness.printSuiteSummary("COMPILE", summary);
+    return summary;
 }

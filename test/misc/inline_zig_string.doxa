@@ -1,0 +1,17 @@
+zig ZigStr {
+    fn echo(s: []const u8) []const u8 {
+        return s;
+    }
+
+    fn hi() []const u8 {
+        return "hi";
+    }
+}
+
+const a is ZigStr.echo("abc")
+const b is ZigStr.hi()
+
+@print("{a}\n")
+@print("{b}\n")
+
+
