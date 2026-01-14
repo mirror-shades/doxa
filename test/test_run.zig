@@ -1,19 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const answers = @import("./answers.zig");
-const testing = std.testing;
-const process = std.process;
-const fs = std.fs;
+const answers = @import("answers");
 
-const IOTest = answers.IOTest;
+const harness = @import("harness.zig");
+
 const peek_result = answers.peek_result;
 const print_result = answers.print_result;
 
-const test_results = struct {
-    passed: usize,
-    failed: usize,
-    untested: usize,
-};
+const test_results = harness.Counts;
 
 const Mode = enum {
     PEEK,
@@ -37,120 +31,38 @@ const TestCase = struct {
     expected_error: ?error_result,
 };
 
-var total_passed: usize = 0;
-var total_failed: usize = 0;
-
-const CommandResult = struct {
-    stdout: []const u8,
-    stderr: []const u8,
-    exit_code: u8,
-};
-
-fn repoRootFromEnv(allocator: std.mem.Allocator) !?[]const u8 {
-    return process.getEnvVarOwned(allocator, "DOXA_REPO_ROOT") catch null;
-}
+const CommandResult = harness.CommandResult;
 
 fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]const u8) !CommandResult {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const child_allocator = arena.allocator();
+    const repo_root = try harness.repoRootFromEnv(allocator);
+    defer if (repo_root) |rr| allocator.free(rr);
 
-    const repo_root = try repoRootFromEnv(child_allocator);
-
-    const exe_path = blk: {
-        if (process.getEnvVarOwned(allocator, "DOXA_BIN") catch null) |custom| {
-            break :blk custom;
-        }
-        const exe_name = if (builtin.os.tag == .windows) "doxa.exe" else "doxa";
-        break :blk try fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", exe_name });
-    };
+    const exe_path = try harness.doxaExePath(allocator);
     defer allocator.free(exe_path);
 
-    var child = process.Child.init(&[_][]const u8{ exe_path, "run", path }, child_allocator);
-    child.cwd = repo_root orelse ".";
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    if (input != null) child.stdin_behavior = .Pipe;
-
-    try child.spawn();
-
-    if (input) |input_data| {
-        var stdin_buffer: [1024]u8 = undefined;
-        var stdin_writer = child.stdin.?.writer(&stdin_buffer);
-        const stdin = &stdin_writer.interface;
-        try stdin.writeAll(input_data);
-        try stdin.flush();
-        child.stdin.?.close();
-        // Avoid double-close on Windows: Child.wait() will cleanup streams
-        child.stdin = null;
-    }
-
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
-    defer stdout.deinit();
-    while (true) {
-        const bytes_read = child.stdout.?.read(&stdout_buffer) catch |err| switch (err) {
-            error.BrokenPipe => break,
-            else => return err,
-        };
-        if (bytes_read == 0) break;
-        stdout.appendSlice(stdout_buffer[0..bytes_read]) catch return error.OutOfMemory;
-    }
-
-    var stderr_buffer: [4096]u8 = undefined;
-    var stderr = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
-    defer stderr.deinit();
-    while (true) {
-        const bytes_read = child.stderr.?.read(&stderr_buffer) catch |err| switch (err) {
-            error.BrokenPipe => break,
-            else => return err,
-        };
-        if (bytes_read == 0) break;
-        stderr.appendSlice(stderr_buffer[0..bytes_read]) catch return error.OutOfMemory;
-    }
-    const term = try child.wait();
-
-    const exit_code = switch (term) {
-        .Exited => |code| code,
-        .Signal => |signal| {
-            std.debug.print("Command terminated with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
-            return error.CommandFailed;
-        },
-        .Stopped => |signal| {
-            std.debug.print("Command stopped with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
-            return error.CommandFailed;
-        },
-        .Unknown => {
-            std.debug.print("Command failed with unknown error:\n", .{});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
-            return error.CommandFailed;
-        },
-    };
-
-    return CommandResult{
-        .stdout = try allocator.dupe(u8, stdout.items),
-        .stderr = try allocator.dupe(u8, stderr.items),
-        .exit_code = @intCast(exit_code),
-    };
+    const argv = [_][]const u8{ exe_path, "run", path };
+    return try harness.runCommandCapture(allocator, &argv, repo_root, input);
 }
 
 fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
     const result = try runDoxaCommandEx(allocator, path, null);
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) return error.CommandFailed;
-    return allocator.dupe(u8, result.stdout);
+    allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        return error.CommandFailed;
+    }
+    return result.stdout;
 }
 
 //this function will pipe a char to a doxa command and return the output
 fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input: []const u8) ![]const u8 {
     const result = try runDoxaCommandEx(allocator, path, input);
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-    if (result.exit_code != 0) return error.CommandFailed;
-    return allocator.dupe(u8, result.stdout);
+    allocator.free(result.stderr);
+    if (result.exit_code != 0) {
+        allocator.free(result.stdout);
+        return error.CommandFailed;
+    }
+    return result.stdout;
 }
 
 fn runErrorTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
@@ -168,7 +80,7 @@ fn runErrorTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
         if (result.exit_code == expected_code) {
             passed += 1;
         } else {
-            std.debug.print("✗ Error test failed: expected exit code {}, got {}\n", .{ expected_code, result.exit_code });
+            std.debug.print("Error test failed: expected exit code {}, got {}\n", .{ expected_code, result.exit_code });
             failed += 1;
         }
     } else {
@@ -180,7 +92,7 @@ fn runErrorTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
         if (std.mem.indexOf(u8, result.stderr, expected_msg) != null) {
             passed += 1;
         } else {
-            std.debug.print("✗ Error test failed: expected message \"{s}\" not found in stderr\n", .{expected_msg});
+            std.debug.print("Error test failed: expected message \"{s}\" not found in stderr\n", .{expected_msg});
             std.debug.print("stderr: {s}\n", .{result.stderr});
             failed += 1;
         }
@@ -193,7 +105,7 @@ fn runErrorTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
         if (std.mem.indexOf(u8, result.stderr, expected_code) != null) {
             passed += 1;
         } else {
-            std.debug.print("✗ Error test failed: expected error code \"{s}\" not found in stderr\n", .{expected_code});
+            std.debug.print("Error test failed: expected error code \"{s}\" not found in stderr\n", .{expected_code});
             std.debug.print("stderr: {s}\n", .{result.stderr});
             failed += 1;
         }
@@ -202,32 +114,6 @@ fn runErrorTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     }
 
     return .{ .passed = passed, .failed = failed, .untested = 0 };
-}
-
-// print test is for tests which use the print operator for output
-fn runTest(allocator: std.mem.Allocator, test_name: []const u8, path: []const u8, expected_results: anytype, input: ?[]const u8, mode: Mode) !test_results {
-    _ = test_name; // printing handled by caller
-
-    var output: []const u8 = undefined;
-    if (input != null) {
-        output = try runDoxaCommandWithInput(allocator, path, input.?);
-    } else {
-        output = try runDoxaCommand(allocator, path);
-    }
-
-    defer allocator.free(output);
-
-    if (output.len == 0) {
-        return .{ .passed = 0, .failed = 0 };
-    }
-
-    if (mode == .PRINT) {
-        return try validatePrintResults(output, expected_results, allocator);
-    } else if (mode == .PEEK) {
-        return try validatePeekResults(output, expected_results, allocator);
-    }
-
-    return .{ .passed = 0, .failed = 0 };
 }
 
 fn validatePrintResults(output: []const u8, expected_results: []const print_result, allocator: std.mem.Allocator) !test_results {
@@ -323,14 +209,14 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     if (output.len == 0) return .{ .passed = 0, .untested = 0, .failed = 0 };
 
     return switch (tc.mode) {
-        .PRINT => try validatePrintResults(output, tc.expected_print.?, allocator),
-        .PEEK => try validatePeekResults(output, tc.expected_peek.?, allocator),
+        .PRINT => try harness.validatePrintResults(output, tc.expected_print.?, allocator),
+        .PEEK => try harness.validatePeekResults(output, tc.expected_peek.?, allocator),
         .ERROR => unreachable, // Handled above
     };
 }
 
-test "unified runner" {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
+    var arena = std.heap.ArenaAllocator.init(parent_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
@@ -374,6 +260,18 @@ test "unified runner" {
             .mode = .PRINT,
             .input = null,
             .expected_print = answers.expected_array_storage_results[0..],
+            .expected_peek = null,
+            .expected_error = null,
+        },
+        .{
+            .name = "inline zig string",
+            .path = "./test/misc/inline_zig_string.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = &[_]print_result{
+                .{ .value = "abc" },
+                .{ .value = "hi" },
+            },
             .expected_peek = null,
             .expected_error = null,
         },
@@ -469,41 +367,29 @@ test "unified runner" {
         },
     };
 
-    std.debug.print("\n=== Running test suite ===\n", .{});
+    harness.printSection("RUN");
     var passed: usize = 0;
     var failed: usize = 0;
     var untested: usize = 0;
     for (test_cases) |tc| {
-        std.debug.print("  Running: {s}\n", .{tc.name});
-        std.debug.print("\n=== Running {s} test ===\n", .{tc.name});
-        std.debug.print("Running doxa command with {s}...\n", .{tc.path});
         const result = try runTestCase(allocator, tc);
-        if (tc.mode == .ERROR) {
-            std.debug.print("Checking error conditions...\n", .{});
-        } else {
-            std.debug.print("Parsing output...\n", .{});
+        harness.printCase(tc.name, result);
+        if (!harness.isClean(result)) {
+            std.debug.print("  path: {s}\n", .{tc.path});
         }
-        if (result.failed == 0 and result.untested == 0) {
-            std.debug.print("✓ All {d} test cases passed\n", .{result.passed});
-        } else {
-            std.debug.print("Results: {d} passed, {d} failed, {d} untested\n", .{ result.passed, result.failed, result.untested });
-        }
-        std.debug.print("\n=== {s} test complete ===\n", .{tc.name});
         passed += result.passed;
         failed += result.failed;
         untested += result.untested;
     }
 
     // Dedicated calculator batch with a single summary
-    std.debug.print("\n=== Running calculator test ===\n", .{});
-    std.debug.print("Running doxa command with ./test/examples/calculator.doxa...\n", .{});
     var calc_passed: usize = 0;
     var calc_failed: usize = 0;
     for (answers.calculator_io_tests, 0..) |io, idx| {
         // Execute case without printing; compare first line only
         const out = try runDoxaCommandWithInput(allocator, "./test/examples/calculator.doxa", io.input);
         defer allocator.free(out);
-        const lines = try parsePrintOutput(out, allocator);
+        const lines = try harness.parsePrintOutput(out, allocator);
         defer lines.deinit();
         if (lines.items.len > 0 and std.mem.eql(u8, lines.items[0], io.expected_output)) {
             calc_passed += 1;
@@ -514,36 +400,14 @@ test "unified runner" {
             std.debug.print("{s}\n", .{failure_details});
         }
     }
-    std.debug.print("Parsing output...\n", .{});
-    if (calc_failed == 0) {
-        std.debug.print("All {d} test cases passed\n", .{answers.calculator_io_tests.len});
-    } else {
-        std.debug.print("{d} test case(s) failed\n", .{calc_failed});
-    }
-    std.debug.print("\n=== calculator test complete ===\n", .{});
+    const calc_result = test_results{ .passed = calc_passed, .failed = calc_failed, .untested = 0 };
+    harness.printCase("calculator", calc_result);
     passed += calc_passed;
     failed += calc_failed;
 
-    std.debug.print("\nSuite summary: {d} passed, {d} failed, {d} untested\n", .{ passed, failed, untested });
-    total_passed += passed;
-    total_failed += failed;
-    // Note: We'd need to add total_untested to track this globally if desired
-}
-
-test "summary" {
-    std.debug.print("\n=============================\n", .{});
-    std.debug.print(" TEST SUMMARY", .{});
-    std.debug.print("\n=============================\n", .{});
-    std.debug.print("Total test cases passed: {d}\n", .{total_passed});
-    std.debug.print("Total test cases failed: {d}\n", .{total_failed});
-    // Note: total_untested would need to be added as a global variable
-
-    if (total_failed == 0) {
-        std.debug.print("All tests passed!\n", .{});
-    } else {
-        std.debug.print("{d} test(s) failed!\n", .{total_failed});
-    }
-    std.debug.print("=============================\n", .{});
+    const summary = test_results{ .passed = passed, .failed = failed, .untested = untested };
+    harness.printSuiteSummary("RUN", summary);
+    return summary;
 }
 
 fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed(peek_result) {
@@ -597,18 +461,4 @@ fn grabValue(output: []const u8) []const u8 {
     if (i == 0) unreachable;
     const trimmedLine = output[i + 3 ..];
     return trimmedLine;
-}
-
-fn inferTypeFromValue(value: []const u8) []const u8 {
-    if (std.mem.startsWith(u8, value, "0x")) {
-        return "byte";
-    } else if (std.mem.indexOf(u8, value, ".") != null) {
-        return "float";
-    } else if (std.mem.startsWith(u8, value, "\"") and std.mem.endsWith(u8, value, "\"")) {
-        return "string";
-    } else if (std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "false")) {
-        return "tetra";
-    } else {
-        return "int";
-    }
 }

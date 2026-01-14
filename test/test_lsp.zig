@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
 const reporting = @import("reporting");
+const harness = @import("harness.zig");
 
 const Reporter = reporting.Reporter;
 const Location = reporting.Location;
@@ -9,7 +10,19 @@ const Range = reporting.Range;
 const RelatedInformation = reporting.RelatedInformation;
 const convertPathToUri = reporting.convertPathToUri;
 
-test "convertPathToUri posix path" {
+fn runCheck(name: []const u8, func: anytype, passed: *usize, skipped: *usize) anyerror!void {
+    _ = name;
+    func() catch |err| switch (err) {
+        error.SkipZigTest => {
+            skipped.* += 1;
+            return;
+        },
+        else => return err,
+    };
+    passed.* += 1;
+}
+
+fn checkConvertPathToUriPosixPath() anyerror!void {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     const uri = try convertPathToUri(testing.allocator, "/tmp/project/main.doxa");
@@ -17,7 +30,7 @@ test "convertPathToUri posix path" {
     try testing.expectEqualStrings("file:///tmp/project/main.doxa", uri);
 }
 
-test "convertPathToUri windows drive" {
+fn checkConvertPathToUriWindowsDrive() anyerror!void {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const uri = try convertPathToUri(testing.allocator, "C:\\dev\\doxa\\file.doxa");
@@ -25,7 +38,7 @@ test "convertPathToUri windows drive" {
     try testing.expectEqualStrings("file:///C:/dev/doxa/file.doxa", uri);
 }
 
-test "convertPathToUri windows unc" {
+fn checkConvertPathToUriWindowsUnc() anyerror!void {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const uri = try convertPathToUri(testing.allocator, "\\\\server\\share\\sub\\file.doxa");
@@ -33,7 +46,7 @@ test "convertPathToUri windows unc" {
     try testing.expectEqualStrings("file://server/share/sub/file.doxa", uri);
 }
 
-test "convertUriToPath posix path" {
+fn checkConvertUriToPathPosixPath() anyerror!void {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     const path = try reporting.convertUriToPath(testing.allocator, "file:///tmp/project/main.doxa");
@@ -41,7 +54,7 @@ test "convertUriToPath posix path" {
     try testing.expectEqualStrings("/tmp/project/main.doxa", path);
 }
 
-test "convertUriToPath windows drive" {
+fn checkConvertUriToPathWindowsDrive() anyerror!void {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const path = try reporting.convertUriToPath(testing.allocator, "file:///C:/dev/doxa/file.doxa");
@@ -49,7 +62,7 @@ test "convertUriToPath windows drive" {
     try testing.expectEqualStrings("C:\\dev\\doxa\\file.doxa", path);
 }
 
-test "convertUriToPath windows unc" {
+fn checkConvertUriToPathWindowsUnc() anyerror!void {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const path = try reporting.convertUriToPath(testing.allocator, "file://server/share/sub/file.doxa");
@@ -57,8 +70,8 @@ test "convertUriToPath windows unc" {
     try testing.expectEqualStrings("\\\\server\\share\\sub\\file.doxa", path);
 }
 
-test "Reporter.toLspDiagnostics serializes related info" {
-    var reporter = Reporter.init(testing.allocator, .{ .log_to_file = false });
+fn checkReporterToLspDiagnosticsSerializesRelatedInfo() anyerror!void {
+    var reporter = Reporter.init(testing.allocator, .{ .log_to_file = false, .log_to_stderr = false });
     defer reporter.deinit();
 
     const primary_uri = "file:///src/main.doxa";
@@ -106,9 +119,10 @@ test "Reporter.toLspDiagnostics serializes related info" {
     try testing.expectEqualStrings(expected, diagnostics);
 }
 
-test "Reporter publish tracking detects changes and throttles" {
+fn checkReporterPublishTrackingDetectsChangesAndThrottles() anyerror!void {
     var reporter = Reporter.init(testing.allocator, .{
         .log_to_file = false,
+        .log_to_stderr = false,
         .publish_debounce_ns = std.time.ns_per_ms,
     });
     defer reporter.deinit();
@@ -141,4 +155,22 @@ test "Reporter publish tracking detects changes and throttles" {
     try reporter.markDiagnosticsPublished(uri, 2 * std.time.ns_per_ms);
     reporter.dropPublishedDiagnostics(uri);
     try testing.expect(reporter.diagnosticsChanged(uri));
+}
+
+test "lsp suite" {
+    harness.printSection("LSP");
+
+    var passed: usize = 0;
+    var skipped: usize = 0;
+
+    try runCheck("convertPathToUri posix path", checkConvertPathToUriPosixPath, &passed, &skipped);
+    try runCheck("convertPathToUri windows drive", checkConvertPathToUriWindowsDrive, &passed, &skipped);
+    try runCheck("convertPathToUri windows unc", checkConvertPathToUriWindowsUnc, &passed, &skipped);
+    try runCheck("convertUriToPath posix path", checkConvertUriToPathPosixPath, &passed, &skipped);
+    try runCheck("convertUriToPath windows drive", checkConvertUriToPathWindowsDrive, &passed, &skipped);
+    try runCheck("convertUriToPath windows unc", checkConvertUriToPathWindowsUnc, &passed, &skipped);
+    try runCheck("Reporter.toLspDiagnostics", checkReporterToLspDiagnosticsSerializesRelatedInfo, &passed, &skipped);
+    try runCheck("Reporter publish tracking", checkReporterPublishTrackingDetectsChangesAndThrottles, &passed, &skipped);
+
+    harness.printSuiteSummary("LSP", .{ .passed = passed, .failed = 0, .untested = skipped });
 }

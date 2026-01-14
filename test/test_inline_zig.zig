@@ -29,7 +29,7 @@ test "inline zig: accepts multiline signatures" {
         \\fn foo(
         \\    a: i64,
         \\    b: f64,
-        \\) -> f64 {
+        \\) f64 {
         \\    _ = a;
         \\    return b;
         \\}
