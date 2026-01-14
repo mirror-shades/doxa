@@ -129,11 +129,6 @@ pub const ErrorList = error{
     ExpectedCommaOrClosingBracket,
     ExpectedCommaOrClosingParenthesis,
     InvalidNumber,
-    // Inline Zig blocks
-    EmptyInput,
-    InvalidParamType,
-    InvalidReturnType,
-    InlineZigNotValid,
     InvalidEscapeSequence,
     UnexpectedCharacter,
     InvalidCharacter,
@@ -142,6 +137,12 @@ pub const ErrorList = error{
     InvalidExponent,
     ByteValueTooLarge,
     InvalidInternalMethod,
+
+    // Inline Zig blocks
+    EmptyInput,
+    InvalidParamType,
+    InvalidReturnType,
+    InlineZigNotValid,
 
     // Unicode & UTF-8 Handling
     Utf8InvalidStartByte,

@@ -30,6 +30,7 @@ pub const ReporterOptions = struct {
     debug_bytecode: bool = false,
     debug_execution: bool = false,
     debug_memory: bool = false,
+    log_to_stderr: bool = true,
     log_to_file: bool = true,
     log_file_path: []const u8 = "last_diagnostics.log",
     max_log_bytes: usize = 2 * 1024 * 1024,
@@ -716,7 +717,9 @@ pub const Reporter = struct {
         }
 
         const line = line_buf.items;
-        std.debug.print("DoxVM: {s}\n", .{line});
+        if (self.options.log_to_stderr) {
+            std.debug.print("DoxVM: {s}\n", .{line});
+        }
 
         if (self.options.log_to_file) {
             self.writeToLog(line) catch {};

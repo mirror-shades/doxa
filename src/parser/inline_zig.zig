@@ -269,7 +269,7 @@ fn parseTopLevelImportConst(ts: *Tokenizer) ErrorList!void {
 
 fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!ZigFnSig {
     // Grammar (restricted):
-    //   (pub|export|inline|noinline|extern)* fn IDENT "(" (IDENT ":" AllowedType ("," IDENT ":" AllowedType)*)? ")" ("->")? AllowedType "{"
+    //   (pub|export|inline|noinline|extern)* fn IDENT "(" (IDENT ":" AllowedType ("," IDENT ":" AllowedType)*)? ")" AllowedType "{"
     // Note: requires a body (`{ ... }`) per docs/inline.md.
     while (true) {
         const t = (try ts.peek()) orelse return error.InlineZigNotValid;
@@ -318,13 +318,6 @@ fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!Zi
             break;
         }
         return error.InlineZigNotValid;
-    }
-
-    // Optional arrow (doc style): `->`
-    if (try ts.peek()) |t| {
-        if (tokenIs(t, .symbol, "->")) {
-            _ = try ts.next();
-        }
     }
 
     const ret_ti = try parseAllowedType(ts, .ret);

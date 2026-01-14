@@ -529,7 +529,7 @@ pub const PrintOps = struct {
                 for (arr.elements) |elem| {
                     if (elem == .nothing) break;
                     if (!first) try printToStdout(", ", .{});
-                    try PrintOps.formatHIRValueRaw(vm, elem);
+                    try PrintOps.formatHIRValue(vm, elem);
                     first = false;
                 }
                 try printToStdout("]", .{});
