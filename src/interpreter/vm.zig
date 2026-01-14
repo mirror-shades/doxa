@@ -103,7 +103,44 @@ pub const VM = struct {
     array_type_cache: std.AutoHashMap(ArrayTypeKey, *hir_types.HIRType),
     array_type_nodes: Managed(*hir_types.HIRType),
 
-    pub fn init(allocator: std.mem.Allocator, bytecode: *module.BytecodeModule, reporter: *Reporter, memory_manager: *MemoryManager) !VM {
+    // Inline zig modules compiled to dynamic libraries for VM module calls.
+    zig_modules: ?std.StringHashMap(ZigRuntimeModule) = null,
+
+    pub const ZigRuntimeFn = struct {
+        symbol: []const u8,
+        param_types: []module.BytecodeType,
+        return_type: module.BytecodeType,
+    };
+
+    pub const ZigRuntimeModule = struct {
+        lib_path: []const u8,
+        lib: ?std.DynLib = null,
+        functions: std.StringHashMap(ZigRuntimeFn),
+
+        pub fn deinit(self: *ZigRuntimeModule, allocator: std.mem.Allocator) void {
+            if (self.lib) |*l| {
+                l.close();
+            }
+            var it = self.functions.iterator();
+            while (it.next()) |entry| {
+                const key = entry.key_ptr.*;
+                const fnv = entry.value_ptr.*;
+                allocator.free(@constCast(key));
+                allocator.free(@constCast(fnv.symbol));
+                allocator.free(fnv.param_types);
+            }
+            self.functions.deinit();
+            allocator.free(@constCast(self.lib_path));
+        }
+    };
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        bytecode: *module.BytecodeModule,
+        reporter: *Reporter,
+        memory_manager: *MemoryManager,
+        zig_modules: ?std.StringHashMap(ZigRuntimeModule),
+    ) !VM {
         const frame_list = Managed(runtime.Frame).init(allocator);
 
         const stack = try runtime.OperandStack.init(allocator, DEFAULT_STACK_CAPACITY);
@@ -143,6 +180,7 @@ pub const VM = struct {
             .skip_next_enter_scope = false,
             .array_type_cache = std.AutoHashMap(ArrayTypeKey, *hir_types.HIRType).init(allocator),
             .array_type_nodes = Managed(*hir_types.HIRType).init(allocator),
+            .zig_modules = zig_modules,
         };
 
         vm.indexLabels();
@@ -189,6 +227,17 @@ pub const VM = struct {
         self.allocator.free(self.module_state);
         self.allocator.free(self.label_cache);
         self.stack.deinit();
+
+        if (self.zig_modules) |*mods| {
+            var it = mods.iterator();
+            while (it.next()) |entry| {
+                const key = entry.key_ptr.*;
+                var m = entry.value_ptr.*;
+                m.deinit(self.allocator);
+                self.allocator.free(@constCast(key));
+            }
+            mods.deinit();
+        }
     }
 
     pub fn reset(self: *VM) void {
@@ -2087,8 +2136,11 @@ pub const VM = struct {
 
     fn handleCall(self: *VM, payload: anytype) VmError!void {
         switch (payload.target.call_kind) {
-            .LocalFunction, .ModuleFunction => {
+            .LocalFunction => {
                 const function_index = self.resolveFunctionIndex(payload.target.function_index, payload.target.qualified_name);
+                if (function_index >= self.bytecode.functions.len) {
+                    return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown function: {s}", .{payload.target.qualified_name});
+                }
                 const func_ptr = &self.bytecode.functions[function_index];
                 const return_ip = self.ip;
 
@@ -2100,8 +2152,180 @@ pub const VM = struct {
                 self.ip = func_ptr.start_ip;
                 self.skip_increment = true;
             },
+            .ModuleFunction => {
+                // First, see if this module function was compiled into the bytecode (imported doxa module).
+                const function_index = self.resolveFunctionIndex(payload.target.function_index, payload.target.qualified_name);
+                if (function_index < self.bytecode.functions.len and std.mem.eql(u8, self.bytecode.functions[function_index].qualified_name, payload.target.qualified_name)) {
+                    const func_ptr = &self.bytecode.functions[function_index];
+                    const return_ip = self.ip;
+                    const stack_base = self.stack.len();
+                    _ = try self.pushFrame(function_index, stack_base, return_ip);
+                    if (func_ptr.start_ip >= self.bytecode.instructions.len) return error.UnimplementedInstruction;
+                    self.ip = func_ptr.start_ip;
+                    self.skip_increment = true;
+                    return;
+                }
+
+                // Otherwise, attempt inline zig dynlib call.
+                try self.execInlineZigModuleFunction(payload.target.qualified_name, payload.arg_count);
+            },
             .BuiltinFunction => try self.execBuiltin(payload.target.qualified_name, payload.arg_count),
         }
+    }
+
+    fn execInlineZigModuleFunction(self: *VM, qualified_name: []const u8, arg_count_raw: u32) VmError!void {
+        const dot_idx = std.mem.indexOfScalar(u8, qualified_name, '.') orelse {
+            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown module function: {s}", .{qualified_name});
+            return ErrorList.RuntimeError;
+        };
+        const module_name = qualified_name[0..dot_idx];
+        const fn_name = qualified_name[dot_idx + 1 ..];
+
+        if (self.zig_modules == null) {
+            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Module function not available in VM: {s}", .{qualified_name});
+            return ErrorList.RuntimeError;
+        }
+        var mods = &self.zig_modules.?;
+        if (mods.getPtr(module_name)) |mod_ptr| {
+            if (mod_ptr.lib == null) {
+                mod_ptr.lib = std.DynLib.open(mod_ptr.lib_path) catch {
+                    self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to load zig module library: {s}", .{mod_ptr.lib_path});
+                    return ErrorList.RuntimeError;
+                };
+            }
+            const fn_entry = mod_ptr.functions.getPtr(fn_name) orelse {
+                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function '{s}' not found in zig module '{s}'", .{ fn_name, module_name });
+                return ErrorList.RuntimeError;
+            };
+
+            const arg_count: usize = @intCast(arg_count_raw);
+            if (arg_count != fn_entry.param_types.len) {
+                self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT_COUNT, "Invalid argument count for {s}: expected {}, got {}", .{ qualified_name, fn_entry.param_types.len, arg_count });
+                return ErrorList.RuntimeError;
+            }
+
+            // Currently supports only up to 1 argument for float/int/byte.
+            if (arg_count > 1) {
+                self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Inline zig VM calls support up to 1 arg for now: {s}", .{qualified_name});
+                return ErrorList.RuntimeError;
+            }
+
+            const lib = &mod_ptr.lib.?;
+            if (arg_count == 0) {
+                // No-arg function
+                switch (fn_entry.return_type) {
+                    .Float => {
+                        const Fn = *const fn () callconv(.c) f64;
+                        const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                            self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                            return ErrorList.RuntimeError;
+                        };
+                        defer self.allocator.free(sym_z);
+                        const f = lib.lookup(Fn, sym_z) orelse {
+                            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                            return ErrorList.RuntimeError;
+                        };
+                        const res = f();
+                        try self.pushValue(.{ .float = res });
+                        return;
+                    },
+                    .Int => {
+                        const Fn = *const fn () callconv(.c) i64;
+                        const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                            self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                            return ErrorList.RuntimeError;
+                        };
+                        defer self.allocator.free(sym_z);
+                        const f = lib.lookup(Fn, sym_z) orelse {
+                            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                            return ErrorList.RuntimeError;
+                        };
+                        const res = f();
+                        try self.pushValue(.{ .int = res });
+                        return;
+                    },
+                    else => {
+                        self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Unsupported return type for inline zig VM call: {s}", .{qualified_name});
+                        return ErrorList.RuntimeError;
+                    },
+                }
+            }
+
+            // One-arg function
+            const arg0 = try self.popValue();
+            switch (fn_entry.param_types[0]) {
+                .Float => {
+                    const x = switch (arg0) {
+                        .float => |v| v,
+                        .int => |v| @as(f64, @floatFromInt(v)),
+                        .byte => |v| @as(f64, @floatFromInt(v)),
+                        else => {
+                            self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
+                            return ErrorList.RuntimeError;
+                        },
+                    };
+                    switch (fn_entry.return_type) {
+                        .Float => {
+                            const Fn = *const fn (f64) callconv(.c) f64;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            const res = f(x);
+                            try self.pushValue(.{ .float = res });
+                        },
+                        else => {
+                            self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Unsupported return type for inline zig VM call: {s}", .{qualified_name});
+                            return ErrorList.RuntimeError;
+                        },
+                    }
+                    return;
+                },
+                .Int => {
+                    const x = switch (arg0) {
+                        .int => |v| v,
+                        .byte => |v| @as(i64, v),
+                        else => {
+                            self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
+                            return ErrorList.RuntimeError;
+                        },
+                    };
+                    switch (fn_entry.return_type) {
+                        .Int => {
+                            const Fn = *const fn (i64) callconv(.c) i64;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            const res = f(x);
+                            try self.pushValue(.{ .int = res });
+                        },
+                        else => {
+                            self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Unsupported return type for inline zig VM call: {s}", .{qualified_name});
+                            return ErrorList.RuntimeError;
+                        },
+                    }
+                    return;
+                },
+                else => {
+                    self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Unsupported parameter type for inline zig VM call: {s}", .{qualified_name});
+                    return ErrorList.RuntimeError;
+                },
+            }
+        }
+
+        self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown zig module: {s}", .{module_name});
+        return ErrorList.RuntimeError;
     }
 
     fn handleReturn(self: *VM, payload: anytype) VmError!void {

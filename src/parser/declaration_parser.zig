@@ -14,6 +14,55 @@ const precedence = @import("./precedence.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 
+pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
+    if (self.peek().type != .ZIG) {
+        return error.UnexpectedToken;
+    }
+
+    const zig_token = self.peek();
+    self.advance();
+
+    if (self.peek().type != .IDENTIFIER) {
+        return error.ExpectedIdentifier;
+    }
+    const module_name = self.peek();
+    self.advance();
+
+    if (self.peek().type != .ZIG_BLOCK) {
+        return error.ExpectedLeftBrace;
+    }
+    const zig_block_token = self.peek();
+
+    const source = switch (zig_block_token.literal) {
+        .string => |s| s,
+        else => return error.InvalidExpression,
+    };
+    self.advance();
+
+    // Allow an optional newline after the block (recommended style).
+    if (self.peek().type == .NEWLINE) {
+        self.advance();
+    }
+
+    const span = ast.SourceSpan.merge(
+        ast.SourceSpan.fromToken(zig_token),
+        ast.SourceSpan.fromToken(zig_block_token),
+    );
+
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = span,
+        },
+        .data = .{
+            .ZigDecl = .{
+                .name = module_name,
+                .source = source,
+            },
+        },
+    };
+}
+
 pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
     var is_public = false;
     if (self.peek().type == .PUBLIC) {

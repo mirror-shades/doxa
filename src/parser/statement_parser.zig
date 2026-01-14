@@ -269,6 +269,7 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
 
 pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
     return switch (self.peek().type) {
+        .ZIG => declaration_parser.parseZigDecl(self),
         .VAR, .CONST => declaration_parser.parseVarDecl(self),
         .FUNCTION => declaration_parser.parseFunctionDecl(self),
         .RETURN => parseReturnStmt(self),

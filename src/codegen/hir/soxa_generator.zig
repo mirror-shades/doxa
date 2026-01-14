@@ -1778,6 +1778,18 @@ pub const HIRGenerator = struct {
                 if (self.function_signatures.get(function_name)) |func_info| {
                     return func_info.return_type;
                 }
+                // Inline-zig module functions are registered via `imported_symbols` (parser),
+                // but won't exist in `function_signatures` because they are not Doxa FunctionDecls.
+                // Use the imported metadata so codegen uses the correct return type.
+                if (self.imported_symbols) |imported_symbols| {
+                    if (imported_symbols.get(function_name)) |sym| {
+                        if (sym.kind == .Function) {
+                            if (sym.return_type_info) |ret| {
+                                return self.convertTypeInfo(ret);
+                            }
+                        }
+                    }
+                }
                 return .String;
             },
         }

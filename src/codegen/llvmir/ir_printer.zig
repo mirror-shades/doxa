@@ -695,6 +695,35 @@ pub const IRPrinter = struct {
         try w.writeAll("declare i8 @doxa_forall_quantifier_eq(ptr, i64)\n");
         try w.writeAll("declare void @doxa_clear(ptr)\n");
 
+        // Inline zig module functions (external): declare them as varargs so we don't need full type info here.
+        // We only declare calls that are NOT backed by a HIR function_table entry.
+        var declared_inline = std.StringHashMap(void).init(self.allocator);
+        defer declared_inline.deinit();
+        for (hir.instructions) |inst| {
+            if (inst != .Call) continue;
+            const c = inst.Call;
+            if (c.call_kind != .ModuleFunction) continue;
+            if (std.mem.indexOfScalar(u8, c.qualified_name, '.') == null) continue;
+            if (c.qualified_name.len == 0) continue;
+
+            // If this name exists as a defined HIR function, don't declare varargs (would conflict with definition).
+            var is_defined = false;
+            for (hir.function_table) |ft| {
+                if (std.mem.eql(u8, ft.qualified_name, c.qualified_name)) {
+                    is_defined = true;
+                    break;
+                }
+            }
+            if (is_defined) continue;
+            if (declared_inline.contains(c.qualified_name)) continue;
+            try declared_inline.put(c.qualified_name, {});
+
+            const ret_ty = self.hirTypeToLLVMType(c.return_type, false);
+            const decl = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}(...)\n", .{ ret_ty, c.qualified_name });
+            defer self.allocator.free(decl);
+            try w.writeAll(decl);
+        }
+
         try self.buildEnumPrintMap(hir);
         // Struct field names are captured directly from StructNew name/value pairs
         // during codegen; the old backward-scan heuristic was brittle and could

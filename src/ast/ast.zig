@@ -222,6 +222,10 @@ pub const Stmt = struct {
 
     pub const Data = union(enum) {
         Expression: ?*Expr,
+        ZigDecl: struct {
+            name: Token,
+            source: []const u8,
+        },
         VarDecl: struct {
             name: Token,
             type_info: TypeInfo,
@@ -294,6 +298,7 @@ pub const Stmt = struct {
                     allocator.destroy(expr);
                 }
             },
+            .ZigDecl => {},
             .VarDecl => |*v| {
                 if (v.initializer) |init| {
                     init.deinit(allocator);

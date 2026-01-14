@@ -1,6 +1,7 @@
 const std = @import("std");
 const token = @import("../types/token.zig");
 const declaration_parser = @import("declaration_parser.zig");
+const inline_zig = @import("inline_zig.zig");
 const expression_parser = @import("expression_parser.zig");
 const statement_parser = @import("statement_parser.zig");
 const Precedence = @import("./precedence.zig").Precedence;
@@ -261,6 +262,52 @@ pub const Parser = struct {
 
             const stmt_token_type = self.peek().type;
             switch (stmt_token_type) {
+                .ZIG => {
+                    if (is_entry) {
+                        return error.MisplacedEntryPoint;
+                    }
+                    if (is_public) {
+                        return error.MisplacedPublicModifier;
+                    }
+                    const zig_decl = try declaration_parser.parseZigDecl(self);
+                    // Validate and register module namespace + function signatures so `Ops.fn(...)` works.
+                    const module_name = zig_decl.data.ZigDecl.name.lexeme;
+                    const zig_source = zig_decl.data.ZigDecl.source;
+
+                    const sigs = try inline_zig.sanitizeAndExtract(self.allocator, zig_source);
+                    defer inline_zig.deinitSigsShallow(self.allocator, sigs);
+
+                    // Ensure the namespace exists (placeholder ModuleInfo is enough for semantic module lookup).
+                    if (!self.module_namespaces.contains(module_name)) {
+                        try self.module_namespaces.put(module_name, .{
+                            .name = module_name,
+                            .imports = &[_]ast.ImportInfo{},
+                            .ast = null,
+                            .file_path = self.current_file,
+                            .symbols = null,
+                        });
+                    }
+
+                    if (self.imported_symbols == null) {
+                        self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
+                    }
+
+                    for (sigs) |sig| {
+                        const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, sig.name });
+                        // Note: allocate-owned strings for imported symbol fields.
+                        try self.imported_symbols.?.put(full_name, .{
+                            .kind = .Function,
+                            .name = sig.name,
+                            .original_module = module_name,
+                            .namespace_alias = null,
+                            .param_count = @intCast(sig.param_types.len),
+                            .param_types = sig.param_types,
+                            .return_type_info = sig.return_type,
+                        });
+                    }
+
+                    try statements.append(zig_decl);
+                },
                 .VAR, .CONST => {
                     var decl = try declaration_parser.parseVarDecl(self);
                     decl.data.VarDecl.is_public = is_public;
@@ -1619,7 +1666,7 @@ pub const Parser = struct {
                                 }
                             }
                         },
-                        .Block, .MapDecl, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast => {},
+                        .ZigDecl, .Block, .MapDecl, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast => {},
                     }
                 }
             },

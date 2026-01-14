@@ -35,6 +35,10 @@ fn resolveArrayElementInfo(self: *HIRGenerator, element_info: ?*const ast.TypeIn
 
 pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || ErrorList)!void {
     switch (stmt.data) {
+        .ZigDecl => {
+            // Inline zig modules are handled outside of normal statement lowering.
+            // They only contribute external/module-callable functions.
+        },
         .Expression => |expr| {
             if (expr) |e| {
                 // Do not treat a trailing expression as an implicit function return.
