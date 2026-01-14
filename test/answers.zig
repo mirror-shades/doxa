@@ -24,6 +24,19 @@ pub const expected_array_storage_results = [_]print_result{
     .{ .value = "2 3" },
 };
 
+pub const expected_inline_zig_test_results = [_]print_result{
+    .{ .value = "42" },
+    .{ .value = "49" },
+    .{ .value = "-42" },
+    .{ .value = "5.0" },
+    .{ .value = "4.0" },
+    .{ .value = "4" },
+    .{ .value = "hello" },
+    .{ .value = "100" },
+    .{ .value = "0" },
+    .{ .value = "10" },
+};
+
 pub const expected_complex_print_results = [_]print_result{
     .{ .value = "The variable \"number\" is equal to 10" },
     .{ .value = "The variable name \"number\" has 6 letters" },

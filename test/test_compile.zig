@@ -235,6 +235,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const expressions_path = try getBinaryPath(allocator, "./test/out/expressions");
     const brainfuck_path = try getBinaryPath(allocator, "./test/out/brainfuck");
     const inline_zig_string_path = try getBinaryPath(allocator, "./test/out/inline_zig_string");
+    const inline_zig_test_path = try getBinaryPath(allocator, "./test/out/inline_zig_test");
 
     const test_cases = [_]TestCase{
         .{
@@ -278,6 +279,14 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
                 .{ .value = "abc" },
                 .{ .value = "hi" },
             },
+            .expected_peek = null,
+        },
+        .{
+            .name = "inline zig test",
+            .binary_path = inline_zig_test_path,
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_inline_zig_test_results[0..],
             .expected_peek = null,
         },
     };

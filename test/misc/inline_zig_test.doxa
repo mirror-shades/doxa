@@ -1,0 +1,72 @@
+zig MathUtils {
+    fn double(n: i64) i64 {
+        return n * 2;
+    }
+
+    fn square(n: i64) i64 {
+        return n * n;
+    }
+
+    fn negate(n: i64) i64 {
+        return -n;
+    }
+
+    fn half(n: f64) f64 {
+        return n / 2.0;
+    }
+
+    fn sqrt_approx(x: f64) f64 {
+        return @sqrt(x);
+    }
+}
+
+zig StringUtils {
+    fn str_length(s: []const u8) i64 {
+        return @intCast(s.len);
+    }
+
+    fn get_hello() []const u8 {
+        return "hello";
+    }
+}
+
+zig LogicUtils {
+    fn abs(n: i64) i64 {
+        if (n < 0) return -n;
+        return n;
+    }
+
+    fn get_zero() i64 {
+        return 0;
+    }
+
+    fn get_ten() i64 {
+        return 10;
+    }
+}
+
+const doubled is MathUtils.double(21)
+const squared is MathUtils.square(7)
+const negated is MathUtils.negate(42)
+const halved is MathUtils.half(10.0)
+const sqrt_val is MathUtils.sqrt_approx(16.0)
+
+@print("{doubled}\n")
+@print("{squared}\n")
+@print("{negated}\n")
+@print("{halved}\n")
+@print("{sqrt_val}\n")
+
+const str_len is StringUtils.str_length("doxa")
+const hello is StringUtils.get_hello()
+
+@print("{str_len}\n")
+@print("{hello}\n")
+
+const absolute is LogicUtils.abs(-100)
+const zero is LogicUtils.get_zero()
+const ten is LogicUtils.get_ten()
+
+@print("{absolute}\n")
+@print("{zero}\n")
+@print("{ten}\n")

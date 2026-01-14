@@ -80,44 +80,22 @@ pub fn build(b: *std.Build) void {
     }
     compress_step.dependOn(&compress_cmd.step);
 
-    // Main integration tests
-    const test_run_exe = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test/test_run.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    test_run_exe.root_module.addImport("answers", b.createModule(.{
+    const answers_module = b.createModule(.{
         .root_source_file = b.path("test/answers.zig"),
-    }));
-    const run_test_run = b.addRunArtifact(test_run_exe);
-    run_test_run.skip_foreign_checks = true;
+    });
 
-    // Compilation tests
-    const test_compile_exe = b.addTest(.{
+    // Main test suite (run + compile + inline Zig)
+    const test_suite_exe = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("test/test_compile.zig"),
+            .root_source_file = b.path("test.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    test_compile_exe.root_module.addImport("answers", b.createModule(.{
-        .root_source_file = b.path("test/answers.zig"),
-    }));
-    const run_test_compile = b.addRunArtifact(test_compile_exe);
-    run_test_compile.skip_foreign_checks = true;
-
-    // Inline Zig validation tests
-    const test_inline_zig_exe = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("test_inline_zig_root.zig"),
-            .target = target,
-            .optimize = optimize,
-        }),
-    });
-    const run_test_inline_zig = b.addRunArtifact(test_inline_zig_exe);
-    run_test_inline_zig.skip_foreign_checks = true;
+    test_suite_exe.root_module.addImport("answers", answers_module);
+    const run_test_suite = b.addRunArtifact(test_suite_exe);
+    run_test_suite.skip_foreign_checks = true;
+    run_test_suite.step.dependOn(b.getInstallStep());
 
     // LSP tests
     const reporting_module = b.createModule(.{
@@ -137,8 +115,9 @@ pub fn build(b: *std.Build) void {
 
     // Run all tests
     const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&run_test_run.step);
-    test_step.dependOn(&run_test_compile.step);
-    test_step.dependOn(&run_test_inline_zig.step);
+    test_step.dependOn(&run_test_suite.step);
     test_step.dependOn(&run_test_lsp.step);
+
+    const test_lsp_step = b.step("test-lsp", "Run LSP tests");
+    test_lsp_step.dependOn(&run_test_lsp.step);
 }
