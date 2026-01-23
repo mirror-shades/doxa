@@ -19,6 +19,10 @@ const target_names = [_][]const u8{
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const host_target = b.graph.host;
+    const can_run_target =
+        target.result.os.tag == host_target.result.os.tag and
+        target.result.cpu.arch == host_target.result.cpu.arch;
 
     const exe = b.addExecutable(.{
         .name = "doxa",
@@ -84,6 +88,14 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("test/answers.zig"),
     });
 
+    // Dedicated install location for tests so a long-running editor/LSP instance
+    // doesn't lock `zig-out/bin/doxa(.exe)` and break `zig build test` on Windows.
+    const test_install = b.addInstallArtifact(exe, .{
+        .dest_dir = .{ .override = .{ .custom = "test-bin" } },
+    });
+    const exe_name = if (target.result.os.tag == .windows) "doxa.exe" else "doxa";
+    const test_doxa_path = b.pathJoin(&.{ "zig-out", "test-bin", exe_name });
+
     // Main test suite (run + compile + inline Zig)
     const test_suite_exe = b.addTest(.{
         .root_module = b.createModule(.{
@@ -95,7 +107,8 @@ pub fn build(b: *std.Build) void {
     test_suite_exe.root_module.addImport("answers", answers_module);
     const run_test_suite = b.addRunArtifact(test_suite_exe);
     run_test_suite.skip_foreign_checks = true;
-    run_test_suite.step.dependOn(b.getInstallStep());
+    run_test_suite.step.dependOn(&test_install.step);
+    run_test_suite.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
 
     // LSP tests
     const reporting_module = b.createModule(.{
@@ -112,11 +125,20 @@ pub fn build(b: *std.Build) void {
     test_lsp_exe.root_module.addImport("reporting", reporting_module);
     const run_test_lsp = b.addRunArtifact(test_lsp_exe);
     run_test_lsp.skip_foreign_checks = true;
+    run_test_lsp.step.dependOn(&test_install.step);
+    run_test_lsp.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
 
     // Run all tests
     const test_step = b.step("test", "Run all tests");
-    test_step.dependOn(&run_test_suite.step);
-    test_step.dependOn(&run_test_lsp.step);
+    if (can_run_target) {
+        test_step.dependOn(&run_test_suite.step);
+        test_step.dependOn(&run_test_lsp.step);
+    } else {
+        // Cross-target: compile tests + doxa, but don't execute anything.
+        test_step.dependOn(&test_install.step);
+        test_step.dependOn(&test_suite_exe.step);
+        test_step.dependOn(&test_lsp_exe.step);
+    }
 
     const test_lsp_step = b.step("test-lsp", "Run LSP tests");
     test_lsp_step.dependOn(&run_test_lsp.step);
