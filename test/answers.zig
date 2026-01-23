@@ -196,6 +196,11 @@ pub const expected_expressions_results = [_]peek_result{
     .{ .type = "string", .value = "\"end\"" },
 };
 
+pub const expected_union_enum_return_results = [_]peek_result{
+    .{ .type = "array | Error", .value = "[1, 2, 3]" },
+    .{ .type = "array | >Error", .value = ".FailedToShunt" },
+};
+
 pub const expected_methods_results = [_]peek_result{
     .{ .type = "int", .value = "5" },
     .{ .type = "int", .value = "5" },

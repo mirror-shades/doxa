@@ -32,6 +32,14 @@ pub fn printCase(name: []const u8, result: Counts) void {
         std.debug.print("- {s}: ok ({d})\n", .{ name, result.passed });
         return;
     }
+    if (result.failed == 0 and result.passed == 0 and result.untested > 0) {
+        std.debug.print("- {s}: SKIP ({d})\n", .{ name, result.untested });
+        return;
+    }
+    if (result.failed == 0 and result.untested > 0) {
+        std.debug.print("- {s}: WARN ({d} ok, {d} untested)\n", .{ name, result.passed, result.untested });
+        return;
+    }
     std.debug.print(
         "- {s}: FAIL ({d} ok, {d} fail, {d} untested)\n",
         .{ name, result.passed, result.failed, result.untested },

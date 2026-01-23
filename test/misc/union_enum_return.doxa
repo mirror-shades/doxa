@@ -1,0 +1,18 @@
+enum Error {
+    FailedToShunt,
+}
+
+function ok() returns int[] | Error {
+    return [1, 2, 3]
+}
+
+function bad() returns int[] | Error {
+    return Error.FailedToShunt
+}
+
+entry function main() {
+    const a is ok()
+    a?
+    const b is bad()
+    b?
+}

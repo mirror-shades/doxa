@@ -430,6 +430,36 @@ pub const ArrayHeader = extern struct {
     elem_tag: u64,
 };
 
+pub const StructDesc = extern struct {
+    type_name: ?[*:0]const u8,
+    field_count: u64,
+    field_names: ?[*]const ?[*:0]const u8,
+    field_tags: ?[*]const u64,
+    field_enum_type_names: ?[*]const ?[*:0]const u8,
+};
+
+var struct_registry: std.AutoHashMapUnmanaged(usize, *const StructDesc) = .{};
+
+pub export fn doxa_struct_register(instance: ?*anyopaque, desc: ?*const StructDesc) callconv(.c) void {
+    const inst = instance orelse return;
+    const sd = desc orelse return;
+    struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), sd) catch {};
+}
+
+pub const EnumDesc = extern struct {
+    type_name: ?[*:0]const u8,
+    variant_count: u64,
+    variant_names: ?[*]const ?[*:0]const u8,
+};
+
+var enum_registry: std.AutoHashMapUnmanaged(usize, *const EnumDesc) = .{};
+
+pub export fn doxa_enum_register(desc: ?*const EnumDesc) callconv(.c) void {
+    const ed = desc orelse return;
+    const tn = ed.type_name orelse return;
+    enum_registry.put(std.heap.page_allocator, @intFromPtr(tn), ed) catch {};
+}
+
 fn clampMin(a: u64, b: u64) u64 {
     return if (a < b) b else a;
 }
@@ -632,7 +662,145 @@ pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
     _ = out.flush() catch {};
 }
 
-fn printArrayHdrImpl(out: anytype, hdr: *ArrayHeader) !void {
+fn printTaggedBitsImpl(out: anytype, tag: u64, bits: i64) anyerror!void {
+    switch (tag) {
+        0 => { // int (i64)
+            try out.print("{d}", .{bits});
+        },
+        1 => { // byte (u8)
+            const b: u8 = asByte(bits);
+            try out.print("{d}", .{b});
+        },
+        2 => { // float (f64)
+            const f: f64 = asFloat(bits);
+            try out.print("{d}", .{f});
+        },
+        3 => { // string (i8*)
+            const s_ptr = cStringFromBits(bits);
+            if (s_ptr) |p| {
+                const s = std.mem.span(p);
+                try out.print("\"{s}\"", .{s});
+            } else {
+                try out.print("\"\"", .{});
+            }
+        },
+        4 => { // tetra (2-bit stored in u8)
+            const t: u2 = asTetra(bits);
+            const v: u8 = @intCast(t);
+            const name = switch (v) {
+                0 => "false",
+                1 => "true",
+                2 => "both",
+                3 => "neither",
+                else => "invalid",
+            };
+            try out.print("{s}", .{name});
+        },
+        5 => { // nothing
+            try out.print("nothing", .{});
+        },
+        6 => { // array (ptr)
+            const addr: u64 = @bitCast(bits);
+            if (addr == 0) {
+                try out.print("[]", .{});
+            } else {
+                const nested_hdr = @as(
+                    *ArrayHeader,
+                    @ptrCast(@alignCast(@as(?*anyopaque, @ptrFromInt(@as(usize, addr))))),
+                );
+                try printArrayHdrImpl(out, nested_hdr);
+            }
+        },
+        7 => { // struct (ptr)
+            const addr: u64 = @bitCast(bits);
+            if (addr == 0) {
+                try out.print("<struct:null>", .{});
+            } else {
+                try printStructImpl(out, addr);
+            }
+        },
+        8 => { // enum (discriminant)
+            try out.print("<enum:{d}>", .{bits});
+        },
+        else => {
+            try out.print("?", .{});
+        },
+    }
+}
+
+fn printEnumImpl(out: anytype, type_name_ptr: ?[*:0]const u8, bits: i64) anyerror!void {
+    const tn = type_name_ptr orelse {
+        try out.print("<enum:{d}>", .{bits});
+        return;
+    };
+    const desc = enum_registry.get(@intFromPtr(tn)) orelse {
+        try out.print("<enum:{d}>", .{bits});
+        return;
+    };
+
+    const count: usize = @intCast(desc.variant_count);
+    const idx_i64 = bits;
+    if (idx_i64 < 0) {
+        try out.print(".Unknown", .{});
+        return;
+    }
+    const idx: usize = @intCast(@as(u64, @intCast(idx_i64)));
+    if (idx >= count) {
+        try out.print(".Unknown", .{});
+        return;
+    }
+
+    if (desc.variant_names) |names_ptr| {
+        const names = names_ptr[0..count];
+        if (names[idx]) |n| {
+            const s = std.mem.span(n);
+            try out.print(".{s}", .{s});
+            return;
+        }
+    }
+    try out.print(".Unknown", .{});
+}
+
+fn printStructImpl(out: anytype, addr: u64) anyerror!void {
+    const key: usize = @intCast(addr);
+    const desc = struct_registry.get(key) orelse {
+        try out.print("<struct@0x{x}>", .{addr});
+        return;
+    };
+
+    const field_count: usize = @intCast(desc.field_count);
+    const names = if (desc.field_names) |p| p[0..field_count] else &[_]?[*:0]const u8{};
+    const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
+    const enum_type_names = if (desc.field_enum_type_names) |p| p[0..field_count] else &[_]?[*:0]const u8{};
+    const fields: [*]const i64 = @ptrCast(@alignCast(@as(*anyopaque, @ptrFromInt(key))));
+
+    try out.print("{{ ", .{});
+    var first: bool = true;
+    var idx: usize = field_count;
+    while (idx > 0) {
+        idx -= 1;
+        if (!first) try out.print(", ", .{});
+
+        const name_slice: []const u8 = if (idx < names.len) blk: {
+            if (names[idx]) |n| break :blk std.mem.span(n);
+            break :blk "";
+        } else "";
+
+        try out.print("{s}: ", .{name_slice});
+
+        const tag: u64 = if (idx < tags.len) tags[idx] else 255;
+        const bits: i64 = fields[idx];
+        if (tag == 8 and idx < enum_type_names.len) {
+            try printEnumImpl(out, enum_type_names[idx], bits);
+        } else {
+            try printTaggedBitsImpl(out, tag, bits);
+        }
+        first = false;
+    }
+    try out.print(" }}", .{});
+}
+
+fn printArrayHdrImpl(out: anytype, hdr: *ArrayHeader) anyerror!void {
     try out.print("[", .{});
 
     // If the array is logically empty, just print [] and exit.
@@ -645,55 +813,7 @@ fn printArrayHdrImpl(out: anytype, hdr: *ArrayHeader) !void {
     while (i < hdr.len) : (i += 1) {
         if (i != 0) try out.print(", ", .{});
         const elem_bits = doxa_array_get_i64(hdr, i);
-        switch (hdr.elem_tag) {
-            0 => { // int (i64)
-                try out.print("{d}", .{elem_bits});
-            },
-            1 => { // byte (u8)
-                const b: u8 = asByte(elem_bits);
-                try out.print("{d}", .{b});
-            },
-            2 => { // float (f64)
-                const f: f64 = asFloat(elem_bits);
-                try out.print("{d}", .{f});
-            },
-            3 => { // string (i8*)
-                const s_ptr = cStringFromBits(elem_bits);
-                if (s_ptr) |p| {
-                    const s = std.mem.span(p);
-                    try out.print("\"{s}\"", .{s});
-                } else {
-                    try out.print("\"\"", .{});
-                }
-            },
-            4 => { // tetra (2-bit stored in u8)
-                const t: u2 = asTetra(elem_bits);
-                const v: u8 = @intCast(t);
-                const name = switch (v) {
-                    0 => "false",
-                    1 => "true",
-                    2 => "both",
-                    3 => "neither",
-                    else => "invalid",
-                };
-                try out.print("{s}", .{name});
-            },
-            6 => { // array (ptr)
-                const addr: u64 = @bitCast(elem_bits);
-                if (addr == 0) {
-                    try out.print("[]", .{});
-                } else {
-                    const nested_hdr = @as(
-                        *ArrayHeader,
-                        @ptrCast(@alignCast(@as(?*anyopaque, @ptrFromInt(@as(usize, addr))))),
-                    );
-                    try printArrayHdrImpl(out, nested_hdr);
-                }
-            },
-            else => {
-                try out.print("?", .{});
-            },
-        }
+        try printTaggedBitsImpl(out, hdr.elem_tag, elem_bits);
     }
 
     try out.print("]", .{});
@@ -907,7 +1027,12 @@ pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
             }
         },
         .Struct => {
-            writeStdout("<struct>");
+            var buf: [1024]u8 = undefined;
+            var bw = std.fs.File.stdout().writer(&buf);
+            const out = &bw.interface;
+            const addr: u64 = @bitCast(val.payload_bits);
+            printTaggedBitsImpl(out, 7, @as(i64, @bitCast(addr))) catch return;
+            _ = out.flush() catch {};
         },
         .Enum => {
             // Enum printing is now handled natively by the IR printer

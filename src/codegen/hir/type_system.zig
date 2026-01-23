@@ -84,9 +84,33 @@ pub const TypeSystem = struct {
         return HIRType{ .Struct = 0 };
     }
 
-    fn structTypeFromOptional(self: *TypeSystem, maybe_name: ?[]const u8) HIRType {
+    pub fn enumTypeForName(self: *TypeSystem, name: []const u8) HIRType {
+        if (self.enum_table) |table| {
+            if (table.getIdByName(name)) |id| {
+                return HIRType{ .Enum = id };
+            }
+        }
+        return HIRType{ .Enum = 0 };
+    }
+
+    fn customTypeForName(self: *TypeSystem, name: []const u8) HIRType {
+        if (self.custom_types.get(name)) |custom_type| {
+            return switch (custom_type.kind) {
+                .Struct => self.structTypeForName(name),
+                .Enum => self.enumTypeForName(name),
+            };
+        }
+
+        // Best-effort fallback when the custom type registry isn't populated.
+        if (self.enum_table) |table| {
+            if (table.getIdByName(name)) |_| return self.enumTypeForName(name);
+        }
+        return self.structTypeForName(name);
+    }
+
+    fn customTypeFromOptional(self: *TypeSystem, maybe_name: ?[]const u8) HIRType {
         if (maybe_name) |name| {
-            return self.structTypeForName(name);
+            return self.customTypeForName(name);
         }
         return HIRType{ .Struct = 0 };
     }
@@ -315,7 +339,7 @@ pub const TypeSystem = struct {
                 }
                 break :blk .Unknown;
             },
-            .Custom => self.structTypeFromOptional(type_info.custom_type),
+            .Custom => self.customTypeFromOptional(type_info.custom_type),
             else => .Nothing,
         };
     }
@@ -337,14 +361,14 @@ pub const TypeSystem = struct {
             .Variable => |var_token| blk: {
                 // 1. Prefer explicit custom-type tracking from the HIR symbol table
                 if (symbol_table.getVariableCustomType(var_token.lexeme)) |ctype| {
-                    break :blk FieldResolveResult{ .t = self.structTypeForName(ctype), .custom_type_name = ctype };
+                    break :blk FieldResolveResult{ .t = self.customTypeForName(ctype), .custom_type_name = ctype };
                 }
 
                 // 2. Treat bare type names (e.g. Point) as struct/enum types
                 if (self.isCustomType(var_token.lexeme)) |ct| {
                     switch (ct.kind) {
                         .Struct => break :blk FieldResolveResult{ .t = self.structTypeForName(var_token.lexeme), .custom_type_name = var_token.lexeme },
-                        .Enum => break :blk FieldResolveResult{ .t = HIRType{ .Enum = 0 }, .custom_type_name = null },
+                        .Enum => break :blk FieldResolveResult{ .t = self.enumTypeForName(var_token.lexeme), .custom_type_name = var_token.lexeme },
                     }
                 }
 
