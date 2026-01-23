@@ -315,7 +315,7 @@ pub const PrintOps = struct {
             .string => "string",
             .tetra => "tetra",
             .nothing => "nothing",
-            .struct_instance => "struct",
+            .struct_instance => |s| if (s.type_name.len == 0) "struct" else s.type_name,
             .map => "map",
             .enum_variant => "enum",
             else => "unknown",

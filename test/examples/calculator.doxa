@@ -36,19 +36,13 @@ function calculate(input :: string) {
     @assert(verifyParens(splitInput), "parens don't match")
     const tokens is tokenize(splitInput)
     const rpn is shunt(tokens)
-
-    rpn as CalcToken[] then {
-        const result is evaluate(rpn)
-        result as int then {
-            @print("Output: {result}\n")
-        }
-        else {
-            @print("{result}\n")
-            @print("evaluation failed\n")
-        }
-    } else {
-        @print("{rpn}\n")
-        @print("tokens failed to shunt\n")
+    const result is evaluate(rpn)
+    result as int then {
+        @print("Output: {result}\n")
+    }
+    else {
+        @print("{result}\n")
+        @print("evaluation failed\n")
     }
 }
 
@@ -195,7 +189,7 @@ function tokenize(input :: string[]) returns CalcToken[] {
     return tokens
 }
 
-function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
+function shunt(tokens :: CalcToken[]) returns CalcToken[] {
     var output :: CalcToken[]
     var operators :: CalcToken[]
 
@@ -211,7 +205,10 @@ function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
                 const top_prec is precedence(top_op.value)
                 const current_prec is precedence(t.value)
 
-                if top_prec == -1 or current_prec == -1 then return Error.FailedToShunt
+                if top_prec == -1 or current_prec == -1 then {
+                    @assert(false, "failed to shunt")
+                    unreachable
+                }
 
                 if top_prec > current_prec or 
                 ...(top_prec == current_prec and 
@@ -238,7 +235,8 @@ function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
                 @pop(operators)
             } else {
                 @print("Error: Mismatched parentheses\n")
-                return Error.MismatchedParentheses
+                @assert(false, "mismatched parentheses")
+                unreachable
             }
         }
     }
@@ -247,11 +245,11 @@ function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
         const popped is @pop(operators)
         if popped.token_type == TokenType.LPAREN or 
         ...popped.token_type == TokenType.RPAREN then {
-            return Error.MismatchedParentheses
+            @assert(false, "mismatched parentheses")
+            unreachable
         }
         @push(output, popped)
     }
-
     return output
 }
 

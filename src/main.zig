@@ -1028,11 +1028,17 @@ pub fn main() !void {
         // Determine executable path (add .exe on Windows)
         const raw_exe = blk2: {
             if (std.fs.path.isAbsolute(artifact_stem)) break :blk2 artifact_stem;
-            // Check if it's a relative path starting with ./ or ../
-            if (std.mem.startsWith(u8, artifact_stem, "./") or std.mem.startsWith(u8, artifact_stem, "../")) {
-                break :blk2 artifact_stem;
-            }
-            // default to out/<stem>
+            // Treat any path that looks explicit as a user-provided destination.
+            // (Windows users commonly pass `out\\app` or `.\\out\\app`.)
+            const looks_like_path =
+                std.mem.startsWith(u8, artifact_stem, "./") or
+                std.mem.startsWith(u8, artifact_stem, "../") or
+                std.mem.startsWith(u8, artifact_stem, ".\\") or
+                std.mem.startsWith(u8, artifact_stem, "..\\") or
+                (std.mem.indexOfAny(u8, artifact_stem, "/\\") != null);
+            if (looks_like_path) break :blk2 artifact_stem;
+
+            // Default to `out/<stem>` when only a filename is provided.
             break :blk2 try std.fmt.bufPrint(&exe_path_buf, "out/{s}", .{artifact_stem});
         };
         const exe_path = blk3: {

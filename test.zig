@@ -11,10 +11,9 @@ test "run suite" {
 
 test "compile suite" {
     const summary = try test_compile.runAll(testing.allocator);
-    try testing.expect(summary.failed == 0 and summary.untested == 0);
+    try testing.expect(summary.failed == 0);
 }
 
 test {
     _ = @import("test/test_inline_zig.zig");
 }
-

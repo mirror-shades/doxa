@@ -743,6 +743,8 @@ pub const LexicalAnalyzer = struct {
         var depth: usize = 1;
         var in_string = false;
         var string_escape = false;
+        var in_char = false;
+        var char_escape = false;
         var line_comment = false;
         var block_comment_depth: usize = 0;
 
@@ -796,6 +798,26 @@ pub const LexicalAnalyzer = struct {
                 continue;
             }
 
+            if (in_char) {
+                if (char_escape) {
+                    char_escape = false;
+                    self.advance();
+                    continue;
+                }
+                if (ch == '\\') {
+                    char_escape = true;
+                    self.advance();
+                    continue;
+                }
+                if (ch == '\'') {
+                    in_char = false;
+                    self.advance();
+                    continue;
+                }
+                self.advance();
+                continue;
+            }
+
             // Not in string/comment
             if (ch == '/' and self.peekAt(1) == '/') {
                 line_comment = true;
@@ -812,6 +834,22 @@ pub const LexicalAnalyzer = struct {
             if (ch == '"') {
                 in_string = true;
                 self.advance();
+                continue;
+            }
+            if (ch == '\'') {
+                in_char = true;
+                self.advance();
+                continue;
+            }
+
+            // Zig multiline string literal: `\\\\...` continues until newline.
+            // Treat as an opaque region so braces inside don't affect our depth tracking.
+            if (ch == '\\' and self.peekAt(1) == '\\') {
+                self.advance();
+                self.advance();
+                while (!self.isAtEnd() and self.peekAt(0) != '\n') {
+                    self.advance();
+                }
                 continue;
             }
 

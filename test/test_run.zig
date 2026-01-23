@@ -303,6 +303,15 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected_error = null,
         },
         .{
+            .name = "union enum return",
+            .path = "./test/misc/union_enum_return.doxa",
+            .mode = .PEEK,
+            .input = null,
+            .expected_print = null,
+            .expected_peek = answers.expected_union_enum_return_results[0..],
+            .expected_error = null,
+        },
+        .{
             .name = "syntax error",
             .path = "./test/syntax/equals_for_assign.doxa",
             .mode = .ERROR,
