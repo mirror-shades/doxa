@@ -1,4 +1,8 @@
 const std = @import("std");
+const HIR = @import("../hir/soxa_types.zig");
+const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
+const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
+const CompareInstruction = std.meta.TagPayload(HIRInstruction, .Compare);
 
 pub const IRPrinter = struct {
     const Self = @This();
@@ -99,10 +103,25 @@ pub const IRPrinter = struct {
     pub const stackTypeToLLVMType = StructsEnumsEmitMethods.stackTypeToLLVMType;
     pub const hirTypeToLLVMType = StructsEnumsEmitMethods.hirTypeToLLVMType;
 
-    const HIR = @import("../hir/soxa_types.zig");
-    const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
-    const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
-    const CompareInstruction = std.meta.TagPayload(HIRInstruction, .Compare);
+    allocator: std.mem.Allocator,
+    peek_string_counter: usize,
+
+    global_types: std.StringHashMap(StackType),
+    global_array_types: std.StringHashMap(HIR.HIRType),
+    global_enum_types: std.StringHashMap([]const u8),
+    global_struct_field_types: std.StringHashMap([]HIR.HIRType),
+    global_struct_field_names: std.StringHashMap([]const []const u8),
+    global_struct_type_names: std.StringHashMap([]const u8),
+    defined_globals: std.StringHashMap(bool),
+    struct_fields_by_id: std.AutoHashMap(HIR.StructId, []HIR.HIRType),
+    struct_type_names_by_id: std.AutoHashMap(HIR.StructId, []const u8),
+    struct_field_names_by_type: std.StringHashMap([]const []const u8),
+    struct_desc_globals_by_type: std.StringHashMap([]const u8),
+    function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
+    function_struct_return_type_names: std.StringHashMap([]const u8),
+    enum_desc_globals_by_type: std.StringHashMap([]const u8),
+    last_emitted_enum_value: ?u64 = null,
+    enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
 
     pub const EnumVariantMeta = struct {
         index: u32,
@@ -250,24 +269,4 @@ pub const IRPrinter = struct {
 
         return info;
     }
-
-    allocator: std.mem.Allocator,
-    peek_string_counter: usize,
-
-    global_types: std.StringHashMap(StackType),
-    global_array_types: std.StringHashMap(HIR.HIRType),
-    global_enum_types: std.StringHashMap([]const u8),
-    global_struct_field_types: std.StringHashMap([]HIR.HIRType),
-    global_struct_field_names: std.StringHashMap([]const []const u8),
-    global_struct_type_names: std.StringHashMap([]const u8),
-    defined_globals: std.StringHashMap(bool),
-    struct_fields_by_id: std.AutoHashMap(HIR.StructId, []HIR.HIRType),
-    struct_type_names_by_id: std.AutoHashMap(HIR.StructId, []const u8),
-    struct_field_names_by_type: std.StringHashMap([]const []const u8),
-    struct_desc_globals_by_type: std.StringHashMap([]const u8),
-    function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
-    function_struct_return_type_names: std.StringHashMap([]const u8),
-    enum_desc_globals_by_type: std.StringHashMap([]const u8),
-    last_emitted_enum_value: ?u64 = null,
-    enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
 };
