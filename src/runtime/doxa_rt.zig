@@ -69,10 +69,120 @@ pub export fn doxa_peek_string(ptr: ?[*:0]const u8) callconv(.c) void {
 }
 
 pub export fn doxa_str_eq(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) bool {
-    if (a == null or b == null) return false;
-    const as = std.mem.span(a.?);
-    const bs = std.mem.span(b.?);
+    const as = if (a) |p| std.mem.span(p) else "";
+    const bs = if (b) |p| std.mem.span(p) else "";
     return std.mem.eql(u8, as, bs);
+}
+
+fn allocSentinelString(bytes: []const u8) ?[*:0]u8 {
+    const out = std.heap.page_allocator.allocSentinel(u8, bytes.len, 0) catch return null;
+    @memcpy(out[0..bytes.len], bytes);
+    return out.ptr;
+}
+
+pub export fn doxa_int_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
+    if (ptr == null) return 0;
+    const raw = std.mem.span(ptr.?);
+    const s = std.mem.trim(u8, raw, " \t\r\n");
+    if (s.len == 0) return 0;
+
+    // Hex prefix (supports negative hex like -0x0A)
+    const is_neg = s[0] == '-';
+    const hex_start: usize = if (is_neg) 1 else 0;
+    if (s.len >= hex_start + 2 and s[hex_start] == '0' and (s[hex_start + 1] == 'x' or s[hex_start + 1] == 'X')) {
+        const digits = s[hex_start + 2 ..];
+        const parsed = std.fmt.parseInt(i64, digits, 16) catch return 0;
+        return if (is_neg) -parsed else parsed;
+    }
+
+    // Float-like strings: parse as float then truncate toward zero.
+    if (std.mem.indexOfScalar(u8, s, '.') != null) {
+        const f = std.fmt.parseFloat(f64, s) catch return 0;
+        return @intFromFloat(f);
+    }
+
+    return std.fmt.parseInt(i64, s, 10) catch 0;
+}
+
+pub export fn doxa_float_from_cstr(ptr: ?[*:0]const u8) callconv(.c) f64 {
+    if (ptr == null) return 0.0;
+    const raw = std.mem.span(ptr.?);
+    const s = std.mem.trim(u8, raw, " \t\r\n");
+    if (s.len == 0) return 0.0;
+
+    const is_neg = s[0] == '-';
+    const hex_start: usize = if (is_neg) 1 else 0;
+    if (s.len >= hex_start + 2 and s[hex_start] == '0' and (s[hex_start + 1] == 'x' or s[hex_start + 1] == 'X')) {
+        const digits = s[hex_start + 2 ..];
+        const parsed = std.fmt.parseInt(i64, digits, 16) catch return 0.0;
+        const signed = if (is_neg) -parsed else parsed;
+        return @floatFromInt(signed);
+    }
+
+    // Accept plain integers and floats.
+    return std.fmt.parseFloat(f64, s) catch 0.0;
+}
+
+pub export fn doxa_int_to_string(value: i64) callconv(.c) ?[*:0]u8 {
+    var buf: [64]u8 = undefined;
+    const s = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return null;
+    return allocSentinelString(s);
+}
+
+pub export fn doxa_float_to_string(value: f64) callconv(.c) ?[*:0]u8 {
+    var buf: [64]u8 = undefined;
+    const rounded_down = std.math.floor(value);
+    const s = if (value - rounded_down == 0)
+        std.fmt.bufPrint(&buf, "{d}.0", .{value}) catch return null
+    else
+        std.fmt.bufPrint(&buf, "{d}", .{value}) catch return null;
+    return allocSentinelString(s);
+}
+
+pub export fn doxa_byte_to_string(value: i64) callconv(.c) ?[*:0]u8 {
+    var buf: [16]u8 = undefined;
+    const byte_val: u8 = @intCast(value & 0xff);
+    const s = std.fmt.bufPrint(&buf, "0x{X:0>2}", .{byte_val}) catch return null;
+    return allocSentinelString(s);
+}
+
+pub export fn doxa_tetra_to_string(value: i64) callconv(.c) ?[*:0]u8 {
+    const v: u8 = @intCast(value & 0x3);
+    const name: []const u8 = switch (v) {
+        0 => "false",
+        1 => "true",
+        2 => "both",
+        3 => "neither",
+        else => "invalid",
+    };
+    return allocSentinelString(name);
+}
+
+pub export fn doxa_enum_to_string(type_name_ptr: ?[*:0]const u8, bits: i64) callconv(.c) ?[*:0]u8 {
+    var list = std.array_list.Managed(u8).init(std.heap.page_allocator);
+    defer list.deinit();
+    const w = list.writer();
+    printEnumImpl(w, type_name_ptr, bits) catch return null;
+    return allocSentinelString(list.items);
+}
+
+pub export fn doxa_struct_to_string(instance: ?*anyopaque) callconv(.c) ?[*:0]u8 {
+    if (instance == null) return doxa_str_clone(null);
+    const addr: u64 = @intFromPtr(instance.?);
+    var list = std.array_list.Managed(u8).init(std.heap.page_allocator);
+    defer list.deinit();
+    const w = list.writer();
+    printStructImpl(w, addr) catch return null;
+    return allocSentinelString(list.items);
+}
+
+pub export fn doxa_array_to_string(hdr: ?*ArrayHeader) callconv(.c) ?[*:0]u8 {
+    if (hdr == null) return doxa_str_clone(null);
+    var list = std.array_list.Managed(u8).init(std.heap.page_allocator);
+    defer list.deinit();
+    const w = list.writer();
+    printArrayHdrImpl(w, hdr.?) catch return null;
+    return allocSentinelString(list.items);
 }
 
 pub export fn doxa_str_concat(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
@@ -226,36 +336,41 @@ pub export fn doxa_input() callconv(.c) ?[*:0]u8 {
 pub export fn doxa_find(collection: ?*anyopaque, value: i64) callconv(.c) i64 {
     if (collection == null) return -1;
 
-    // Try to interpret as ArrayHeader first
-    const maybe_hdr = @as(?*ArrayHeader, @ptrCast(@alignCast(collection)));
+    const maybe_hdr = asArrayHeader(collection);
     if (maybe_hdr) |hdr| {
-        // It's an array - search for the value
-        var idx: u64 = 0;
-        while (idx < hdr.len) : (idx += 1) {
-            const elem = doxa_array_get_i64(hdr, idx);
-            if (elem == value) {
-                return @intCast(idx);
-            }
-        }
-        return -1;
+        return doxa_find_array(hdr, value);
     }
 
-    // Try to interpret as string (C string)
-    const str_ptr = @as(?[*:0]const u8, @ptrCast(@alignCast(collection)));
+    // Interpret as string (C string)
+    const str_ptr = @as(?[*:0]const u8, @ptrCast(collection));
     if (str_ptr) |s| {
-        const str = std.mem.span(s);
-        const needle_ptr = @as(?[*:0]const u8, @ptrCast(@alignCast(@as(?*anyopaque, @ptrFromInt(@as(usize, @intCast(value)))))));
-        if (needle_ptr) |needle| {
-            const needle_str = std.mem.span(needle);
-            if (needle_str.len == 0) return 0;
-            if (std.mem.indexOf(u8, str, needle_str)) |found| {
-                return @intCast(found);
-            }
-        }
-        return -1;
+        const needle_ptr = @as(?[*:0]const u8, @ptrFromInt(@as(usize, @intCast(value))));
+        return doxa_find_str(s, needle_ptr);
     }
 
     return -1;
+}
+
+pub export fn doxa_find_array(hdr: ?*ArrayHeader, value: i64) callconv(.c) i64 {
+    const h = hdr orelse return -1;
+    var idx: u64 = 0;
+    while (idx < h.len) : (idx += 1) {
+        const elem = doxa_array_get_i64(h, idx);
+        if (elem == value) return @intCast(idx);
+    }
+    return -1;
+}
+
+pub export fn doxa_find_str(str_ptr: ?[*:0]const u8, needle_ptr: ?[*:0]const u8) callconv(.c) i64 {
+    const s_ptr = str_ptr orelse return -1;
+    const n_ptr = needle_ptr orelse return -1;
+    const str = std.mem.span(s_ptr);
+    const needle = std.mem.span(n_ptr);
+    if (needle.len == 0) return 0;
+    return if (std.mem.indexOf(u8, str, needle)) |found|
+        @intCast(found)
+    else
+        -1;
 }
 
 //------------------------------------------------------------------------------
@@ -412,6 +527,56 @@ pub export fn doxa_byte_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
         return rounded;
     }
     return 0;
+}
+
+pub export fn doxa_byte_from_i64(value: i64) callconv(.c) i64 {
+    if (value >= 0 and value <= 255) return value;
+    return 0;
+}
+
+pub export fn doxa_byte_from_f64(value: f64) callconv(.c) i64 {
+    if (!std.math.isFinite(value)) return 0;
+    const rounded: i64 = @intFromFloat(value);
+    if (rounded >= 0 and rounded <= 255) return rounded;
+    return 0;
+}
+
+pub export fn doxa_substring(s: ?[*:0]const u8, start: i64, length: i64) callconv(.c) ?[*:0]u8 {
+    const src = if (s) |p| std.mem.span(p) else "";
+    if (start < 0 or length < 0) return doxa_str_clone(null);
+    const start_u: usize = @intCast(@as(u64, @intCast(start)));
+    const len_u: usize = @intCast(@as(u64, @intCast(length)));
+    if (start_u >= src.len) return doxa_str_clone(null);
+    const end_unclamped: usize = start_u +| len_u;
+    const end_u: usize = if (end_unclamped > src.len) src.len else end_unclamped;
+    return allocSentinelString(src[start_u..end_u]);
+}
+
+pub export fn doxa_str_pop(s: ?[*:0]const u8, out_remaining: *?[*:0]u8, out_popped: *?[*:0]u8) callconv(.c) u8 {
+    const src = if (s) |p| std.mem.span(p) else "";
+    if (src.len == 0) {
+        out_remaining.* = doxa_str_clone(null);
+        out_popped.* = doxa_str_clone(null);
+        return 0;
+    }
+
+    var last_char_start: usize = src.len;
+    var i: usize = src.len;
+    while (i > 0) {
+        i -= 1;
+        const byte = src[i];
+        if ((byte & 0x80) == 0) {
+            last_char_start = i;
+            break;
+        } else if ((byte & 0xC0) == 0xC0) {
+            last_char_start = i;
+            break;
+        }
+    }
+
+    out_remaining.* = allocSentinelString(src[0..last_char_start]);
+    out_popped.* = allocSentinelString(src[last_char_start..src.len]);
+    return 1;
 }
 
 // Return length of a C string (0 if null)
@@ -639,8 +804,7 @@ pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u
 pub export fn doxa_clear(collection: ?*anyopaque) callconv(.c) void {
     if (collection == null) return;
 
-    // Try to interpret as ArrayHeader first
-    const maybe_hdr = @as(?*ArrayHeader, @ptrCast(@alignCast(collection)));
+    const maybe_hdr = asArrayHeader(collection);
     if (maybe_hdr) |hdr| {
         // It's an array - clear by setting length to 0
         hdr.len = 0;
@@ -649,6 +813,24 @@ pub export fn doxa_clear(collection: ?*anyopaque) callconv(.c) void {
 
     // For strings, this is a no-op (strings are immutable)
     // The compiler should prevent calling clear on strings, but if it happens, just return
+}
+
+fn asArrayHeader(ptr: ?*anyopaque) ?*ArrayHeader {
+    const p = ptr orelse return null;
+    const addr = @intFromPtr(p);
+    if (addr % @alignOf(ArrayHeader) != 0) return null;
+
+    const hdr: *ArrayHeader = @ptrCast(@alignCast(p));
+
+    // Validate minimal invariants to avoid treating C strings as ArrayHeaders.
+    if (hdr.elem_tag > 8) return null;
+    if (!(hdr.elem_size == 0 or hdr.elem_size == 1 or hdr.elem_size == 8)) return null;
+    if (hdr.len > hdr.cap) return null;
+    if (hdr.elem_size == 0) return hdr;
+    if (hdr.cap == 0) return hdr;
+    if (hdr.data == null) return null;
+
+    return hdr;
 }
 
 // Shared array header printer for compiled programs and the VM.
