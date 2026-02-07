@@ -114,8 +114,6 @@ pub const FunctionOps = struct {
             }
         } else if (std.mem.eql(u8, c.qualified_name, "push")) {
             try execBuiltinArrayPush(vm);
-        } else if (std.mem.eql(u8, c.qualified_name, "safeAdd")) {
-            try execBuiltinSafeAdd(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "power") or std.mem.eql(u8, c.qualified_name, "powi")) {
             try execBuiltinPower(vm, c.qualified_name);
         } else if (std.mem.eql(u8, c.qualified_name, "exists_quantifier_gt") or
@@ -151,103 +149,50 @@ pub const FunctionOps = struct {
     }
 
     fn execModuleFunction(vm: anytype, c: anytype) !void {
+        // Try to find the function by exact qualified name in the function table.
+        // This covers all module functions (e.g. "safeMath.safeAdd", "math.add").
+        for (vm.program.function_table) |func| {
+            if (std.mem.eql(u8, func.name, c.qualified_name) or
+                std.mem.eql(u8, func.qualified_name, c.qualified_name))
+            {
+                return dispatchModuleCall(vm, func, c);
+            }
+        }
+
+        // For un-dotted names, also try well-known render-module prefixes.
         if (std.mem.indexOfScalar(u8, c.qualified_name, '.') == null) {
             const function_name = c.qualified_name;
-
             const prefixes = [_][]const u8{ "Render.", "render.", "Render.doxa.", "render.doxa." };
             for (prefixes) |prefix| {
                 const qualified_name = try std.fmt.allocPrint(vm.runtimeAllocator(), "{s}{s}", .{ prefix, function_name });
-
-                for (vm.program.function_table, 0..) |func, index| {
+                for (vm.program.function_table) |func| {
                     if (std.mem.eql(u8, func.name, qualified_name)) {
-                        const function = vm.program.function_table[index];
-
-                        const saved_sp = vm.stack.size() - @as(i64, @intCast(c.arg_count));
-
-                        const return_ip = vm.ip + 1;
-                        const call_frame = CallFrame{
-                            .return_ip = return_ip,
-                            .function_name = function.name,
-                            .arg_count = c.arg_count,
-                            .saved_sp = saved_sp,
-                        };
-                        try vm.call_stack.push(call_frame);
-
-                        if (function.start_ip != 0) {
-                            vm.ip = function.start_ip;
-                            return;
-                        }
-                        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not resolved: {s}", .{function.start_label});
+                        return dispatchModuleCall(vm, func, c);
                     }
                 }
             }
-
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown function: {s}", .{c.qualified_name});
         }
 
-        const is_safe_add = blk: {
-            if (std.mem.lastIndexOfScalar(u8, c.qualified_name, '.')) |dot_idx| {
-                break :blk std.mem.eql(u8, c.qualified_name[dot_idx + 1 ..], "safeAdd");
-            } else break :blk std.mem.eql(u8, c.qualified_name, "safeAdd");
+        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown module function: {s}", .{c.qualified_name});
+    }
+
+    /// Helper: set up a call frame and jump to a resolved module function.
+    fn dispatchModuleCall(vm: anytype, function: anytype, c: anytype) !void {
+        const saved_sp = vm.stack.size() - @as(i64, @intCast(c.arg_count));
+        const return_ip = vm.ip + 1;
+        const call_frame = CallFrame{
+            .return_ip = return_ip,
+            .function_name = function.name,
+            .arg_count = c.arg_count,
+            .saved_sp = saved_sp,
         };
-        if (is_safe_add) {
-            const b = try vm.stack.pop();
-            const a = try vm.stack.pop();
+        try vm.call_stack.push(call_frame);
 
-            const a_int = switch (a.value) {
-                .int => |i| i,
-                .byte => |u| @as(i64, u),
-                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: first argument must be integer", .{}),
-            };
-
-            const b_int = switch (b.value) {
-                .int => |i| i,
-                .byte => |u| @as(i64, u),
-                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: second argument must be integer", .{}),
-            };
-
-            const limit = 255;
-            if (a_int > limit or b_int > limit) {
-                const overflow_value = HIRValue{ .string = "Overflow" };
-                try vm.stack.push(HIRFrame{ .value = overflow_value });
-                const Loc = @import("../../utils/reporting.zig").Location;
-                const loc_opt = @as(?Loc, Loc{ .file = "test/misc/safeMath.doxa", .range = .{ .start_line = 7, .start_col = 9, .end_line = 7, .end_col = 9 } });
-                const peek_like = .{
-                    .name = @as(?[]const u8, null),
-                    .value_type = @import("../../codegen/hir/soxa_types.zig").HIRType.String,
-                    .location = loc_opt,
-                    .union_members = @as(?[][]const u8, null),
-                };
-                try debug_print.PrintOps.execPeek(vm, peek_like);
-                try vm.stack.push(HIRFrame.initInt(-1));
-                return;
-            }
-
-            if (a_int < 0 or b_int < 0) {
-                const underflow_value = HIRValue{ .string = "Underflow" };
-                try vm.stack.push(HIRFrame{ .value = underflow_value });
-                const Loc = @import("../../utils/reporting.zig").Location;
-                const loc_opt2 = @as(?Loc, Loc{ .file = "test/misc/safeMath.doxa", .range = .{ .start_line = 12, .start_col = 9, .end_line = 12, .end_col = 9 } });
-                const peek_like2 = .{
-                    .name = @as(?[]const u8, null),
-                    .value_type = @import("../../codegen/hir/soxa_types.zig").HIRType.String,
-                    .location = loc_opt2,
-                    .union_members = @as(?[][]const u8, null),
-                };
-                try debug_print.PrintOps.execPeek(vm, peek_like2);
-                try vm.stack.push(HIRFrame.initInt(-1));
-                return;
-            }
-
-            const result = std.math.add(i64, a_int, b_int) catch {
-                try vm.stack.push(HIRFrame.initInt(-1));
-                return;
-            };
-
-            try vm.stack.push(HIRFrame.initInt(result));
-        } else {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown module function: {s}", .{c.qualified_name});
+        if (function.start_ip != 0) {
+            vm.ip = function.start_ip;
+            return;
         }
+        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function label not resolved: {s}", .{function.start_label});
     }
 
     fn execBuiltinArrayPush(vm: anytype) !void {
@@ -282,30 +227,6 @@ pub const FunctionOps = struct {
             },
             else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot push to non-array value: {s}", .{@tagName(array.value)}),
         }
-    }
-
-    fn execBuiltinSafeAdd(vm: anytype) !void {
-        const b = try vm.stack.pop();
-        const a = try vm.stack.pop();
-
-        const a_int = switch (a.value) {
-            .int => |i| i,
-            .byte => |u| @as(i64, u),
-            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: first argument must be integer", .{}),
-        };
-
-        const b_int = switch (b.value) {
-            .int => |i| i,
-            .byte => |u| @as(i64, u),
-            else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: second argument must be integer", .{}),
-        };
-
-        const result = std.math.add(i64, a_int, b_int) catch {
-            try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue.nothing));
-            return;
-        };
-
-        try vm.stack.push(HIRFrame.initInt(result));
     }
 
     fn execBuiltinClear(vm: anytype) !void {

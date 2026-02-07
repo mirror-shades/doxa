@@ -1,18 +1,19 @@
 const std = @import("std");
-const HIR = @import("../hir/soxa_types.zig");
-const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
-const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
-const CompareInstruction = std.meta.TagPayload(HIRInstruction, .Compare);
 
 pub const IRPrinter = struct {
+    pub const IRPrinter = Self;
+    pub const HIR = @import("../hir/soxa_types.zig");
+    pub const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
+    pub const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
+    pub const CompareInstruction = std.meta.TagPayload(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare);
     const Self = @This();
 
     const Ctx = struct {
         pub const IRPrinter = Self;
-        pub const HIR = Self.HIR;
-        pub const HIRValue = Self.HIRValue;
-        pub const HIRInstruction = Self.HIRInstruction;
-        pub const CompareInstruction = Self.CompareInstruction;
+        pub const HIR = @import("../hir/soxa_types.zig");
+        pub const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
+        pub const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
+        pub const CompareInstruction = std.meta.TagPayload(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare);
         pub const PeekEmitState = Self.PeekEmitState;
         pub const PeekStringInfo = Self.PeekStringInfo;
         pub const StackType = Self.StackType;

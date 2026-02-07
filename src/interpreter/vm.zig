@@ -1272,37 +1272,6 @@ pub const VM = struct {
             return;
         }
 
-        if (std.mem.eql(u8, name, "safeAdd")) {
-            const b = try self.stack.pop();
-            const a = try self.stack.pop();
-
-            const a_int = switch (a.value) {
-                .int => |i| i,
-                .byte => |u| @as(i64, u),
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: first argument must be integer", .{}),
-            };
-
-            const b_int = switch (b.value) {
-                .int => |i| i,
-                .byte => |u| @as(i64, u),
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "safeAdd: second argument must be integer", .{}),
-            };
-
-            const limit = 255;
-            if (a_int > limit or b_int > limit or a_int < 0 or b_int < 0) {
-                try self.stack.push(HIRFrame.initInt(-1));
-                return;
-            }
-
-            const result = std.math.add(i64, a_int, b_int) catch {
-                try self.stack.push(HIRFrame.initInt(-1));
-                return;
-            };
-
-            try self.stack.push(HIRFrame.initInt(result));
-            return;
-        }
-
         if (std.mem.eql(u8, name, "power") or std.mem.eql(u8, name, "powi")) {
             const exponent = try self.stack.pop();
             const base = try self.stack.pop();

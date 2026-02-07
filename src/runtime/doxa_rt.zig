@@ -245,29 +245,19 @@ pub export fn doxa_print_byte(value: i64) callconv(.c) void {
 }
 
 fn getEnumVariantName(type_name: []const u8, variant_index: i64) []const u8 {
-    // For now, we'll implement a simple mapping for common enum types
-    // In a full implementation, this would look up the enum type registry
-    if (std.mem.eql(u8, type_name, "Color")) {
-        return switch (variant_index) {
-            0 => "Red",
-            1 => "Green",
-            2 => "Blue",
-            else => "Unknown",
-        };
-    }
+    const desc = findEnumDescByName(type_name) orelse return "Unknown";
+    if (variant_index < 0) return "Unknown";
+    const idx: usize = @intCast(@as(u64, @intCast(variant_index)));
+    const count: usize = @intCast(desc.variant_count);
+    if (idx >= count) return "Unknown";
 
-    // Default fallback
-    return switch (variant_index) {
-        0 => "Variant0",
-        1 => "Variant1",
-        2 => "Variant2",
-        3 => "Variant3",
-        4 => "Variant4",
-        5 => "Variant5",
-        6 => "Variant6",
-        7 => "Variant7",
-        else => "Unknown",
-    };
+    if (desc.variant_names) |names_ptr| {
+        const names = names_ptr[0..count];
+        if (names[idx]) |n| {
+            return std.mem.span(n);
+        }
+    }
+    return "Unknown";
 }
 
 // Built-in functions
@@ -625,6 +615,24 @@ pub export fn doxa_enum_register(desc: ?*const EnumDesc) callconv(.c) void {
     enum_registry.put(std.heap.page_allocator, @intFromPtr(tn), ed) catch {};
 }
 
+fn findEnumDescByName(type_name: []const u8) ?*const EnumDesc {
+    var it = enum_registry.iterator();
+    while (it.next()) |entry| {
+        const registered_ptr: [*:0]const u8 = @ptrFromInt(entry.key_ptr.*);
+        const registered_name = std.mem.span(registered_ptr);
+        if (std.mem.eql(u8, registered_name, type_name)) {
+            return entry.value_ptr.*;
+        }
+    }
+    return null;
+}
+
+fn lookupEnumDesc(type_name_ptr: ?[*:0]const u8) ?*const EnumDesc {
+    const tn = type_name_ptr orelse return null;
+    if (enum_registry.get(@intFromPtr(tn))) |desc| return desc;
+    return findEnumDescByName(std.mem.span(tn));
+}
+
 fn clampMin(a: u64, b: u64) u64 {
     return if (a < b) b else a;
 }
@@ -915,7 +923,7 @@ fn printEnumImpl(out: anytype, type_name_ptr: ?[*:0]const u8, bits: i64) anyerro
         try out.print("<enum:{d}>", .{bits});
         return;
     };
-    const desc = enum_registry.get(@intFromPtr(tn)) orelse {
+    const desc = lookupEnumDesc(tn) orelse {
         try out.print("<enum:{d}>", .{bits});
         return;
     };
@@ -932,15 +940,12 @@ fn printEnumImpl(out: anytype, type_name_ptr: ?[*:0]const u8, bits: i64) anyerro
         return;
     }
 
-    if (desc.variant_names) |names_ptr| {
-        const names = names_ptr[0..count];
-        if (names[idx]) |n| {
-            const s = std.mem.span(n);
-            try out.print(".{s}", .{s});
-            return;
-        }
+    const name = getEnumVariantName(std.mem.span(tn), bits);
+    if (!std.mem.eql(u8, name, "Unknown")) {
+        try out.print(".{s}", .{name});
+    } else {
+        try out.print(".Unknown", .{});
     }
-    try out.print(".Unknown", .{});
 }
 
 fn printStructImpl(out: anytype, addr: u64) anyerror!void {

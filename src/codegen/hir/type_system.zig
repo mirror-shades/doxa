@@ -3,9 +3,11 @@ const ast = @import("../../ast/ast.zig");
 const Token = @import("../../types/token.zig").Token;
 const TokenType = @import("../../types/token.zig").TokenType;
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
-const HIRType = @import("soxa_types.zig").HIRType;
-const StructId = @import("soxa_types.zig").StructId;
-const EnumId = @import("soxa_types.zig").EnumId;
+const SoxaTypes = @import("soxa_types.zig");
+const HIRType = SoxaTypes.HIRType;
+const StructId = SoxaTypes.StructId;
+const EnumId = SoxaTypes.EnumId;
+const FunctionInfo = SoxaTypes.FunctionInfo;
 const SymbolTable = @import("symbol_table.zig").SymbolTable;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -24,6 +26,7 @@ pub const TypeSystem = struct {
     enum_table: ?*const EnumTable = null,
     union_id_map: std.StringHashMap(u32),
     next_union_id: u32,
+    function_signatures: ?*const std.StringHashMap(FunctionInfo) = null,
 
     pub const CustomTypeInfo = struct {
         name: []const u8,
@@ -688,33 +691,37 @@ pub const TypeSystem = struct {
             .FunctionCall => |call| {
                 switch (call.callee.data) {
                     .InternalCall => |method| {
-                        if (std.mem.eql(u8, method.method.lexeme, "substring")) return .String;
-                        if (std.mem.eql(u8, method.method.lexeme, "length")) return .Int;
-                        if (std.mem.eql(u8, method.method.lexeme, "bytes")) return .Unknown;
-                        if (std.mem.eql(u8, method.method.lexeme, "int")) return .Int;
-                        if (std.mem.eql(u8, method.method.lexeme, "float")) return .Float;
-                        if (std.mem.eql(u8, method.method.lexeme, "byte")) {
-                            return .Byte;
+                        const method_name = method.method.lexeme;
+                        // Well-known type-conversion / intrinsic methods
+                        if (std.mem.eql(u8, method_name, "substring")) return .String;
+                        if (std.mem.eql(u8, method_name, "length")) return .Int;
+                        if (std.mem.eql(u8, method_name, "bytes")) return .Unknown;
+                        if (std.mem.eql(u8, method_name, "int")) return .Int;
+                        if (std.mem.eql(u8, method_name, "float")) return .Float;
+                        if (std.mem.eql(u8, method_name, "byte")) return .Byte;
+                        // Fall back to function_signatures for user-defined methods
+                        if (self.function_signatures) |sigs| {
+                            if (sigs.get(method_name)) |info| return info.return_type;
                         }
-                        if (std.mem.eql(u8, method.method.lexeme, "safeAdd")) return .Int;
                     },
                     .FieldAccess => |field| {
-                        if (std.mem.eql(u8, field.field.lexeme, "safeAdd")) {
-                            return .Int;
+                        const field_name = field.field.lexeme;
+                        // Try qualified name (e.g. "module.func")
+                        if (self.function_signatures) |sigs| {
+                            if (field.object.data == .Variable) {
+                                const obj_name = field.object.data.Variable.lexeme;
+                                // Build "obj.field" key – try stack buffer first
+                                var buf: [256]u8 = undefined;
+                                const qualified = std.fmt.bufPrint(&buf, "{s}.{s}", .{ obj_name, field_name }) catch field_name;
+                                if (sigs.get(qualified)) |info| return info.return_type;
+                            }
+                            if (sigs.get(field_name)) |info| return info.return_type;
                         }
                     },
                     .Variable => |var_token| {
-                        if (std.mem.eql(u8, var_token.lexeme, "fizzbuzz") or
-                            std.mem.eql(u8, var_token.lexeme, "fber") or
-                            std.mem.eql(u8, var_token.lexeme, "forloop"))
-                        {
-                            return .Nothing;
-                        }
-                        if (std.mem.eql(u8, var_token.lexeme, "return_test")) {
-                            return .String;
-                        }
-                        if (std.mem.eql(u8, var_token.lexeme, "foo")) {
-                            return .Int;
+                        // Look up user-defined / module function return type
+                        if (self.function_signatures) |sigs| {
+                            if (sigs.get(var_token.lexeme)) |info| return info.return_type;
                         }
                     },
                     else => {},

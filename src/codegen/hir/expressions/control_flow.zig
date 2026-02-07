@@ -555,8 +555,12 @@ pub const ControlFlowHandler = struct {
                             .Tetra => break :blk "tetra[]",
                             .Nothing => break :blk "array[]", // VM uses array[] for unknown/nothing
                         },
-                        // Arrays of custom/struct types appear as struct[] at runtime
-                        .Custom => break :blk "struct[]",
+                        // Arrays of custom/struct types use the actual type name at runtime
+                        // e.g., CalcToken[] not struct[]
+                        .Custom => |elem_tok| {
+                            const name_with_brackets = std.fmt.allocPrint(self.generator.allocator, "{s}[]", .{elem_tok.lexeme}) catch break :blk "struct[]";
+                            break :blk name_with_brackets;
+                        },
                         .Struct => break :blk "struct[]",
                         // Other element kinds (enum, union, map, function, auto) default to array[]
                         else => break :blk "array[]",
