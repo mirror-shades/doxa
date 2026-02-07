@@ -87,17 +87,7 @@ pub const HIRGenerator = struct {
 
     is_generating_nested_array: bool = false,
 
-    pub const FunctionInfo = struct {
-        name: []const u8,
-        arity: u32,
-        return_type: HIRType,
-        start_label: []const u8,
-        body_label: ?[]const u8 = null,
-        local_var_count: u32,
-        is_entry: bool,
-        param_is_alias: []bool,
-        param_types: []HIRType,
-    };
+    pub const FunctionInfo = SoxaTypes.FunctionInfo;
 
     pub const FunctionBody = struct {
         function_info: FunctionInfo,
@@ -711,12 +701,7 @@ pub const HIRGenerator = struct {
             }
             self.current_function_scope_id = null;
 
-            if (std.mem.eql(u8, function_body.function_info.name, "safeAdd") or std.mem.eql(u8, function_body.function_info.name, "safeMath.safeAdd")) {
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = 1, .var_name = "a", .scope_kind = self.symbol_table.determineVariableScope("a"), .module_context = null } });
-                try self.instructions.append(.{ .LoadVar = .{ .var_index = 0, .var_name = "b", .scope_kind = self.symbol_table.determineVariableScope("b"), .module_context = null } });
-                try self.instructions.append(.{ .Call = .{ .function_index = 1, .qualified_name = "math.add", .arg_count = 2, .call_kind = .ModuleFunction, .target_module = "math", .return_type = .Int } });
-                try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = .Int } });
-            } else if (!has_returned) {
+            if (!has_returned) {
                 if (function_body.function_info.return_type != .Nothing) {
                     try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
                 } else {
@@ -1741,38 +1726,21 @@ pub const HIRGenerator = struct {
                 return .Nothing;
             },
             .BuiltinFunction => {
-                if (std.mem.eql(u8, function_name, "safeAdd") or
-                    std.mem.eql(u8, function_name, "safeSub") or
-                    std.mem.eql(u8, function_name, "safeMul") or
-                    std.mem.eql(u8, function_name, "foo") or
-                    std.mem.eql(u8, function_name, "time"))
-                {
-                    return .Int;
-                }
-                if (std.mem.eql(u8, function_name, "push") or
-                    std.mem.eql(u8, function_name, "insert") or
-                    std.mem.eql(u8, function_name, "clear"))
-                {
-                    return .Nothing;
-                }
+                // `remove` is special: it signals an alias-tracking error.
                 if (std.mem.eql(u8, function_name, "remove")) {
                     return error.InvalidAliasType;
                 }
-                if (std.mem.eql(u8, function_name, "print") or
-                    std.mem.eql(u8, function_name, "println"))
-                {
-                    return .Nothing;
+                // Look up the centralised builtin registry.
+                const builtin_registry = @import("../../runtime/builtin_registry.zig");
+                if (builtin_registry.get(function_name)) |info| {
+                    return info.return_type;
                 }
-                if (std.mem.eql(u8, function_name, "input")) {
-                    return .String;
+                // Fall back: check if this is really a user-defined function
+                // that was misclassified as a builtin.
+                if (self.function_signatures.get(function_name)) |func_info| {
+                    return func_info.return_type;
                 }
-                if (std.mem.eql(u8, function_name, "random")) {
-                    return .Float;
-                }
-                if (std.mem.eql(u8, function_name, "dice_roll")) {
-                    return .Int;
-                }
-                return .String;
+                return .Unknown;
             },
             .ModuleFunction => {
                 if (self.function_signatures.get(function_name)) |func_info| {

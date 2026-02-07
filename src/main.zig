@@ -144,7 +144,7 @@ fn needsRecompilation(source_path: []const u8, soxa_path: []const u8, allocator:
 
 fn writeBytecodeArtifact(bytecode_module: *BytecodeModule, path: []const u8) !void {
     if (std.fs.path.dirname(path)) |dir| {
-        std.fs.cwd().makePath(dir) catch {};
+        try std.fs.cwd().makePath(dir);
     }
 
     try BytecodeWriter.writeBytecodeModuleToFile(bytecode_module, path);
@@ -165,6 +165,8 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []ast.Stmt, par
     var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, parser.module_namespaces, parser.imported_symbols, function_return_types, semantic_analyzer);
     defer hir_generator.deinit();
 
+    hir_generator.type_system.function_signatures = &hir_generator.function_signatures;
+
     const custom_types = semantic_analyzer.getCustomTypes();
     var custom_types_iter = custom_types.iterator();
     while (custom_types_iter.next()) |entry| {
@@ -173,7 +175,6 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []ast.Stmt, par
         try hir_generator.type_system.custom_types.put(custom_type.name, converted_type);
     }
 
-    // Manually register TokenType enum if not already registered
     if (hir_generator.type_system.custom_types.get("TokenType") == null) {
         const tokentype_variants = try memoryManager.getAnalysisAllocator().alloc([]const u8, 16);
         tokentype_variants[0] = try memoryManager.getAnalysisAllocator().dupe(u8, "INT_LITERAL");
@@ -235,8 +236,7 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
     }
     if (!has_any) return null;
 
-    // Ensure cache directory exists
-    std.fs.cwd().makePath("out/zig/cache") catch {};
+    try std.fs.cwd().makePath("out/zig/cache");
 
     var modules = std.StringHashMap(VM.ZigRuntimeModule).init(memoryManager.getAllocator());
     errdefer {
@@ -526,8 +526,7 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
 fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []ast.Stmt, reporter: *Reporter) ![]const []const u8 {
     const Sha256 = std.crypto.hash.sha2.Sha256;
 
-    // Ensure cache directory exists
-    std.fs.cwd().makePath("out/zig/cache") catch {};
+    try std.fs.cwd().makePath("out/zig/cache");
 
     var out_paths = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
     errdefer {
@@ -1052,7 +1051,7 @@ pub fn main() !void {
 
         // Ensure parent dir exists
         if (std.fs.path.dirname(exe_path)) |dir| {
-            std.fs.cwd().makePath(dir) catch {};
+            try std.fs.cwd().makePath(dir);
         }
 
         // Derive IR/Object paths - always put intermediate files in out/ directory
@@ -1122,7 +1121,7 @@ pub fn main() !void {
         var rt_obj_buf: [256]u8 = undefined;
         const rt_obj = try std.fmt.bufPrint(&rt_obj_buf, "out/doxa_rt.o", .{});
         {
-            std.fs.cwd().makeDir("out") catch {};
+            try std.fs.cwd().makeDir("out");
             const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{rt_obj});
             defer std.heap.page_allocator.free(emit_flag);
 

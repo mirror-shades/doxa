@@ -101,6 +101,20 @@ pub const CallKind = enum {
     BuiltinFunction,
 };
 
+/// Metadata for a compiled user-defined or module function.
+/// Shared by HIRGenerator (codegen) and TypeSystem (type inference).
+pub const FunctionInfo = struct {
+    name: []const u8,
+    arity: u32,
+    return_type: HIRType,
+    start_label: []const u8,
+    body_label: ?[]const u8 = null,
+    local_var_count: u32,
+    is_entry: bool,
+    param_is_alias: []bool,
+    param_types: []HIRType,
+};
+
 pub const HIRProgram = struct {
     instructions: []HIRInstruction,
     constant_pool: []HIRValue,

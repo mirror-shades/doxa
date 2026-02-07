@@ -1629,27 +1629,37 @@ pub fn Methods(comptime Ctx: type) type {
     /// enums by name in native code without needing a dynamic registry at
     /// runtime.
     pub fn buildEnumPrintMap(self: *IRPrinter, hir: *const HIR.HIRProgram) !void {
-        for (hir.constant_pool) |hv| {
-            if (hv == .enum_variant) {
-                const ev = hv.enum_variant;
-
-                // Get or create the variant list for this enum type.
-                var entry = try self.enum_print_map.getOrPut(ev.type_name);
+        const registerVariant = struct {
+            fn add(printer: *IRPrinter, type_name: []const u8, variant_index: u32, variant_name: []const u8) !void {
+                var entry = try printer.enum_print_map.getOrPut(type_name);
                 if (!entry.found_existing) {
                     entry.value_ptr.* = std.ArrayListUnmanaged(EnumVariantMeta){};
                 }
 
-                // Avoid duplicating the same (type, index) pair.
                 for (entry.value_ptr.items) |existing| {
-                    if (existing.index == ev.variant_index and std.mem.eql(u8, existing.name, ev.variant_name)) {
-                        break;
+                    if (existing.index == variant_index and std.mem.eql(u8, existing.name, variant_name)) {
+                        return;
                     }
-                } else {
-                    try entry.value_ptr.append(self.allocator, .{
-                        .index = ev.variant_index,
-                        .name = ev.variant_name,
-                    });
                 }
+
+                try entry.value_ptr.append(printer.allocator, .{
+                    .index = variant_index,
+                    .name = variant_name,
+                });
+            }
+        };
+
+        for (hir.constant_pool) |hv| {
+            if (hv == .enum_variant) {
+                const ev = hv.enum_variant;
+                try registerVariant.add(self, ev.type_name, ev.variant_index, ev.variant_name);
+            }
+        }
+
+        for (hir.instructions) |inst| {
+            if (inst == .EnumNew) {
+                const ev = inst.EnumNew;
+                try registerVariant.add(self, ev.enum_name, ev.variant_index, ev.variant_name);
             }
         }
     }
