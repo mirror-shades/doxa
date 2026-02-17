@@ -37,6 +37,7 @@ const CustomTypeInfo = Types.CustomTypeInfo;
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
+const SlotManager = @import("../codegen/hir/slot_manager.zig").SlotManager;
 const DeferAction = *const fn () void;
 const DEFAULT_STACK_CAPACITY: usize = 1024 * 1024; // 1M frames initial capacity, grows dynamically
 
@@ -2494,8 +2495,9 @@ pub const VM = struct {
         var frame = try runtime.Frame.init(self.allocator, func_ptr, stack_base, self.slot_refs.items.len, return_ip);
         errdefer frame.deinit();
 
-        // Expand locals if needed for dynamic allocation
-        const required_locals = @max(func_ptr.local_var_count, 1000);
+        // Pre-allocate enough locals so alias slots (which start at ALIAS_SLOT_BASE)
+        // don't trigger per-access reallocation.
+        const required_locals = @max(func_ptr.local_var_count, SlotManager.ALIAS_SLOT_BASE);
         if (required_locals > func_ptr.local_var_count) {
             const frame_alloc = frame.arena.allocator();
             if (required_locals > frame.locals.len) {
@@ -2538,7 +2540,7 @@ pub const VM = struct {
         }
 
         if (self.bytecode.functions.len == 0) {
-            const required_locals = 1000;
+            const required_locals = SlotManager.ALIAS_SLOT_BASE;
 
             var dummy_function = module.BytecodeFunction{
                 .name = "main",
@@ -2573,7 +2575,7 @@ pub const VM = struct {
         }
 
         var frame = try runtime.Frame.init(self.scopeAllocator(), &self.bytecode.functions[0], self.stack.len(), self.slot_refs.items.len, 0);
-        const required_locals = 1000;
+        const required_locals = SlotManager.ALIAS_SLOT_BASE;
         frame.arena.deinit();
         frame.arena = std.heap.ArenaAllocator.init(self.scopeAllocator());
         const frame_alloc2 = frame.arena.allocator();

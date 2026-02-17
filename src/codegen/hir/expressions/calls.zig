@@ -568,26 +568,34 @@ pub const CallsHandler = struct {
             try self.generator.instructions.append(.ArraySlice);
         } else if (std.mem.eql(u8, name, "clear")) {
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            // Evaluate receiver/collection
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            // Call builtin clear(collection) - returns cleared collection for internal use
-            try self.generator.instructions.append(.{
-                .Call = .{
-                    .function_index = 0,
-                    .qualified_name = "clear",
-                    .arg_count = 1,
-                    .call_kind = .BuiltinFunction,
-                    .target_module = null,
-                    .return_type = .Nothing, // But VM returns the cleared collection
-                },
-            });
-            // If called on a variable, store the result back
-            if (builtin_data.arguments[0].data == .Variable) {
-                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
-                const var_idx = try self.generator.getOrCreateVariable(var_name);
-                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+            const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
+
+            if (target_type == .String) {
+                // Strings are immutable - replace with empty string
+                if (builtin_data.arguments[0].data == .Variable) {
+                    const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+                    const var_idx = try self.generator.getOrCreateVariable(var_name);
+                    const expected_type = self.generator.getTrackedVariableType(var_name) orelse .String;
+                    const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+                    const empty_str_value = HIRValue{ .string = "" };
+                    const empty_str_idx = try self.generator.addConstant(empty_str_value);
+                    try self.generator.instructions.append(.{ .Const = .{ .value = empty_str_value, .constant_id = empty_str_idx } });
+                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                }
+            } else {
+                // Arrays: doxa_clear modifies the ArrayHeader in-place (sets len=0).
+                // No StoreVar needed since the pointer doesn't change.
+                try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+                try self.generator.instructions.append(.{
+                    .Call = .{
+                        .function_index = 0,
+                        .qualified_name = "clear",
+                        .arg_count = 1,
+                        .call_kind = .BuiltinFunction,
+                        .target_module = null,
+                        .return_type = .Nothing,
+                    },
+                });
             }
             // @clear returns nothing
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
@@ -644,7 +652,17 @@ pub const CallsHandler = struct {
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString } });
         } else if (std.mem.eql(u8, name, "length")) {
             try self.generator.generateExpression(internal_data.receiver, true, false);
-            try self.generator.instructions.append(.{ .StringOp = .{ .op = .Length } });
+            var t = self.generator.inferTypeFromExpression(internal_data.receiver);
+            if (t == .Unknown and internal_data.receiver.data == .Variable) {
+                const var_name = internal_data.receiver.data.Variable.lexeme;
+                if (self.generator.getTrackedVariableType(var_name)) |tracked| {
+                    t = tracked;
+                }
+            }
+            switch (t) {
+                .Array => try self.generator.instructions.append(.ArrayLen),
+                else => try self.generator.instructions.append(.{ .StringOp = .{ .op = .Length } }),
+            }
         } else if (std.mem.eql(u8, name, "int")) {
             try self.generator.generateExpression(internal_data.receiver, true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToInt } });
@@ -709,10 +727,13 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
             }
 
+            const struct_t = self.generator.type_system.structTypeForName(type_name);
+            const resolved_struct_id: u32 = if (struct_t == .Struct) struct_t.Struct else 0;
+
             try self.generator.instructions.append(.{
                 .StructNew = .{
                     .type_name = type_name,
-                    .struct_id = 0, // TODO: look up real StructId from struct table
+                    .struct_id = resolved_struct_id,
                     .field_count = @intCast(field_count),
                     .field_names = try self.generator.allocator.dupe([]const u8, field_names),
                     .field_types = try self.generator.allocator.dupe(HIRType, field_types),
@@ -727,7 +748,7 @@ pub const CallsHandler = struct {
         const func_body = self.generator.findFunctionBody(function_name) orelse return false;
         if (!self.shouldInlineFunction(func_body)) return false;
 
-        const scope_id = self.generator.label_generator.label_count + 1000;
+        const scope_id = self.generator.nextScopeId();
         try self.generator.instructions.append(.{
             .EnterScope = .{ .scope_id = scope_id, .var_count = @intCast(func_body.function_info.arity) },
         });

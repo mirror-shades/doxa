@@ -101,15 +101,7 @@ pub const AssignmentsHandler = struct {
                 });
                 return;
             } else {
-                // Fallback to old behavior if alias not found
-                try self.generator.instructions.append(.{
-                    .StoreAlias = .{
-                        .slot_index = 1, // Fallback to hardcoded slot
-                        .var_name = assign.name.lexeme,
-                        .expected_type = assigned_type,
-                    },
-                });
-                return;
+                return ErrorList.InvalidAliasArgument;
             }
         }
 
@@ -147,13 +139,7 @@ pub const AssignmentsHandler = struct {
                     },
                 });
             } else {
-                // Fallback to old behavior if alias not found
-                try self.generator.instructions.append(.{
-                    .LoadAlias = .{
-                        .var_name = compound.name.lexeme,
-                        .slot_index = 1, // Fallback to hardcoded slot
-                    },
-                });
+                return ErrorList.InvalidAliasArgument;
             }
         } else {
             // Regular variable - determine correct scope
@@ -232,14 +218,7 @@ pub const AssignmentsHandler = struct {
                     },
                 });
             } else {
-                // Fallback to old behavior if alias not found
-                try self.generator.instructions.append(.{
-                    .StoreAlias = .{
-                        .var_name = compound.name.lexeme,
-                        .slot_index = 1, // Fallback to hardcoded slot
-                        .expected_type = expected_type,
-                    },
-                });
+                return ErrorList.InvalidAliasArgument;
             }
         } else {
             // Regular variable - determine correct scope

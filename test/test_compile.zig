@@ -323,7 +323,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
         .{
             .name = "array storage migration",
             .binary_path = array_storage_migration_path,
-            .mode = .SKIP,
+            .mode = .PRINT,
             .input = null,
             .expected_print = answers.expected_array_storage_results[0..],
             .expected_peek = null,
@@ -331,7 +331,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
         .{
             .name = "methods",
             .binary_path = methods_path,
-            .mode = .SKIP,
+            .mode = .PEEK,
             .input = "f\n",
             .expected_print = null,
             .expected_peek = answers.expected_methods_results[0..],
@@ -371,10 +371,38 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
         untested += result.untested;
     }
 
-    _ = calculator_path;
-    const calc_result = test_results{ .passed = 0, .failed = 0, .untested = answers.calculator_io_tests.len };
+    // Dedicated calculator batch with a single summary
+    var calc_passed: usize = 0;
+    var calc_failed: usize = 0;
+    for (answers.calculator_io_tests, 0..) |io, idx| {
+        const out = runCompiledBinaryWithInput(allocator, calculator_path, io.input) catch {
+            // Check for cross-compilation or execution error
+            const result = runCompiledBinaryEx(allocator, calculator_path, io.input) catch {
+                // Likely cross-compilation - mark as untested
+                untested += answers.calculator_io_tests.len;
+                harness.printCase("calculator", .{ .passed = 0, .failed = 0, .untested = answers.calculator_io_tests.len });
+                break;
+            };
+            defer allocator.free(result.stdout);
+            defer allocator.free(result.stderr);
+            calc_failed += 1;
+            continue;
+        };
+        defer allocator.free(out);
+        const lines = try harness.parsePrintOutput(out, allocator);
+        defer lines.deinit();
+        if (lines.items.len > 0 and std.mem.eql(u8, lines.items[0], io.expected_output)) {
+            calc_passed += 1;
+        } else {
+            calc_failed += 1;
+            const found_output = if (lines.items.len > 0) lines.items[0] else "(no output)";
+            std.debug.print("Calculator test case {d} failed:\n  Input: \"{s}\"\n  Expected: \"{s}\"\n  Found:    \"{s}\"\n", .{ idx + 1, std.mem.trim(u8, io.input, " \t\n\r"), io.expected_output, found_output });
+        }
+    }
+    const calc_result = test_results{ .passed = calc_passed, .failed = calc_failed, .untested = 0 };
     harness.printCase("calculator", calc_result);
-    untested += calc_result.untested;
+    passed += calc_passed;
+    failed += calc_failed;
 
     const summary = test_results{ .passed = passed, .failed = failed, .untested = untested };
     harness.printSuiteSummary("COMPILE", summary);

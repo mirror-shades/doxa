@@ -12,17 +12,17 @@ const convertPathToUri = reporting.convertPathToUri;
 
 fn runCheck(name: []const u8, func: anytype, passed: *usize, skipped: *usize) anyerror!void {
     _ = name;
-    func() catch |err| switch (err) {
-        error.SkipZigTest => {
+    func() catch |err| {
+        if (err == error.SkipZigTest) {
             skipped.* += 1;
             return;
-        },
-        else => return err,
+        }
+        return err;
     };
     passed.* += 1;
 }
 
-fn checkConvertPathToUriPosixPath() anyerror!void {
+fn checkConvertPathToUriPosixPath() !void {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     const uri = try convertPathToUri(testing.allocator, "/tmp/project/main.doxa");
@@ -30,7 +30,7 @@ fn checkConvertPathToUriPosixPath() anyerror!void {
     try testing.expectEqualStrings("file:///tmp/project/main.doxa", uri);
 }
 
-fn checkConvertPathToUriWindowsDrive() anyerror!void {
+fn checkConvertPathToUriWindowsDrive() !void {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const uri = try convertPathToUri(testing.allocator, "C:\\dev\\doxa\\file.doxa");
@@ -38,7 +38,7 @@ fn checkConvertPathToUriWindowsDrive() anyerror!void {
     try testing.expectEqualStrings("file:///C:/dev/doxa/file.doxa", uri);
 }
 
-fn checkConvertPathToUriWindowsUnc() anyerror!void {
+fn checkConvertPathToUriWindowsUnc() !void {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const uri = try convertPathToUri(testing.allocator, "\\\\server\\share\\sub\\file.doxa");
@@ -46,7 +46,7 @@ fn checkConvertPathToUriWindowsUnc() anyerror!void {
     try testing.expectEqualStrings("file://server/share/sub/file.doxa", uri);
 }
 
-fn checkConvertUriToPathPosixPath() anyerror!void {
+fn checkConvertUriToPathPosixPath() !void {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     const path = try reporting.convertUriToPath(testing.allocator, "file:///tmp/project/main.doxa");
@@ -54,7 +54,7 @@ fn checkConvertUriToPathPosixPath() anyerror!void {
     try testing.expectEqualStrings("/tmp/project/main.doxa", path);
 }
 
-fn checkConvertUriToPathWindowsDrive() anyerror!void {
+fn checkConvertUriToPathWindowsDrive() !void {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const path = try reporting.convertUriToPath(testing.allocator, "file:///C:/dev/doxa/file.doxa");
@@ -62,7 +62,7 @@ fn checkConvertUriToPathWindowsDrive() anyerror!void {
     try testing.expectEqualStrings("C:\\dev\\doxa\\file.doxa", path);
 }
 
-fn checkConvertUriToPathWindowsUnc() anyerror!void {
+fn checkConvertUriToPathWindowsUnc() !void {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const path = try reporting.convertUriToPath(testing.allocator, "file://server/share/sub/file.doxa");
@@ -70,7 +70,7 @@ fn checkConvertUriToPathWindowsUnc() anyerror!void {
     try testing.expectEqualStrings("\\\\server\\share\\sub\\file.doxa", path);
 }
 
-fn checkReporterToLspDiagnosticsSerializesRelatedInfo() anyerror!void {
+fn checkReporterToLspDiagnosticsSerializesRelatedInfo() !void {
     var reporter = Reporter.init(testing.allocator, .{ .log_to_file = false, .log_to_stderr = false });
     defer reporter.deinit();
 
@@ -119,7 +119,7 @@ fn checkReporterToLspDiagnosticsSerializesRelatedInfo() anyerror!void {
     try testing.expectEqualStrings(expected, diagnostics);
 }
 
-fn checkReporterPublishTrackingDetectsChangesAndThrottles() anyerror!void {
+fn checkReporterPublishTrackingDetectsChangesAndThrottles() !void {
     var reporter = Reporter.init(testing.allocator, .{
         .log_to_file = false,
         .log_to_stderr = false,

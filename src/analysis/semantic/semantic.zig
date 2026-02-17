@@ -150,13 +150,16 @@ pub const SemanticAnalyzer = struct {
         try self.type_aliases.put(alias_copy, target_copy);
     }
 
+    /// Maximum depth for resolving chained type aliases before assuming a cycle.
+    const MAX_TYPE_ALIAS_DEPTH: usize = 32;
+
     pub fn resolveTypeAlias(self: *const SemanticAnalyzer, type_name: []const u8) []const u8 {
         var current = type_name;
         var guard: usize = 0;
         while (self.type_aliases.get(current)) |target| {
             current = target;
             guard += 1;
-            if (guard > 32) break;
+            if (guard > MAX_TYPE_ALIAS_DEPTH) break;
         }
         return current;
     }
@@ -204,7 +207,7 @@ pub const SemanticAnalyzer = struct {
             .Enum => .Enum,
             .Function => .Function,
             .Union => .Union,
-            .Unknown => .Nothing, // TODO: This feels hacky
+            .Unknown => .Nothing,
         };
     }
 

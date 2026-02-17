@@ -1,4 +1,7 @@
 const std = @import("std");
+const doxa_rt = @import("../../../runtime/doxa_rt.zig");
+const DoxaTag = doxa_rt.DoxaTag;
+const DoxaUnionMeta = doxa_rt.DoxaUnionMeta;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -196,27 +199,28 @@ pub fn Methods(comptime Ctx: type) type {
         // If it's already a canonical value, reuse it.
         if (value.ty == .Value) return value;
 
-        // Determine tag based on stack type (align with DoxaTag values)
-        var tag_const: i32 = 8; // default to Nothing
+        // Determine tag based on stack type (must match DoxaTag in doxa_rt.zig)
+        const tag = DoxaTag;
+        var tag_const: i32 = @intFromEnum(tag.Nothing); // default
         switch (value.ty) {
             .I64 => {
                 // Distinguish enums vs ints when metadata exists
-                tag_const = if (value.enum_type_name != null) 6 else 0;
+                tag_const = if (value.enum_type_name != null) @intFromEnum(tag.Enum) else @intFromEnum(tag.Int);
             },
-            .F64 => tag_const = 1,
-            .I8 => tag_const = 2,
+            .F64 => tag_const = @intFromEnum(tag.Float),
+            .I8 => tag_const = @intFromEnum(tag.Byte),
             .PTR => {
                 if (value.array_type != null) {
-                    tag_const = 4;
+                    tag_const = @intFromEnum(tag.Array);
                 } else if (value.struct_field_types != null or value.struct_type_name != null) {
-                    tag_const = 5;
+                    tag_const = @intFromEnum(tag.Struct);
                 } else {
-                    tag_const = 3; // string by default
+                    tag_const = @intFromEnum(tag.String); // string by default
                 }
             },
-            .I2, .I1 => tag_const = 7,
-            .Nothing => tag_const = 8,
-            .Value => tag_const = 8,
+            .I2, .I1 => tag_const = @intFromEnum(tag.Tetra),
+            .Nothing => tag_const = @intFromEnum(tag.Nothing),
+            .Value => tag_const = @intFromEnum(tag.Nothing),
         }
 
         // Compute reserved bits if targeting a union
@@ -224,8 +228,8 @@ pub fn Methods(comptime Ctx: type) type {
         if (target_union) |ut| {
             if (ut == .Union) {
                 const idx = self.findUnionMemberIndex(ut, value);
-                const uid = ut.Union.id & 0x7FFF;
-                reserved_const = 0x80000000 | (uid << 16) | (idx & 0xFFFF);
+                const uid = ut.Union.id & (DoxaUnionMeta.union_id_mask >> DoxaUnionMeta.union_id_shift);
+                reserved_const = DoxaUnionMeta.is_union_bit | (uid << DoxaUnionMeta.union_id_shift) | (idx & DoxaUnionMeta.member_index_mask);
             }
         }
 

@@ -609,7 +609,16 @@ pub fn Methods(comptime Ctx: type) type {
         stack.items.len -= 2;
 
         const len_info = try self.loadArrayLength(w, hdr_val, id);
-        const element_type = len_info.array.array_type orelse HIR.HIRType{ .Int = {} };
+        var element_type = len_info.array.array_type orelse HIR.HIRType{ .Int = {} };
+        if (element_type == .Nothing and value.ty != .Nothing) {
+            element_type = switch (value.ty) {
+                .I8 => .Byte,
+                .F64 => .Float,
+                .I2, .I1 => .Tetra,
+                .PTR => value.array_type orelse .String,
+                else => .Int,
+            };
+        }
         const stored_val = try self.convertValueToArrayStorage(w, value, element_type, id);
 
         const set_line = try std.fmt.allocPrint(
@@ -620,7 +629,7 @@ pub fn Methods(comptime Ctx: type) type {
         defer self.allocator.free(set_line);
         try w.writeAll(set_line);
 
-        try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = len_info.array.array_type });
+        try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = element_type });
     }
 
     pub fn emitArrayLen(
@@ -671,6 +680,149 @@ pub fn Methods(comptime Ctx: type) type {
 
         try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = len_info.array.array_type });
         try stack.append(actual);
+    }
+
+    pub fn emitArrayInsert(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+    ) !void {
+        if (stack.items.len < 3) return;
+        const value = stack.items[stack.items.len - 1];
+        const idx_val = stack.items[stack.items.len - 2];
+        const target = stack.items[stack.items.len - 3];
+        stack.items.len -= 3;
+
+        const idx_i64 = if (idx_val.ty == .I64) idx_val else try self.ensureI64(w, idx_val, id);
+        if (target.array_type) |elem_type_in| {
+            var elem_type = elem_type_in;
+            if (elem_type == .Nothing and value.ty != .Nothing) {
+                elem_type = switch (value.ty) {
+                    .I8 => .Byte,
+                    .F64 => .Float,
+                    .I2, .I1 => .Tetra,
+                    .PTR => value.array_type orelse .String,
+                    else => .Int,
+                };
+            }
+            const hdr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+            const stored_val = try self.convertValueToArrayStorage(w, value, elem_type, id);
+            const out = try self.nextTemp(id);
+            const line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_insert(ptr {s}, i64 {s}, i64 {s})\n", .{ out, hdr.name, idx_i64.name, stored_val.name });
+            defer self.allocator.free(line);
+            try w.writeAll(line);
+            try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type });
+            return;
+        }
+
+        const s_ptr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+        const ins_ptr = if (value.ty == .PTR) value else try self.ensurePointer(w, value, id);
+        const out = try self.nextTemp(id);
+        const line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_str_insert(ptr {s}, i64 {s}, ptr {s})\n", .{ out, s_ptr.name, idx_i64.name, ins_ptr.name });
+        defer self.allocator.free(line);
+        try w.writeAll(line);
+        try stack.append(.{ .name = out, .ty = .PTR });
+    }
+
+    pub fn emitArrayRemove(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+    ) !void {
+        if (stack.items.len < 2) return;
+        const idx_val = stack.items[stack.items.len - 1];
+        const target = stack.items[stack.items.len - 2];
+        stack.items.len -= 2;
+
+        const idx_i64 = if (idx_val.ty == .I64) idx_val else try self.ensureI64(w, idx_val, id);
+        if (target.array_type) |elem_type| {
+            const hdr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+            const removed_slot = try self.nextTemp(id);
+            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{removed_slot});
+            defer self.allocator.free(alloca_line);
+            try w.writeAll(alloca_line);
+            const init_line = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{removed_slot});
+            defer self.allocator.free(init_line);
+            try w.writeAll(init_line);
+            const out = try self.nextTemp(id);
+            const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_remove(ptr {s}, i64 {s}, ptr {s})\n", .{ out, hdr.name, idx_i64.name, removed_slot });
+            defer self.allocator.free(call_line);
+            try w.writeAll(call_line);
+            const removed = try self.nextTemp(id);
+            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ removed, removed_slot });
+            defer self.allocator.free(load_line);
+            try w.writeAll(load_line);
+            const removed_val = try self.convertArrayStorageToValue(w, .{ .name = removed, .ty = .I64 }, elem_type, id);
+            // Contract: [updated, removed]
+            try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type });
+            try stack.append(removed_val);
+            return;
+        }
+
+        const s_ptr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+        const rem_slot = try self.nextTemp(id);
+        const popped_slot = try self.nextTemp(id);
+        const rem_alloca = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{rem_slot});
+        defer self.allocator.free(rem_alloca);
+        try w.writeAll(rem_alloca);
+        const pop_alloca = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{popped_slot});
+        defer self.allocator.free(pop_alloca);
+        try w.writeAll(pop_alloca);
+        const rem_init = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{rem_slot});
+        defer self.allocator.free(rem_init);
+        try w.writeAll(rem_init);
+        const pop_init = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{popped_slot});
+        defer self.allocator.free(pop_init);
+        try w.writeAll(pop_init);
+        const ok = try self.nextTemp(id);
+        const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call i8 @doxa_str_remove(ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ ok, s_ptr.name, idx_i64.name, rem_slot, popped_slot });
+        defer self.allocator.free(call_line);
+        try w.writeAll(call_line);
+        const rem_name = try self.nextTemp(id);
+        const pop_name = try self.nextTemp(id);
+        const rem_load = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ rem_name, rem_slot });
+        defer self.allocator.free(rem_load);
+        try w.writeAll(rem_load);
+        const pop_load = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ pop_name, popped_slot });
+        defer self.allocator.free(pop_load);
+        try w.writeAll(pop_load);
+        try stack.append(.{ .name = rem_name, .ty = .PTR });
+        try stack.append(.{ .name = pop_name, .ty = .PTR });
+    }
+
+    pub fn emitArraySlice(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+    ) !void {
+        if (stack.items.len < 3) return;
+        const len_val = stack.items[stack.items.len - 1];
+        const start_val = stack.items[stack.items.len - 2];
+        const target = stack.items[stack.items.len - 3];
+        stack.items.len -= 3;
+
+        const start_i64 = if (start_val.ty == .I64) start_val else try self.ensureI64(w, start_val, id);
+        const len_i64 = if (len_val.ty == .I64) len_val else try self.ensureI64(w, len_val, id);
+
+        if (target.array_type) |elem_type| {
+            const hdr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+            const out = try self.nextTemp(id);
+            const line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_slice(ptr {s}, i64 {s}, i64 {s})\n", .{ out, hdr.name, start_i64.name, len_i64.name });
+            defer self.allocator.free(line);
+            try w.writeAll(line);
+            try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type });
+            return;
+        }
+
+        const s_ptr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+        const out = try self.nextTemp(id);
+        const line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_substring(ptr {s}, i64 {s}, i64 {s})\n", .{ out, s_ptr.name, start_i64.name, len_i64.name });
+        defer self.allocator.free(line);
+        try w.writeAll(line);
+        try stack.append(.{ .name = out, .ty = .PTR });
     }
 
     pub fn emitArrayConcat(
@@ -942,7 +1094,7 @@ pub fn Methods(comptime Ctx: type) type {
         id: *usize,
     ) !StackVal {
         // Guard against corrupted operand names causing huge allocations
-        if (lhs.name.len > 1000 or rhs.name.len > 1000) {
+        if (lhs.name.len > IRPrinter.MAX_SANE_NAME_LEN or rhs.name.len > IRPrinter.MAX_SANE_NAME_LEN) {
             const result_name = try self.nextTemp(id);
             const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
             defer self.allocator.free(false_line);

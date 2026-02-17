@@ -53,7 +53,8 @@ pub const StructTable = struct {
         }
 
         const owned_name = try self.allocator.dupe(u8, qualified_name);
-        const id: StructId = @intCast(self.entries.items.len);
+        // Reserve 0 as a sentinel for "unknown/unset", so real IDs start from 1.
+        const id: StructId = @intCast(self.entries.items.len + 1);
 
         var new_fields = try self.allocator.alloc(Field, field_inputs.len);
         for (field_inputs, 0..) |input, field_index| {
@@ -77,8 +78,8 @@ pub const StructTable = struct {
     }
 
     pub fn getEntryById(self: *StructTable, id: StructId) ?*Entry {
-        if (id >= self.entries.items.len) return null;
-        return &self.entries.items[id];
+        if (id == 0 or id > self.entries.items.len) return null;
+        return &self.entries.items[id - 1];
     }
 
     pub fn getIdByName(self: *const StructTable, qualified_name: []const u8) ?StructId {
@@ -86,13 +87,13 @@ pub const StructTable = struct {
     }
 
     pub fn fields(self: *const StructTable, id: StructId) ?[]const Field {
-        if (id >= self.entries.items.len) return null;
-        return self.entries.items[id].fields;
+        if (id == 0 or id > self.entries.items.len) return null;
+        return self.entries.items[id - 1].fields;
     }
 
     pub fn getName(self: *const StructTable, id: StructId) ?[]const u8 {
-        if (id >= self.entries.items.len) return null;
-        return self.entries.items[id].qualified_name;
+        if (id == 0 or id > self.entries.items.len) return null;
+        return self.entries.items[id - 1].qualified_name;
     }
 
     pub fn setFieldHIRType(self: *StructTable, id: StructId, field_index: u32, ty: HIRType) void {

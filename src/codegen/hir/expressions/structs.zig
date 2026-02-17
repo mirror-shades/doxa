@@ -6,12 +6,25 @@ const HIRType = @import("../soxa_types.zig").HIRType;
 const HIREnum = @import("../soxa_values.zig").HIREnum;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 
+
 /// Handle struct operations, field access, and type declarations
 pub const StructsHandler = struct {
     generator: *HIRGenerator,
 
     pub fn init(generator: *HIRGenerator) StructsHandler {
         return .{ .generator = generator };
+    }
+
+    fn resolveStructIdFromName(self: *StructsHandler, type_name: []const u8) u32 {
+        const st = self.generator.type_system.structTypeForName(type_name);
+        if (st == .Struct and st.Struct != 0) return st.Struct;
+        return 0;
+    }
+
+    fn resolveStructIdFromType(self: *StructsHandler, container_type: HIRType, fallback_name: ?[]const u8) u32 {
+        if (container_type == .Struct and container_type.Struct != 0) return container_type.Struct;
+        if (fallback_name) |name| return self.resolveStructIdFromName(name);
+        return 0;
     }
 
     /// Generate HIR for struct literal expressions
@@ -68,11 +81,7 @@ pub const StructsHandler = struct {
         }
 
         // Generate StructNew instruction with field types
-        const struct_id: u32 = blk: {
-            const st = self.generator.type_system.structTypeForName(struct_data.name.lexeme);
-            if (st == .Struct) break :blk st.Struct;
-            break :blk 0;
-        };
+        const struct_id = self.resolveStructIdFromName(struct_data.name.lexeme);
         try self.generator.instructions.append(.{
             .StructNew = .{
                 .type_name = struct_data.name.lexeme,
@@ -246,11 +255,12 @@ pub const StructsHandler = struct {
             }
 
             // Now, the original logic for FieldAccess (non-enum)
+            const struct_id = self.resolveStructIdFromType(obj_type, resolved.struct_name);
             try self.generator.instructions.append(.{
                 .GetField = .{
                     .field_name = field.field.lexeme,
                     .container_type = obj_type, // Use the inferred object type
-                    .struct_id = 0, // TODO: look up real StructId from struct table
+                    .struct_id = struct_id,
                     .field_index = resolved.field_index, // Resolved from type system
                     .field_type = resolved_field_type,
                     .field_for_peek = false, // Default
@@ -283,11 +293,13 @@ pub const StructsHandler = struct {
 
             // Get the outer field (person)
             const outer_resolved_get = self.resolveFieldIndexAndStructName(outer_field.object, outer_field.field.lexeme);
+            const outer_container_type = self.generator.inferTypeFromExpression(outer_field.object);
+            const outer_struct_id = self.resolveStructIdFromType(outer_container_type, outer_resolved_get.struct_name);
             try self.generator.instructions.append(.{
                 .GetField = .{
                     .field_name = outer_field.field.lexeme,
-                    .container_type = HIRType{ .Struct = 0 },
-                    .struct_id = 0,
+                    .container_type = outer_container_type,
+                    .struct_id = outer_struct_id,
                     .field_index = outer_resolved_get.field_index,
                     .field_type = .Unknown,
                     .field_for_peek = false,
@@ -305,6 +317,7 @@ pub const StructsHandler = struct {
             // For nested field access, we need to resolve the field index from the outer field's type
             var inner_field_index: u32 = 0;
             var inner_field_struct_name: ?[]const u8 = null;
+            var inner_container_name: ?[]const u8 = null;
 
             // Try to resolve from the outer field's type
             if (self.generator.type_system.resolveFieldAccessType(outer_field.object, &self.generator.symbol_table)) |resolve_result| {
@@ -315,6 +328,7 @@ pub const StructsHandler = struct {
                                 for (fields) |f| {
                                     if (std.mem.eql(u8, f.name, outer_field.field.lexeme)) {
                                         if (f.custom_type_name) |inner_struct_name| {
+                                            inner_container_name = inner_struct_name;
                                             if (self.generator.type_system.custom_types.get(inner_struct_name)) |inner_custom_type| {
                                                 if (inner_custom_type.kind == .Struct) {
                                                     if (inner_custom_type.getStructFieldIndex(assign_data.field.lexeme)) |resolved_index| {
@@ -341,11 +355,13 @@ pub const StructsHandler = struct {
                 }
             }
 
+            const inner_container_type = self.generator.inferTypeFromExpression(assign_data.object);
+            const inner_struct_id = self.resolveStructIdFromType(inner_container_type, inner_container_name);
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
-                    .container_type = HIRType{ .Struct = 0 },
-                    .struct_id = 0,
+                    .container_type = inner_container_type,
+                    .struct_id = inner_struct_id,
                     .field_index = inner_field_index,
                     .field_type = .Unknown,
                     .nested_struct_id = null,
@@ -364,8 +380,8 @@ pub const StructsHandler = struct {
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = outer_field.field.lexeme,
-                    .container_type = HIRType{ .Struct = 0 },
-                    .struct_id = 0,
+                    .container_type = outer_container_type,
+                    .struct_id = outer_struct_id,
                     .field_index = outer_resolved_set.field_index,
                     .field_type = .Unknown,
                     .nested_struct_id = null,
@@ -414,11 +430,13 @@ pub const StructsHandler = struct {
             const resolved = self.resolveFieldIndexAndStructName(assign_data.object, assign_data.field.lexeme);
 
             // Generate SetField instruction
+            const assign_container_type = self.generator.inferTypeFromExpression(assign_data.object);
+            const assign_struct_id = self.resolveStructIdFromType(assign_container_type, resolved.struct_name);
             try self.generator.instructions.append(.{
                 .SetField = .{
                     .field_name = assign_data.field.lexeme,
-                    .container_type = HIRType{ .Struct = 0 },
-                    .struct_id = 0,
+                    .container_type = assign_container_type,
+                    .struct_id = assign_struct_id,
                     .field_index = resolved.field_index,
                     .field_type = .Unknown,
                     .nested_struct_id = null,

@@ -62,27 +62,6 @@ pub const BasicExpressionHandler = struct {
 
     /// Generate HIR for variable access
     pub fn generateVariable(self: *BasicExpressionHandler, var_token: ast.Token) (std.mem.Allocator.Error || ErrorList)!void {
-        // Special case: Check if this is a module-level constant that should be loaded as a constant
-        // This is a simple fix for the HEIGHT constant issue
-        if (std.mem.eql(u8, var_token.lexeme, "HEIGHT")) {
-            // Load HEIGHT as a constant value 600
-            const const_idx = try self.generator.addConstant(HIRValue{ .int = 600 });
-            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 600 }, .constant_id = const_idx } });
-            return;
-        }
-        if (std.mem.eql(u8, var_token.lexeme, "WIDTH")) {
-            // Load WIDTH as a constant value 800
-            const const_idx = try self.generator.addConstant(HIRValue{ .int = 800 });
-            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 800 }, .constant_id = const_idx } });
-            return;
-        }
-        if (std.mem.eql(u8, var_token.lexeme, "FPS")) {
-            // Load FPS as a constant value 60
-            const const_idx = try self.generator.addConstant(HIRValue{ .int = 60 });
-            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .int = 60 }, .constant_id = const_idx } });
-            return;
-        }
-
         // Compile-time validation: Ensure variable has been declared
         const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
         if (maybe_idx) |existing_idx| {
@@ -99,13 +78,7 @@ pub const BasicExpressionHandler = struct {
                         },
                     });
                 } else {
-                    // Fallback to old behavior if alias not found
-                    try self.generator.instructions.append(.{
-                        .LoadAlias = .{
-                            .var_name = var_token.lexeme,
-                            .slot_index = 1, // Fallback to hardcoded slot
-                        },
-                    });
+                    return ErrorList.InvalidAliasArgument;
                 }
             } else {
                 // Regular variable
@@ -134,13 +107,7 @@ pub const BasicExpressionHandler = struct {
                         },
                     });
                 } else {
-                    // Fallback to old behavior if alias not found
-                    try self.generator.instructions.append(.{
-                        .LoadAlias = .{
-                            .var_name = var_token.lexeme,
-                            .slot_index = 1, // Fallback to hardcoded slot
-                        },
-                    });
+                    return ErrorList.InvalidAliasArgument;
                 }
             } else {
                 // Regular variable - ensure it exists in the current scope and load it at runtime
@@ -190,14 +157,7 @@ pub const BasicExpressionHandler = struct {
                 });
                 return;
             } else {
-                // Fallback to old behavior if alias not found
-                try self.generator.instructions.append(.{
-                    .LoadAlias = .{
-                        .var_name = "this",
-                        .slot_index = 1, // Fallback to hardcoded slot
-                    },
-                });
-                return;
+                return ErrorList.InvalidAliasArgument;
             }
         }
 

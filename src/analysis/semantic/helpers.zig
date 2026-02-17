@@ -1008,7 +1008,7 @@ pub fn hirTypeToAstType(hir_type: HIRType) ast.Type {
         .Enum => .Enum,
         .Function => .Function,
         .Union => .Union,
-        .Unknown => .Nothing, // TODO: This feels hacky
+        .Unknown => .Nothing,
     };
 }
 

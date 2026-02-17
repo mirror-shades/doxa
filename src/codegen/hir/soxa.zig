@@ -28,6 +28,7 @@ const ExceptionBehavior = SoxaInstructions.ExceptionBehavior;
 const ResizeBehavior = SoxaInstructions.ResizeBehavior;
 const HIRGenerator = @import("soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("soxa_parser.zig").SoxaTextParser;
+const constants = @import("../../common/constants.zig");
 
 const HirTypeNames = [_][]const u8{
     "Int",
@@ -227,7 +228,7 @@ pub const SoxaHeader = struct {
 /// possibly even in some sort of precompiler build step
 fn computeCacheKey(source_path: []const u8, allocator: std.mem.Allocator) ![]u8 {
     // Read source file content
-    const source_content = try std.fs.cwd().readFileAlloc(allocator, source_path, 1024 * 1024); // 1MB max
+    const source_content = try std.fs.cwd().readFileAlloc(allocator, source_path, constants.MAX_SOURCE_FILE_BYTES);
     defer allocator.free(source_content);
 
     // Create hasher
@@ -345,7 +346,7 @@ pub fn readSoxaFile(file_path: []const u8, allocator: std.mem.Allocator) !HIRPro
     };
     defer file.close();
 
-    const source = try file.readToEndAlloc(allocator, 1024 * 1024); // 1MB max
+    const source = try file.readToEndAlloc(allocator, constants.MAX_SOURCE_FILE_BYTES);
     defer allocator.free(source);
 
     var parser = SoxaTextParser.init(allocator, source);
@@ -1145,8 +1146,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
             try writer.print("    LogicalOp {s}                ; Logical operation\n", .{op_name});
         },
 
-            .TypeCheck => |tc| try writer.print("    TypeCheck \"{s}\"              ; Type check\n", .{tc.target_type}),
-            .UnionConstruct => |uc| try writer.print("    UnionConstruct member:{d}   ; union value construct\n", .{uc.member_index}),
+        .TypeCheck => |tc| try writer.print("    TypeCheck \"{s}\"              ; Type check\n", .{tc.target_type}),
+        .UnionConstruct => |uc| try writer.print("    UnionConstruct member:{d}   ; union value construct\n", .{uc.member_index}),
 
         .Range => |r| try writer.print("    Range {s}                    ; Create array from range\n", .{@tagName(r.element_type)}),
 

@@ -255,12 +255,14 @@ pub const IOHandler = struct {
             .enum_type_name = enum_type_name,
         } });
 
-        // IMPORTANT: Peek pops the value, prints, then pushes it back.
-        // In statement context (!preserve_result), we don't need to do anything else
-        // because the Peek instruction already handles the stack properly.
-        // The value is pushed back and will be consumed by the next operation or
-        // cleaned up at the end of the statement.
-        _ = preserve_result; // used by PeekStruct, not by Peek
+        // Peek reads the top of the stack without popping it.
+        // In statement context (!preserve_result), we must pop the value to prevent
+        // it from polluting the compile-time stack in the LLVM IR backend.
+        // Without this, stale values accumulate and get consumed by subsequent
+        // operations (e.g. StoreVar after a void Call), causing memory corruption.
+        if (!preserve_result) {
+            try self.generator.instructions.append(.Pop);
+        }
     }
 
     /// Generate HIR for struct peek expressions
@@ -313,12 +315,15 @@ pub const IOHandler = struct {
                     },
                 });
 
+                const container_type = self.generator.inferTypeFromExpression(field.object);
+                const field_struct_id: u32 = if (container_type == .Struct) container_type.Struct else 0;
+
                 // Generate GetField instruction to access the field
                 try self.generator.instructions.append(.{
                     .GetField = .{
                         .field_name = field.field.lexeme,
-                        .container_type = HIRType{ .Struct = 0 },
-                        .struct_id = 0,
+                        .container_type = container_type,
+                        .struct_id = field_struct_id,
                         .field_index = 0,
                         .field_type = .Unknown,
                         .field_for_peek = true,
@@ -344,10 +349,16 @@ pub const IOHandler = struct {
             },
         };
 
+        const peek_struct_type = if (peek_data.expr.data == .StructLiteral)
+            self.generator.type_system.structTypeForName(struct_info.name)
+        else
+            self.generator.inferTypeFromExpression(peek_data.expr);
+        const peek_sid: u32 = if (peek_struct_type == .Struct) peek_struct_type.Struct else 0;
+
         // Add the PeekStruct instruction with the gathered info
         try self.generator.instructions.append(.{ .PeekStruct = .{
             .type_name = struct_info.name,
-            .struct_id = 0,
+            .struct_id = peek_sid,
             .field_count = struct_info.field_count,
             .field_names = struct_info.field_names,
             .field_types = struct_info.field_types,

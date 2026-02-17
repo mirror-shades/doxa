@@ -97,29 +97,13 @@ pub fn runCommandCapture(
         child.stdin = null;
     }
 
-    var stdout_buffer: [4096]u8 = undefined;
-    var stdout = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
-    defer stdout.deinit();
-    while (true) {
-        const bytes_read = child.stdout.?.read(&stdout_buffer) catch |err| switch (err) {
-            error.BrokenPipe => break,
-            else => return err,
-        };
-        if (bytes_read == 0) break;
-        stdout.appendSlice(stdout_buffer[0..bytes_read]) catch return error.OutOfMemory;
-    }
+    var stdout = std.ArrayList(u8).empty;
+    defer stdout.deinit(child_allocator);
+    var stderr = std.ArrayList(u8).empty;
+    defer stderr.deinit(child_allocator);
 
-    var stderr_buffer: [4096]u8 = undefined;
-    var stderr = std.array_list.Managed(u8).initCapacity(child_allocator, 4096) catch return error.OutOfMemory;
-    defer stderr.deinit();
-    while (true) {
-        const bytes_read = child.stderr.?.read(&stderr_buffer) catch |err| switch (err) {
-            error.BrokenPipe => break,
-            else => return err,
-        };
-        if (bytes_read == 0) break;
-        stderr.appendSlice(stderr_buffer[0..bytes_read]) catch return error.OutOfMemory;
-    }
+    // Poll both pipes concurrently to avoid deadlock when one pipe fills up.
+    try child.collectOutput(child_allocator, &stdout, &stderr, 8 * 1024 * 1024);
 
     const term = try child.wait();
     const exit_code: u8 = switch (term) {

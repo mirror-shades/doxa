@@ -18,7 +18,7 @@
     - `neither` → `false` (falsy corner)
   - This is intentional so each Doxa atomic type has a corresponding Zig type.
 - **Doxa `nothing`** → Zig `void`
-- **Doxa `string`** → Zig `[]const u8` (supported; see below)
+- **Doxa `string`** → Zig `[]const u8`
 
 3) The compiler validates these rules before invoking the Zig toolchain.
 
