@@ -968,6 +968,9 @@ pub fn Methods(comptime Ctx: type) type {
 
         // Store struct field metadata globally for later lookup
         try self.global_struct_field_types.put(sn.type_name, try self.allocator.dupe(HIR.HIRType, sn.field_types));
+        if (!self.struct_field_enum_type_names_by_type.contains(sn.type_name)) {
+            try self.struct_field_enum_type_names_by_type.put(sn.type_name, try self.allocator.dupe(?[]const u8, pending_enum_type_names));
+        }
     }
 
     pub fn emitGetField(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gf: std.meta.TagPayload(HIRInstruction, .GetField)) !void {
@@ -1028,6 +1031,14 @@ pub fn Methods(comptime Ctx: type) type {
 
         const storage = StackVal{ .name = field_val, .ty = .I64 };
         var pushed = try self.convertArrayStorageToValue(w, storage, field_type, id);
+        if (field_type == .Enum and struct_val.struct_type_name != null) {
+            if (self.struct_field_enum_type_names_by_type.get(struct_val.struct_type_name.?)) |enum_type_names| {
+                const idx: usize = @intCast(gf.field_index);
+                if (idx < enum_type_names.len) {
+                    pushed.enum_type_name = enum_type_names[idx];
+                }
+            }
+        }
         if (pushed.ty == .PTR) {
             switch (field_type) {
                 .Array => |elem_ptr| pushed.array_type = elem_ptr.*,

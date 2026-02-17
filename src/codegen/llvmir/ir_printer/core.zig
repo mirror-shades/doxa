@@ -442,6 +442,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .function_struct_return_fields = std.StringHashMap([]HIR.HIRType).init(allocator),
                 .function_struct_return_type_names = std.StringHashMap([]const u8).init(allocator),
                 .struct_field_names_by_type = std.StringHashMap([]const []const u8).init(allocator),
+                .struct_field_enum_type_names_by_type = std.StringHashMap([]const ?[]const u8).init(allocator),
                 .struct_desc_globals_by_type = std.StringHashMap([]const u8).init(allocator),
                 .enum_desc_globals_by_type = std.StringHashMap([]const u8).init(allocator),
                 .enum_print_map = std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)).init(allocator),
@@ -471,6 +472,11 @@ pub fn Methods(comptime Ctx: type) type {
                 self.allocator.free(entry.value_ptr.*);
             }
             self.struct_field_names_by_type.deinit();
+            var enum_names_it = self.struct_field_enum_type_names_by_type.iterator();
+            while (enum_names_it.next()) |entry| {
+                self.allocator.free(entry.value_ptr.*);
+            }
+            self.struct_field_enum_type_names_by_type.deinit();
 
             var desc_it = self.struct_desc_globals_by_type.iterator();
             while (desc_it.next()) |entry| {
