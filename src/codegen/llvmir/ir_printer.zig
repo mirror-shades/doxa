@@ -120,6 +120,7 @@ pub const IRPrinter = struct {
     struct_fields_by_id: std.AutoHashMap(HIR.StructId, []HIR.HIRType),
     struct_type_names_by_id: std.AutoHashMap(HIR.StructId, []const u8),
     struct_field_names_by_type: std.StringHashMap([]const []const u8),
+    struct_field_enum_type_names_by_type: std.StringHashMap([]const ?[]const u8),
     struct_desc_globals_by_type: std.StringHashMap([]const u8),
     function_struct_return_fields: std.StringHashMap([]HIR.HIRType),
     function_struct_return_type_names: std.StringHashMap([]const u8),
