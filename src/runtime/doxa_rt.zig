@@ -3,14 +3,6 @@ const builtin = @import("builtin");
 const MapRuntime = @import("map_runtime.zig");
 const MAX_STDIN_READ_BYTES: usize = 1024 * 1024;
 
-//------------------------------------------------------------------------------
-// DOXA Runtime Support
-//
-// This module consolidates the exported helpers that the generated code
-// expects to link against.  It currently exposes the legacy array helpers and
-// serves as the place where future debug/peek/print shims will live.
-//------------------------------------------------------------------------------
-
 fn writeStdout(slice: []const u8) void {
     if (builtin.os.tag == .windows) {
         const win = std.os.windows;
@@ -59,7 +51,6 @@ pub export fn doxa_write_quoted_string(ptr: ?[*:0]const u8) callconv(.c) void {
     }
 }
 
-// Simple peek function for strings - called by LLVM IR with raw string pointers
 pub export fn doxa_peek_string(ptr: ?[*:0]const u8) callconv(.c) void {
     writeStdout("\"");
     if (ptr) |p| {
@@ -87,7 +78,6 @@ pub export fn doxa_int_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
     const s = std.mem.trim(u8, raw, " \t\r\n");
     if (s.len == 0) return 0;
 
-    // Hex prefix (supports negative hex like -0x0A)
     const is_neg = s[0] == '-';
     const hex_start: usize = if (is_neg) 1 else 0;
     if (s.len >= hex_start + 2 and s[hex_start] == '0' and (s[hex_start + 1] == 'x' or s[hex_start + 1] == 'X')) {
@@ -96,7 +86,6 @@ pub export fn doxa_int_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
         return if (is_neg) -parsed else parsed;
     }
 
-    // Float-like strings: parse as float then truncate toward zero.
     if (std.mem.indexOfScalar(u8, s, '.') != null) {
         const f = std.fmt.parseFloat(f64, s) catch return 0;
         return @intFromFloat(f);
@@ -120,7 +109,6 @@ pub export fn doxa_float_from_cstr(ptr: ?[*:0]const u8) callconv(.c) f64 {
         return @floatFromInt(signed);
     }
 
-    // Accept plain integers and floats.
     return std.fmt.parseFloat(f64, s) catch 0.0;
 }
 
@@ -265,7 +253,6 @@ fn getEnumVariantName(type_name: []const u8, variant_index: i64) []const u8 {
     return "Unknown";
 }
 
-// Built-in functions
 var rng_state: ?std.Random.DefaultPrng = null;
 
 pub export fn doxa_random() callconv(.c) f64 {
@@ -276,7 +263,6 @@ pub export fn doxa_random() callconv(.c) f64 {
     return rng_state.?.random().float(f64);
 }
 
-// Fast integer-only random number generator for dice rolls
 pub export fn doxa_random_int() callconv(.c) i64 {
     if (rng_state == null) {
         const seed = @as(u64, @intCast(std.time.timestamp()));
@@ -285,7 +271,6 @@ pub export fn doxa_random_int() callconv(.c) i64 {
     return rng_state.?.random().intRangeAtMost(i64, 0, 5) + 1;
 }
 
-// Ultra-fast dice roll - single function call, no floating point
 pub export fn doxa_dice_roll() callconv(.c) i64 {
     if (rng_state == null) {
         const seed = @as(u64, @intCast(std.time.timestamp()));
@@ -325,9 +310,6 @@ pub export fn doxa_input() callconv(.c) ?[*:0]u8 {
     return out.ptr;
 }
 
-/// Find value in array or substring in string
-/// For arrays: collection is ArrayHeader*, value is i64 (or other type encoded as i64)
-/// For strings: collection is ptr to string, value is ptr to substring
 pub export fn doxa_find(collection: ?*anyopaque, value: i64) callconv(.c) i64 {
     if (collection == null) return -1;
 
@@ -336,7 +318,6 @@ pub export fn doxa_find(collection: ?*anyopaque, value: i64) callconv(.c) i64 {
         return doxa_find_array(hdr, value);
     }
 
-    // Interpret as string (C string)
     const str_ptr = @as(?[*:0]const u8, @ptrCast(collection));
     if (str_ptr) |s| {
         const needle_ptr = @as(?[*:0]const u8, @ptrFromInt(@as(usize, @intCast(value))));
@@ -367,10 +348,6 @@ pub export fn doxa_find_str(str_ptr: ?[*:0]const u8, needle_ptr: ?[*:0]const u8)
     else
         -1;
 }
-
-//------------------------------------------------------------------------------
-// Map helpers for native (LLVM) backend
-//------------------------------------------------------------------------------
 
 pub export fn doxa_map_new(capacity: i64, key_tag: i64, value_tag: i64) callconv(.c) *MapRuntime.MapHeader {
     return MapRuntime.mapNew(capacity, key_tag, value_tag);
@@ -404,8 +381,6 @@ pub const DoxaPeekInfo = extern struct {
     column: u32,
 };
 
-/// View for C/LLVM callers to construct a `DoxaValue` without knowing its full
-/// Zig definition. This mirrors the `%DoxaValue` layout in the LLVM IR.
 pub const DoxaValueC = extern struct {
     tag: u32,
     reserved: u32,
@@ -481,10 +456,6 @@ pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void 
     }
 }
 
-/// Convert a C-string to a byte value, mirroring the VM's @byte(string) semantics
-/// for the common cases used by compiled code (single characters, decimal, hex,
-/// and simple float strings). On invalid input, this returns 0 instead of raising
-/// a runtime error, to keep the native code path simple.
 pub export fn doxa_byte_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
     if (ptr == null) return 0;
     const s_val = std.mem.span(ptr.?);
@@ -493,19 +464,16 @@ pub export fn doxa_byte_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
         return 0;
     }
 
-    // Single ASCII character
     if (s_val.len == 1) {
         return @as(i64, @intCast(s_val[0]));
     }
 
-    // Hex literal of form "0xFF"
     if (s_val.len > 2 and std.mem.eql(u8, s_val[0..2], "0x")) {
         const hex_str = s_val[2..];
         const parsed_hex_byte = std.fmt.parseInt(u8, hex_str, 16) catch return 0;
         return @as(i64, @intCast(parsed_hex_byte));
     }
 
-    // Try decimal integer
     const parsed_int_opt: ?i64 = std.fmt.parseInt(i64, s_val, 10) catch null;
     if (parsed_int_opt) |parsed_int| {
         if (parsed_int >= 0 and parsed_int <= 255) {
@@ -514,7 +482,6 @@ pub export fn doxa_byte_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
         return 0;
     }
 
-    // Fallback: parse as float and clamp into byte range
     const parsed_float = std.fmt.parseFloat(f64, s_val) catch return 0;
     if (!std.math.isFinite(parsed_float)) return 0;
     const rounded: i64 = @intFromFloat(parsed_float);
@@ -619,7 +586,6 @@ pub export fn doxa_str_pop(s: ?[*:0]const u8, out_remaining: *?[*:0]u8, out_popp
     return 1;
 }
 
-// Return length of a C string (0 if null)
 pub export fn doxa_str_len(ptr: ?[*:0]const u8) callconv(.c) i64 {
     if (ptr) |p| {
         return @intCast(std.mem.len(p));
@@ -683,16 +649,12 @@ fn lookupEnumDesc(type_name_ptr: ?[*:0]const u8) ?*const EnumDesc {
     return findEnumDescByName(std.mem.span(tn));
 }
 
-/// Minimum initial capacity for a new array allocation, chosen to amortize
-/// the cost of small repeated pushes.
 const ARRAY_MIN_CAPACITY: u64 = 8;
 
 fn clampMin(a: u64, b: u64) u64 {
     return if (a < b) b else a;
 }
 
-/// Allocate an ArrayHeader and backing buffer. elem_tag values mirror the
-/// compiler's mapping:
 /// 0=int(i64), 1=byte(u8), 2=float(f64), 3=string(i8*), 4=tetra(u8 lower 2 bits),
 /// 5=nothing, 6=array(*ArrayHeader), 7=struct(ptr), 8=enum(i64 variant index).
 pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *ArrayHeader {
@@ -743,8 +705,6 @@ pub export fn doxa_array_len(hdr: *ArrayHeader) callconv(.c) u64 {
 pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
     if (hdr.data == null or idx >= hdr.len) return 0;
 
-    // Treat the backing buffer as raw bytes; decode per element tag to avoid
-    // misaligned @alignCast when elem_size is smaller than 8 (bytes/tetras).
     const base: [*]const u8 = @ptrCast(hdr.data.?);
     const off: usize = @intCast(idx * hdr.elem_size);
     const p = base + off;
@@ -786,7 +746,6 @@ pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
                 0;
             break :blk_array @bitCast(addr);
         },
-        // Treat other tags (struct, enum, unknown) as raw 64-bit slots.
         else => blk_raw: {
             const ip: *const i64 = @ptrCast(@alignCast(p));
             break :blk_raw ip.*;
@@ -847,7 +806,6 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
     }
 }
 
-/// Concatenate two arrays by allocating a new header and copying elements.
 pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u64, elem_tag: u64) callconv(.c) *ArrayHeader {
     const len_a: u64 = if (a) |hdr| hdr.len else 0;
     const len_b: u64 = if (b) |hdr| hdr.len else 0;
@@ -924,14 +882,11 @@ pub export fn doxa_array_slice(hdr: ?*ArrayHeader, start: i64, length: i64) call
     return out;
 }
 
-/// Clear an array by setting its length to 0
-/// For strings, this is a no-op since strings are immutable
 pub export fn doxa_clear(collection: ?*anyopaque) callconv(.c) void {
     if (collection == null) return;
 
     const maybe_hdr = asArrayHeader(collection);
     if (maybe_hdr) |hdr| {
-        // It's an array - clear by setting length to 0
         hdr.len = 0;
         return;
     }
@@ -958,9 +913,6 @@ fn asArrayHeader(ptr: ?*anyopaque) ?*ArrayHeader {
     return hdr;
 }
 
-// Shared array header printer for compiled programs and the VM.
-// This mirrors the VM's array printing, including support for nested arrays,
-// and uses a single writer so recursion composes correctly.
 pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
     var buf: [1024]u8 = undefined;
     var bw = std.fs.File.stdout().writer(&buf);
@@ -1107,7 +1059,6 @@ fn printStructImpl(out: anytype, addr: u64) anyerror!void {
 fn printArrayHdrImpl(out: anytype, hdr: *ArrayHeader) anyerror!void {
     try out.print("[", .{});
 
-    // If the array is logically empty, just print [] and exit.
     if (hdr.len == 0) {
         try out.print("]", .{});
         return;

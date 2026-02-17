@@ -1,23 +1,5 @@
-///! Centralised registry of built-in functions.
-///!
-///! Every function that is implemented in the VM/runtime (as opposed to
-///! user-defined Doxa code) should be listed here.  The registry is used by:
-///!
-///!   * **codegen** (`soxa_generator.inferCallReturnType`) – to look up the
-///!     HIR return type of a built-in call without hardcoding names.
-///!   * **VM dispatch** (`functions.execBuiltinFunction`) – to validate that a
-///!     call tagged `.BuiltinFunction` is actually a known built-in.
-///!
-///! User-defined functions (e.g. `safeAdd`, `foo`, `fizzbuzz`, …) do **not**
-///! belong here.  Their return types come from `function_signatures` in the
-///! HIRGenerator / TypeSystem.
-
 const std = @import("std");
 const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
-
-// ---------------------------------------------------------------------------
-// Public types
-// ---------------------------------------------------------------------------
 
 pub const BuiltinInfo = struct {
     name: []const u8,
@@ -25,10 +7,6 @@ pub const BuiltinInfo = struct {
     /// Expected argument count.  `null` means variadic / context-dependent.
     param_count: ?u32,
 };
-
-// ---------------------------------------------------------------------------
-// Static table
-// ---------------------------------------------------------------------------
 
 pub const BUILTINS = [_]BuiltinInfo{
     // ── Collection operations ───────────────────────────────────────────
@@ -82,12 +60,6 @@ pub const BUILTINS = [_]BuiltinInfo{
     .{ .name = "forall_quantifier_eq", .return_type = .Tetra, .param_count = 2 },
 };
 
-// ---------------------------------------------------------------------------
-// Lookup helpers
-// ---------------------------------------------------------------------------
-
-/// Look up a built-in function by name.  Returns `null` when the name does
-/// not correspond to any known built-in (i.e. it is user-defined).
 pub fn get(name: []const u8) ?*const BuiltinInfo {
     inline for (&BUILTINS) |*entry| {
         if (std.mem.eql(u8, entry.name, name)) return entry;
@@ -95,11 +67,9 @@ pub fn get(name: []const u8) ?*const BuiltinInfo {
     return null;
 }
 
-/// Convenience: returns `true` when `name` is a recognised built-in.
 pub fn isBuiltin(name: []const u8) bool {
     return get(name) != null;
 }
-
 /// Return the HIR return type for a built-in, or `null` if unknown.
 pub fn getReturnType(name: []const u8) ?HIRType {
     if (get(name)) |info| return info.return_type;

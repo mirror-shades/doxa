@@ -503,7 +503,6 @@ pub const Reporter = struct {
         if (self.published_state.get(target)) |state| {
             return state.hash != new_hash;
         }
-        // Never published this file; treat as changed so editors receive an initial payload.
         return true;
     }
 
@@ -1085,10 +1084,8 @@ fn appendUriPath(
     var tmp = std.array_list.Managed(u8).init(allocator);
     defer tmp.deinit();
 
-    // Get the raw string from the component
     var buffer: [1024]u8 = undefined;
     const component_str = component.toRaw(&buffer) catch blk: {
-        // If buffer is too small, fall back to accessing the field directly
         break :blk switch (component) {
             .raw => |s| s,
             .percent_encoded => |s| s,
@@ -1103,7 +1100,6 @@ fn appendUriPath(
     switch (mode) {
         .unc => {
             if (raw[0] != '/') {
-                // UNC paths must include a separator between host and share.
                 try writer.writeByte('/');
             }
         },

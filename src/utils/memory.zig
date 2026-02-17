@@ -7,10 +7,6 @@ const TypesImport = @import("../types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
 const CustomTypeInfo = TypesImport.CustomTypeInfo;
 
-// ============================================================================
-// Core Types
-// ============================================================================
-
 pub const ValueStorage = struct {
     value: TokenLiteral,
     type: TokenType,
@@ -25,10 +21,6 @@ pub const Variable = struct {
     id: u32,
     is_alias: bool,
 };
-
-// ============================================================================
-// Scope - Simple brace-based scoping
-// ============================================================================
 
 pub const Scope = struct {
     id: u32,
@@ -59,13 +51,10 @@ pub const Scope = struct {
         if (self.is_deinited) return;
         self.is_deinited = true;
 
-        // Clean up variables owned by this scope
         var it = self.variables.valueIterator();
         while (it.next()) |var_ptr| {
             const variable = var_ptr.*;
-            // Remove from global maps
             _ = self.manager.variable_map.remove(variable.id);
-            // Only remove storage if this variable owns it (not an alias)
             if (!variable.is_alias) {
                 if (self.manager.value_storage.fetchRemove(variable.storage_id)) |kv| {
                     self.allocator.destroy(kv.value);
@@ -78,7 +67,6 @@ pub const Scope = struct {
         self.arena.deinit();
     }
 
-    /// Create a new variable with its own storage
     pub fn createValueBinding(
         self: *Scope,
         name: []const u8,
@@ -96,11 +84,9 @@ pub const Scope = struct {
         self.manager.next_storage_id += 1;
         self.manager.variable_counter += 1;
 
-        // Create storage
         const storage = try self.allocator.create(ValueStorage);
         storage.* = .{ .value = value, .type = vtype, .type_info = type_info, .constant = constant };
 
-        // Create variable
         const variable = try self.allocator.create(Variable);
         variable.* = .{
             .name = name,
@@ -110,7 +96,6 @@ pub const Scope = struct {
             .is_alias = false,
         };
 
-        // Register globally (for storage_id lookups) and locally
         try self.manager.variable_map.put(variable_id, variable);
         try self.manager.value_storage.put(storage_id, storage);
         try self.variables.put(variable_id, variable);
@@ -119,7 +104,6 @@ pub const Scope = struct {
         return variable;
     }
 
-    /// Create an alias that points to an existing variable's storage
     pub fn createAlias(self: *Scope, name: []const u8, target: *Variable) !*Variable {
         const variable_id = self.manager.variable_counter;
         self.manager.variable_counter += 1;
@@ -128,7 +112,7 @@ pub const Scope = struct {
         variable.* = .{
             .name = name,
             .type = target.type,
-            .storage_id = target.storage_id, // Share storage!
+            .storage_id = target.storage_id,
             .id = variable_id,
             .is_alias = true,
         };
@@ -140,7 +124,6 @@ pub const Scope = struct {
         return variable;
     }
 
-    /// Create alias from a known storage_id (for VM use)
     pub fn createAliasFromStorageId(
         self: *Scope,
         name: []const u8,
@@ -168,17 +151,12 @@ pub const Scope = struct {
         return variable;
     }
 
-    /// Look up variable by name, walking up parent scopes
     pub fn lookupVariable(self: *Scope, name: []const u8) ?*Variable {
         if (self.name_map.get(name)) |v| return v;
         if (self.parent) |p| return p.lookupVariable(name);
         return null;
     }
 };
-
-// ============================================================================
-// ScopeManager - Manages global storage lookups (for storage_id indirection)
-// ============================================================================
 
 pub const ScopeManager = struct {
     allocator: std.mem.Allocator,
@@ -289,10 +267,6 @@ pub const ScopeManager = struct {
     }
 };
 
-// ============================================================================
-// MemoryManager - Simplified top-level interface
-// ============================================================================
-
 pub const MemoryManager = struct {
     allocator: std.mem.Allocator,
     analysis_arena: std.heap.ArenaAllocator,
@@ -313,13 +287,11 @@ pub const MemoryManager = struct {
     }
 
     pub fn deinit(self: *MemoryManager) void {
-        // Clean up root scope if it exists
         if (self.scope_manager.root_scope) |root_scope| {
             root_scope.deinit();
             self.scope_manager.root_scope = null;
         }
 
-        // Clean up pooled scopes
         for (self.scope_pool.items) |scope| {
             scope.deinit();
             self.allocator.destroy(scope);
@@ -332,7 +304,6 @@ pub const MemoryManager = struct {
         self.execution_arena.deinit();
     }
 
-    /// Get the allocator (for VM/execution)
     pub fn getAllocator(self: *MemoryManager) std.mem.Allocator {
         return self.allocator;
     }
@@ -345,7 +316,6 @@ pub const MemoryManager = struct {
         return self.execution_arena.allocator();
     }
 
-    /// Create a scope with a specific ID
     pub fn createScope(self: *MemoryManager, scope_id: u32, parent: ?*Scope) !*Scope {
         const scope = try self.allocator.create(Scope);
         scope.* = Scope.init(scope_id, parent, self);
@@ -353,7 +323,6 @@ pub const MemoryManager = struct {
         return scope;
     }
 
-    /// Type registry
     pub fn registerCustomType(self: *MemoryManager, type_info: CustomTypeInfo) !void {
         try self.type_registry.put(type_info.name, type_info);
     }
@@ -369,12 +338,10 @@ pub const MemoryManager = struct {
         }
     }
 
-    /// Debug dump
     pub fn dumpState(self: *MemoryManager, reporter: anytype) void {
         self.scope_manager.dumpStateWithReporter(reporter);
     }
 
-    // Compatibility stubs for phase transitions (no longer needed)
     pub fn transitionToGeneration(self: *MemoryManager) !void {
         _ = self;
     }

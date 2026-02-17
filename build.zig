@@ -44,7 +44,6 @@ pub fn build(b: *std.Build) void {
     const run_step = b.step("run", "Run the application");
     run_step.dependOn(&run_exe.step);
 
-    // Release step for cross-compilation
     const release_step = b.step("release", "Build release binaries for all platforms");
 
     for (targets, 0..) |t, i| {
@@ -68,7 +67,6 @@ pub fn build(b: *std.Build) void {
         release_step.dependOn(&target_output.step);
     }
 
-    // Compress step for creating zip archives
     const compress_step = b.step("compress", "Create zip archives of release binaries");
 
     const compress_cmd = b.addSystemCommand(&[_][]const u8{
@@ -77,7 +75,6 @@ pub fn build(b: *std.Build) void {
         "--cwd",
         b.getInstallPath(.prefix, ""),
     });
-    // Add all target names as arguments
     inline for (target_names) |name| {
         compress_cmd.addArg(name);
     }
@@ -95,7 +92,6 @@ pub fn build(b: *std.Build) void {
     const exe_name = if (target.result.os.tag == .windows) "doxa.exe" else "doxa";
     const test_doxa_path = b.pathJoin(&.{ "zig-out", "test-bin", exe_name });
 
-    // Main test suite (run + compile + inline Zig)
     const test_suite_exe = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test.zig"),
@@ -109,7 +105,6 @@ pub fn build(b: *std.Build) void {
     run_test_suite.step.dependOn(&test_install.step);
     run_test_suite.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
 
-    // LSP tests
     const reporting_module = b.createModule(.{
         .root_source_file = b.path("src/utils/reporting.zig"),
     });
@@ -127,7 +122,6 @@ pub fn build(b: *std.Build) void {
     run_test_lsp.step.dependOn(&test_install.step);
     run_test_lsp.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
 
-    // Run all tests
     const test_step = b.step("test", "Run all tests");
     if (can_run_target) {
         test_step.dependOn(&run_test_suite.step);
