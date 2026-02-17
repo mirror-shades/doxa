@@ -1,0 +1,29 @@
+zig IO {
+    const std = @import("std");
+
+    fn print(input: []const u8) void {
+        std.debug.print("inside print with {s}\n", .{input});
+        var stdout_buffer: [1024]u8 = undefined;
+        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        const stdout = &stdout_writer.interface;
+        
+        stdout.print("did you ever hear the tragedy of darth plagueis the wise?\n", .{}) catch return;
+        
+        stdout.flush() catch return;
+    }
+    
+}
+
+pub function printf(input :: string) {
+    @print("{input}")
+}
+
+pub function print(input :: string) {
+    @print("calling print with {input}\n");
+    IO.print(input);
+}
+
+pub function println(input :: string) {
+    IO.print(input + "\n");
+}
+
