@@ -655,6 +655,63 @@ fn clampMin(a: u64, b: u64) u64 {
     return if (a < b) b else a;
 }
 
+fn ensureArrayCapacity(hdr: *ArrayHeader, required_len: u64) bool {
+    if (required_len <= hdr.cap) return true;
+
+    // Grow exponentially to avoid repeated reallocations on append-heavy paths.
+    var new_cap: u64 = if (hdr.cap == 0) ARRAY_MIN_CAPACITY else hdr.cap;
+    while (new_cap < required_len) {
+        const doubled = std.math.mul(u64, new_cap, 2) catch {
+            new_cap = required_len;
+            break;
+        };
+        new_cap = doubled;
+    }
+
+    if (hdr.elem_size == 0) {
+        hdr.cap = new_cap;
+        return true;
+    }
+
+    if (hdr.elem_size == 8) {
+        const new_slice = std.heap.page_allocator.alloc(i64, @intCast(new_cap)) catch return false;
+        @memset(new_slice, 0);
+
+        if (hdr.data) |old_data| {
+            const old_slice_ptr: [*]i64 = @ptrCast(@alignCast(old_data));
+            const old_slice = old_slice_ptr[0..@intCast(hdr.cap)];
+            const copy_len: usize = @intCast(@min(hdr.len, hdr.cap));
+            @memcpy(new_slice[0..copy_len], old_slice[0..copy_len]);
+            std.heap.page_allocator.free(old_slice);
+        }
+
+        hdr.data = @ptrCast(new_slice.ptr);
+        hdr.cap = new_cap;
+        return true;
+    }
+
+    const new_bytes_u64 = std.math.mul(u64, hdr.elem_size, new_cap) catch return false;
+    const old_bytes_u64 = std.math.mul(u64, hdr.elem_size, hdr.cap) catch return false;
+    if (new_bytes_u64 > std.math.maxInt(usize)) return false;
+    if (old_bytes_u64 > std.math.maxInt(usize)) return false;
+
+    const new_buf = std.heap.page_allocator.alloc(u8, @intCast(new_bytes_u64)) catch return false;
+    @memset(new_buf, 0);
+
+    if (hdr.data) |old_data| {
+        const old_buf_ptr: [*]u8 = @ptrCast(old_data);
+        const old_buf = old_buf_ptr[0..@intCast(old_bytes_u64)];
+        const used_bytes_u64 = std.math.mul(u64, hdr.elem_size, @min(hdr.len, hdr.cap)) catch 0;
+        const used_bytes: usize = @intCast(@min(used_bytes_u64, new_bytes_u64));
+        @memcpy(new_buf[0..used_bytes], old_buf[0..used_bytes]);
+        std.heap.page_allocator.free(old_buf);
+    }
+
+    hdr.data = @ptrCast(new_buf.ptr);
+    hdr.cap = new_cap;
+    return true;
+}
+
 /// 0=int(i64), 1=byte(u8), 2=float(f64), 3=string(i8*), 4=tetra(u8 lower 2 bits),
 /// 5=nothing, 6=array(*ArrayHeader), 7=struct(ptr), 8=enum(i64 variant index).
 pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *ArrayHeader {
@@ -754,8 +811,9 @@ pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
 }
 
 pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callconv(.c) void {
-    if (hdr.data == null) return;
-    if (idx >= hdr.cap) return; // no resize in minimal runtime
+    const needed_len = idx + 1;
+    if (!ensureArrayCapacity(hdr, needed_len)) return;
+    if (hdr.data == null and hdr.elem_size != 0) return;
     if (idx >= hdr.len) hdr.len = idx + 1;
     const base: [*]u8 = @ptrCast(hdr.data.?);
     const off: usize = @intCast(idx * hdr.elem_size);
@@ -835,9 +893,9 @@ pub export fn doxa_array_insert(hdr: ?*ArrayHeader, idx: i64, value: i64) callco
     if (idx < 0) return h;
     const pos: u64 = @intCast(@as(u64, @intCast(idx)));
     if (pos > h.len) return h;
-    if (h.len >= h.cap) return h; // minimal runtime: no growth
 
     const old_len = h.len;
+    if (!ensureArrayCapacity(h, old_len + 1)) return h;
     h.len = old_len + 1;
     var i: u64 = old_len;
     while (i > pos) : (i -= 1) {
