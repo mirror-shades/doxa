@@ -345,6 +345,9 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
 
             try self.trackVariableType(decl.name.lexeme, var_type);
+            if (var_type == .Array) {
+                try self.trackArrayElementType(decl.name.lexeme, var_type.Array.*);
+            }
 
             if (custom_type_name) |custom_type| {
                 try self.trackVariableCustomType(decl.name.lexeme, custom_type);
