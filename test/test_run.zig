@@ -381,7 +381,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = null,
             .expected_peek = null,
-            .expected_error = .{ .exit_code = 1, .contains_message = "Reached unreachable code", .error_code = null },
+            .expected_error = .{ .exit_code = 2, .contains_message = "Reached unreachable code", .error_code = null },
         },
     };
 

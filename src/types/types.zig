@@ -17,7 +17,7 @@ const ErrorCode = Errors.ErrorCode;
 pub const StructField = struct {
     name: []const u8,
     field_type_info: *ast.TypeInfo,
-    custom_type_name: ?[]const u8 = null, // For custom types like Person
+    custom_type_name: ?[]const u8 = null,
     index: u32,
     is_public: bool = false,
 };
