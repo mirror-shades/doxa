@@ -1489,35 +1489,41 @@ pub const HIRGenerator = struct {
         const union_members = hir_type.Union.members;
         var names = try self.allocator.alloc([]const u8, union_members.len);
         for (union_members, 0..) |member_ptr, i| {
-            const member_type = member_ptr.*;
-            names[i] = switch (member_type) {
-                .Int => "int",
-                .Float => "float",
-                .String => "string",
-                .Tetra => "tetra",
-                .Byte => "byte",
-                .Nothing => "nothing",
-                .Array => "array",
-                .Map => "map",
-                .Struct => blk: {
-                    if (self.type_system.struct_table) |table| {
-                        if (table.getName(member_type.Struct)) |name| break :blk name;
-                    }
-                    break :blk "struct";
-                },
-                .Enum => blk: {
-                    if (self.type_system.enum_table) |table| {
-                        if (table.getName(member_type.Enum)) |name| break :blk name;
-                    }
-                    break :blk "enum";
-                },
-                .Function => "function",
-                .Union => "union",
-                .Unknown => "unknown",
-                .Poison => "poison",
-            };
+            names[i] = try self.hirTypeToDisplayName(member_ptr.*);
         }
         return names;
+    }
+
+    fn hirTypeToDisplayName(self: *HIRGenerator, ty: HIRType) ![]const u8 {
+        return switch (ty) {
+            .Int => "int",
+            .Float => "float",
+            .String => "string",
+            .Tetra => "tetra",
+            .Byte => "byte",
+            .Nothing => "nothing",
+            .Array => |elem_ptr| blk: {
+                const elem_name = try self.hirTypeToDisplayName(elem_ptr.*);
+                break :blk try std.fmt.allocPrint(self.allocator, "{s}[]", .{elem_name});
+            },
+            .Map => "map",
+            .Struct => |sid| blk: {
+                if (self.type_system.struct_table) |table| {
+                    if (table.getName(sid)) |name| break :blk name;
+                }
+                break :blk "struct";
+            },
+            .Enum => |eid| blk: {
+                if (self.type_system.enum_table) |table| {
+                    if (table.getName(eid)) |name| break :blk name;
+                }
+                break :blk "enum";
+            },
+            .Function => "function",
+            .Union => "union",
+            .Unknown => "unknown",
+            .Poison => "poison",
+        };
     }
 
     fn ensureAuxMapsInit(self: *HIRGenerator) void {
