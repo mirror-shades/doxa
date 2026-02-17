@@ -86,7 +86,6 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 
 - standard lib
 - finish the last few internal methods
-- zig code blocks
 
 ## Example
 
