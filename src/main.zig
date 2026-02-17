@@ -65,7 +65,7 @@ const CLI = struct {
     script_path: ?[]const u8,
     profile: bool,
     output_path: ?[]const u8,
-    output_dir: []const u8, // base directory for build artefacts (default "out")
+    output_dir: []const u8,
     target_arch: ?[]const u8,
     target_os: ?[]const u8,
     target_abi: ?[]const u8,
@@ -126,8 +126,7 @@ fn generateArtifactPath(memoryManager: *MemoryManager, source_path: []const u8, 
         else => return err,
     };
 
-    // "output_dir/" prefix
-    const dir_prefix_len = output_dir.len + 1; // +1 for the slash
+    const dir_prefix_len = output_dir.len + 1;
 
     if (last_dot) |dot| {
         const basename = filename[0..dot];
@@ -235,7 +234,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
     const bc = @import("./codegen/bytecode/module.zig");
     const Sha256 = std.crypto.hash.sha2.Sha256;
 
-    // Collect zig decls
     var has_any = false;
     for (statements) |s| {
         if (s.data == .ZigDecl) {
@@ -266,11 +264,9 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
         const module_name = decl.name.lexeme;
         const zig_source = decl.source;
 
-        // Validate and extract signatures (also enforces doxa-compatible types)
         const sigs = try inline_zig.sanitizeAndExtract(memoryManager.getAllocator(), zig_source);
         defer inline_zig.deinitSigs(memoryManager.getAllocator(), sigs);
 
-        // Compute a stable cache key for the module+source.
         var h: [Sha256.digest_length]u8 = undefined;
         var hasher = Sha256.init(.{});
         hasher.update("__doxa_inlinezig_v2__\n");
@@ -282,7 +278,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
         const hex_buf = std.fmt.bytesToHex(h, .lower);
         const short_hex = hex_buf[0..16];
 
-        // Build wrapper source path in cache
         var zig_path_buf: [512]u8 = undefined;
         const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/zig/cache/{s}-{s}.zig", .{ output_dir, module_name, short_hex });
 
@@ -294,7 +289,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
         };
         const lib_path = try std.fmt.bufPrint(&lib_path_buf, "{s}/zig/cache/{s}-{s}.{s}", .{ output_dir, module_name, short_hex, lib_ext });
 
-        // Generate wrapper bodies + runtime function metadata
         var functions = std.StringHashMap(VM.ZigRuntimeFn).init(memoryManager.getAllocator());
         errdefer {
             var itf = functions.iterator();
@@ -351,15 +345,12 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
             }
         };
 
-        // Helpers used by wrapper shims (string boundary conversion + free)
         try file_buf.appendSlice("const __doxa_std = @import(\"std\");\n\n");
         try file_buf.appendSlice("fn __doxa_to_cstr(s: []const u8) ?[*:0]u8 {\n");
         try file_buf.appendSlice("    const buf = __doxa_std.heap.page_allocator.allocSentinel(u8, s.len, 0) catch return null;\n");
         try file_buf.appendSlice("    @memcpy(buf[0..s.len], s);\n");
         try file_buf.appendSlice("    return buf.ptr;\n");
         try file_buf.appendSlice("}\n\n");
-        // Give this symbol a stable, per-module unique name so multiple inline-zig objects
-        // can be linked into one executable without duplicate symbol errors.
         const free_sym = try std.fmt.allocPrint(memoryManager.getAllocator(), "__doxa_inlinezig_free_cstr__{s}_{s}", .{ module_name, short_hex });
         defer memoryManager.getAllocator().free(free_sym);
 
@@ -376,7 +367,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
         try file_buf.appendSlice("}\n\n");
 
         for (sigs) |sig| {
-            // Only support small subset in VM bridge for now
             const ret_zig = zigTypeName.fromReturnTypeInfo(sig.return_type) orelse {
                 reporter.reportCompileError(s.base.location(), ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in VM bridge for '{s}.{s}'", .{ module_name, sig.name });
                 return error.NotImplemented;
@@ -385,10 +375,8 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
             var param_types_bc = try memoryManager.getAllocator().alloc(bc.BytecodeType, sig.param_types.len);
             errdefer memoryManager.getAllocator().free(param_types_bc);
 
-            // Build wrapper signature and call args
             var sig_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
             defer sig_buf.deinit();
-            // Export the symbol name as "{Module}.{fn}" so LLVM IR can call it directly.
             const sym_ident = try std.fmt.allocPrint(memoryManager.getAllocator(), "__doxa_export__{s}_{s}", .{ module_name, sig.name });
             defer memoryManager.getAllocator().free(sym_ident);
             const sym_export = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}.{s}", .{ module_name, sig.name });
@@ -398,7 +386,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
             try sig_buf.appendSlice(sym_ident);
             try sig_buf.appendSlice("(");
 
-            // We'll build a shim body that converts C-string params to slices for user code.
             var prelude_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
             defer prelude_buf.deinit();
 
@@ -443,7 +430,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
 
             try call_buf.appendSlice(")");
 
-            // Inject conversion prelude (string params)
             try sig_buf.appendSlice("\n");
             if (prelude_buf.items.len > 0) try sig_buf.appendSlice(prelude_buf.items);
 
@@ -464,7 +450,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
 
             try file_buf.appendSlice(sig_buf.items);
 
-            // Export with dotted name
             var export_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
             defer export_buf.deinit();
             try export_buf.appendSlice("comptime { @export(");
@@ -475,7 +460,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
             try export_buf.appendSlice("\" }); }\n\n");
             try file_buf.appendSlice(export_buf.items);
 
-            // Store runtime lookup metadata (transfer ownership)
             const fn_key = try memoryManager.getAllocator().dupe(u8, sig.name);
             errdefer memoryManager.getAllocator().free(fn_key);
             errdefer memoryManager.getAllocator().free(sym_export);
@@ -487,7 +471,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
             });
         }
 
-        // Write wrapper source and compile only if not already cached.
         const lib_exists = blk: {
             std.fs.cwd().access(lib_path, .{}) catch break :blk false;
             break :blk true;
@@ -495,7 +478,6 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
         if (!lib_exists) {
             try std.fs.cwd().writeFile(.{ .sub_path = zig_path, .data = file_buf.items });
 
-            // Compile dynamic library
             var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer args_list.deinit();
             const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{lib_path});
@@ -553,11 +535,9 @@ fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []ast.Stmt
         const module_name = decl.name.lexeme;
         const zig_source = decl.source;
 
-        // Validate and extract signatures (also enforces doxa-compatible types)
         const sigs = try inline_zig.sanitizeAndExtract(memoryManager.getAllocator(), zig_source);
         defer inline_zig.deinitSigs(memoryManager.getAllocator(), sigs);
 
-        // Cache key
         var h: [Sha256.digest_length]u8 = undefined;
         var hasher = Sha256.init(.{});
         hasher.update("__doxa_inlinezig_v2__\n");
@@ -568,11 +548,9 @@ fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []ast.Stmt
         const hex_buf = std.fmt.bytesToHex(h, .lower);
         const short_hex = hex_buf[0..16];
 
-        // Wrapper source path
         var zig_path_buf: [512]u8 = undefined;
         const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/zig/cache/{s}-{s}.zig", .{ output_dir, module_name, short_hex });
 
-        // Object path
         var obj_path_buf: [512]u8 = undefined;
         const obj_ext = if (builtin.os.tag == .windows) "obj" else "o";
         const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/zig/cache/{s}-{s}.{s}", .{ output_dir, module_name, short_hex, obj_ext });
@@ -695,7 +673,6 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         return options;
     }
 
-    // Handle the mode argument (run or compile)
     if (stringEquals(args[1], "run")) {
         options.mode = .RUN;
     } else if (stringEquals(args[1], "compile")) {
@@ -709,7 +686,6 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
     var options_list = std.array_list.Managed([]const u8).init(allocator);
     defer options_list.deinit();
 
-    // Process remaining arguments starting from index 2
     for (args[2..]) |arg| {
         try options_list.append(arg);
     }
@@ -749,7 +725,6 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             options.profile = true;
             continue;
         } else if (stringEquals(arg, "-o") or stringEquals(arg, "--output")) {
-            // Set flag to expect output path in next argument
             expecting_output = true;
             continue;
         } else if (std.mem.startsWith(u8, arg, "--output-dir=")) {
@@ -771,7 +746,6 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             };
             continue;
         } else if (arg.len >= 3 and arg[0] == '-' and arg[1] == 'O') {
-            // Accept -O-1, -O0..-O3
             const lvl_str = arg[2..];
             options.opt_level = std.fmt.parseInt(i32, lvl_str, 10) catch {
                 std.debug.print("Error: invalid optimization flag: {s}\n", .{arg});
@@ -903,7 +877,7 @@ pub fn main() !void {
     var profiler = Profiler.init(gpa.allocator(), cli_options.profile);
     defer profiler.deinit();
 
-    const path = cli_options.script_path.?; // Safe to unwrap since we validated it
+    const path = cli_options.script_path.?;
 
     const path_uri = try reporter.ensureFileUri(path);
 
@@ -947,18 +921,15 @@ pub fn main() !void {
     try semantic_analyzer.analyze(parsedStatements);
     profiler.stopPhase();
 
-    // Dump memory state if debug_memory is enabled
     if (cli_options.reporter_options.debug_memory) {
         memoryManager.dumpState(&reporter);
     }
 
     profiler.startPhase(Phase.GENERATE_S);
 
-    // Generate the soxa path for intermediate files (freed when execution arena deinits)
     const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa", cli_options.output_dir);
 
     const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, &parser, &semantic_analyzer, &reporter);
-    // Emit textual HIR (.soxa) for debugging/inspection
     try SoxaCompiler.writeSoxaFile(&hir_program_for_bytecode, soxa_path, path, memoryManager.getExecutionAllocator());
     profiler.stopPhase();
 
@@ -999,7 +970,6 @@ pub fn main() !void {
 
         profiler.stopPhase();
 
-        // Dump memory state after execution if debug_memory is enabled
         if (cli_options.reporter_options.debug_memory) {
             memoryManager.dumpState(&reporter);
         }
@@ -1020,22 +990,17 @@ pub fn main() !void {
             break :blk filename;
         };
 
-        // Ensure output directory exists
         std.fs.cwd().makeDir(cli_options.output_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {},
             else => return err,
         };
 
-        // Normalize output directories and filenames
         var ir_path_buf: [512]u8 = undefined;
         var obj_path_buf: [512]u8 = undefined;
         var exe_path_buf: [512]u8 = undefined;
 
-        // Determine executable path (add .exe on Windows)
         const raw_exe = blk2: {
             if (std.fs.path.isAbsolute(artifact_stem)) break :blk2 artifact_stem;
-            // Treat any path that looks explicit as a user-provided destination.
-            // (Windows users commonly pass `out\\app` or `.\\out\\app`.)
             const looks_like_path =
                 std.mem.startsWith(u8, artifact_stem, "./") or
                 std.mem.startsWith(u8, artifact_stem, "../") or
@@ -1044,7 +1009,6 @@ pub fn main() !void {
                 (std.mem.indexOfAny(u8, artifact_stem, "/\\") != null);
             if (looks_like_path) break :blk2 artifact_stem;
 
-            // Default to `<output_dir>/<stem>` when only a filename is provided.
             break :blk2 try std.fmt.bufPrint(&exe_path_buf, "{s}/{s}", .{ cli_options.output_dir, artifact_stem });
         };
         const exe_path = blk3: {
@@ -1056,14 +1020,11 @@ pub fn main() !void {
             break :blk3 raw_exe;
         };
 
-        // Ensure parent dir exists
         if (std.fs.path.dirname(exe_path)) |dir| {
             try std.fs.cwd().makePath(dir);
         }
 
-        // Derive IR/Object paths - always put intermediate files in out/ directory
         const stem_for_derivatives = blk4: {
-            // Extract just the filename (without path) for intermediate files
             var filename_start: usize = 0;
             for (exe_path, 0..) |c, i| {
                 if (c == '/' or c == '\\') filename_start = i + 1;
@@ -1122,9 +1083,6 @@ pub fn main() !void {
             }
         }
 
-        // Link final executable with runtime helpers
-
-        // Build runtime print object (relocatable) to avoid archive format issues
         var rt_obj_buf: [256]u8 = undefined;
         const rt_obj = try std.fmt.bufPrint(&rt_obj_buf, "{s}/doxa_rt.o", .{cli_options.output_dir});
         {
@@ -1135,7 +1093,6 @@ pub fn main() !void {
             const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{rt_obj});
             defer std.heap.page_allocator.free(emit_flag);
 
-            // Prepare zig build-obj arguments (+ optional target)
             var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer args_list.deinit();
             try args_list.appendSlice(&[_][]const u8{ "zig", "build-obj", RUNTIME_SOURCE_PATH, emit_flag });
@@ -1172,16 +1129,13 @@ pub fn main() !void {
             }
         }
 
-        // Compile inline zig blocks to objects (cached) and link them in.
         const inline_zig_objs = try compileInlineZigObjects(&memoryManager, parsedStatements, &reporter, cli_options.output_dir);
         defer {
             for (inline_zig_objs) |p| memoryManager.getAllocator().free(@constCast(p));
             memoryManager.getAllocator().free(inline_zig_objs);
         }
 
-        // Link using zig cc (+ static runtime lib + inline zig objects)
         {
-            // Prepare zig cc arguments (+ optional target)
             var args_ln = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer args_ln.deinit();
             try args_ln.append("zig");
@@ -1234,17 +1188,13 @@ pub fn main() !void {
             }
         }
 
-        // Move PDB file from root to out/ directory if it exists
         const pdb_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.pdb", .{stem_for_derivatives});
         defer std.heap.page_allocator.free(pdb_filename);
         const pdb_out_path = try std.fmt.allocPrint(std.heap.page_allocator, "{s}/{s}.pdb", .{ cli_options.output_dir, stem_for_derivatives });
         defer std.heap.page_allocator.free(pdb_out_path);
 
-        // Try to move the PDB file from root to out/
         std.fs.cwd().rename(pdb_filename, pdb_out_path) catch |err| switch (err) {
-            error.FileNotFound => {
-                // PDB file doesn't exist, that's fine
-            },
+            error.FileNotFound => {},
             else => {
                 // Some other error occurred, but we'll continue
             },
