@@ -1730,7 +1730,97 @@ pub fn Methods(comptime Ctx: type) type {
                         }
 
                         // Print the actual value
-                        switch (v.ty) {
+                        var handled_union_enum = false;
+                        if (v.ty == .Value and pk.value_type == .Union and pk.union_members != null) {
+                            const members = pk.union_members.?;
+                            var enum_member_idx: ?usize = null;
+                            var enum_member_name: ?[]const u8 = null;
+                            for (members, 0..) |member_name, member_idx| {
+                                if (self.enum_print_map.contains(member_name)) {
+                                    if (enum_member_idx != null) {
+                                        enum_member_idx = null;
+                                        enum_member_name = null;
+                                        break;
+                                    }
+                                    enum_member_idx = member_idx;
+                                    enum_member_name = member_name;
+                                }
+                            }
+
+                            if (enum_member_idx) |enum_idx| {
+                                const reserved = try self.nextTemp(&id);
+                                const reserved_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 1\n", .{ reserved, v.name });
+                                defer self.allocator.free(reserved_line);
+                                try w.writeAll(reserved_line);
+
+                                const active_member = try self.nextTemp(&id);
+                                const active_member_line = try std.fmt.allocPrint(self.allocator, "  {s} = and i32 {s}, 65535\n", .{ active_member, reserved });
+                                defer self.allocator.free(active_member_line);
+                                try w.writeAll(active_member_line);
+
+                                const enum_idx_i32: i32 = @intCast(enum_idx);
+                                const is_enum_member = try self.nextTemp(&id);
+                                const is_enum_member_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, {d}\n", .{ is_enum_member, active_member, enum_idx_i32 });
+                                defer self.allocator.free(is_enum_member_line);
+                                try w.writeAll(is_enum_member_line);
+
+                                const enum_label = try std.fmt.allocPrint(self.allocator, "peek_union_enum_{d}", .{id});
+                                id += 1;
+                                defer self.allocator.free(enum_label);
+                                const fallback_label = try std.fmt.allocPrint(self.allocator, "peek_union_fallback_{d}", .{id});
+                                id += 1;
+                                defer self.allocator.free(fallback_label);
+                                const merge_label = try std.fmt.allocPrint(self.allocator, "peek_union_merge_{d}", .{id});
+                                id += 1;
+                                defer self.allocator.free(merge_label);
+
+                                const branch_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ is_enum_member, enum_label, fallback_label });
+                                defer self.allocator.free(branch_line);
+                                try w.writeAll(branch_line);
+
+                                const enum_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{enum_label});
+                                defer self.allocator.free(enum_label_line);
+                                try w.writeAll(enum_label_line);
+
+                                const payload_bits = try self.nextTemp(&id);
+                                const payload_bits_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload_bits, v.name });
+                                defer self.allocator.free(payload_bits_line);
+                                try w.writeAll(payload_bits_line);
+
+                                try self.emitEnumPrint(peek_state, w, &id, enum_member_name.?, payload_bits);
+
+                                const enum_br_merge_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{merge_label});
+                                defer self.allocator.free(enum_br_merge_line);
+                                try w.writeAll(enum_br_merge_line);
+
+                                const fallback_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{fallback_label});
+                                defer self.allocator.free(fallback_label_line);
+                                try w.writeAll(fallback_label_line);
+
+                                const tmp_ptr = try self.nextTemp(&id);
+                                const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{tmp_ptr});
+                                defer self.allocator.free(alloca_line);
+                                try w.writeAll(alloca_line);
+                                const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ v.name, tmp_ptr });
+                                defer self.allocator.free(store_line);
+                                try w.writeAll(store_line);
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+
+                                const fallback_br_merge_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{merge_label});
+                                defer self.allocator.free(fallback_br_merge_line);
+                                try w.writeAll(fallback_br_merge_line);
+
+                                const merge_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{merge_label});
+                                defer self.allocator.free(merge_label_line);
+                                try w.writeAll(merge_label_line);
+
+                                handled_union_enum = true;
+                            }
+                        }
+
+                        if (!handled_union_enum) switch (v.ty) {
                             .I64 => {
                                 if (v.enum_type_name) |type_name| {
                                     try self.emitEnumPrint(peek_state, w, &id, type_name, v.name);
@@ -1782,7 +1872,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 }
                             },
                             else => {},
-                        }
+                        };
                         try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
                         last_instruction_was_terminator = false;
                     },

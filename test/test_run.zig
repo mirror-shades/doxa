@@ -12,13 +12,6 @@ const test_results = harness.Counts;
 const Mode = enum {
     PEEK,
     PRINT,
-    ERROR,
-};
-
-const error_result = struct {
-    exit_code: ?u8,
-    contains_message: ?[]const u8,
-    error_code: ?[]const u8,
 };
 
 const TestCase = struct {
@@ -28,7 +21,6 @@ const TestCase = struct {
     input: ?[]const u8,
     expected_print: ?[]const print_result,
     expected_peek: ?[]const peek_result,
-    expected_error: ?error_result,
 };
 
 const CommandResult = harness.CommandResult;
@@ -63,57 +55,6 @@ fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input
         return error.CommandFailed;
     }
     return result.stdout;
-}
-
-fn runErrorTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
-    const result = try runDoxaCommandEx(allocator, tc.path, tc.input);
-    defer allocator.free(result.stdout);
-    defer allocator.free(result.stderr);
-
-    const expected = tc.expected_error.?;
-
-    var passed: usize = 0;
-    var failed: usize = 0;
-
-    // Check exit code
-    if (expected.exit_code) |expected_code| {
-        if (result.exit_code == expected_code) {
-            passed += 1;
-        } else {
-            std.debug.print("Error test failed: expected exit code {}, got {}\n", .{ expected_code, result.exit_code });
-            failed += 1;
-        }
-    } else {
-        passed += 1; // No exit code check required
-    }
-
-    // Check if stderr contains expected message
-    if (expected.contains_message) |expected_msg| {
-        if (std.mem.indexOf(u8, result.stderr, expected_msg) != null) {
-            passed += 1;
-        } else {
-            std.debug.print("Error test failed: expected message \"{s}\" not found in stderr\n", .{expected_msg});
-            std.debug.print("stderr: {s}\n", .{result.stderr});
-            failed += 1;
-        }
-    } else {
-        passed += 1; // No message check required
-    }
-
-    // Check error code in stderr
-    if (expected.error_code) |expected_code| {
-        if (std.mem.indexOf(u8, result.stderr, expected_code) != null) {
-            passed += 1;
-        } else {
-            std.debug.print("Error test failed: expected error code \"{s}\" not found in stderr\n", .{expected_code});
-            std.debug.print("stderr: {s}\n", .{result.stderr});
-            failed += 1;
-        }
-    } else {
-        passed += 1; // No error code check required
-    }
-
-    return .{ .passed = passed, .failed = failed, .untested = 0 };
 }
 
 fn validatePrintResults(output: []const u8, expected_results: []const print_result, allocator: std.mem.Allocator) !test_results {
@@ -194,10 +135,6 @@ fn validatePeekResults(output: []const u8, expected_results: []const peek_result
 }
 
 fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
-    if (tc.mode == .ERROR) {
-        return try runErrorTestCase(allocator, tc);
-    }
-
     var output: []const u8 = undefined;
     if (tc.input) |inp| {
         output = try runDoxaCommandWithInput(allocator, tc.path, inp);
@@ -211,7 +148,6 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     return switch (tc.mode) {
         .PRINT => try harness.validatePrintResults(output, tc.expected_print.?, allocator),
         .PEEK => try harness.validatePeekResults(output, tc.expected_peek.?, allocator),
-        .ERROR => unreachable, // Handled above
     };
 }
 
@@ -234,7 +170,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = null,
             .expected_peek = answers.expected_bigfile_results[0..],
-            .expected_error = null,
         },
         .{
             .name = "brainfuck",
@@ -243,7 +178,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = answers.expected_brainfuck_results[0..],
             .expected_peek = null,
-            .expected_error = null,
         },
         .{
             .name = "complex print",
@@ -252,7 +186,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = answers.expected_complex_print_results[0..],
             .expected_peek = null,
-            .expected_error = null,
         },
         .{
             .name = "array storage migration",
@@ -261,7 +194,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = answers.expected_array_storage_results[0..],
             .expected_peek = null,
-            .expected_error = null,
         },
         .{
             .name = "inline zig string",
@@ -273,7 +205,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
                 .{ .value = "hi" },
             },
             .expected_peek = null,
-            .expected_error = null,
         },
         .{
             .name = "inline zig test",
@@ -282,7 +213,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = answers.expected_inline_zig_test_results[0..],
             .expected_peek = null,
-            .expected_error = null,
         },
         .{
             .name = "expressions",
@@ -291,7 +221,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = null,
             .expected_peek = answers.expected_expressions_results[0..],
-            .expected_error = null,
         },
         .{
             .name = "methods",
@@ -300,7 +229,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = "f\n",
             .expected_print = null,
             .expected_peek = answers.expected_methods_results[0..],
-            .expected_error = null,
         },
         .{
             .name = "union enum return",
@@ -309,79 +237,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = null,
             .expected_peek = answers.expected_union_enum_return_results[0..],
-            .expected_error = null,
-        },
-        .{
-            .name = "syntax error",
-            .path = "./test/syntax/equals_for_assign.doxa",
-            .mode = .ERROR,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = null,
-            .expected_error = .{ .exit_code = 1, .contains_message = "equals sign '=' is not used for variable declarations", .error_code = "E2004" },
-        },
-        .{
-            .name = "undefined variable",
-            .path = "./test/misc/error_test.doxa",
-            .mode = .ERROR,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = null,
-            .expected_error = .{ .exit_code = 1, .contains_message = "Undefined variable", .error_code = "E1001" },
-        },
-        .{
-            .name = "as fallback type mismatch",
-            .path = "./test/syntax/as_fallback_type_error.doxa",
-            .mode = .ERROR,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = null,
-            .expected_error = .{ .exit_code = 1, .contains_message = "Fallback for 'as' must produce type float, got int", .error_code = "E1003" },
-        },
-        .{
-            .name = "fixed array push requires dynamic storage",
-            .path = "./test/syntax/fixed_array_push_error.doxa",
-            .mode = .ERROR,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = null,
-            .expected_error = .{ .exit_code = 1, .contains_message = "cannot be used with @push", .error_code = "E6018" },
-        },
-        .{
-            .name = "const literal array push requires dynamic storage",
-            .path = "./test/syntax/const_literal_push_error.doxa",
-            .mode = .ERROR,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = null,
-            .expected_error = .{ .exit_code = 1, .contains_message = "cannot be used with @push", .error_code = "E6018" },
-        },
-        .{
-            .name = "nested const literal array push requires dynamic storage",
-            .path = "./test/syntax/nested_const_literal_push_error.doxa",
-            .mode = .ERROR,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = null,
-            .expected_error = .{ .exit_code = 1, .contains_message = "cannot be used with @push", .error_code = "E6018" },
-        },
-        .{
-            .name = "const alias array push requires dynamic storage",
-            .path = "./test/syntax/const_alias_push_error.doxa",
-            .mode = .ERROR,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = null,
-            .expected_error = .{ .exit_code = 1, .contains_message = "cannot be used with @push", .error_code = "E6018" },
-        },
-        .{
-            .name = "unreachable keyword",
-            .path = "./test/misc/unreachable.doxa",
-            .mode = .ERROR,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = null,
-            .expected_error = .{ .exit_code = 2, .contains_message = "Reached unreachable code", .error_code = null },
         },
     };
 

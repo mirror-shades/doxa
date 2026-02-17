@@ -980,10 +980,34 @@ pub const TypeSystem = struct {
                     }
                 }
             } else {
-                try list.append(self.astTypeToLowerName(member.base));
+                try list.append(try self.typeInfoDisplayName(member));
             }
         }
 
         return try list.toOwnedSlice();
+    }
+
+    fn typeInfoDisplayName(self: *TypeSystem, info: *const ast.TypeInfo) ![]const u8 {
+        return switch (info.base) {
+            .Int => "int",
+            .Byte => "byte",
+            .Float => "float",
+            .String => "string",
+            .Tetra => "tetra",
+            .Nothing => "nothing",
+            .Array => blk: {
+                if (info.array_type) |elem| {
+                    const elem_name = try self.typeInfoDisplayName(elem);
+                    break :blk try std.fmt.allocPrint(self.allocator, "{s}[]", .{elem_name});
+                }
+                break :blk "array";
+            },
+            .Struct => info.custom_type orelse "struct",
+            .Enum => info.custom_type orelse "enum",
+            .Custom => info.custom_type orelse "custom",
+            .Map => "map",
+            .Function => "function",
+            .Union => "union",
+        };
     }
 };

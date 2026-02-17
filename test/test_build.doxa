@@ -3,6 +3,7 @@
 @build("./test/misc/expressions.doxa", "./test/out/expressions", @arch(), @os(), @abi(), true)
 @build("./test/misc/array_storage_migration.doxa", "./test/out/array_storage_migration", @arch(), @os(), @abi(), true)
 @build("./test/misc/methods.doxa", "./test/out/methods", @arch(), @os(), @abi(), true)
+@build("./test/misc/union_enum_return.doxa", "./test/out/union_enum_return", @arch(), @os(), @abi(), true)
 @build("./test/misc/inline_zig_string.doxa", "./test/out/inline_zig_string", @arch(), @os(), @abi(), true)
 @build("./test/misc/inline_zig_test.doxa", "./test/out/inline_zig_test", @arch(), @os(), @abi(), true)
 @build("./test/examples/brainfuck.doxa", "./test/out/brainfuck", @arch(), @os(), @abi(), true)
