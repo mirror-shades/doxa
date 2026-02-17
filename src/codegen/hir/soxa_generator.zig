@@ -87,7 +87,6 @@ pub const HIRGenerator = struct {
 
     is_generating_nested_array: bool = false,
 
-    /// Monotonically increasing counter for scope IDs, independent of labels.
     next_scope_id: u32 = 0,
 
     pub const FunctionInfo = SoxaTypes.FunctionInfo;
