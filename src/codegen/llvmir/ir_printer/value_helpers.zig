@@ -393,15 +393,19 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(line);
                 break :blk_ptr StackVal{ .name = tmp, .ty = .PTR };
             },
-            .Struct => blk_struct_ptr: {
+            .Struct => |sid| blk_struct_ptr: {
                 const tmp = try self.nextTemp(id);
                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ tmp, as_i64.name });
                 defer self.allocator.free(line);
                 try w.writeAll(line);
-                // Preserve the fact that this pointer is a struct value even when we
-                // don't have concrete struct field metadata available (e.g., values
-                // retrieved from a map and wrapped into a union).
-                break :blk_struct_ptr StackVal{ .name = tmp, .ty = .PTR, .struct_type_name = "struct" };
+                // Preserve concrete struct metadata so downstream GetField can
+                // load the right storage type for each field.
+                break :blk_struct_ptr StackVal{
+                    .name = tmp,
+                    .ty = .PTR,
+                    .struct_field_types = self.struct_fields_by_id.get(sid),
+                    .struct_type_name = self.struct_type_names_by_id.get(sid) orelse "struct",
+                };
             },
             .Array => |inner| blk_arr: {
                 const tmp = try self.nextTemp(id);

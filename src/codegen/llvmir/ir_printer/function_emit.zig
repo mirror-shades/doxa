@@ -411,7 +411,15 @@ pub fn Methods(comptime Ctx: type) type {
                             );
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            try stack.append(.{ .name = result_name, .ty = entry.stack_type, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name });
+                            try stack.append(.{
+                                .name = result_name,
+                                .ty = entry.stack_type,
+                                .array_type = entry.array_type,
+                                .enum_type_name = entry.enum_type_name,
+                                .struct_field_types = entry.struct_field_types,
+                                .struct_field_names = entry.struct_field_names,
+                                .struct_type_name = entry.struct_type_name,
+                            });
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
@@ -481,11 +489,35 @@ pub fn Methods(comptime Ctx: type) type {
                                     const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
+                                } else if (v.struct_field_types != null or v.struct_type_name != null) {
+                                    const dv = try self.buildDoxaValue(w, v, null, &id);
+                                    const tmp_ptr = try self.nextTemp(&id);
+                                    const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{tmp_ptr});
+                                    defer self.allocator.free(alloca_line);
+                                    try w.writeAll(alloca_line);
+                                    const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ dv.name, tmp_ptr });
+                                    defer self.allocator.free(store_line);
+                                    try w.writeAll(store_line);
+                                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
+                                    defer self.allocator.free(call_line);
+                                    try w.writeAll(call_line);
                                 } else {
                                     const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
                                     defer self.allocator.free(line);
                                     try w.writeAll(line);
                                 }
+                            },
+                            .Value => {
+                                const tmp_ptr = try self.nextTemp(&id);
+                                const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{tmp_ptr});
+                                defer self.allocator.free(alloca_line);
+                                try w.writeAll(alloca_line);
+                                const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ v.name, tmp_ptr });
+                                defer self.allocator.free(store_line);
+                                try w.writeAll(store_line);
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
                             },
                             else => {},
                         }
@@ -1368,11 +1400,23 @@ pub fn Methods(comptime Ctx: type) type {
                             const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
                             defer self.allocator.free(alloca_line);
                             try w.writeAll(alloca_line);
-                            const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = inferred_ty, .array_type = value.array_type };
+                            const info = VariableInfo{
+                                .ptr_name = ptr_name,
+                                .stack_type = inferred_ty,
+                                .array_type = value.array_type,
+                                .enum_type_name = value.enum_type_name,
+                                .struct_field_types = value.struct_field_types,
+                                .struct_field_names = value.struct_field_names,
+                                .struct_type_name = value.struct_type_name,
+                            };
                             try variables.put(sv.var_name, info);
                             info_ptr = variables.getPtr(sv.var_name);
                         } else {
                             if (info_ptr.?.array_type == null) info_ptr.?.array_type = value.array_type;
+                            if (info_ptr.?.enum_type_name == null) info_ptr.?.enum_type_name = value.enum_type_name;
+                            if (info_ptr.?.struct_field_types == null) info_ptr.?.struct_field_types = value.struct_field_types;
+                            if (info_ptr.?.struct_field_names == null) info_ptr.?.struct_field_names = value.struct_field_names;
+                            if (info_ptr.?.struct_type_name == null) info_ptr.?.struct_type_name = value.struct_type_name;
                             const target_ty = info_ptr.?.stack_type;
                             value = try self.coerceForStore(value, target_ty, &id, w);
                         }
@@ -1411,12 +1455,24 @@ pub fn Methods(comptime Ctx: type) type {
                             const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ ptr_name, llvm_ty });
                             defer self.allocator.free(alloca_line);
                             try w.writeAll(alloca_line);
-                            const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = target_ty, .array_type = value.array_type };
+                            const info = VariableInfo{
+                                .ptr_name = ptr_name,
+                                .stack_type = target_ty,
+                                .array_type = value.array_type,
+                                .enum_type_name = value.enum_type_name,
+                                .struct_field_types = value.struct_field_types,
+                                .struct_field_names = value.struct_field_names,
+                                .struct_type_name = value.struct_type_name,
+                            };
                             try variables.put(sd.var_name, info);
                             info_ptr = variables.getPtr(sd.var_name);
                         } else {
                             if (sd.declared_type == .Unknown) info_ptr.?.stack_type = target_ty;
                             info_ptr.?.array_type = value.array_type;
+                            if (info_ptr.?.enum_type_name == null) info_ptr.?.enum_type_name = value.enum_type_name;
+                            if (info_ptr.?.struct_field_types == null) info_ptr.?.struct_field_types = value.struct_field_types;
+                            if (info_ptr.?.struct_field_names == null) info_ptr.?.struct_field_names = value.struct_field_names;
+                            if (info_ptr.?.struct_type_name == null) info_ptr.?.struct_type_name = value.struct_type_name;
                         }
                         const store_line = try std.fmt.allocPrint(
                             self.allocator,
@@ -1442,6 +1498,9 @@ pub fn Methods(comptime Ctx: type) type {
                             info_ptr.?.stack_type = value.ty;
                             info_ptr.?.array_type = value.array_type;
                             info_ptr.?.enum_type_name = value.enum_type_name;
+                            info_ptr.?.struct_field_types = value.struct_field_types;
+                            info_ptr.?.struct_field_names = value.struct_field_names;
+                            info_ptr.?.struct_type_name = value.struct_type_name;
                         }
                         const store_line = try std.fmt.allocPrint(
                             self.allocator,
