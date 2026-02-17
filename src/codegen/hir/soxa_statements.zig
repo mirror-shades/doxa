@@ -168,7 +168,9 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
                             } });
                             try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
-                            var_type = HIRType.Nothing;
+                            // Preserve the declared array type for typed empty literals (e.g. int[] is []).
+                            // Resetting to Nothing causes a later fallback inference from [] to degrade to nothing[].
+                            var_type = self.convertTypeInfo(decl.type_info);
                         }
                     } else {
                         // Non-empty array - use the inferred type from the init expression
