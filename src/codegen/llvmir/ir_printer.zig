@@ -76,6 +76,9 @@ pub const IRPrinter = struct {
     pub const emitArrayGetAndArith = CollectionsEmitMethods.emitArrayGetAndArith;
     pub const emitArrayPush = CollectionsEmitMethods.emitArrayPush;
     pub const emitArrayPop = CollectionsEmitMethods.emitArrayPop;
+    pub const emitArrayInsert = CollectionsEmitMethods.emitArrayInsert;
+    pub const emitArrayRemove = CollectionsEmitMethods.emitArrayRemove;
+    pub const emitArraySlice = CollectionsEmitMethods.emitArraySlice;
     pub const emitArrayLen = CollectionsEmitMethods.emitArrayLen;
     pub const emitArrayConcat = CollectionsEmitMethods.emitArrayConcat;
     pub const emitMap = CollectionsEmitMethods.emitMap;
@@ -128,6 +131,11 @@ pub const IRPrinter = struct {
         index: u32,
         name: []const u8,
     };
+
+    /// Maximum plausible length for an operand / variable name.  Names longer
+    /// than this are assumed to be corrupted by an upstream pipeline bug and
+    /// are handled defensively (e.g. by emitting a safe fallback).
+    pub const MAX_SANE_NAME_LEN: usize = 1000;
 
     pub const StackType = enum { I64, F64, I8, I1, I2, PTR, Value, Nothing };
 

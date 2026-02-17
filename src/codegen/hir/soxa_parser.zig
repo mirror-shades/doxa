@@ -35,6 +35,13 @@ fn parseTypeFromToken(name: []const u8) HIRType {
     return .Unknown;
 }
 
+fn inferredStructIdFromName(type_name: []const u8) u32 {
+    const raw: u64 = std.hash.Wyhash.hash(0, type_name);
+    const narrowed: u32 = @truncate(raw);
+    // Keep 0 reserved as "unknown/unset".
+    return if (narrowed == 0) 1 else narrowed;
+}
+
 pub const SoxaTextParser = struct {
     allocator: std.mem.Allocator,
     source: []const u8,
@@ -960,6 +967,15 @@ pub const SoxaTextParser = struct {
 
             const type_name = try self.parseQuotedString(type_name_quoted);
             const field_count = std.fmt.parseInt(u32, field_count_str, 10) catch return;
+            var struct_id = inferredStructIdFromName(type_name);
+
+            // Optional explicit id token, e.g. `id=123`.
+            if (tokens.next()) |maybe_id_tok| {
+                if (std.mem.startsWith(u8, maybe_id_tok, "id=")) {
+                    const parsed = std.fmt.parseInt(u32, maybe_id_tok[3..], 10) catch struct_id;
+                    struct_id = if (parsed == 0) struct_id else parsed;
+                }
+            }
 
             const field_names = try self.allocator.alloc([]const u8, field_count);
             const field_types = try self.allocator.alloc(HIRType, field_count);
@@ -971,7 +987,7 @@ pub const SoxaTextParser = struct {
             try self.instructions.append(HIRInstruction{
                 .StructNew = .{
                     .type_name = type_name,
-                    .struct_id = 0,
+                    .struct_id = struct_id,
                     .field_count = field_count,
                     .field_names = field_names,
                     .field_types = field_types,

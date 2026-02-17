@@ -424,7 +424,7 @@ pub const ControlFlowHandler = struct {
         try self.generator.symbol_table.pushScope();
 
         // Enter loop iteration scope
-        const loop_scope_id = self.generator.label_generator.label_count + 2000; // Use offset to avoid conflicts
+        const loop_scope_id = self.generator.nextScopeId();
         try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = loop_scope_id, .var_count = 0 } });
 
         try self.generator.generateExpression(loop.body, false, false);

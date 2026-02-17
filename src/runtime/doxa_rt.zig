@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const MapRuntime = @import("map_runtime.zig");
+const MAX_STDIN_READ_BYTES: usize = 1024 * 1024;
 
 //------------------------------------------------------------------------------
 // DOXA Runtime Support
@@ -158,6 +159,10 @@ pub export fn doxa_tetra_to_string(value: i64) callconv(.c) ?[*:0]u8 {
     return allocSentinelString(name);
 }
 
+pub export fn doxa_nothing_to_string() callconv(.c) ?[*:0]u8 {
+    return allocSentinelString("nothing");
+}
+
 pub export fn doxa_enum_to_string(type_name_ptr: ?[*:0]const u8, bits: i64) callconv(.c) ?[*:0]u8 {
     var list = std.array_list.Managed(u8).init(std.heap.page_allocator);
     defer list.deinit();
@@ -312,7 +317,7 @@ pub export fn doxa_input() callconv(.c) ?[*:0]u8 {
             bytes.append(ch) catch return null;
         }
         if (std.mem.indexOfScalar(u8, tmp[0..n], '\n') != null) break;
-        if (bytes.items.len >= 1024 * 1024) break;
+        if (bytes.items.len >= MAX_STDIN_READ_BYTES) break;
     }
 
     const out = std.heap.page_allocator.allocSentinel(u8, bytes.items.len, 0) catch return null;
@@ -542,6 +547,51 @@ pub export fn doxa_substring(s: ?[*:0]const u8, start: i64, length: i64) callcon
     return allocSentinelString(src[start_u..end_u]);
 }
 
+pub export fn doxa_str_insert(s: ?[*:0]const u8, idx: i64, ins: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
+    const src = if (s) |p| std.mem.span(p) else "";
+    const add = if (ins) |p| std.mem.span(p) else "";
+    const idx_clamped: usize = blk: {
+        if (idx <= 0) break :blk 0;
+        const iu: usize = @intCast(@as(u64, @intCast(idx)));
+        break :blk if (iu > src.len) src.len else iu;
+    };
+    const out_len = src.len + add.len;
+    const out = std.heap.page_allocator.allocSentinel(u8, out_len, 0) catch return null;
+    @memcpy(out[0..idx_clamped], src[0..idx_clamped]);
+    @memcpy(out[idx_clamped .. idx_clamped + add.len], add);
+    @memcpy(out[idx_clamped + add.len .. out_len], src[idx_clamped..]);
+    return out.ptr;
+}
+
+pub export fn doxa_str_remove(
+    s: ?[*:0]const u8,
+    idx: i64,
+    out_remaining: *?[*:0]u8,
+    out_removed: *?[*:0]u8,
+) callconv(.c) u8 {
+    const src = if (s) |p| std.mem.span(p) else "";
+    if (src.len == 0 or idx < 0) {
+        out_remaining.* = doxa_str_clone(s);
+        out_removed.* = doxa_str_clone(null);
+        return 0;
+    }
+    const iu: usize = @intCast(@as(u64, @intCast(idx)));
+    if (iu >= src.len) {
+        out_remaining.* = doxa_str_clone(s);
+        out_removed.* = doxa_str_clone(null);
+        return 0;
+    }
+    out_removed.* = allocSentinelString(src[iu .. iu + 1]);
+    const out = std.heap.page_allocator.allocSentinel(u8, src.len - 1, 0) catch {
+        out_remaining.* = doxa_str_clone(s);
+        return 0;
+    };
+    @memcpy(out[0..iu], src[0..iu]);
+    @memcpy(out[iu .. src.len - 1], src[iu + 1 ..]);
+    out_remaining.* = out.ptr;
+    return 1;
+}
+
 pub export fn doxa_str_pop(s: ?[*:0]const u8, out_remaining: *?[*:0]u8, out_popped: *?[*:0]u8) callconv(.c) u8 {
     const src = if (s) |p| std.mem.span(p) else "";
     if (src.len == 0) {
@@ -633,6 +683,10 @@ fn lookupEnumDesc(type_name_ptr: ?[*:0]const u8) ?*const EnumDesc {
     return findEnumDescByName(std.mem.span(tn));
 }
 
+/// Minimum initial capacity for a new array allocation, chosen to amortize
+/// the cost of small repeated pushes.
+const ARRAY_MIN_CAPACITY: u64 = 8;
+
 fn clampMin(a: u64, b: u64) u64 {
     return if (a < b) b else a;
 }
@@ -642,7 +696,7 @@ fn clampMin(a: u64, b: u64) u64 {
 /// 0=int(i64), 1=byte(u8), 2=float(f64), 3=string(i8*), 4=tetra(u8 lower 2 bits),
 /// 5=nothing, 6=array(*ArrayHeader), 7=struct(ptr), 8=enum(i64 variant index).
 pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *ArrayHeader {
-    const cap = clampMin(init_len, 8);
+    const cap = clampMin(init_len, ARRAY_MIN_CAPACITY);
     const hdr_ptr = std.heap.page_allocator.create(ArrayHeader) catch @panic("oom allocating ArrayHeader");
     const data_bytes: usize = @intCast(elem_size * cap);
     var data_ptr: ?*anyopaque = null;
@@ -669,6 +723,17 @@ pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callc
         .elem_tag = elem_tag,
     };
     return hdr_ptr;
+}
+
+pub export fn doxa_array_clone(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
+    const src = hdr orelse return doxa_array_new(8, 0, 0);
+    const result = doxa_array_new(src.elem_size, src.elem_tag, src.len);
+    var idx: u64 = 0;
+    while (idx < src.len) : (idx += 1) {
+        const val = doxa_array_get_i64(src, idx);
+        doxa_array_set_i64(result, idx, val);
+    }
+    return result;
 }
 
 pub export fn doxa_array_len(hdr: *ArrayHeader) callconv(.c) u64 {
@@ -805,6 +870,58 @@ pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u
     }
 
     return result;
+}
+
+pub export fn doxa_array_insert(hdr: ?*ArrayHeader, idx: i64, value: i64) callconv(.c) *ArrayHeader {
+    const h = hdr orelse return doxa_array_new(8, 0, 0);
+    if (idx < 0) return h;
+    const pos: u64 = @intCast(@as(u64, @intCast(idx)));
+    if (pos > h.len) return h;
+    if (h.len >= h.cap) return h; // minimal runtime: no growth
+
+    const old_len = h.len;
+    h.len = old_len + 1;
+    var i: u64 = old_len;
+    while (i > pos) : (i -= 1) {
+        const prev = doxa_array_get_i64(h, i - 1);
+        doxa_array_set_i64(h, i, prev);
+    }
+    doxa_array_set_i64(h, pos, value);
+    return h;
+}
+
+pub export fn doxa_array_remove(hdr: ?*ArrayHeader, idx: i64, out_removed: *i64) callconv(.c) *ArrayHeader {
+    const h = hdr orelse return doxa_array_new(8, 0, 0);
+    out_removed.* = 0;
+    if (idx < 0) return h;
+    const pos: u64 = @intCast(@as(u64, @intCast(idx)));
+    if (pos >= h.len) return h;
+
+    out_removed.* = doxa_array_get_i64(h, pos);
+    var i: u64 = pos;
+    while (i + 1 < h.len) : (i += 1) {
+        const next = doxa_array_get_i64(h, i + 1);
+        doxa_array_set_i64(h, i, next);
+    }
+    if (h.len > 0) h.len -= 1;
+    return h;
+}
+
+pub export fn doxa_array_slice(hdr: ?*ArrayHeader, start: i64, length: i64) callconv(.c) *ArrayHeader {
+    const h = hdr orelse return doxa_array_new(8, 0, 0);
+    if (start < 0 or length < 0) return doxa_array_new(h.elem_size, h.elem_tag, 0);
+    const s: u64 = @intCast(@as(u64, @intCast(start)));
+    const n: u64 = @intCast(@as(u64, @intCast(length)));
+    if (s >= h.len or n == 0) return doxa_array_new(h.elem_size, h.elem_tag, 0);
+    const max_len = h.len - s;
+    const out_len: u64 = if (n > max_len) max_len else n;
+    const out = doxa_array_new(h.elem_size, h.elem_tag, out_len);
+    var i: u64 = 0;
+    while (i < out_len) : (i += 1) {
+        const v = doxa_array_get_i64(h, s + i);
+        doxa_array_set_i64(out, i, v);
+    }
+    return out;
 }
 
 /// Clear an array by setting its length to 0

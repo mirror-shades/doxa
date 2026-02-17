@@ -1,4 +1,5 @@
 const std = @import("std");
+const DoxaUnionMeta = @import("../../../runtime/doxa_rt.zig").DoxaUnionMeta;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -306,8 +307,8 @@ pub fn Methods(comptime Ctx: type) type {
                 const member_bits = try self.nextTemp(id);
                 const member_line = try std.fmt.allocPrint(
                     self.allocator,
-                    "  {s} = and i32 {s}, 65535\n",
-                    .{ member_bits, reserved },
+                    "  {s} = and i32 {s}, {d}\n",
+                    .{ member_bits, reserved, DoxaUnionMeta.member_index_mask },
                 );
                 defer self.allocator.free(member_line);
                 try w.writeAll(member_line);
@@ -854,7 +855,7 @@ pub fn Methods(comptime Ctx: type) type {
         id.* += 1;
         defer self.allocator.free(size_temp);
 
-        const struct_size: u64 = @intCast(fcount * 8);
+        const struct_size: u64 = @intCast(fcount * @sizeOf(i64));
         const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_temp, struct_size });
         defer self.allocator.free(size_line);
         try w.writeAll(size_line);

@@ -1,8 +1,9 @@
 const std = @import("std");
 const builtin = @import("builtin");
-
 const Errors = @import("errors.zig");
 const ErrorList = Errors.ErrorList;
+
+pub const MAX_DIAGNOSTIC_LOG_BYTES: usize = 2 * (1024 * 1024);
 
 pub const Severity = enum {
     Error,
@@ -19,6 +20,8 @@ pub const DiagnosticPhase = enum {
     Debug,
 };
 
+pub const DEFAULT_LOG_FILE_PATH = "last_diagnostics.log";
+
 pub const ReporterOptions = struct {
     max_diagnostics: i32 = 1000,
     warn_as_error: bool = false,
@@ -32,8 +35,8 @@ pub const ReporterOptions = struct {
     debug_memory: bool = false,
     log_to_stderr: bool = true,
     log_to_file: bool = true,
-    log_file_path: []const u8 = "last_diagnostics.log",
-    max_log_bytes: usize = 2 * 1024 * 1024,
+    log_file_path: []const u8 = DEFAULT_LOG_FILE_PATH,
+    max_log_bytes: usize = MAX_DIAGNOSTIC_LOG_BYTES,
     publish_debounce_ns: u64 = 30 * std.time.ns_per_ms,
 };
 

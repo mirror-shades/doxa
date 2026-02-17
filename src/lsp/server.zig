@@ -10,6 +10,7 @@ const Parser = @import("../parser/parser_types.zig").Parser;
 const SemanticAnalyzer = @import("../analysis/semantic/semantic.zig").SemanticAnalyzer;
 const Errors = @import("../utils/errors.zig");
 const InternalMethods = @import("internal_methods.zig");
+const HARNESS_MAX_FILE_BYTES: usize = @import("../common/constants.zig").MAX_LSP_FILE_BYTES;
 
 const JsonValue = std.json.Value;
 
@@ -22,8 +23,6 @@ pub const DebugHarnessOptions = struct {
     reporter_options: ReporterOptions,
     script_path: []const u8,
 };
-
-const HARNESS_MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
 
 const ResponseSink = struct {
     context: *anyopaque,

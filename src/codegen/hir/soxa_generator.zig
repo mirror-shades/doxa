@@ -87,6 +87,9 @@ pub const HIRGenerator = struct {
 
     is_generating_nested_array: bool = false,
 
+    /// Monotonically increasing counter for scope IDs, independent of labels.
+    next_scope_id: u32 = 0,
+
     pub const FunctionInfo = SoxaTypes.FunctionInfo;
 
     pub const FunctionBody = struct {
@@ -522,7 +525,7 @@ pub const HIRGenerator = struct {
             function_body.start_instruction_index = @intCast(self.instructions.items.len);
             try self.instructions.append(.{ .Label = .{ .name = function_body.function_info.start_label, .vm_address = 0 } });
 
-            const function_scope_id = self.label_generator.label_count + 1000;
+            const function_scope_id = self.nextScopeId();
             self.current_function_scope_id = function_scope_id;
             try self.instructions.append(.{ .EnterScope = .{ .scope_id = function_scope_id, .var_count = 0 } });
 
@@ -1078,6 +1081,14 @@ pub const HIRGenerator = struct {
         return self.label_generator.generateLabel(prefix);
     }
 
+    /// Return a unique scope ID. Each call increments the counter so IDs
+    /// are guaranteed not to collide with labels or with each other.
+    pub fn nextScopeId(self: *HIRGenerator) u32 {
+        const id = self.next_scope_id;
+        self.next_scope_id += 1;
+        return id;
+    }
+
     fn extractSimpleComparison(self: *HIRGenerator, condition: *ast.Expr) !HIRValue {
         _ = self;
         switch (condition.data) {
@@ -1225,7 +1236,17 @@ pub const HIRGenerator = struct {
             return;
         } else if (std.mem.eql(u8, name, "length")) {
             try self.generateExpression(receiver, true, false);
-            try self.instructions.append(.{ .StringOp = .{ .op = .Length } });
+            var t = self.inferTypeFromExpression(receiver);
+            if (t == .Unknown and receiver.data == .Variable) {
+                const var_name = receiver.data.Variable.lexeme;
+                if (self.getTrackedVariableType(var_name)) |tracked| {
+                    t = tracked;
+                }
+            }
+            switch (t) {
+                .Array => try self.instructions.append(.ArrayLen),
+                else => try self.instructions.append(.{ .StringOp = .{ .op = .Length } }),
+            }
             return;
         } else if (std.mem.eql(u8, name, "int")) {
             try self.generateExpression(receiver, true, false);

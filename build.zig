@@ -57,7 +57,6 @@ pub fn build(b: *std.Build) void {
                 .strip = true,
             }),
         });
-
         const target_output = b.addInstallArtifact(release_exe, .{
             .dest_dir = .{
                 .override = .{
