@@ -41,7 +41,10 @@ pub fn build(b: *std.Build) void {
     });
     b.getInstallStep().dependOn(&install_std.step);
 
-    const run_exe = b.addRunArtifact(exe);
+    const run_exe_name = if (target.result.os.tag == .windows) "doxa.exe" else "doxa";
+    const run_doxa_path = b.pathJoin(&.{ "zig-out", "bin", run_exe_name });
+    const run_exe = b.addSystemCommand(&[_][]const u8{run_doxa_path});
+    run_exe.step.dependOn(b.getInstallStep());
 
     if (b.args) |args| {
         run_exe.addArgs(args);
