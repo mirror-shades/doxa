@@ -4,6 +4,7 @@ const ast = @import("../ast/ast.zig");
 const ModuleInfo = ast.ModuleInfo;
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const import_parser = @import("import_parser.zig");
+const inline_zig = @import("inline_zig.zig");
 
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -335,6 +336,24 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                         try imports.append(import);
                     }
                 },
+                .ZigDecl => |zig_decl| {
+                    const sigs = try inline_zig.sanitizeAndExtract(self.allocator, zig_decl.source);
+                    defer inline_zig.deinitSigsShallow(self.allocator, sigs);
+
+                    for (sigs) |sig| {
+                        const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ zig_decl.name.lexeme, sig.name });
+                        if (!self.imported_symbols.?.contains(full_name)) {
+                            try self.imported_symbols.?.put(full_name, .{
+                                .kind = .Function,
+                                .name = sig.name,
+                                .original_module = module_path,
+                                .param_count = @intCast(sig.param_types.len),
+                                .param_types = sig.param_types,
+                                .return_type_info = sig.return_type,
+                            });
+                        }
+                    }
+                },
                 .Import => |import_info| {
                     try imports.append(import_info);
                 },
@@ -548,6 +567,24 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                     name = module.name.lexeme;
                     for (module.imports) |import| {
                         try imports.append(import);
+                    }
+                },
+                .ZigDecl => |zig_decl| {
+                    const sigs = try inline_zig.sanitizeAndExtract(self.allocator, zig_decl.source);
+                    defer inline_zig.deinitSigsShallow(self.allocator, sigs);
+
+                    for (sigs) |sig| {
+                        const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ zig_decl.name.lexeme, sig.name });
+                        if (!self.imported_symbols.?.contains(full_name)) {
+                            try self.imported_symbols.?.put(full_name, .{
+                                .kind = .Function,
+                                .name = sig.name,
+                                .original_module = module_path,
+                                .param_count = @intCast(sig.param_types.len),
+                                .param_types = sig.param_types,
+                                .return_type_info = sig.return_type,
+                            });
+                        }
                     }
                 },
                 .Import => |import_info| {

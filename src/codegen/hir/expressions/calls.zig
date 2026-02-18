@@ -58,7 +58,7 @@ pub const CallsHandler = struct {
 
                 if (handled_module_call) {
                     // handled below by common call emission path
-                } else if (field_access.object.data == .Variable and self.generator.isModuleNamespace(field_access.object.data.Variable.lexeme)) {
+                } else if (field_access.object.data == .Variable and (self.generator.isModuleNamespace(field_access.object.data.Variable.lexeme) or self.isImportedModuleFunction(field_access.object.data.Variable.lexeme, field_access.field.lexeme))) {
                     const object_name = field_access.object.data.Variable.lexeme;
 
                     function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
@@ -295,6 +295,17 @@ pub const CallsHandler = struct {
             },
             else => null,
         };
+    }
+
+    fn isImportedModuleFunction(self: *CallsHandler, module_name: []const u8, fn_name: []const u8) bool {
+        if (self.generator.imported_symbols) |symbols| {
+            const full_name = std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ module_name, fn_name }) catch return false;
+            defer self.generator.allocator.free(full_name);
+            if (symbols.get(full_name)) |sym| {
+                return sym.kind == .Function;
+            }
+        }
+        return false;
     }
 
     /// Helper function to convert AST type to HIR type

@@ -2213,6 +2213,20 @@ pub const VM = struct {
             if (arg_count == 0) {
                 // No-arg function
                 switch (fn_entry.return_type) {
+                    .Nothing => {
+                        const Fn = *const fn () callconv(.c) void;
+                        const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                            self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                            return ErrorList.RuntimeError;
+                        };
+                        defer self.allocator.free(sym_z);
+                        const f = lib.lookup(Fn, sym_z) orelse {
+                            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                            return ErrorList.RuntimeError;
+                        };
+                        f();
+                        return;
+                    },
                     .Float => {
                         const Fn = *const fn () callconv(.c) f64;
                         const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
@@ -2282,6 +2296,19 @@ pub const VM = struct {
                         },
                     };
                     switch (fn_entry.return_type) {
+                        .Nothing => {
+                            const Fn = *const fn (f64) callconv(.c) void;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            f(x);
+                        },
                         .Float => {
                             const Fn = *const fn (f64) callconv(.c) f64;
                             const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
@@ -2330,6 +2357,19 @@ pub const VM = struct {
                         },
                     };
                     switch (fn_entry.return_type) {
+                        .Nothing => {
+                            const Fn = *const fn (i64) callconv(.c) void;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            f(x);
+                        },
                         .Int => {
                             const Fn = *const fn (i64) callconv(.c) i64;
                             const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
@@ -2383,6 +2423,20 @@ pub const VM = struct {
                     const cptr: ?[*:0]const u8 = tmp.ptr;
 
                     switch (fn_entry.return_type) {
+                        .Nothing => {
+                            const Fn = *const fn (?[*:0]const u8) callconv(.c) void;
+                            const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {
+                                self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Out of memory building symbol name", .{});
+                                return ErrorList.RuntimeError;
+                            };
+                            defer self.allocator.free(sym_z);
+                            const f = lib.lookup(Fn, sym_z) orelse {
+                                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Missing symbol '{s}' in zig module '{s}'", .{ fn_entry.symbol, module_name });
+                                return ErrorList.RuntimeError;
+                            };
+                            f(cptr);
+                            return;
+                        },
                         .String => {
                             const Fn = *const fn (?[*:0]const u8) callconv(.c) ?[*:0]u8;
                             const sym_z = self.allocator.dupeZ(u8, fn_entry.symbol) catch {

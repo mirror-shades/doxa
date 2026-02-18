@@ -268,9 +268,25 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                 if (field_access.object.data == .Variable) {
                     const object_name = field_access.object.data.Variable.lexeme;
-                    if (helpers.isModuleNamespace(self, object_name)) {
-                        // Use proper module field access instead of hardcoded Int
-                        return helpers.handleModuleFieldAccess(self, object_name, method_name, .{ .location = getLocationFromBase(expr.base) });
+                    const imported_module_fn = blk: {
+                        if (self.parser) |p| {
+                            if (p.imported_symbols) |symbols| {
+                                const full_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, method_name }) catch break :blk false;
+                                defer self.allocator.free(full_name);
+                                if (symbols.get(full_name)) |sym| {
+                                    break :blk sym.kind == .Function;
+                                }
+                            }
+                        }
+                        break :blk false;
+                    };
+                    if (helpers.isModuleNamespace(self, object_name) or imported_module_fn) {
+                        const module_field_type = try helpers.handleModuleFieldAccess(self, object_name, method_name, .{ .location = getLocationFromBase(expr.base) });
+                        if (module_field_type.base == .Function and module_field_type.function_type != null) {
+                            type_info.* = module_field_type.function_type.?.return_type.*;
+                            return type_info;
+                        }
+                        return module_field_type;
                     }
 
                     if (self.custom_types.get(object_name)) |custom_type| {
@@ -289,8 +305,12 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     if (object_type.base == .Custom) {
                         if (object_type.custom_type) |ct_name| {
                             if (helpers.isModuleNamespace(self, ct_name)) {
-                                // Use the full namespace for chained module forwarding (e.g. std.io.println).
-                                return helpers.handleModuleFieldAccess(self, ct_name, method_name, .{ .location = getLocationFromBase(expr.base) });
+                                const module_field_type = try helpers.handleModuleFieldAccess(self, ct_name, method_name, .{ .location = getLocationFromBase(expr.base) });
+                                if (module_field_type.base == .Function and module_field_type.function_type != null) {
+                                    type_info.* = module_field_type.function_type.?.return_type.*;
+                                    return type_info;
+                                }
+                                return module_field_type;
                             }
                         }
                     }
