@@ -1174,10 +1174,63 @@ pub const Parser = struct {
         resolved_path: []const u8,
     };
 
+    fn isReservedStdModule(module_name: []const u8) bool {
+        return std.mem.eql(u8, module_name, "std");
+    }
+
+    fn readModuleDataFromFile(alloc: std.mem.Allocator, file_path: []const u8) !ModuleData {
+        var file = if (std.fs.path.isAbsolute(file_path))
+            try std.fs.openFileAbsolute(file_path, .{})
+        else
+            try std.fs.cwd().openFile(file_path, .{});
+        defer file.close();
+
+        const file_size = try file.getEndPos();
+        if (file_size > std.math.maxInt(usize)) {
+            return error.FileTooLarge;
+        }
+        const size: usize = @intCast(file_size);
+        const buffer = try alloc.alloc(u8, size);
+        errdefer alloc.free(buffer);
+
+        const bytes_read = try file.readAll(buffer);
+        if (bytes_read != size) {
+            alloc.free(buffer);
+            return error.IncompleteRead;
+        }
+
+        const path_copy = try alloc.dupe(u8, file_path);
+
+        return ModuleData{
+            .source = buffer,
+            .resolved_path = path_copy,
+        };
+    }
+
+    fn tryLoadBundledStdModule(alloc: std.mem.Allocator) !?ModuleData {
+        const exe_dir = std.fs.selfExeDirPathAlloc(alloc) catch return null;
+        defer alloc.free(exe_dir);
+
+        const bundled_path = try std.fs.path.join(alloc, &.{ exe_dir, "..", "lib", "std", "std.doxa" });
+        defer alloc.free(bundled_path);
+        if (readModuleDataFromFile(alloc, bundled_path)) |data| {
+            return data;
+        } else |_| {}
+
+        return null;
+    }
+
     pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorList!ModuleData {
         var clean_name = module_name;
         if (std.mem.startsWith(u8, clean_name, "./")) {
             clean_name = clean_name[2..];
+        }
+
+        if (isReservedStdModule(clean_name)) {
+            if (try tryLoadBundledStdModule(self.allocator)) |data| {
+                return data;
+            }
+            return error.ModuleNotFound;
         }
 
         const has_doxa_ext = std.mem.endsWith(u8, clean_name, ".doxa");
@@ -1185,29 +1238,7 @@ pub const Parser = struct {
 
         const current_dir = std.fs.path.dirname(self.current_file) orelse ".";
 
-        const readFileContentsWithPath = struct {
-            fn read(alloc: std.mem.Allocator, file_path: []const u8) !ModuleData {
-                var file = try std.fs.cwd().openFile(file_path, .{});
-                defer file.close();
-
-                const size = try file.getEndPos();
-                const buffer = try alloc.alloc(u8, size);
-                errdefer alloc.free(buffer);
-
-                const bytes_read = try file.readAll(buffer);
-                if (bytes_read != size) {
-                    alloc.free(buffer);
-                    return error.IncompleteRead;
-                }
-
-                const path_copy = try alloc.dupe(u8, file_path);
-
-                return ModuleData{
-                    .source = buffer,
-                    .resolved_path = path_copy,
-                };
-            }
-        }.read;
+        const readFileContentsWithPath = readModuleDataFromFile;
 
         var err: anyerror = error.FileNotFound;
 
