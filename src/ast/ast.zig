@@ -298,7 +298,9 @@ pub const Stmt = struct {
                     allocator.destroy(expr);
                 }
             },
-            .ZigDecl => {},
+            .ZigDecl => |z| {
+                allocator.free(z.source);
+            },
             .VarDecl => |*v| {
                 if (v.initializer) |init| {
                     init.deinit(allocator);

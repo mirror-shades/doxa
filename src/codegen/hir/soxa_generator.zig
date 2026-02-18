@@ -1417,7 +1417,17 @@ pub const HIRGenerator = struct {
                     .FieldAccess => |field_access| {
                         if (field_access.object.data == .Variable) {
                             const object_name = field_access.object.data.Variable.lexeme;
-                            if (self.isModuleNamespace(object_name)) {
+                            const imported_module_fn = blk: {
+                                if (self.imported_symbols) |symbols| {
+                                    const full_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme }) catch break :blk false;
+                                    defer self.allocator.free(full_name);
+                                    if (symbols.get(full_name)) |sym| {
+                                        break :blk sym.kind == .Function;
+                                    }
+                                }
+                                break :blk false;
+                            };
+                            if (self.isModuleNamespace(object_name) or imported_module_fn) {
                                 const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme }) catch return .Unknown;
                                 allocated_name = qualified;
                                 function_name = qualified;

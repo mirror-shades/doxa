@@ -37,6 +37,7 @@ pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
         .string => |s| s,
         else => return error.InvalidExpression,
     };
+    const source_owned = try self.allocator.dupe(u8, source);
     self.advance();
 
     // Allow an optional newline after the block (recommended style).
@@ -57,7 +58,7 @@ pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
         .data = .{
             .ZigDecl = .{
                 .name = module_name,
-                .source = source,
+                .source = source_owned,
             },
         },
     };
