@@ -1425,6 +1425,19 @@ pub const HIRGenerator = struct {
                             } else {
                                 return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
                             }
+                        } else if (field_access.object.data == .FieldAccess) {
+                            if (self.resolveFieldAccessType(field_access.object)) |resolved| {
+                                if (resolved.custom_type_name != null and self.isModuleNamespace(resolved.custom_type_name.?)) {
+                                    const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ resolved.custom_type_name.?, field_access.field.lexeme }) catch return .Unknown;
+                                    allocated_name = qualified;
+                                    function_name = qualified;
+                                    call_kind = .ModuleFunction;
+                                } else {
+                                    return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
+                                }
+                            } else {
+                                return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
+                            }
                         } else {
                             return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
                         }

@@ -48,6 +48,11 @@ pub const ImportStackEntry = struct {
     }
 };
 
+pub const ModuleImportEntry = struct {
+    imported_path: []const u8,
+    is_public: bool,
+};
+
 pub const Parser = struct {
     tokens: []const token.Token,
     current: usize,
@@ -64,7 +69,7 @@ pub const Parser = struct {
     module_cache: std.StringHashMap(ModuleInfo),
     module_namespaces: std.StringHashMap(ModuleInfo),
 
-    module_imports: std.StringHashMap(std.StringHashMap([]const u8)),
+    module_imports: std.StringHashMap(std.StringHashMap(ModuleImportEntry)),
 
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
@@ -83,7 +88,7 @@ pub const Parser = struct {
             .current_file_uri = current_file_uri,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
-            .module_imports = std.StringHashMap(std.StringHashMap([]const u8)).init(allocator),
+            .module_imports = std.StringHashMap(std.StringHashMap(ModuleImportEntry)).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
             .declared_types = std.StringHashMap(void).init(allocator),
             .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
@@ -223,14 +228,30 @@ pub const Parser = struct {
 
         // first pass: imports and modules
         var start_index_after_imports = self.current;
-        while (self.tokens[start_index_after_imports].type == .IMPORT or self.tokens[start_index_after_imports].type == .MODULE) {
+        while (start_index_after_imports < self.tokens.len) {
+            var pass_is_public = false;
+            var token_type = self.tokens[start_index_after_imports].type;
+            if (token_type == .PUBLIC and start_index_after_imports + 1 < self.tokens.len) {
+                const next_type = self.tokens[start_index_after_imports + 1].type;
+                if (next_type == .IMPORT or next_type == .MODULE) {
+                    pass_is_public = true;
+                    token_type = next_type;
+                } else {
+                    break;
+                }
+            }
+            if (token_type != .IMPORT and token_type != .MODULE) break;
+
             const temp_current = self.current;
             self.current = start_index_after_imports;
+            if (pass_is_public) {
+                self.advance();
+            }
 
-            if (self.tokens[start_index_after_imports].type == .MODULE) {
-                _ = try import_parser.parseModuleStmt(self);
+            if (token_type == .MODULE) {
+                _ = try import_parser.parseModuleStmt(self, pass_is_public);
             } else {
-                _ = try import_parser.parseImportStmt(self);
+                _ = try import_parser.parseImportStmt(self, pass_is_public);
             }
 
             start_index_after_imports = self.current;
@@ -342,19 +363,13 @@ pub const Parser = struct {
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
-                    if (is_public) {
-                        return error.MisplacedPublicModifier;
-                    }
-                    _ = try import_parser.parseImportStmt(self);
+                    _ = try import_parser.parseImportStmt(self, is_public);
                 },
                 .MODULE => {
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
-                    if (is_public) {
-                        return error.MisplacedPublicModifier;
-                    }
-                    _ = try import_parser.parseModuleStmt(self);
+                    _ = try import_parser.parseModuleStmt(self, is_public);
                 },
                 .STRUCT_TYPE => {
                     const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
@@ -1486,9 +1501,7 @@ pub const Parser = struct {
                 if (import.namespace_alias) |alias| {
                     if (std.mem.eql(u8, import.module_path, self.current_file)) continue;
 
-                    const qualified_alias = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, alias });
-                    defer self.allocator.free(qualified_alias);
-
+                    // Ensure local alias exists for module-internal references (e.g. math.add inside safeMath).
                     if (!self.module_namespaces.contains(alias)) {
                         if (self.module_cache.contains(import.module_path)) {
                             const cached_module = self.module_cache.get(import.module_path).?;
@@ -1506,7 +1519,28 @@ pub const Parser = struct {
                         }
                     }
 
-                    try module_resolver.recordModuleImport(self, module_path, alias, import.module_path);
+                    // Public imports are additionally exposed as nested namespaces (e.g. std.io).
+                    if (import.is_public) {
+                        const qualified_alias = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, alias });
+                        if (!self.module_namespaces.contains(qualified_alias)) {
+                            if (self.module_cache.contains(import.module_path)) {
+                                const cached_module = self.module_cache.get(import.module_path).?;
+                                try self.module_namespaces.put(qualified_alias, cached_module);
+                            } else {
+                                const previous_current_file = self.current_file;
+                                const previous_current_file_uri = self.current_file_uri;
+                                self.current_file = module_info.file_path;
+                                self.current_file_uri = try self.reporter.ensureFileUri(module_info.file_path);
+                                defer {
+                                    self.current_file = previous_current_file;
+                                    self.current_file_uri = previous_current_file_uri;
+                                }
+                                try self.loadAndRegisterModule(import.module_path, qualified_alias, import.specific_symbol);
+                            }
+                        }
+                    }
+
+                    try module_resolver.recordModuleImport(self, module_path, alias, import.module_path, import.is_public);
                 }
             }
         }

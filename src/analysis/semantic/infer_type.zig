@@ -288,12 +288,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 } else if (field_access.object.data == .FieldAccess) {
                     if (object_type.base == .Custom) {
                         if (object_type.custom_type) |ct_name| {
-                            if (std.mem.indexOfScalar(u8, ct_name, '.')) |dot_idx| {
-                                const root = ct_name[0..dot_idx];
-                                if (helpers.isModuleNamespace(self, root)) {
-                                    // Use proper module field access instead of hardcoded Int
-                                    return helpers.handleModuleFieldAccess(self, root, method_name, .{ .location = getLocationFromBase(expr.base) });
-                                }
+                            if (helpers.isModuleNamespace(self, ct_name)) {
+                                // Use the full namespace for chained module forwarding (e.g. std.io.println).
+                                return helpers.handleModuleFieldAccess(self, ct_name, method_name, .{ .location = getLocationFromBase(expr.base) });
                             }
                         }
                     }

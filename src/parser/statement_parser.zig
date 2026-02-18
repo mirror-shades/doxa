@@ -277,11 +277,11 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         .BREAK => parseBreakStmt(self),
         .EACH => parseEachStmt(self),
         .IMPORT => blk: {
-            _ = try import_parser.parseImportStmt(self);
+            _ = try import_parser.parseImportStmt(self, false);
             break :blk ast.Stmt{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(self.peek()) }, .data = .{ .Expression = null } };
         },
         .MODULE => blk: {
-            _ = try import_parser.parseModuleStmt(self);
+            _ = try import_parser.parseModuleStmt(self, false);
             break :blk ast.Stmt{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(self.peek()) }, .data = .{ .Expression = null } };
         },
         .LEFT_BRACE => blk: {

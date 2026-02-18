@@ -39,7 +39,8 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
         return info;
     }
 
-    try self.module_resolution_status.put(normalized_path, .IN_PROGRESS);
+    const status_key = try self.allocator.dupe(u8, normalized_path);
+    try self.module_resolution_status.put(status_key, .IN_PROGRESS);
 
     const current_file_copy = try self.allocator.dupe(u8, self.current_file);
     try self.import_stack.append(.{
@@ -98,8 +99,15 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
 
     const info = try extractModuleInfoWithParser(self, module_block, module_data.resolved_path, null, &new_parser);
 
-    self.module_resolution_status.putAssumeCapacity(normalized_path, .COMPLETED);
-    try self.module_cache.put(normalized_path, info);
+    if (self.module_resolution_status.getPtr(normalized_path)) |status_ptr| {
+        status_ptr.* = .COMPLETED;
+    } else {
+        const completed_key = try self.allocator.dupe(u8, normalized_path);
+        try self.module_resolution_status.put(completed_key, .COMPLETED);
+    }
+
+    const cache_key = try self.allocator.dupe(u8, normalized_path);
+    try self.module_cache.put(cache_key, info);
 
     return info;
 }
@@ -491,14 +499,15 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
         var import_it = module_import_map.iterator();
         while (import_it.next()) |entry| {
             const alias = entry.key_ptr.*;
-            const imported_module_path = entry.value_ptr.*;
+            const import_entry = entry.value_ptr.*;
 
             try imports.append(ast.ImportInfo{
                 .import_type = .Module,
-                .module_path = imported_module_path,
+                .module_path = import_entry.imported_path,
                 .namespace_alias = alias,
                 .specific_symbols = null,
                 .specific_symbol = null,
+                .is_public = import_entry.is_public,
             });
         }
         found_imports = true;
@@ -509,14 +518,15 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
             var import_it = module_import_map.iterator();
             while (import_it.next()) |entry| {
                 const alias = entry.key_ptr.*;
-                const imported_module_path = entry.value_ptr.*;
+                const import_entry = entry.value_ptr.*;
 
                 try imports.append(ast.ImportInfo{
                     .import_type = .Module,
-                    .module_path = imported_module_path,
+                    .module_path = import_entry.imported_path,
                     .namespace_alias = alias,
                     .specific_symbols = null,
                     .specific_symbol = null,
+                    .is_public = import_entry.is_public,
                 });
             }
             found_imports = true;
@@ -665,11 +675,14 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
     };
 }
 
-pub fn recordModuleImport(self: *Parser, importer_path: []const u8, alias: []const u8, imported_path: []const u8) !void {
+pub fn recordModuleImport(self: *Parser, importer_path: []const u8, alias: []const u8, imported_path: []const u8, is_public: bool) !void {
     var module_aliases = try self.module_imports.getOrPut(importer_path);
     if (!module_aliases.found_existing) {
-        module_aliases.value_ptr.* = std.StringHashMap([]const u8).init(self.allocator);
+        module_aliases.value_ptr.* = std.StringHashMap(@import("parser_types.zig").ModuleImportEntry).init(self.allocator);
     }
 
-    try module_aliases.value_ptr.put(alias, imported_path);
+    try module_aliases.value_ptr.put(alias, .{
+        .imported_path = imported_path,
+        .is_public = is_public,
+    });
 }

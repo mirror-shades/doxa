@@ -93,6 +93,31 @@ pub fn handleModuleFieldAccess(
     errdefer allocator.destroy(type_info);
 
     if (parser) |p| {
+        if (p.module_namespaces.get(module_name)) |module_info| {
+            for (module_info.imports) |import_info| {
+                if (!import_info.is_public or import_info.import_type != .Module) continue;
+                if (import_info.namespace_alias) |alias| {
+                    if (std.mem.eql(u8, alias, field_name)) {
+                        type_info.* = ast.TypeInfo{
+                            .base = .Custom,
+                            .is_mutable = false,
+                            .custom_type = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_name, field_name }),
+                        };
+                        return type_info;
+                    }
+                }
+            }
+        }
+
+        const nested_name = std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_name, field_name }) catch null;
+        if (nested_name) |qualified| {
+            defer allocator.free(qualified);
+            if (p.module_namespaces.contains(qualified)) {
+                type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try allocator.dupe(u8, qualified) };
+                return type_info;
+            }
+        }
+
         // Look for the field in the module's imported symbols
         if (p.imported_symbols) |imported_symbols| {
             const full_name = std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_name, field_name }) catch {

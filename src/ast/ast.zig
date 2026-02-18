@@ -1177,6 +1177,7 @@ pub const ImportInfo = struct {
     namespace_alias: ?[]const u8 = null,
     specific_symbols: ?[][]const u8 = null,
     specific_symbol: ?[]const u8 = null,
+    is_public: bool = false,
 };
 
 pub const ModuleSymbol = struct {

@@ -2138,6 +2138,24 @@ pub const VM = struct {
                     return;
                 }
 
+                // Forwarded module calls may include extra namespace prefixes
+                // (e.g. "std.io.println" while bytecode contains "io.println").
+                var suffix = payload.target.qualified_name;
+                while (std.mem.indexOfScalar(u8, suffix, '.')) |dot_idx| {
+                    suffix = suffix[dot_idx + 1 ..];
+                    const fallback_index = self.resolveFunctionIndex(payload.target.function_index, suffix);
+                    if (fallback_index < self.bytecode.functions.len and std.mem.eql(u8, self.bytecode.functions[fallback_index].qualified_name, suffix)) {
+                        const func_ptr = &self.bytecode.functions[fallback_index];
+                        const return_ip = self.ip;
+                        const stack_base = self.stack.len();
+                        _ = try self.pushFrame(fallback_index, stack_base, return_ip);
+                        if (func_ptr.start_ip >= self.bytecode.instructions.len) return error.UnimplementedInstruction;
+                        self.ip = func_ptr.start_ip;
+                        self.skip_increment = true;
+                        return;
+                    }
+                }
+
                 // Otherwise, attempt inline zig dynlib call.
                 try self.execInlineZigModuleFunction(payload.target.qualified_name, payload.arg_count);
             },
