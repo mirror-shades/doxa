@@ -34,6 +34,12 @@ pub fn build(b: *std.Build) void {
     });
 
     b.installArtifact(exe);
+    const install_std = b.addInstallDirectory(.{
+        .source_dir = b.path("std"),
+        .install_dir = .prefix,
+        .install_subdir = "lib/std",
+    });
+    b.getInstallStep().dependOn(&install_std.step);
 
     const run_exe = b.addRunArtifact(exe);
 
@@ -63,8 +69,14 @@ pub fn build(b: *std.Build) void {
                 },
             },
         });
+        const target_std = b.addInstallDirectory(.{
+            .source_dir = b.path("std"),
+            .install_dir = .prefix,
+            .install_subdir = b.fmt("{s}/lib/std", .{target_names[i]}),
+        });
 
         release_step.dependOn(&target_output.step);
+        release_step.dependOn(&target_std.step);
     }
 
     const compress_step = b.step("compress", "Create zip archives of release binaries");
