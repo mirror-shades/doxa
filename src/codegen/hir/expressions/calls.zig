@@ -30,7 +30,35 @@ pub const CallsHandler = struct {
 
         switch (call_data.callee.data) {
             .FieldAccess => |field_access| {
-                if (field_access.object.data == .Variable and self.generator.isModuleNamespace(field_access.object.data.Variable.lexeme)) {
+                var handled_module_call = false;
+                if (try self.moduleNamespaceFromExpr(field_access.object)) |module_ns| {
+                    function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ module_ns, field_access.field.lexeme });
+                    call_kind = .ModuleFunction;
+                    if (self.generator.getFunctionIndex(function_name)) |idx| {
+                        function_index = idx;
+                    }
+                    handled_module_call = true;
+                }
+
+                if (field_access.object.data == .FieldAccess) {
+                    if (self.generator.resolveFieldAccessType(field_access.object)) |resolved| {
+                        if (resolved.custom_type_name != null) {
+                            const module_ns = resolved.custom_type_name.?;
+                            if (self.generator.isModuleNamespace(module_ns)) {
+                                function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ module_ns, field_access.field.lexeme });
+                                call_kind = .ModuleFunction;
+                                if (self.generator.getFunctionIndex(function_name)) |idx| {
+                                    function_index = idx;
+                                }
+                                handled_module_call = true;
+                            }
+                        }
+                    }
+                }
+
+                if (handled_module_call) {
+                    // handled below by common call emission path
+                } else if (field_access.object.data == .Variable and self.generator.isModuleNamespace(field_access.object.data.Variable.lexeme)) {
                     const object_name = field_access.object.data.Variable.lexeme;
 
                     function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
@@ -248,6 +276,25 @@ pub const CallsHandler = struct {
                 .return_type = return_type,
             },
         });
+    }
+
+    fn moduleNamespaceFromExpr(self: *CallsHandler, expr: *ast.Expr) !?[]const u8 {
+        return switch (expr.data) {
+            .Variable => |var_tok| blk: {
+                if (self.generator.isModuleNamespace(var_tok.lexeme)) {
+                    break :blk try self.generator.allocator.dupe(u8, var_tok.lexeme);
+                }
+                break :blk null;
+            },
+            .FieldAccess => |fa| blk: {
+                const parent = try self.moduleNamespaceFromExpr(fa.object);
+                if (parent) |p| {
+                    break :blk try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ p, fa.field.lexeme });
+                }
+                break :blk null;
+            },
+            else => null,
+        };
     }
 
     /// Helper function to convert AST type to HIR type

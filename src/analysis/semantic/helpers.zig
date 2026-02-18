@@ -583,6 +583,37 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
     errdefer self.allocator.destroy(type_info);
 
     if (self.parser) |parser| {
+        if (parser.module_namespaces.get(module_name)) |module_info| {
+            for (module_info.imports) |import_info| {
+                if (!import_info.is_public or import_info.import_type != .Module) continue;
+                if (import_info.namespace_alias) |alias| {
+                    if (std.mem.eql(u8, alias, field_name)) {
+                        const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name });
+                        type_info.* = ast.TypeInfo{
+                            .base = .Custom,
+                            .is_mutable = false,
+                            .custom_type = qualified,
+                        };
+                        return type_info;
+                    }
+                }
+            }
+        }
+
+        const nested_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name }) catch null;
+        if (nested_name) |qualified| {
+            defer self.allocator.free(qualified);
+            if (parser.module_namespaces.contains(qualified)) {
+                const owned = try self.allocator.dupe(u8, qualified);
+                type_info.* = ast.TypeInfo{
+                    .base = .Custom,
+                    .is_mutable = false,
+                    .custom_type = owned,
+                };
+                return type_info;
+            }
+        }
+
         // Look for the field in the module's imported symbols
         if (parser.imported_symbols) |imported_symbols| {
             const full_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name }) catch {

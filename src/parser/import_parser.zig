@@ -20,7 +20,7 @@ pub const ImportedSymbol = struct {
     return_type_info: ?ast.TypeInfo = null,
 };
 
-pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
+pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
     self.advance();
 
     if (self.peek().type != .IDENTIFIER) {
@@ -83,15 +83,17 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
     if (self.peek().type == .SEMICOLON) {
         self.advance();
     }
-    if (self.peek().type != .NEWLINE) {
+    if (self.peek().type != .NEWLINE and self.peek().type != .EOF and self.peek().type != .RIGHT_BRACE) {
         return error.ExpectedNewline;
     }
-    self.advance();
+    if (self.peek().type == .NEWLINE) {
+        self.advance();
+    }
 
     try self.loadAndRegisterModule(module_path, namespace, null);
 
     // Safe to ignore errors here; symbol resolution will still attempt other paths.
-    _ = module_resolver.recordModuleImport(self, self.current_file, namespace, module_path) catch {};
+    _ = module_resolver.recordModuleImport(self, self.current_file, namespace, module_path, is_public) catch {};
 
     return ast.Stmt{
         .base = .{
@@ -105,12 +107,13 @@ pub fn parseModuleStmt(self: *Parser) !ast.Stmt {
                 .namespace_alias = namespace,
                 .specific_symbols = null,
                 .specific_symbol = null,
+                .is_public = is_public,
             },
         },
     };
 }
 
-pub fn parseImportStmt(self: *Parser) !ast.Stmt {
+pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
     self.advance();
 
     var symbols = std.array_list.Managed([]const u8).init(self.allocator);
@@ -198,10 +201,12 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
     if (self.peek().type == .SEMICOLON) {
         self.advance();
     }
-    if (self.peek().type != .NEWLINE) {
+    if (self.peek().type != .NEWLINE and self.peek().type != .EOF and self.peek().type != .RIGHT_BRACE) {
         return error.ExpectedNewline;
     }
-    self.advance();
+    if (self.peek().type == .NEWLINE) {
+        self.advance();
+    }
 
     const owned_symbols = try self.allocator.dupe([]const u8, symbols.items);
 
@@ -221,6 +226,7 @@ pub fn parseImportStmt(self: *Parser) !ast.Stmt {
                 .namespace_alias = null,
                 .specific_symbols = owned_symbols,
                 .specific_symbol = if (owned_symbols.len == 1) owned_symbols[0] else null,
+                .is_public = is_public,
             },
         },
     };
@@ -431,12 +437,18 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                     }
                 },
                 .Import => |import_info| {
-                    try self.imported_symbols.?.put(import_info.module_path, .{
-                        .kind = .Import,
-                        .name = import_info.module_path,
-                        .original_module = module_path,
-                        .namespace_alias = import_info.namespace_alias,
-                    });
+                    if (!import_info.is_public) continue;
+                    if (import_info.import_type == .Module) {
+                        if (import_info.namespace_alias) |alias| {
+                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, alias });
+                            try self.imported_symbols.?.put(full_name, .{
+                                .kind = .Import,
+                                .name = alias,
+                                .original_module = import_info.module_path,
+                                .namespace_alias = alias,
+                            });
+                        }
+                    }
                 },
                 else => {},
             }

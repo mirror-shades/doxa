@@ -53,7 +53,7 @@ pub const Parser = struct {
     module_cache: std.StringHashMap(ModuleInfo),
     module_namespaces: std.StringHashMap(ModuleInfo),
 
-    module_imports: std.StringHashMap(std.StringHashMap([]const u8)),
+    module_imports: std.StringHashMap(std.StringHashMap(@import("parser_types.zig").ModuleImportEntry)),
 
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
@@ -72,7 +72,7 @@ pub const Parser = struct {
             .current_file_uri = current_file_uri,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
-            .module_imports = std.StringHashMap(std.StringHashMap([]const u8)).init(allocator),
+            .module_imports = std.StringHashMap(std.StringHashMap(@import("parser_types.zig").ModuleImportEntry)).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
             .declared_types = std.StringHashMap(void).init(allocator),
             .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
@@ -161,9 +161,9 @@ pub const Parser = struct {
             self.current = start_index_after_imports;
 
             if (self.tokens[start_index_after_imports].type == .MODULE) {
-                _ = try import_parser.parseModuleStmt(self);
+                _ = try import_parser.parseModuleStmt(self, false);
             } else {
-                _ = try import_parser.parseImportStmt(self);
+                _ = try import_parser.parseImportStmt(self, false);
             }
 
             start_index_after_imports = self.current;
@@ -223,7 +223,7 @@ pub const Parser = struct {
                     if (is_public) {
                         return error.MisplacedPublicModifier;
                     }
-                    _ = try import_parser.parseImportStmt(self);
+                    _ = try import_parser.parseImportStmt(self, false);
                 },
                 .MODULE => {
                     if (is_entry) {
@@ -232,7 +232,7 @@ pub const Parser = struct {
                     if (is_public) {
                         return error.MisplacedPublicModifier;
                     }
-                    _ = try import_parser.parseModuleStmt(self);
+                    _ = try import_parser.parseModuleStmt(self, false);
                 },
                 .STRUCT_TYPE => {
                     const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
