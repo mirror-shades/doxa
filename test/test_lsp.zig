@@ -71,7 +71,7 @@ fn checkConvertUriToPathWindowsUnc() !void {
 }
 
 fn checkReporterToLspDiagnosticsSerializesRelatedInfo() !void {
-    var reporter = Reporter.init(testing.allocator, .{ .log_to_file = false, .log_to_stderr = false });
+    var reporter = Reporter.init(testing.allocator, .{ .log_to_stderr = false });
     defer reporter.deinit();
 
     const primary_uri = "file:///src/main.doxa";
@@ -121,7 +121,6 @@ fn checkReporterToLspDiagnosticsSerializesRelatedInfo() !void {
 
 fn checkReporterPublishTrackingDetectsChangesAndThrottles() !void {
     var reporter = Reporter.init(testing.allocator, .{
-        .log_to_file = false,
         .log_to_stderr = false,
         .publish_debounce_ns = std.time.ns_per_ms,
     });

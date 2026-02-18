@@ -20,8 +20,6 @@ pub const DiagnosticPhase = enum {
     Debug,
 };
 
-pub const DEFAULT_LOG_FILE_PATH = "last_diagnostics.log";
-
 pub const ReporterOptions = struct {
     max_diagnostics: i32 = 1000,
     warn_as_error: bool = false,
@@ -34,9 +32,6 @@ pub const ReporterOptions = struct {
     debug_execution: bool = false,
     debug_memory: bool = false,
     log_to_stderr: bool = true,
-    log_to_file: bool = true,
-    log_file_path: []const u8 = DEFAULT_LOG_FILE_PATH,
-    max_log_bytes: usize = MAX_DIAGNOSTIC_LOG_BYTES,
     publish_debounce_ns: u64 = 30 * std.time.ns_per_ms,
 };
 
@@ -722,10 +717,6 @@ pub const Reporter = struct {
         if (self.options.log_to_stderr) {
             std.debug.print("DoxVM: {s}\n", .{line});
         }
-
-        if (self.options.log_to_file) {
-            self.writeToLog(line) catch {};
-        }
     }
 
     fn locationMatchesNeedle(self: *Reporter, loc: Location, ctx: *const FileNeedleContext) bool {
@@ -763,26 +754,6 @@ pub const Reporter = struct {
             return std.ascii.eqlIgnoreCase(a, b);
         }
         return std.mem.eql(u8, a, b);
-    }
-
-    fn writeToLog(self: *Reporter, line: []const u8) !void {
-        const opts = self.options;
-        const cwd = std.fs.cwd();
-        var file = cwd.createFile(opts.log_file_path, .{ .read = true, .truncate = false, .exclusive = false }) catch |e| switch (e) {
-            error.PathAlreadyExists => try cwd.openFile(opts.log_file_path, .{ .mode = .read_write }),
-            else => return e,
-        };
-        defer file.close();
-
-        const current_size = file.getEndPos() catch 0;
-
-        if (current_size >= opts.max_log_bytes) {
-            try file.setEndPos(0);
-        }
-
-        try file.seekFromEnd(0);
-        try file.writeAll(line);
-        try file.writeAll("\n");
     }
 
     pub fn ensureFileUri(self: *Reporter, path: []const u8) ![]const u8 {
