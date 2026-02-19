@@ -1979,7 +1979,7 @@ pub const VM = struct {
                             else => false,
                         },
                         .enum_variant => |e_entry| switch (key_frame.value) {
-                            .enum_variant => |e_key| std.mem.eql(u8, e_entry.type_name, e_key.type_name) and e_entry.variant_index == e_key.variant_index,
+                            .enum_variant => |e_key| e_entry.variant_index == e_key.variant_index,
                             else => false,
                         },
                         else => false,
@@ -2027,7 +2027,7 @@ pub const VM = struct {
                             else => false,
                         },
                         .enum_variant => |e_entry| switch (key_frame.value) {
-                            .enum_variant => |e_key| std.mem.eql(u8, e_entry.type_name, e_key.type_name) and e_entry.variant_index == e_key.variant_index,
+                            .enum_variant => |e_key| e_entry.variant_index == e_key.variant_index,
                             else => false,
                         },
                         else => false,
@@ -2830,10 +2830,10 @@ pub const VM = struct {
         switch (value.*) {
             .int, .byte, .float, .tetra, .nothing, .storage_id_ref => {},
             .string => |s| {
-                allocator.free(s);
+                if (s.len > 0) allocator.free(s);
             },
             .struct_instance => |s| {
-                allocator.free(s.type_name);
+                if (s.type_name.len > 0) allocator.free(s.type_name);
                 for (s.fields) |field| {
                     allocator.free(field.name);
                     self.freeValueFromAllocator(allocator, field.value);
@@ -2861,8 +2861,8 @@ pub const VM = struct {
                 allocator.free(a.elements);
             },
             .enum_variant => |e| {
-                allocator.free(e.type_name);
-                allocator.free(e.variant_name);
+                if (e.type_name.len > 0) allocator.free(e.type_name);
+                if (e.variant_name.len > 0) allocator.free(e.variant_name);
             },
         }
         value.* = hir_values.nothing_value;

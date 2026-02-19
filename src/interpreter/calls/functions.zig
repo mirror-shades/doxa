@@ -290,7 +290,7 @@ pub const FunctionOps = struct {
                 else => false,
             },
             .enum_variant => |av| switch (b) {
-                .enum_variant => |bv| std.mem.eql(u8, av.variant_name, bv.variant_name) and std.mem.eql(u8, av.type_name, bv.type_name),
+                .enum_variant => |bv| av.variant_index == bv.variant_index,
                 else => false,
             },
             else => false,

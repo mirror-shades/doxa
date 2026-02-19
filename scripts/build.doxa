@@ -20,11 +20,7 @@ function getTargetString(target :: Target) returns string {
     }
 }
 
-entry function main() {
-    const os is @os()
-    const arch is @arch()
-    var target :: Target is .not_found
-
+function setTarget(^target :: Target, os :: string, arch :: string) {
     if os == "windows" then {
         if arch == "x86_64" then target is .x86_windows
     }
@@ -36,6 +32,11 @@ entry function main() {
         if arch == "x86_64" then target is .x86_linux
         if arch == "aarch64" then target is .aarch_linux
     }
+}
+
+function build(os :: string, arch :: string) {
+    var target :: Target is .not_found
+    setTarget(^target, os, arch)
 
     if target == .not_found {
         @print("build not supported for this target system")
@@ -55,4 +56,10 @@ entry function main() {
     std.file.copyDir(target_string, "doxa-build/lib/zig")
     std.file.delete(target_string, true)
     std.file.delete(target_zip_string, true)
+}
+
+entry function main() {
+    const os is @os()
+    const arch is @arch()
+    build(os, arch)
 }
