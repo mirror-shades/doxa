@@ -1,7 +1,30 @@
 module std from "std"
 
-std.process.exec("zig build")
-std.file.makeDir("doxa-build")
-std.file.copyDir("zig-out/bin", "doxa-build/bin")
-std.file.copyDir("std", "doxa-build/lib")
-std.http.downloadUrl("https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip")
+enum Target {
+    x86_windows,
+    x86_macos,
+    x86_linux,
+    aarch_macos,
+    aarch_linux,
+}
+
+function getTargetString(target :: Target) returns string {
+    return match target {
+        .x86_windows then "x86_64-windows",
+        .x86_macos then "x86_64-macos",
+        .x86_linux then "x86_64-linux",
+        .aarch_macos then "aarch64-macos",
+        .aarch_linux then "aarch64-linux",
+    }
+}
+
+entry function main() {
+    var target :: Target
+    std.process.exec("zig build")
+    std.file.makeDir("doxa-build")
+    std.file.copyDir("zig-out/bin", "doxa-build/bin")
+    std.file.copyDir("std", "doxa-build/lib/std")
+    # std.http.downloadUrl("https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip", "zig-x86_64-windows-0.15.2.zip")
+    # std.file.unzipFile("zig-x86_64-windows-0.15.2.zip", ".")
+    # std.file.copyDir("zig-x86_64-windows-0.15.2", "doxa-build/lib/zig")
+}
