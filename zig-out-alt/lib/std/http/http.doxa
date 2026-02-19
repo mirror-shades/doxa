@@ -1,0 +1,54 @@
+zig HTTP {
+    const std = @import("std");
+
+    fn filenameFromUrl(url: []const u8) []const u8 {
+        const query_idx = std.mem.indexOfScalar(u8, url, '?');
+        const without_query = if (query_idx) |idx| url[0..idx] else url;
+        const fragment_idx = std.mem.indexOfScalar(u8, without_query, '#');
+        const without_fragment = if (fragment_idx) |idx| without_query[0..idx] else without_query;
+        const trimmed = std.mem.trimRight(u8, without_fragment, "/");
+        const slash_idx = std.mem.lastIndexOfScalar(u8, trimmed, '/');
+        const name = if (slash_idx) |idx| trimmed[idx + 1 ..] else trimmed;
+        return if (name.len == 0) "downloaded.bin" else name;
+    }
+
+    pub fn downloadUrl(url: []const u8, destination: []const u8) void {
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        defer _ = gpa.deinit();
+        const allocator = gpa.allocator();
+
+        var client: std.http.Client = .{ .allocator = allocator };
+        defer client.deinit();
+
+        var file = std.fs.cwd().createFile(destination, .{}) catch |err| {
+            std.debug.print("error creating file: {}\n", .{err});
+            return;
+        };
+        defer file.close();
+
+        var buf: [16 * 1024]u8 = undefined;
+
+        var file_writer = file.writer(&buf);
+        const writer = &file_writer.interface;
+
+        const res = client.fetch(.{
+            .location = .{ .url = url },
+            .method = .GET,
+            .response_writer = writer,
+        }) catch |err| {
+            std.debug.print("error fetching: {}\n", .{err});
+            return;
+        };
+
+        writer.flush() catch |err| {
+            std.debug.print("error flushing: {}\n", .{err});
+            return;
+        };
+
+        std.debug.print("download done: status={}\n", .{res.status});
+    }
+}
+
+pub function downloadUrl(url :: string, destination :: string) {
+    HTTP.downloadUrl(url, destination)
+}
