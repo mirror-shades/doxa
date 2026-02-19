@@ -1,0 +1,7 @@
+module std from "std"
+
+std.process.exec("zig build")
+std.file.makeDir("doxa-build")
+std.file.copyDir("zig-out/bin", "doxa-build/bin")
+std.file.copyDir("std", "doxa-build/lib")
+std.http.downloadUrl("https://ziglang.org/download/0.15.2/zig-x86_64-windows-0.15.2.zip")

@@ -1,2 +1,4 @@
 pub module io from "./io/io.doxa"
 pub module process from "./process/process.doxa"
+pub module file from "./file/file.doxa"
+pub module http from "./http/http.doxa"
