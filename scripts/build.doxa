@@ -20,8 +20,6 @@ function getTargetString(target :: Target) returns string {
     }
 }
 
-
-
 entry function main() {
     const os is @os()
     const arch is @arch()
@@ -55,4 +53,6 @@ entry function main() {
     std.http.downloadUrl(target_url_string, target_zip_string)
     std.file.unzipFile(target_zip_string, ".")
     std.file.copyDir(target_string, "doxa-build/lib/zig")
+    std.file.delete(target_string, true)
+    std.file.delete(target_zip_string, true)
 }
