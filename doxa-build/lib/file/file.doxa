@@ -1,0 +1,130 @@
+zig File {
+        const std = @import("std");
+
+    fn makeDir(path: []const u8) void {
+        std.fs.cwd().makeDir(path) catch |err| {
+            std.debug.print("failed to make directory: {s}\n", .{@errorName(err)});
+        };
+    }
+
+    fn copyFile(source: []const u8, destination: []const u8) void {
+        const cwd = std.fs.cwd();
+        cwd.copyFile(source, cwd, destination, .{}) catch |err| {
+            std.debug.print("failed to copy file: {s}\n", .{@errorName(err)});
+        };
+    }
+
+    fn copyDir(source: []const u8, destination: []const u8) void {
+        const allocator = std.heap.page_allocator;
+        const Task = struct {
+            src: []u8,
+            dst: []u8,
+        };
+
+        var stack = std.array_list.Managed(Task).init(allocator);
+        defer {
+            for (stack.items) |item| {
+                allocator.free(item.src);
+                allocator.free(item.dst);
+            }
+            stack.deinit();
+        }
+
+        const root_src = allocator.dupe(u8, source) catch |err| {
+            std.debug.print("copyDir alloc source failed ({s}): {s}\n", .{ source, @errorName(err) });
+            return;
+        };
+        const root_dst = allocator.dupe(u8, destination) catch |err| {
+            allocator.free(root_src);
+            std.debug.print("copyDir alloc destination failed ({s}): {s}\n", .{ destination, @errorName(err) });
+            return;
+        };
+        stack.append(.{ .src = root_src, .dst = root_dst }) catch |err| {
+            allocator.free(root_src);
+            allocator.free(root_dst);
+            std.debug.print("copyDir queue root failed: {s}\n", .{@errorName(err)});
+            return;
+        };
+
+        while (stack.items.len != 0) {
+            const task = stack.pop().?;
+            defer allocator.free(task.src);
+            defer allocator.free(task.dst);
+
+            var src_dir = std.fs.cwd().openDir(task.src, .{ .iterate = true }) catch |err| {
+                std.debug.print("copyDir open source failed ({s}): {s}\n", .{ task.src, @errorName(err) });
+                continue;
+            };
+            defer src_dir.close();
+
+            std.fs.cwd().makePath(task.dst) catch |err| {
+                std.debug.print("copyDir make destination failed ({s}): {s}\n", .{ task.dst, @errorName(err) });
+                continue;
+            };
+
+            var dst_dir = std.fs.cwd().openDir(task.dst, .{ .iterate = true }) catch |err| {
+                std.debug.print("copyDir open destination failed ({s}): {s}\n", .{ task.dst, @errorName(err) });
+                continue;
+            };
+            defer dst_dir.close();
+
+            var iter = src_dir.iterate();
+            while (true) {
+                const next_entry = iter.next() catch |err| {
+                    std.debug.print("copyDir iterate failed ({s}): {s}\n", .{ task.src, @errorName(err) });
+                    break;
+                };
+                const entry = next_entry orelse break;
+                const name = entry.name;
+                if (name[0] == '.' and (name.len == 1 or (name.len == 2 and name[1] == '.'))) continue;
+
+                switch (entry.kind) {
+                    .file => {
+                        const src_file_path = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.src, std.fs.path.sep_str, name }) catch |err| {
+                            std.debug.print("copyDir build source file path failed ({s}): {s}\n", .{ name, @errorName(err) });
+                            continue;
+                        };
+                        defer allocator.free(src_file_path);
+
+                        std.fs.cwd().copyFile(src_file_path, dst_dir, name, .{}) catch |err| {
+                            std.debug.print("copyDir file copy failed ({s}): {s}\n", .{ src_file_path, @errorName(err) });
+                            continue;
+                        };
+                    },
+                    .directory => {
+                        const sub_src = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.src, std.fs.path.sep_str, name }) catch |err| {
+                            std.debug.print("copyDir build source dir path failed ({s}): {s}\n", .{ name, @errorName(err) });
+                            continue;
+                        };
+                        const sub_dst = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.dst, std.fs.path.sep_str, name }) catch |err| {
+                            allocator.free(sub_src);
+                            std.debug.print("copyDir build destination dir path failed ({s}): {s}\n", .{ name, @errorName(err) });
+                            continue;
+                        };
+
+                        stack.append(.{ .src = sub_src, .dst = sub_dst }) catch |err| {
+                            allocator.free(sub_src);
+                            allocator.free(sub_dst);
+                            std.debug.print("copyDir queue subdir failed ({s}): {s}\n", .{ name, @errorName(err) });
+                            continue;
+                        };
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+    
+}
+
+pub function makeDir(path :: string) {
+    File.makeDir(path)
+}
+
+pub function copyFile(source :: string, destination :: string) {
+    File.copyFile(source, destination)
+}
+
+pub function copyDir(source :: string, destination :: string) {
+    File.copyDir(source, destination)
+}

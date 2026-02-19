@@ -1,68 +1,122 @@
-
 `zig` blocks are embedded Zig modules.
 
-## Current rules (implemented today)
+## Current source-level rules
 
-1) **Top-level is restricted**: only `const X = @import("...");` and `fn ... { ... }` are allowed (comments/blank lines ok).
+1. Top-level is restricted to:
+- `const X = @import("...");`
+- `fn ... { ... }`
 
-2) **Signatures are restricted to Doxa-compatible atomic types**, expressed using Zig types:
+2. Function signatures are restricted to Doxa-compatible atomic types:
+- Doxa `int` <-> Zig `i64`
+- Doxa `float` <-> Zig `f64`
+- Doxa `byte` <-> Zig `u8`
+- Doxa `tetra` <-> Zig `bool` (lossy at boundary)
+- Doxa `nothing` <-> Zig `void`
+- Doxa `string` <-> Zig `[]const u8`
 
-- **Doxa `int`** → Zig `i64`
-- **Doxa `float`** → Zig `f64`
-- **Doxa `byte`** → Zig `u8`
-- **Doxa `tetra`** → Zig `bool` (**lossy**)
-  - We treat tetra as a *truthy/falsy* value at the boundary:
-    - `false` → `false`
-    - `true` → `true`
-    - `both` → `true` (truthy corner)
-    - `neither` → `false` (falsy corner)
-  - This is intentional so each Doxa atomic type has a corresponding Zig type.
-- **Doxa `nothing`** → Zig `void`
-- **Doxa `string`** → Zig `[]const u8`
+3. The compiler validates these rules before invoking Zig.
 
-3) The compiler validates these rules before invoking the Zig toolchain.
+## Inline Zig ABI (argv/argc model)
 
+The VM/runtime boundary for inline Zig must use a single argument vector ABI:
 
+- `argv`: pointer to an array of ABI values (`DoxaAbiValue`)
+- `argc`: number of entries in `argv`
+- one ABI entry per Doxa call argument, in source order
+
+Wrappers decode by tag, then call the real Zig function.
+
+### Canonical ABI value layout
+
+```zig
+pub const DoxaAbiTag = enum(u32) {
+    Int = 0,
+    Float = 1,
+    Byte = 2,
+    String = 3,
+    Tetra = 4,
+    Nothing = 5,
+};
+
+pub const DoxaAbiValue = extern struct {
+    tag: DoxaAbiTag,
+    flags: u32,    // reserved, currently 0
+    payload0: u64, // bits or pointer
+    payload1: u64, // extra payload (String length)
+};
+
+pub const DoxaAbiStatus = enum(i32) {
+    ok = 0,
+    bad_arity = 1,
+    bad_tag = 2,
+    bad_value = 3,
+    internal = 255,
+};
 ```
-zig ZigOps {
-    fn sqrt_approx(x: f64) f64 {
-        // Normal Zig body is the simplest path today.
-        // (The doc previously showed `@llvm_external_call(...)`, which is not implemented.)
-        return @sqrt(x);
-    }
-}
 
-const zigSqrt is ZigOps.sqrt_approx(10.5)
+Notes:
+- Layout is part of the ABI contract and must remain stable.
+- `extern struct` is required for a predictable C ABI layout.
+- `flags` is reserved for future use (ownership/nullability/union metadata).
+
+### Wrapper export signature
+
+Generated wrapper functions should use:
+
+```zig
+pub export fn __doxa_export__Module_fn(
+    argv: [*]const DoxaAbiValue,
+    argc: usize,
+    out_ret: *DoxaAbiValue,
+) callconv(.c) DoxaAbiStatus
 ```
 
-## Notes / current implementation
-- **Caching**: zig blocks are compiled into `out/zig/cache/` keyed by a hash of `(module name + source)`. Rebuilds reuse cached artifacts when possible.
-- **Run mode (`doxa run`)**: zig blocks compile to a dynamic library and are called via the VM.
-  - **Current VM bridge support is minimal**: `int`/`float`/`string` only, with **0 or 1 argument**.
-  - `byte` / `tetra(bool)` / `nothing` are **not supported yet** in the VM↔Zig call bridge (calls will error as not implemented).
-- **Compile mode (`doxa compile`)**: zig blocks compile to object files and are linked into the final executable.
-  - Calls are emitted as external calls (currently declared as varargs in LLVM IR to avoid requiring full signature types at the IR level).
-  - `string` is supported via a C-string ABI; `tetra` needs explicit lossy conversion (`i2` ↔ `bool`) to be safe.
-- Note: Zig does **not** support `->` return syntax; use `fn name(args) ReturnType { ... }`.
+Behavior:
+- validate `argc` first
+- decode each argument from `argv[i]` by tag
+- on mismatch, return `bad_tag` or `bad_value`
+- call user Zig function only after successful decode
+- encode return into `out_ret`, return `ok`
 
-## String support (important)
+### Encoding rules
 
-- **Signatures may mention `[]const u8`**.
-- **Current ABI**: `string` crosses the boundary as a **C string**.
-  - Wrapper function params use `?[*:0]const u8` and convert to `[]const u8` via `std.mem.span`.
-  - Wrapper return values are allocated as `?[*:0]u8` and returned as C strings.
-- **Run mode (`doxa run`)**: VM copies returned C strings into a Doxa `string` and frees the temporary.
-- **Compile mode (`doxa compile`)**: returned C strings are treated like other runtime strings.
-- **Limitation**: strings may not contain embedded `\\0` (C-string limitation).
+- `Int`: `payload0 = bitcast(i64 -> u64)`
+- `Float`: `payload0 = bitcast(f64 -> u64)`
+- `Byte`: `payload0 = u8`
+- `Tetra`: `payload0 = u2` (`0=false`, `1=true`, `2=both`, `3=neither`)
+- `String`: `payload0 = ptr`, `payload1 = len`
+- `Nothing`: payload ignored
 
-## Wanted / next steps (partially implemented)
+String rule:
+- Strings are `(ptr,len)`, not C-strings.
+- Embedded `\0` is valid and must be preserved.
 
-- **Tetra (`i2`) ↔ `bool` boundary conversion** (lossy):
-  - VM: allow `tetra` arguments/returns by converting `i2` tetra to `bool` at the call boundary (and converting `bool` results back into tetra `true/false`).
-  - LLVM codegen: for compile mode, emit the same lossy conversion when calling inline Zig exports.
-- **Run-mode bridge**: extend VM calls to cover `byte` and `bool` (and more than 1 argument).
-- **Strings**: optionally move to a real `(ptr,len)` ABI to support embedded `\\0` and avoid scanning for length.
-- **Optional convenience**: add an `@llvm_external_call(...)` shim if we want that exact syntax in examples.
+### Ownership and lifetime (v1)
 
-With more clarity on rules, molecular types could be provided as well. Structs would need a matching Zig counterpart, and arrays would need to be handled as slices, etc. This can come later when the implementation is mature.
+- `argv` values are borrowed for the duration of the call.
+- `out_ret.String` is owned by callee and must be freed by runtime/VM using the module free hook.
+- Non-string scalar returns are by value in `out_ret`.
 
+### Error model
+
+Wrapper returns status; no trap/panic for user type mismatch:
+- `bad_arity`: `argc` does not match expected function arity
+- `bad_tag`: tag incompatible with expected parameter type
+- `bad_value`: malformed payload (e.g. null pointer with non-zero string length)
+- `internal`: unexpected wrapper/runtime failure
+
+The caller (VM/runtime) turns status into a Doxa runtime error.
+
+## Compile/run parity requirement
+
+Both modes must use the same logical ABI:
+- `doxa run`: dynamic library call path uses `argv/argc`
+- `doxa compile`: generated call path should align with the same value model
+
+No per-signature C ABI shims should be required at the VM boundary.
+
+## Migration notes
+
+- Old per-argument exports (`fn(x: i64)`, C-string-only string bridge, 0/1-arg VM specialization) are legacy.
+- New architecture is the `argv/argc` + tagged decode wrapper model.
+- Existing inline Zig source syntax does not need to change.
