@@ -2,7 +2,9 @@ zig HTTP {
     const std = @import("std");
 
     pub fn downloadUrl(url: []const u8) void {
-        const allocator = std.heap.page_allocator;
+        var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+        defer _ = gpa.deinit();
+        const allocator = gpa.allocator();
 
         var client: std.http.Client = .{ .allocator = allocator };
         defer client.deinit();
