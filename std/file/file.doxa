@@ -14,6 +14,25 @@ zig File {
         };
     }
 
+    fn delete(path: []const u8, recursive: bool) void {
+        const cwd = std.fs.cwd();
+        cwd.deleteFile(path) catch |err| {
+            if (err == error.IsDir) {
+                if (recursive) {
+                    cwd.deleteTree(path) catch |e| {
+                        std.debug.print("failed to delete directory: {s}\n", .{@errorName(e)});
+                    };
+                } else {
+                    cwd.deleteDir(path) catch |e| {
+                        std.debug.print("failed to delete directory: {s}\n", .{@errorName(e)});
+                    };
+                }
+            } else {
+                std.debug.print("failed to delete file: {s}\n", .{@errorName(err)});
+            }
+        };
+    }
+
     fn copyDir(source: []const u8, destination: []const u8) void {
         const allocator = std.heap.page_allocator;
         const Task = struct {
@@ -152,6 +171,10 @@ pub function makeDir(path :: string) {
 
 pub function copyFile(source :: string, destination :: string) {
     File.copyFile(source, destination)
+}
+
+pub function delete(path :: string, recursive :: bool) {
+    File.delete(path, recursive)
 }
 
 pub function copyDir(source :: string, destination :: string) {
