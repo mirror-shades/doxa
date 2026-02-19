@@ -47,13 +47,30 @@ function build(os :: string, arch :: string) {
     const target_zip_string is target_string + ".zip"
     const target_url_string is "https://ziglang.org/download/0.15.2/" + target_zip_string
 
-    std.process.exec("zig build")
+    @print("building for {arch}-{os}\n")
+
+    @print("compilng Doxa\n")
+    std.process.exec("zig build\n")
+
+    @print("making build dir\n")
     std.file.makeDir("doxa-build")
+    
+    @print("copying doxa bin\n")
     std.file.copyDir("zig-out/bin", "doxa-build/bin")
+   
+    @print("copying doxa std\n")
     std.file.copyDir("std", "doxa-build/lib/std")
+    
+    @print("downloading zig dependancy\n")
     std.http.downloadUrl(target_url_string, target_zip_string)
+    
+    @print("unzipping\n")
     std.file.unzipFile(target_zip_string, ".")
+
+    @print("copying zig\n")
     std.file.copyDir(target_string, "doxa-build/lib/zig")
+    
+    @print("cleaning up\n")
     std.file.delete(target_string, true)
     std.file.delete(target_zip_string, true)
 }
