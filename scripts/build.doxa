@@ -49,7 +49,7 @@ function build(os :: string, arch :: string) {
 
     @print("building for {arch}-{os}\n")
 
-    @print("compilng Doxa\n")
+    @print("compiling Doxa\n")
     std.process.exec("zig build\n")
 
     @print("making build dir\n")
