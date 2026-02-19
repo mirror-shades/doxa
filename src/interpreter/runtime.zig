@@ -129,6 +129,8 @@ pub const Frame = struct {
         if (idx >= self.locals.len or idx >= self.alias_refs.len) {
             const new_size = idx + 1;
             const arena_alloc = self.arena.allocator();
+            const old_locals_len = self.locals.len;
+            const old_alias_len = self.alias_refs.len;
 
             self.locals = arena_alloc.realloc(self.locals, new_size) catch {
                 if (self.locals.len > 0) {
@@ -142,10 +144,10 @@ pub const Frame = struct {
                 return SlotPointer{ .value = &self.locals[idx] };
             };
 
-            for (self.locals[self.locals.len..new_size]) |*value| {
+            for (self.locals[old_locals_len..new_size]) |*value| {
                 value.* = HIRValue.nothing;
             }
-            for (self.alias_refs[self.alias_refs.len..new_size]) |*ref| {
+            for (self.alias_refs[old_alias_len..new_size]) |*ref| {
                 ref.* = null;
             }
         }

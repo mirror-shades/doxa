@@ -388,8 +388,7 @@ pub const VM = struct {
                 var had_old_value = false;
 
                 switch (owner) {
-                    .Runtime => allocator = self.runtimeAllocator(),
-                    .Scope => allocator = self.scopeAllocator(),
+                    .Runtime, .Scope => allocator = try self.allocatorForPointer(ptr),
                     .Module => |module_id| {
                         const state = try self.resolveModuleState(module_id);
                         allocator = state.allocator;
@@ -429,8 +428,7 @@ pub const VM = struct {
                 var had_old_value = false;
 
                 switch (owner) {
-                    .Runtime => allocator = self.runtimeAllocator(),
-                    .Scope => allocator = self.scopeAllocator(),
+                    .Runtime, .Scope => allocator = try self.allocatorForPointer(ptr),
                     .Module => |module_id| {
                         const state = try self.resolveModuleState(module_id);
                         allocator = state.allocator;
@@ -493,8 +491,7 @@ pub const VM = struct {
                 var had_old_value = false;
 
                 switch (owner) {
-                    .Runtime => allocator = self.runtimeAllocator(),
-                    .Scope => allocator = self.scopeAllocator(),
+                    .Runtime, .Scope => allocator = try self.allocatorForPointer(ptr),
                     .Module => |module_id| {
                         const state = try self.resolveModuleState(module_id);
                         allocator = state.allocator;
@@ -897,6 +894,33 @@ pub const VM = struct {
             }
         }
         return ValueOwner.Runtime;
+    }
+
+    fn allocatorForPointer(self: *VM, ptr: runtime.SlotPointer) VmError!std.mem.Allocator {
+        const addr = @intFromPtr(ptr.value);
+
+        for (self.module_state) |*state| {
+            if (state.values.len == 0) continue;
+            const base = @intFromPtr(state.values.ptr);
+            const end = base + state.values.len * @sizeOf(HIRValue);
+            if (addr >= base and addr < end) {
+                return state.allocator;
+            }
+        }
+
+        var idx = self.frames.items.len;
+        while (idx > 0) {
+            idx -= 1;
+            const frame = &self.frames.items[idx];
+            if (frame.locals.len == 0) continue;
+            const base = @intFromPtr(frame.locals.ptr);
+            const end = base + frame.locals.len * @sizeOf(HIRValue);
+            if (addr >= base and addr < end) {
+                return frame.arena.allocator();
+            }
+        }
+
+        return self.runtimeAllocator();
     }
 
     fn allocatorForOwner(self: *VM, owner: ValueOwner) VmError!std.mem.Allocator {
