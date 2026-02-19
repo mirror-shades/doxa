@@ -141,6 +141,16 @@ pub const SemanticAnalyzer = struct {
         return self.function_return_types;
     }
 
+    fn isEnumTypeRequiringInitializer(self: *const SemanticAnalyzer, type_info: *const ast.TypeInfo) bool {
+        if (type_info.base == .Enum) return true;
+        if (type_info.base == .Custom and type_info.custom_type != null) {
+            if (self.custom_types.get(type_info.custom_type.?)) |custom_type| {
+                return custom_type.kind == .Enum;
+            }
+        }
+        return false;
+    }
+
     fn registerTypeAlias(self: *SemanticAnalyzer, alias_name: []const u8, target_type: []const u8) !void {
         if (self.type_aliases.contains(alias_name)) return;
         const alias_copy = try self.allocator.dupe(u8, alias_name);
@@ -744,11 +754,23 @@ pub const SemanticAnalyzer = struct {
                     const token_type = helpers.convertTypeToTokenType(self, type_info.base);
 
                     // Get the actual value from initializer or use default for uninitialized variables
-                    var value = if (decl.initializer) |init_expr|
-                        try self.evaluateExpression(init_expr)
-                    else
+                    var value: TokenLiteral = undefined;
+                    if (decl.initializer) |init_expr| {
+                        value = try self.evaluateExpression(init_expr);
+                    } else {
+                        if (self.isEnumTypeRequiringInitializer(type_info)) {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(stmt.base),
+                                ErrorCode.ENUM_REQUIRES_INITIALIZER,
+                                "Enum variables must be initialized",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                            continue;
+                        }
+
                         // Only use defaults for uninitialized variables
-                        switch (type_info.base) {
+                        value = switch (type_info.base) {
                             .Int => TokenLiteral{ .int = 0 },
                             .Float => TokenLiteral{ .float = 0.0 },
                             .String => TokenLiteral{ .string = "" },
@@ -757,6 +779,7 @@ pub const SemanticAnalyzer = struct {
                             .Union => if (type_info.union_type) |ut| self.getUnionDefaultValue(ut) else TokenLiteral{ .nothing = {} },
                             else => TokenLiteral{ .nothing = {} },
                         };
+                    }
 
                     // Convert value to match the declared type
                     value = try self.convertValueToType(value, type_info.base);
@@ -1031,6 +1054,17 @@ pub const SemanticAnalyzer = struct {
 
                                 value = try self.evaluateExpression(init_expr);
                             } else {
+                                if (self.isEnumTypeRequiringInitializer(type_info)) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(stmt.base),
+                                        ErrorCode.ENUM_REQUIRES_INITIALIZER,
+                                        "Enum variables must be initialized",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    continue;
+                                }
+
                                 // Only use defaults for uninitialized variables
                                 value = switch (type_info.base) {
                                     .Int => TokenLiteral{ .int = 0 },

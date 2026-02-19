@@ -1,5 +1,5 @@
 zig File {
-        const std = @import("std");
+    const std = @import("std");
 
     fn makeDir(path: []const u8) void {
         std.fs.cwd().makeDir(path) catch |err| {
@@ -114,6 +114,35 @@ zig File {
             }
         }
     }
+
+    fn unzipFile(zip_path: []const u8, out_dir_path: []const u8) void {
+        const cwd = std.fs.cwd();
+
+        cwd.makePath(out_dir_path) catch |err| {
+            std.debug.print("failed to create path {s}\n", .{ @errorName(err) });
+            return;
+        };
+
+        var out_dir = cwd.openDir(out_dir_path, .{}) catch |err| {
+            std.debug.print("failed to open dir {s}\n", .{ @errorName(err) });
+            return;
+        };
+        defer out_dir.close();
+
+        var zip_file = cwd.openFile(zip_path, .{}) catch |err| {
+            std.debug.print("failed to open file {s}\n", .{ @errorName(err) });
+            return;
+        };
+        defer zip_file.close();
+
+        var buf: [std.compress.flate.max_window_len]u8 = undefined;
+        var r = zip_file.reader(&buf);
+
+        std.zip.extract(out_dir, &r, .{}) catch |err| {
+            std.debug.print("failed to extract {s}\n", .{ @errorName(err) });
+            return;
+        };
+    }
     
 }
 
@@ -127,4 +156,8 @@ pub function copyFile(source :: string, destination :: string) {
 
 pub function copyDir(source :: string, destination :: string) {
     File.copyDir(source, destination)
+}
+
+pub function unzipFile(zip_path :: string, unzip_path :: string) {
+    File.unzipFile(zip_path, unzip_path)
 }

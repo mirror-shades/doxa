@@ -32,6 +32,19 @@ fn getLocationFromBase(base: ast.Base) Location {
     }
 }
 
+fn isEnumTypeRequiringInitializer(
+    type_info: *const TypeInfo,
+    custom_types: std.StringHashMap(types.CustomTypeInfo),
+) bool {
+    if (type_info.base == .Enum) return true;
+    if (type_info.base == .Custom and type_info.custom_type != null) {
+        if (custom_types.get(type_info.custom_type.?)) |custom_type| {
+            return custom_type.kind == .Enum;
+        }
+    }
+    return false;
+}
+
 /// Context for declaration collection operations
 pub const DeclarationCollectionContext = struct {
     allocator: std.mem.Allocator,
@@ -283,6 +296,17 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                         else => TokenLiteral{ .nothing = {} },
                     };
                 } else {
+                    if (isEnumTypeRequiringInitializer(type_info, ctx.custom_types)) {
+                        ctx.reporter.reportCompileError(
+                            getLocationFromBase(stmt.base),
+                            ErrorCode.ENUM_REQUIRES_INITIALIZER,
+                            "Enum variables must be initialized",
+                            .{},
+                        );
+                        ctx.fatal_error.* = true;
+                        continue;
+                    }
+
                     // Only use defaults for uninitialized variables
                     value = switch (type_info.base) {
                         .Int => TokenLiteral{ .int = 0 },
