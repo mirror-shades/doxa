@@ -175,12 +175,19 @@ pub const ControlFlowHandler = struct {
         switch (match_expr.value.data) {
             .Variable => |v| {
                 const var_name = v.lexeme;
-                if (self.generator.symbol_table.getTrackedVariableType(var_name)) |var_type| {
-                    if (var_type == .Enum) {
-                        match_enum_type = self.generator.symbol_table.getVariableCustomType(var_name);
+                if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_name| {
+                    match_enum_type = custom_name;
+                }
+
+                if (match_enum_type == null) {
+                    if (self.generator.symbol_table.getTrackedVariableType(var_name)) |var_type| {
+                        if (var_type == .Enum) {
+                            match_enum_type = self.generator.symbol_table.getVariableCustomType(var_name);
+                        }
                     }
                 }
-                // Fallback: if the variable name itself is a registered enum type, use it
+
+                // If the variable name itself is a registered enum type, use it.
                 if (match_enum_type == null) {
                     if (self.generator.type_system.custom_types.get(var_name)) |ct| {
                         if (ct.kind == .Enum) {

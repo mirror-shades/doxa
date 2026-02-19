@@ -568,6 +568,24 @@ pub const HIRGenerator = struct {
 
                     try self.trackVariableType(param.name.lexeme, param_type);
 
+                    // Preserve concrete custom type name (e.g. enum/struct) for
+                    // non-alias parameters so later codegen (like enum match) can
+                    // construct correctly-typed constants.
+                    if (declared_type_info) |info| {
+                        if (info.base == .Custom and info.custom_type != null) {
+                            const custom_type_name = info.custom_type.?;
+                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name);
+                        }
+                    }
+                    if (param.type_expr) |param_type_expr| {
+                        switch (param_type_expr.data) {
+                            .Custom => |custom_tok| {
+                                try self.trackVariableCustomType(param.name.lexeme, custom_tok.lexeme);
+                            },
+                            else => {},
+                        }
+                    }
+
                     if (param_type == .Array) {
                         try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
                         const storage_kind = if (declared_type_info) |info| convertArrayStorageKind(info.array_storage) else SoxaTypes.ArrayStorageKind.dynamic;
@@ -631,6 +649,17 @@ pub const HIRGenerator = struct {
                     }
 
                     try self.trackVariableType(param.name.lexeme, param_type);
+                    if (declared_type_info) |info| {
+                        if (info.base == .Custom and info.custom_type != null) {
+                            try self.trackVariableCustomType(param.name.lexeme, info.custom_type.?);
+                        }
+                    }
+                    if (param.type_expr) |param_type_expr| {
+                        switch (param_type_expr.data) {
+                            .Custom => |custom_tok| try self.trackVariableCustomType(param.name.lexeme, custom_tok.lexeme),
+                            else => {},
+                        }
+                    }
 
                     if (param_type == .Array) {
                         try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
