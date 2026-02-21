@@ -74,6 +74,7 @@ const CLI = struct {
     lsp_mode: LspMode,
     lsp_debug_file: ?[]const u8,
     lsp_io_trace: bool,
+    program_args: []const []const u8,
 
     pub fn deinit(self: *const CLI, allocator: std.mem.Allocator) void {
         if (self.script_path) |p| allocator.free(p);
@@ -83,6 +84,8 @@ const CLI = struct {
         if (self.target_os) |p| allocator.free(p);
         if (self.target_abi) |p| allocator.free(p);
         if (self.lsp_debug_file) |p| allocator.free(p);
+        for (self.program_args) |arg| allocator.free(arg);
+        if (self.program_args.len > 0) allocator.free(self.program_args);
     }
 };
 
@@ -238,8 +241,8 @@ fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt
 fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, reporter: *Reporter, output_dir: []const u8) ![]const []const u8 {
     return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, output_dir);
 }
-fn runBytecodeModule(memoryManager: *MemoryManager, bytecode_module: *BytecodeModule, reporter: *Reporter, zig_modules: ?std.StringHashMap(VM.ZigRuntimeModule)) !void {
-    var vm = try VM.init(memoryManager.getAllocator(), bytecode_module, reporter, memoryManager, zig_modules);
+fn runBytecodeModule(memoryManager: *MemoryManager, bytecode_module: *BytecodeModule, reporter: *Reporter, zig_modules: ?std.StringHashMap(VM.ZigRuntimeModule), program_args: []const []const u8) !void {
+    var vm = try VM.init(memoryManager.getAllocator(), bytecode_module, reporter, memoryManager, zig_modules, program_args);
     defer vm.deinit();
 
     try memoryManager.bridgeTypesToVM(&vm);
@@ -274,6 +277,7 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         .lsp_mode = .none,
         .lsp_debug_file = null,
         .lsp_io_trace = false,
+        .program_args = &[_][]const u8{},
     };
 
     if (stringEquals(args[1], "--lsp")) {
@@ -320,10 +324,33 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         std.process.exit(EXIT_CODE_USAGE);
     }
 
+    const raw_options = args[2..];
+    var option_end = raw_options.len;
+    var split_seen = false;
+    for (raw_options, 0..) |arg, idx| {
+        if (stringEquals(arg, "--")) {
+            option_end = idx;
+            split_seen = true;
+            break;
+        }
+    }
+
+    if (split_seen and options.mode == .COMPILE) {
+        std.debug.print("Error: `--` program arguments are only valid with `doxa run`\n", .{});
+        printUsage();
+        std.process.exit(EXIT_CODE_USAGE);
+    }
+
+    const option_args = raw_options[0..option_end];
+    const run_program_args = if (split_seen and options.mode == .RUN)
+        raw_options[option_end + 1 ..]
+    else
+        raw_options[0..0];
+
     var options_list = std.array_list.Managed([]const u8).init(allocator);
     defer options_list.deinit();
 
-    for (args[2..]) |arg| {
+    for (option_args) |arg| {
         try options_list.append(arg);
     }
 
@@ -414,6 +441,25 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         std.process.exit(EXIT_CODE_USAGE);
     }
 
+    if (options.mode == .RUN) {
+        const script = options.script_path orelse unreachable;
+        const total = 1 + run_program_args.len;
+        const duplicated = try allocator.alloc([]const u8, total);
+        errdefer allocator.free(duplicated);
+        var copied: usize = 0;
+        errdefer {
+            var i: usize = 0;
+            while (i < copied) : (i += 1) allocator.free(duplicated[i]);
+        }
+        duplicated[0] = try allocator.dupe(u8, script);
+        copied += 1;
+        for (run_program_args, 0..) |arg, idx| {
+            duplicated[idx + 1] = try allocator.dupe(u8, arg);
+            copied += 1;
+        }
+        options.program_args = duplicated;
+    }
+
     return options;
 }
 
@@ -421,6 +467,7 @@ fn printUsage() void {
     std.debug.print("Doxa Programming Language\n", .{});
     std.debug.print("\nUsage:\n", .{});
     std.debug.print("  doxa run [general options] <file.doxa>\n", .{});
+    std.debug.print("       append `-- <args...>` to pass runtime args to @argc/@argv\n", .{});
     std.debug.print("  doxa compile [general options] <file.doxa> -o <output> [compile options]\n", .{});
     std.debug.print("  doxa --lsp [--lsp-debug-io]     # Start the Language Server Protocol loop\n", .{});
     std.debug.print("  doxa --lsp-debug <file.doxa>    # Run the in-process LSP debug harness\n", .{});
@@ -600,7 +647,7 @@ pub fn main() !void {
 
         const zig_modules = try compileInlineZigModules(&memoryManager, parsedStatements, &parser, &reporter, cli_options.output_dir);
 
-        runBytecodeModule(&memoryManager, &bytecode_module, &reporter, zig_modules) catch |err| switch (err) {
+        runBytecodeModule(&memoryManager, &bytecode_module, &reporter, zig_modules, cli_options.program_args) catch |err| switch (err) {
             error.RuntimeTrap => std.process.exit(EXIT_CODE_RUNTIME),
             else => return err,
         };

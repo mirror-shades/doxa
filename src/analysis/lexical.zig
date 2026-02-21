@@ -929,6 +929,10 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.ARCH, .nothing);
         } else if (std.mem.eql(u8, method_name, "abi")) {
             try self.addToken(.ABI, .nothing);
+        } else if (std.mem.eql(u8, method_name, "argc")) {
+            try self.addToken(.ARGC, .nothing);
+        } else if (std.mem.eql(u8, method_name, "argv")) {
+            try self.addToken(.ARGV, .nothing);
         } else if (std.mem.eql(u8, method_name, "time")) {
             try self.addToken(.TIME, .nothing);
         } else if (std.mem.eql(u8, method_name, "tick")) {

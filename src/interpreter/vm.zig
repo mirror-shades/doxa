@@ -106,6 +106,8 @@ pub const VM = struct {
 
     // Inline zig modules compiled to dynamic libraries for VM module calls.
     zig_modules: ?std.StringHashMap(ZigRuntimeModule) = null,
+    // Program argv as seen by Doxa code (argv[0] is program path/name).
+    program_args: []const []const u8 = &[_][]const u8{},
 
     pub const ZigRuntimeFn = struct {
         symbol: []const u8,
@@ -167,6 +169,7 @@ pub const VM = struct {
         reporter: *Reporter,
         memory_manager: *MemoryManager,
         zig_modules: ?std.StringHashMap(ZigRuntimeModule),
+        program_args: []const []const u8,
     ) !VM {
         const frame_list = Managed(runtime.Frame).init(allocator);
 
@@ -208,6 +211,7 @@ pub const VM = struct {
             .array_type_cache = std.AutoHashMap(ArrayTypeKey, *hir_types.HIRType).init(allocator),
             .array_type_nodes = Managed(*hir_types.HIRType).init(allocator),
             .zig_modules = zig_modules,
+            .program_args = program_args,
         };
 
         vm.indexLabels();
@@ -1522,6 +1526,38 @@ pub const VM = struct {
         if (std.mem.eql(u8, name, "time")) {
             const timestamp = std.time.timestamp();
             try self.stack.push(HIRFrame.initInt(timestamp));
+            return;
+        }
+
+        if (std.mem.eql(u8, name, "argc")) {
+            if (arg_count != 0) {
+                return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT_COUNT, "@argc expects 0 arguments", .{});
+            }
+            try self.stack.push(HIRFrame.initInt(@intCast(self.program_args.len)));
+            return;
+        }
+
+        if (std.mem.eql(u8, name, "argv")) {
+            if (arg_count != 1) {
+                return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT_COUNT, "@argv expects 1 argument", .{});
+            }
+
+            const idx_frame = try self.stack.pop();
+            const idx_i64: i64 = switch (idx_frame.value) {
+                .int => |i| i,
+                .byte => |b| @intCast(b),
+                else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@argv index must be int", .{}),
+            };
+            if (idx_i64 < 0) {
+                return self.reporter.reportRuntimeError(null, ErrorCode.INDEX_OUT_OF_BOUNDS, "@argv index {d} is out of bounds for {d} args", .{ idx_i64, self.program_args.len });
+            }
+            const idx: usize = @intCast(idx_i64);
+            if (idx >= self.program_args.len) {
+                return self.reporter.reportRuntimeError(null, ErrorCode.INDEX_OUT_OF_BOUNDS, "@argv index {d} is out of bounds for {d} args", .{ idx, self.program_args.len });
+            }
+
+            const duped = try self.scopeAllocator().dupe(u8, self.program_args[idx]);
+            try self.stack.push(HIRFrame.initString(duped));
             return;
         }
 

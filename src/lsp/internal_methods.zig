@@ -137,6 +137,16 @@ const METHODS = &[_]Method{
         .detail = "Return the ABI (Application Binary Interface)",
         .documentation = "**Input**: none\n**Output**: string\nMatches the target ABI at compile time (e.g., \"gnu\", \"musl\", \"msvc\").",
     },
+    .{
+        .label = "@argc",
+        .detail = "Return the number of user program arguments",
+        .documentation = "**Input**: none\n**Output**: int\nReturns total argc where `@argv(0)` is the program path/name.",
+    },
+    .{
+        .label = "@argv",
+        .detail = "Return a user program argument by index",
+        .documentation = "**Input**: int\n**Output**: string\n`@argv(0)` is the program path/name; panics on out-of-bounds indexes.",
+    },
 };
 
 pub fn all() []const Method {

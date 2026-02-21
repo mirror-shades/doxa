@@ -1202,6 +1202,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 std.mem.eql(u8, fname, "os") or
                 std.mem.eql(u8, fname, "arch") or
                 std.mem.eql(u8, fname, "abi") or
+                std.mem.eql(u8, fname, "argc") or
+                std.mem.eql(u8, fname, "argv") or
                 std.mem.eql(u8, fname, "time") or
                 std.mem.eql(u8, fname, "tick") or
                 std.mem.eql(u8, fname, "random") or
@@ -1769,9 +1771,32 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     }
                 },
 
-                .OS, .ARCH, .ABI, .TIME, .TICK => {
+                .OS, .ARCH, .ABI, .ARGC, .TIME, .TICK => {
                     expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = &[_]*ast.Expr{} } };
                     return try infer_type.inferTypeFromExpr(self, expr);
+                },
+                .ARGV => {
+                    if (method_call.arguments.len == 1) {
+                        expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = method_call.arguments } };
+                        return try infer_type.inferTypeFromExpr(self, expr);
+                    }
+
+                    if (method_call.arguments.len == 0 and method_call.receiver.data != .Literal) {
+                        var args = try self.allocator.alloc(*ast.Expr, 1);
+                        args[0] = method_call.receiver;
+                        expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                        return try infer_type.inferTypeFromExpr(self, expr);
+                    }
+
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_ARGUMENT_COUNT,
+                        "@argv requires exactly 1 argument",
+                        .{},
+                    );
+                    self.fatal_error = true;
+                    type_info.* = .{ .base = .Nothing };
+                    return type_info;
                 },
                 .ASSERT => {
                     const argc = method_call.arguments.len;
