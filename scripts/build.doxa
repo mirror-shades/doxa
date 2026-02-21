@@ -43,6 +43,18 @@ function build(os :: string, arch :: string) {
         return
     }
 
+    var userZigPath :: string
+    if @argc() > 1 then {
+        if @argc() == 2  or @argc() > 3 then {
+            @print("bad arguments passed\n")
+            return
+        }
+        if @arg(1) != "--zig" then {
+            @print("only \"--zig\" accepted\n")
+        }
+        userZigPath is @arg(2)
+    }
+
     const target_string is "zig-" + getTargetString(target) + "-0.15.2"
     const target_zip_string is target_string + ".zip"
     const target_url_string is "https://ziglang.org/download/0.15.2/" + target_zip_string
@@ -60,15 +72,22 @@ function build(os :: string, arch :: string) {
    
     @print("copying doxa std\n")
     std.file.copyDir("std", "doxa-build/lib/std")
-    
-    @print("downloading zig dependancy\n")
-    std.http.downloadUrl(target_url_string, target_zip_string)
-    
-    @print("unzipping\n")
-    std.file.unzipFile(target_zip_string, ".")
 
-    @print("copying zig\n")
-    std.file.copyDir(target_string, "doxa-build/lib/zig")
+    if userZigPath == "" then {
+        @print("downloading zig dependancy\n")
+        std.http.downloadUrl(target_url_string, target_zip_string)
+        
+        @print("unzipping\n")
+        std.file.unzipFile(target_zip_string, ".")
+
+        @print("copying zig\n")
+        std.file.copyDir(target_string, "doxa-build/lib/zig")
+    } else {
+        @print("copying zig\n")
+        std.file.copyDir(target_string, userZigPath)
+    }
+    
+
     
     @print("cleaning up\n")
     std.file.delete(target_string, true)
