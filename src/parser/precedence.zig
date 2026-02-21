@@ -237,6 +237,8 @@ pub const rules = blk: {
     r.set(.OS, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.ARCH, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.ABI, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.ARGC, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.ARGV, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.TIME, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.TICK, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.BUILD, .{ .prefix = internalCallExpr, .precedence = .CALL });

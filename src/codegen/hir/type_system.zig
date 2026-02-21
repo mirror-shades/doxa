@@ -654,6 +654,8 @@ pub const TypeSystem = struct {
                 if (std.mem.eql(u8, method_name, "string")) return .String;
                 if (std.mem.eql(u8, method_name, "byte")) return .Byte;
                 if (std.mem.eql(u8, method_name, "type")) return .String;
+                if (std.mem.eql(u8, method_name, "argc")) return .Int;
+                if (std.mem.eql(u8, method_name, "argv")) return .String;
                 return .Unknown;
             },
             .BuiltinCall => |bc| {
@@ -667,6 +669,8 @@ pub const TypeSystem = struct {
                 }
                 if (std.mem.eql(u8, name, "time")) return .Int;
                 if (std.mem.eql(u8, name, "tick")) return .Int;
+                if (std.mem.eql(u8, name, "argc")) return .Int;
+                if (std.mem.eql(u8, name, "argv")) return .String;
                 if (std.mem.eql(u8, name, "push")) return .Nothing;
                 if (std.mem.eql(u8, name, "pop")) {
                     if (bc.arguments.len > 0) {

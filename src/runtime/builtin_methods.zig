@@ -48,6 +48,8 @@ pub fn getMethodInfo(method_type: token.TokenType) ?*const BuiltinMethodInfo {
         .SLEEP => &METHODS[24],
         .BUILD => &METHODS[25],
         .READ => &METHODS[26],
+        .ARGC => &METHODS[27],
+        .ARGV => &METHODS[28],
         else => null,
     };
 }
@@ -354,6 +356,22 @@ const METHODS = [_]BuiltinMethodInfo{
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Single = T.String }},
+        .return_type = T.String,
+        .can_panic = true,
+    },
+    .{
+        .name = "argc",
+        .arg_count_min = 0,
+        .arg_count_max = 0,
+        .input_types = &[_]InputTypeSpec{},
+        .return_type = T.Int,
+        .can_panic = false,
+    },
+    .{
+        .name = "argv",
+        .arg_count_min = 1,
+        .arg_count_max = 1,
+        .input_types = &[_]InputTypeSpec{Input{ .Single = T.Int }},
         .return_type = T.String,
         .can_panic = true,
     },

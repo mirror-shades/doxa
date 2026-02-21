@@ -680,6 +680,8 @@ pub const CallsHandler = struct {
         } else if (std.mem.eql(u8, name, "os") or
             std.mem.eql(u8, name, "arch") or
             std.mem.eql(u8, name, "abi") or
+            std.mem.eql(u8, name, "argc") or
+            std.mem.eql(u8, name, "argv") or
             std.mem.eql(u8, name, "time") or
             std.mem.eql(u8, name, "tick") or
             std.mem.eql(u8, name, "random") or
@@ -746,6 +748,29 @@ pub const CallsHandler = struct {
         } else if (std.mem.eql(u8, name, "type")) {
             try self.generator.generateExpression(internal_data.receiver, true, false);
             try self.generator.instructions.append(.{ .TypeOf = .{ .value_type = .Unknown } });
+        } else if (std.mem.eql(u8, name, "argc")) {
+            try self.generator.instructions.append(.{ .Call = .{
+                .function_index = 0,
+                .qualified_name = "argc",
+                .arg_count = 0,
+                .call_kind = .BuiltinFunction,
+                .target_module = null,
+                .return_type = .Int,
+            } });
+        } else if (std.mem.eql(u8, name, "argv")) {
+            if (internal_data.arguments.len == 1) {
+                try self.generator.generateExpression(internal_data.arguments[0], true, false);
+            } else {
+                try self.generator.generateExpression(internal_data.receiver, true, false);
+            }
+            try self.generator.instructions.append(.{ .Call = .{
+                .function_index = 0,
+                .qualified_name = "argv",
+                .arg_count = 1,
+                .call_kind = .BuiltinFunction,
+                .target_module = null,
+                .return_type = .String,
+            } });
         } else {
             const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });

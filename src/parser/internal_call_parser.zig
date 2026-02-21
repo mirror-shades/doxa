@@ -42,6 +42,14 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
         return try parseTickMethod(self);
     }
 
+    if (method_tok.type == .ARGC) {
+        return try parseArgcMethod(self);
+    }
+
+    if (method_tok.type == .ARGV) {
+        return try parseArgvMethod(self);
+    }
+
     if (method_tok.type == .BUILD) {
         return try parseBuildMethod(self);
     }
@@ -503,6 +511,63 @@ pub fn parseBuildMethod(self: *Parser) ErrorList!?*ast.Expr {
     };
 
     return build_expr;
+}
+
+pub fn parseArgcMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance();
+
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    const argc_expr = try self.allocator.create(ast.Expr);
+    argc_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = &[_]*ast.Expr{},
+        } },
+    };
+
+    return argc_expr;
+}
+
+pub fn parseArgvMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance();
+
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    const index_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    const arguments = try self.allocator.alloc(*ast.Expr, 1);
+    arguments[0] = index_expr;
+
+    const argv_expr = try self.allocator.create(ast.Expr);
+    argv_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = arguments,
+        } },
+    };
+
+    return argv_expr;
 }
 
 pub fn parseReadMethod(self: *Parser) ErrorList!?*ast.Expr {

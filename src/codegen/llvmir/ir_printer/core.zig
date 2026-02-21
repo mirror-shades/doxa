@@ -501,6 +501,8 @@ pub fn Methods(comptime Ctx: type) type {
             if (std.mem.eql(u8, name, "random")) return "doxa_random";
             if (std.mem.eql(u8, name, "int")) return "doxa_int";
             if (std.mem.eql(u8, name, "tick")) return "doxa_tick";
+            if (std.mem.eql(u8, name, "argc")) return "doxa_argc";
+            if (std.mem.eql(u8, name, "argv")) return "doxa_argv";
             if (std.mem.eql(u8, name, "string")) return "doxa_string";
             if (std.mem.eql(u8, name, "dice_roll")) return "doxa_dice_roll";
             if (std.mem.eql(u8, name, "find")) return "doxa_find";

@@ -50,7 +50,7 @@ function build(os :: string, arch :: string) {
     @print("building for {arch}-{os}\n")
 
     @print("compiling Doxa\n")
-    std.process.exec("zig build\n")
+    std.process.exec("zig build")
 
     @print("making build dir\n")
     std.file.makeDir("doxa-build")

@@ -45,6 +45,8 @@ pub const BUILTINS = [_]BuiltinInfo{
     .{ .name = "os", .return_type = .String, .param_count = 0 },
     .{ .name = "arch", .return_type = .String, .param_count = 0 },
     .{ .name = "abi", .return_type = .String, .param_count = 0 },
+    .{ .name = "argc", .return_type = .Int, .param_count = 0 },
+    .{ .name = "argv", .return_type = .String, .param_count = 1 },
     .{ .name = "sleep", .return_type = .Nothing, .param_count = 1 },
     .{ .name = "exit", .return_type = .Nothing, .param_count = 1 },
 

@@ -72,6 +72,31 @@ fn allocSentinelString(bytes: []const u8) ?[*:0]u8 {
     return out.ptr;
 }
 
+var startup_argc: i32 = 0;
+var startup_argv: ?[*][*:0]u8 = null;
+
+pub export fn doxa_set_args(argc: i32, argv: ?[*][*:0]u8) callconv(.c) void {
+    startup_argc = argc;
+    startup_argv = argv;
+}
+
+pub export fn doxa_argc() callconv(.c) i64 {
+    if (startup_argc <= 0) return 0;
+    return @as(i64, startup_argc);
+}
+
+pub export fn doxa_argv(index: i64) callconv(.c) ?[*:0]u8 {
+    if (index < 0) return null;
+    if (startup_argc <= 0) return null;
+
+    const argc_i64: i64 = @as(i64, startup_argc);
+    if (index >= argc_i64) return null;
+
+    const argv_ptr = startup_argv orelse return null;
+    const actual_index: usize = @intCast(index);
+    return argv_ptr[actual_index];
+}
+
 pub export fn doxa_int_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
     if (ptr == null) return 0;
     const raw = std.mem.span(ptr.?);

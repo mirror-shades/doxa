@@ -59,6 +59,9 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare double @llvm.pow.f64(double, double)\n");
             try w.writeAll("declare double @doxa_random()\n");
             try w.writeAll("declare i64 @doxa_tick()\n");
+            try w.writeAll("declare void @doxa_set_args(i32, ptr)\n");
+            try w.writeAll("declare i64 @doxa_argc()\n");
+            try w.writeAll("declare ptr @doxa_argv(i64)\n");
             try w.writeAll("declare i64 @doxa_int(double)\n");
             try w.writeAll("declare ptr @doxa_input()\n");
             // Legacy type check ABI (i64 + tag + ptr). Implemented as a shim over
@@ -262,8 +265,9 @@ pub fn Methods(comptime Ctx: type) type {
                 else
                     "doxa_user_main";
 
-                try w.writeAll("define i32 @main() {\n");
+                try w.writeAll("define i32 @main(i32 %argc, ptr %argv_raw) {\n");
                 try w.writeAll("entry:\n");
+                try w.writeAll("  call void @doxa_set_args(i32 %argc, ptr %argv_raw)\n");
                 var init_id: usize = 0;
                 try self.emitEnumInitCalls(w, &peek_state, &init_id);
                 const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}()\n", .{entry_mangled_name});
@@ -299,8 +303,9 @@ pub fn Methods(comptime Ctx: type) type {
             functions_start_idx: usize,
             peek_state: *PeekEmitState,
         ) !void {
-            try w.writeAll("define i32 @main() {\n");
+            try w.writeAll("define i32 @main(i32 %argc, ptr %argv_raw) {\n");
             try w.writeAll("entry:\n");
+            try w.writeAll("  call void @doxa_set_args(i32 %argc, ptr %argv_raw)\n");
 
             var id: usize = 0;
             var stack = std.array_list.Managed(StackVal).init(self.allocator);

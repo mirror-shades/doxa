@@ -101,6 +101,8 @@ pub const TokenType = enum {
     OS, // @os     - get operating system
     ARCH, // @arch     - get architecture
     ABI, // @abi     - get ABI
+    ARGC, // @argc     - get argument count (includes argv[0] program name/path)
+    ARGV, // @argv     - get argument by index (argv[0] is program name/path)
     TIME, // @time       - get current time (Unix seconds)
     TICK, // @tick      - monotonic high-resolution time in nanoseconds
     EXIT, // @exit     - exit program
