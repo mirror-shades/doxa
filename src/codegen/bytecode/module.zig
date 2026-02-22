@@ -196,7 +196,11 @@ pub const Instruction = union(enum) {
         location: Reporting.Location,
     },
     Halt,
-    LoadModule: struct { module_name: []const u8 },
+    LoadModule: struct {
+        module_name: []const u8,
+        field_names: []const []const u8 = &[_][]const u8{},
+        field_slots: []const u32 = &[_]u32{},
+    },
     Nop,
 };
 

@@ -653,7 +653,11 @@ pub const BytecodeGenerator = struct {
                 .AssertFail => |payload| try self.instructions.append(self.allocator, .{ .AssertFail = .{ .location = payload.location, .has_message = payload.has_message } }),
                 .Unreachable => |payload| try self.instructions.append(self.allocator, .{ .Unreachable = .{ .location = payload.location } }),
                 .Halt => try self.instructions.append(self.allocator, .Halt),
-                .LoadModule => |payload| try self.instructions.append(self.allocator, .{ .LoadModule = .{ .module_name = payload.module_name } }),
+                .LoadModule => |payload| try self.instructions.append(self.allocator, .{ .LoadModule = .{
+                    .module_name = payload.module_name,
+                    .field_names = payload.field_names,
+                    .field_slots = payload.field_slots,
+                } }),
             }
         }
 

@@ -78,6 +78,8 @@ pub const HIRGenerator = struct {
     module_namespaces: std.StringHashMap(ast.ModuleInfo),
 
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
+    module_field_slots: std.StringHashMap(u32),
+    current_module_context: ?[]const u8 = null,
 
     current_enum_type: ?[]const u8 = null,
     current_assignment_target: ?[]const u8 = null,
@@ -162,6 +164,8 @@ pub const HIRGenerator = struct {
             .function_calls = std.array_list.Managed(FunctionCallSite).init(allocator),
             .module_namespaces = module_namespaces,
             .imported_symbols = imported_symbols,
+            .module_field_slots = std.StringHashMap(u32).init(allocator),
+            .current_module_context = null,
             .current_enum_type = null,
             .stats = HIRStats.init(allocator),
             .loop_context_stack = std.array_list.Managed(LoopContext).init(allocator),
@@ -181,6 +185,7 @@ pub const HIRGenerator = struct {
         self.slot_manager.deinit();
         self.function_signatures.deinit();
         self.function_bodies.deinit();
+        self.module_field_slots.deinit();
         self.function_calls.deinit();
         self.loop_context_stack.deinit();
     }
@@ -874,6 +879,9 @@ pub const HIRGenerator = struct {
 
         var it = self.module_namespaces.iterator();
         while (it.next()) |entry| {
+            const module_alias = entry.key_ptr.*;
+            self.current_module_context = module_alias;
+            defer self.current_module_context = null;
             const module_info = entry.value_ptr.*;
             if (module_info.ast) |module_ast| {
                 if (module_ast.data == .Block) {
@@ -1103,6 +1111,43 @@ pub const HIRGenerator = struct {
 
     pub fn getOrCreateVariable(self: *HIRGenerator, name: []const u8) !u32 {
         return self.symbol_table.getOrCreateVariable(name);
+    }
+
+    pub fn trackModuleFieldSlot(self: *HIRGenerator, module_name: []const u8, field_name: []const u8, slot: u32) !void {
+        const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name });
+        try self.module_field_slots.put(key, slot);
+    }
+
+    pub fn resolveModuleBindings(self: *HIRGenerator, module_name: []const u8) !struct { names: []const []const u8, slots: []const u32 } {
+        var names = std.array_list.Managed([]const u8).init(self.allocator);
+        var slots = std.array_list.Managed(u32).init(self.allocator);
+        errdefer names.deinit();
+        errdefer slots.deinit();
+
+        if (self.module_namespaces.get(module_name)) |module_info| {
+            if (module_info.ast) |module_ast| {
+                if (module_ast.data == .Block) {
+                    for (module_ast.data.Block.statements) |stmt| {
+                        if (stmt.data == .VarDecl) {
+                            const decl = stmt.data.VarDecl;
+                            if (!decl.is_public) continue;
+
+                            const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, decl.name.lexeme });
+                            defer self.allocator.free(key);
+                            if (self.module_field_slots.get(key)) |slot_idx| {
+                                try names.append(decl.name.lexeme);
+                                try slots.append(slot_idx);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return .{
+            .names = try names.toOwnedSlice(),
+            .slots = try slots.toOwnedSlice(),
+        };
     }
 
     pub fn generateLabel(self: *HIRGenerator, prefix: []const u8) ![]const u8 {

@@ -624,6 +624,8 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Generate struct with module variables
     LoadModule: struct {
         module_name: []const u8,
+        field_names: []const []const u8 = &[_][]const u8{},
+        field_slots: []const u32 = &[_]u32{},
     },
 
     /// Map expression
