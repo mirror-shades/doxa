@@ -745,8 +745,8 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                         if (found_var_type) |var_type| {
                             type_info.* = var_type;
                         } else {
-                            // Fallback: default to Int
-                            type_info.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+                            // Fallback: unknown imported variable type should not coerce to int.
+                            type_info.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
                         }
                     },
                     .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false },
@@ -851,7 +851,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
 
             break :blk ast.TypeInfo{ .base = .Function, .is_mutable = false, .function_type = built_func_type };
         },
-        .Variable => ast.TypeInfo{ .base = .Int, .is_mutable = false },
+        .Variable => ast.TypeInfo{ .base = .Nothing, .is_mutable = false },
         .Struct => ast.TypeInfo{ .base = .Struct, .is_mutable = false },
         .Enum => ast.TypeInfo{ .base = .Enum, .is_mutable = false },
         .Type => ast.TypeInfo{ .base = .Custom, .is_mutable = false },

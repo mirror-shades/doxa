@@ -218,8 +218,13 @@ pub fn handleModuleFieldAccess(
                         return type_info;
                     },
                     .Variable => {
-                        // For now, assume variables are integers
-                        type_info.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+                        // Resolve the imported module variable type from the module AST
+                        // when possible; otherwise prefer nothing over an incorrect int default.
+                        if (try findModuleVariableTypeInfo(parser, module_name, field_name)) |resolved_type| {
+                            type_info.* = resolved_type;
+                        } else {
+                            type_info.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
+                        }
                         return type_info;
                     },
                 }
@@ -276,8 +281,8 @@ fn createImportedSymbolVariable(
             };
         },
         .Variable => {
-            // Assume imported variables are integers for now
-            type_info.* = ast.TypeInfo{ .base = .Int, .is_mutable = false };
+            // Unknown imported variable type: default to nothing instead of int.
+            type_info.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
         },
         .Enum => {
             // Assume imported enums are custom types for now
@@ -319,4 +324,59 @@ fn convertTypeToTokenType(base_type: ast.Type) TokenType {
         .Union => .UNION,
         .Custom => .CUSTOM,
     };
+}
+
+fn findModuleVariableTypeInfo(
+    parser: ?*const Parser,
+    module_name: []const u8,
+    field_name: []const u8,
+) !?ast.TypeInfo {
+    const p = parser orelse return null;
+    const module_info = p.module_namespaces.get(module_name) orelse return null;
+    const module_ast = module_info.ast orelse return null;
+    if (module_ast.data != .Block) return null;
+
+    for (module_ast.data.Block.statements) |stmt| {
+        if (stmt.data != .VarDecl) continue;
+        const decl = stmt.data.VarDecl;
+        if (!decl.is_public) continue;
+        if (!std.mem.eql(u8, decl.name.lexeme, field_name)) continue;
+
+        if (decl.type_info.base != .Nothing) {
+            return decl.type_info;
+        }
+
+        if (decl.initializer) |init| {
+            switch (init.data) {
+                .Literal => |lit| {
+                    const base_type: ast.Type = switch (lit) {
+                        .int => .Int,
+                        .float => .Float,
+                        .string => .String,
+                        .tetra => .Tetra,
+                        .byte => .Byte,
+                        .nothing => .Nothing,
+                        else => .Nothing,
+                    };
+                    return ast.TypeInfo{ .base = base_type, .is_mutable = false };
+                },
+                .Array => return ast.TypeInfo{ .base = .Array, .is_mutable = false },
+                .StructLiteral => |struct_lit| return ast.TypeInfo{
+                    .base = .Struct,
+                    .is_mutable = false,
+                    .custom_type = struct_lit.name.lexeme,
+                },
+                .Map, .MapLiteral => return ast.TypeInfo{ .base = .Map, .is_mutable = false },
+                .FieldAccess => {
+                    // Could be enum member; treat as custom and allow later refinement.
+                    return ast.TypeInfo{ .base = .Custom, .is_mutable = false };
+                },
+                else => {},
+            }
+        }
+
+        return ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
+    }
+
+    return null;
 }

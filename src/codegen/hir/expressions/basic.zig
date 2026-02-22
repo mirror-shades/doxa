@@ -62,6 +62,18 @@ pub const BasicExpressionHandler = struct {
 
     /// Generate HIR for variable access
     pub fn generateVariable(self: *BasicExpressionHandler, var_token: ast.Token) (std.mem.Allocator.Error || ErrorList)!void {
+        if (self.generator.isModuleNamespace(var_token.lexeme)) {
+            const bindings = try self.generator.resolveModuleBindings(var_token.lexeme);
+            try self.generator.instructions.append(.{
+                .LoadModule = .{
+                    .module_name = var_token.lexeme,
+                    .field_names = bindings.names,
+                    .field_slots = bindings.slots,
+                },
+            });
+            return;
+        }
+
         // Compile-time validation: Ensure variable has been declared
         const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
         if (maybe_idx) |existing_idx| {

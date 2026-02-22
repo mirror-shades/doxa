@@ -2991,6 +2991,7 @@ pub const VM = struct {
 
     fn execLoadModule(self: *VM, payload: anytype) VmError!void {
         const module_name = payload.module_name;
+        const has_explicit_bindings = payload.field_names.len == payload.field_slots.len and payload.field_names.len > 0;
 
         // Find the module by name
         var module_id: ?module.ModuleId = null;
@@ -3001,29 +3002,36 @@ pub const VM = struct {
             }
         }
 
-        if (module_id == null) {
+        if (module_id == null and !has_explicit_bindings) {
             return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Module '{s}' not found", .{module_name});
         }
 
-        const mod_id = module_id.?;
-        const module_state = try self.resolveModuleState(mod_id);
+        const module_state = if (has_explicit_bindings)
+            try self.resolveModuleState(0)
+        else
+            try self.resolveModuleState(module_id.?);
+        const field_count: usize = if (has_explicit_bindings) payload.field_names.len else module_state.values.len;
+        const alloc = self.runtimeAllocator();
 
-        // Create a struct instance containing all the module's exported variables
-        const fields = try self.allocator.alloc(HIRStructField, module_state.values.len);
-        defer self.allocator.free(fields);
+        // Create a struct instance containing module variables. This allocation is
+        // intentionally retained because it backs the runtime struct value.
+        const fields = try alloc.alloc(HIRStructField, field_count);
 
         for (fields, 0..) |*field, i| {
-            const slot_ptr = module_state.pointer(@intCast(i));
+            const slot_index: u32 = if (has_explicit_bindings) payload.field_slots[i] else @intCast(i);
+            const slot_ptr = module_state.pointer(@intCast(slot_index));
             const value = slot_ptr.load();
 
-            // Generate a generic variable name since we don't have the actual names
-            const var_name = try std.fmt.allocPrint(self.allocator, "var_{}", .{i});
-            defer self.allocator.free(var_name);
+            const resolved_name: []const u8 = if (has_explicit_bindings) payload.field_names[i] else blk: {
+                const var_name = try std.fmt.allocPrint(alloc, "var_{}", .{i});
+                defer alloc.free(var_name);
+                break :blk var_name;
+            };
 
-            const value_ptr = try self.allocator.create(HIRValue);
+            const value_ptr = try alloc.create(HIRValue);
             value_ptr.* = value;
             field.* = HIRStructField{
-                .name = try self.allocator.dupe(u8, var_name),
+                .name = try alloc.dupe(u8, resolved_name),
                 .value = value_ptr,
                 .field_type = .Unknown,
             };
@@ -3031,7 +3039,7 @@ pub const VM = struct {
 
         const struct_instance = HIRValue{
             .struct_instance = HIRStruct{
-                .type_name = try self.allocator.dupe(u8, module_name),
+                .type_name = try alloc.dupe(u8, module_name),
                 .fields = fields,
                 .owner = ValueOwner.Runtime,
             },

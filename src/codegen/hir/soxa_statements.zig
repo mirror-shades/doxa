@@ -354,6 +354,11 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
 
             const var_idx = try self.symbol_table.createVariable(decl.name.lexeme);
+            const is_module_ctx = self.current_function == null and self.isModuleContext();
+            if (is_module_ctx and self.current_module_context != null) {
+                const module_name = self.current_module_context.?;
+                try self.trackModuleFieldSlot(module_name, decl.name.lexeme, var_idx);
+            }
 
             if (decl.type_info.base == .Union) {
                 if (decl.type_info.union_type) |ut| {
@@ -374,7 +379,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     is_literal = false;
                 }
 
-                const is_module_ctx = self.current_function == null and self.isModuleContext();
                 const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);
 
                 if (is_literal) {
@@ -400,7 +404,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     try self.instructions.append(.Pop);
                 }
             } else {
-                const is_module_ctx = self.current_function == null and self.isModuleContext();
                 const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);
 
                 try self.instructions.append(.{ .StoreDecl = .{
