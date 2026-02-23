@@ -1227,6 +1227,301 @@ pub const ModuleInfo = struct {
     }
 };
 
+fn dumpIndent(writer: anytype, depth: u32) @TypeOf(writer).Error!void {
+    for (0..depth) |_| try writer.writeAll("  ");
+}
+
+pub fn dumpStatements(writer: anytype, statements: []const Stmt) @TypeOf(writer).Error!void {
+    try writer.writeAll("(ast\n");
+    for (statements) |*stmt| {
+        try dumpStmt(writer, stmt, 1);
+    }
+    try writer.writeAll(")\n");
+}
+
+fn dumpStmt(writer: anytype, stmt: *const Stmt, depth: u32) @TypeOf(writer).Error!void {
+    try dumpIndent(writer, depth);
+    switch (stmt.data) {
+        .Expression => |maybe_expr| {
+            try writer.print("Stmt.Expression\n", .{});
+            if (maybe_expr) |expr| try dumpExpr(writer, expr, depth + 1);
+        },
+        .ZigDecl => |z| try writer.print("Stmt.ZigDecl name={s}\n", .{z.name.lexeme}),
+        .VarDecl => |*v| {
+            try writer.print("Stmt.VarDecl name={s}\n", .{v.name.lexeme});
+            if (v.initializer) |init| try dumpExpr(writer, init, depth + 1);
+        },
+        .Block => |block_stmts| {
+            try writer.print("Stmt.Block\n", .{});
+            for (block_stmts) |*s| try dumpStmt(writer, s, depth + 1);
+        },
+        .FunctionDecl => |*f| {
+            try writer.print("Stmt.FunctionDecl name={s}\n", .{f.name.lexeme});
+            for (f.body) |*s| try dumpStmt(writer, s, depth + 1);
+        },
+        .MapDecl => |*m| try writer.print("Stmt.MapDecl name={s}\n", .{m.name.lexeme}),
+        .Return => |*r| {
+            try writer.print("Stmt.Return\n", .{});
+            if (r.value) |value| try dumpExpr(writer, value, depth + 1);
+        },
+        .EnumDecl => |e| try writer.print("Stmt.EnumDecl name={s}\n", .{e.name.lexeme}),
+        .MapLiteral => |*ml| {
+            try writer.print("Stmt.MapLiteral\n", .{});
+            for (ml.entries) |entry| {
+                try dumpIndent(writer, depth + 1);
+                try writer.print("entry\n", .{});
+                try dumpExpr(writer, entry.key, depth + 2);
+                try dumpExpr(writer, entry.value, depth + 2);
+            }
+        },
+        .Module => |m| try writer.print("Stmt.Module name={s}\n", .{m.name.lexeme}),
+        .Import => try writer.print("Stmt.Import\n", .{}),
+        .Path => |p| try writer.print("Stmt.Path {s}\n", .{p}),
+        .Continue => try writer.print("Stmt.Continue\n", .{}),
+        .Break => try writer.print("Stmt.Break\n", .{}),
+        .Assert => |*a| {
+            try writer.print("Stmt.Assert\n", .{});
+            try dumpExpr(writer, a.condition, depth + 1);
+            if (a.message) |msg| try dumpExpr(writer, msg, depth + 1);
+        },
+        .Cast => |*c| {
+            try writer.print("Stmt.Cast\n", .{});
+            try dumpExpr(writer, c.value, depth + 1);
+            try dumpTypeExpr(writer, c.target_type, depth + 1);
+        },
+    }
+}
+
+fn dumpExpr(writer: anytype, expr: *const Expr, depth: u32) @TypeOf(writer).Error!void {
+    try dumpIndent(writer, depth);
+    switch (expr.data) {
+        .Literal => |lit| {
+            try writer.print("Expr.Literal {s}\n", .{@tagName(std.meta.activeTag(lit))});
+        },
+        .Binary => |b| {
+            try writer.print("Expr.Binary op={s}\n", .{b.operator.lexeme});
+            if (b.left) |left| try dumpExpr(writer, left, depth + 1);
+            if (b.right) |right| try dumpExpr(writer, right, depth + 1);
+        },
+        .Unary => |u| {
+            try writer.print("Expr.Unary op={s}\n", .{u.operator.lexeme});
+            if (u.right) |right| try dumpExpr(writer, right, depth + 1);
+        },
+        .Variable => |t| try writer.print("Expr.Variable {s}\n", .{t.lexeme}),
+        .Grouping => |g| {
+            try writer.print("Expr.Grouping\n", .{});
+            if (g) |e| try dumpExpr(writer, e, depth + 1);
+        },
+        .Assignment => |a| {
+            try writer.print("Expr.Assignment\n", .{});
+            if (a.value) |v| try dumpExpr(writer, v, depth + 1);
+        },
+        .Block => |blk| {
+            try writer.print("Expr.Block\n", .{});
+            for (blk.statements) |*s| try dumpStmt(writer, s, depth + 1);
+            if (blk.value) |v| try dumpExpr(writer, v, depth + 1);
+        },
+        .Struct => |fields| {
+            try writer.print("Expr.Struct\n", .{});
+            for (fields) |field| {
+                try dumpIndent(writer, depth + 1);
+                try writer.print(".{s}\n", .{field.name.lexeme});
+                try dumpExpr(writer, field.value, depth + 2);
+            }
+        },
+        .Array => |elements| {
+            try writer.print("Expr.Array len={}\n", .{elements.len});
+            for (elements) |e| try dumpExpr(writer, e, depth + 1);
+        },
+        .Index => |i| {
+            try writer.print("Expr.Index\n", .{});
+            try dumpExpr(writer, i.array, depth + 1);
+            try dumpExpr(writer, i.index, depth + 1);
+        },
+        .FunctionCall => |c| {
+            try writer.print("Expr.FunctionCall\n", .{});
+            try dumpExpr(writer, c.callee, depth + 1);
+            for (c.arguments) |arg| try dumpExpr(writer, arg.expr, depth + 1);
+        },
+        .If => |i| {
+            try writer.print("Expr.If\n", .{});
+            if (i.condition) |cond| try dumpExpr(writer, cond, depth + 1);
+            if (i.then_branch) |then_| try dumpExpr(writer, then_, depth + 1);
+            if (i.else_branch) |else_| try dumpExpr(writer, else_, depth + 1);
+        },
+        .FieldAccess => |f| {
+            try writer.print("Expr.FieldAccess .{s}\n", .{f.field.lexeme});
+            try dumpExpr(writer, f.object, depth + 1);
+        },
+        .StructLiteral => |s| {
+            try writer.print("Expr.StructLiteral name={s}\n", .{s.name.lexeme});
+            for (s.fields) |f| {
+                try dumpIndent(writer, depth + 1);
+                try writer.print(".{s}\n", .{f.name.lexeme});
+                try dumpExpr(writer, f.value, depth + 2);
+            }
+        },
+        .ReturnExpr => |r| {
+            try writer.print("Expr.ReturnExpr\n", .{});
+            if (r.value) |v| try dumpExpr(writer, v, depth + 1);
+        },
+        .TypeExpr => |te| {
+            try writer.print("Expr.TypeExpr\n", .{});
+            try dumpTypeExpr(writer, te, depth + 1);
+        },
+        .Loop => |l| {
+            try writer.print("Expr.Loop\n", .{});
+            if (l.condition) |c| try dumpExpr(writer, c, depth + 1);
+            try dumpExpr(writer, l.body, depth + 1);
+        },
+        .Range => |r| {
+            try writer.print("Expr.Range\n", .{});
+            try dumpExpr(writer, r.start, depth + 1);
+            try dumpExpr(writer, r.end, depth + 1);
+        },
+        .Peek => |p| {
+            try writer.print("Expr.Peek\n", .{});
+            try dumpExpr(writer, p.expr, depth + 1);
+        },
+        .Print => |p| {
+            try writer.print("Expr.Print\n", .{});
+            if (p.expr) |e| try dumpExpr(writer, e, depth + 1);
+        },
+        .PeekStruct => |p| {
+            try writer.print("Expr.PeekStruct\n", .{});
+            try dumpExpr(writer, p.expr, depth + 1);
+        },
+        .Input => try writer.print("Expr.Input\n", .{}),
+        .IndexAssign => |i| {
+            try writer.print("Expr.IndexAssign\n", .{});
+            try dumpExpr(writer, i.array, depth + 1);
+            try dumpExpr(writer, i.index, depth + 1);
+            try dumpExpr(writer, i.value, depth + 1);
+        },
+        .Logical => |l| {
+            try writer.print("Expr.Logical op={s}\n", .{l.operator.lexeme});
+            try dumpExpr(writer, l.left, depth + 1);
+            try dumpExpr(writer, l.right, depth + 1);
+        },
+        .StructDecl => try writer.print("Expr.StructDecl\n", .{}),
+        .FieldAssignment => |f| {
+            try writer.print("Expr.FieldAssignment .{s}\n", .{f.field.lexeme});
+            try dumpExpr(writer, f.object, depth + 1);
+            try dumpExpr(writer, f.value, depth + 1);
+        },
+        .Exists => |e| {
+            try writer.print("Expr.Exists {s}\n", .{e.variable.lexeme});
+            try dumpExpr(writer, e.array, depth + 1);
+            try dumpExpr(writer, e.condition, depth + 1);
+        },
+        .ForAll => |e| {
+            try writer.print("Expr.ForAll {s}\n", .{e.variable.lexeme});
+            try dumpExpr(writer, e.array, depth + 1);
+            try dumpExpr(writer, e.condition, depth + 1);
+        },
+        .ArrayType => |a| {
+            try writer.print("Expr.ArrayType\n", .{});
+            try dumpTypeExpr(writer, a.element_type, depth + 1);
+            if (a.size) |s| try dumpExpr(writer, s, depth + 1);
+        },
+        .Match => |m| {
+            try writer.print("Expr.Match\n", .{});
+            try dumpExpr(writer, m.value, depth + 1);
+            for (m.cases) |case_| {
+                try dumpIndent(writer, depth + 1);
+                try writer.print("case\n", .{});
+                try dumpExpr(writer, case_.body, depth + 2);
+            }
+        },
+        .EnumDecl => |e| try writer.print("Expr.EnumDecl name={s}\n", .{e.name.lexeme}),
+        .EnumMember => |t| try writer.print("Expr.EnumMember {s}\n", .{t.lexeme}),
+        .DefaultArgPlaceholder => try writer.print("Expr.DefaultArgPlaceholder\n", .{}),
+        .BuiltinCall => |b| {
+            try writer.print("Expr.BuiltinCall {s}\n", .{b.function.lexeme});
+            for (b.arguments) |arg| try dumpExpr(writer, arg, depth + 1);
+        },
+        .Map => |m| {
+            try writer.print("Expr.Map\n", .{});
+            for (m.entries) |entry| {
+                try dumpExpr(writer, entry.key, depth + 1);
+                try dumpExpr(writer, entry.value, depth + 1);
+            }
+        },
+        .MapLiteral => |m| {
+            try writer.print("Expr.MapLiteral\n", .{});
+            for (m.entries) |entry| {
+                try dumpExpr(writer, entry.key, depth + 1);
+                try dumpExpr(writer, entry.value, depth + 1);
+            }
+            if (m.else_value) |ev| try dumpExpr(writer, ev, depth + 1);
+        },
+        .InternalCall => |c| {
+            try writer.print("Expr.InternalCall .{s}\n", .{c.method.lexeme});
+            try dumpExpr(writer, c.receiver, depth + 1);
+            for (c.arguments) |arg| try dumpExpr(writer, arg, depth + 1);
+        },
+        .Increment => |e| {
+            try writer.print("Expr.Increment\n", .{});
+            try dumpExpr(writer, e, depth + 1);
+        },
+        .Decrement => |e| {
+            try writer.print("Expr.Decrement\n", .{});
+            try dumpExpr(writer, e, depth + 1);
+        },
+        .CompoundAssign => |c| {
+            try writer.print("Expr.CompoundAssign name={s} op={s}\n", .{ c.name.lexeme, c.operator.lexeme });
+            if (c.value) |value| try dumpExpr(writer, value, depth + 1);
+        },
+        .Assert => |a| {
+            try writer.print("Expr.Assert\n", .{});
+            try dumpExpr(writer, a.condition, depth + 1);
+            if (a.message) |msg| try dumpExpr(writer, msg, depth + 1);
+        },
+        .Cast => |c| {
+            try writer.print("Expr.Cast\n", .{});
+            try dumpExpr(writer, c.value, depth + 1);
+            try dumpTypeExpr(writer, c.target_type, depth + 1);
+        },
+        .Unreachable => try writer.print("Expr.Unreachable\n", .{}),
+        .Break => try writer.print("Expr.Break\n", .{}),
+        .This => try writer.print("Expr.This\n", .{}),
+    }
+}
+
+fn dumpTypeExpr(writer: anytype, type_expr: *const TypeExpr, depth: u32) @TypeOf(writer).Error!void {
+    try dumpIndent(writer, depth);
+    switch (type_expr.data) {
+        .Basic => |b| try writer.print("TypeExpr.Basic {s}\n", .{@tagName(b)}),
+        .Custom => |t| try writer.print("TypeExpr.Custom {s}\n", .{t.lexeme}),
+        .Array => |a| {
+            try writer.print("TypeExpr.Array\n", .{});
+            try dumpTypeExpr(writer, a.element_type, depth + 1);
+            if (a.size) |s| try dumpExpr(writer, s, depth + 1);
+        },
+        .Struct => |fields| {
+            try writer.print("TypeExpr.Struct\n", .{});
+            for (fields) |f| {
+                try dumpIndent(writer, depth + 1);
+                try writer.print("{s}\n", .{f.name.lexeme});
+                try dumpTypeExpr(writer, f.type_expr, depth + 2);
+            }
+        },
+        .Enum => |variants| {
+            try writer.print("TypeExpr.Enum\n", .{});
+            for (variants) |v| try writer.print("  {s}\n", .{v});
+        },
+        .Union => |types| {
+            try writer.print("TypeExpr.Union\n", .{});
+            for (types) |t| try dumpTypeExpr(writer, t, depth + 1);
+        },
+        .Map => |m| {
+            try writer.print("TypeExpr.Map\n", .{});
+            if (m.key_type) |k| try dumpTypeExpr(writer, k, depth + 1);
+            try dumpTypeExpr(writer, m.value_type, depth + 1);
+        },
+    }
+}
+
 pub fn createExpr(allocator: std.mem.Allocator, data: Expr.Data, span: SourceSpan) !*Expr {
     const expr = try allocator.create(Expr);
     expr.* = .{

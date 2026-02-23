@@ -623,19 +623,34 @@ pub const Parser = struct {
 
         if (self.peek().type == .DOT) {
             const namespace = struct_name.lexeme;
-
             if (!self.module_namespaces.contains(namespace)) {
                 return error.ExpectedIdentifier;
             }
 
-            self.advance();
+            var builder = std.array_list.Managed(u8).init(self.allocator);
+            errdefer builder.deinit();
+            try builder.appendSlice(struct_name.lexeme);
 
-            if (self.peek().type != .IDENTIFIER) {
-                return error.ExpectedIdentifier;
+            while (self.peek().type == .DOT) {
+                self.advance();
+                if (self.peek().type != .IDENTIFIER) {
+                    return error.ExpectedIdentifier;
+                }
+                try builder.append('.');
+                try builder.appendSlice(self.peek().lexeme);
+                self.advance();
             }
 
-            struct_name = self.peek();
-            self.advance();
+            const qualified_lexeme = try builder.toOwnedSlice();
+            struct_name = token.Token{
+                .type = .IDENTIFIER,
+                .lexeme = qualified_lexeme,
+                .literal = .nothing,
+                .line = struct_name.line,
+                .column = struct_name.column,
+                .file = struct_name.file,
+                .file_uri = struct_name.file_uri,
+            };
         }
 
         if (self.peek().type != .LEFT_BRACE) {

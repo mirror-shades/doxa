@@ -997,18 +997,14 @@ pub const SemanticAnalyzer = struct {
                     if (func_type_info.base != .Function or func_type_info.function_type == null) continue;
 
                     const func_type = func_type_info.function_type.?;
-
-                    const inferred = try self.inferFunctionReturnType(func);
-                    var inferred_return_type = inferred;
-
-                    if (func.return_type_info.base != .Nothing) {
+                    if (func.return_type_info.base == .Nothing) {
+                        // No return inference: functions without an explicit `returns` keep Nothing.
+                        func_type.return_type.* = .{ .base = .Nothing, .is_mutable = false };
+                    } else {
+                        const inferred = try self.inferFunctionReturnType(func);
                         try self.validateReturnTypeCompatibility(&func.return_type_info, inferred, .{ .location = getLocationFromBase(stmt.base) });
-                        const declared_type = try ast.TypeInfo.createDefault(self.allocator);
-                        declared_type.* = func.return_type_info;
-                        inferred_return_type = declared_type;
+                        func_type.return_type.* = func.return_type_info;
                     }
-
-                    func_type.return_type.* = inferred_return_type.*;
                     try self.function_return_types.put(stmt.base.id, func_type.return_type);
                 },
                 else => {},

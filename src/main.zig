@@ -598,6 +598,13 @@ pub fn main() !void {
     const parsedStatements = try parser.execute();
     profiler.stopPhase();
 
+    if (cli_options.reporter_options.debug_parser) {
+        var ast_dump = std.array_list.Managed(u8).init(memoryManager.getAnalysisAllocator());
+        defer ast_dump.deinit();
+        AST.dumpStatements(ast_dump.writer(), parsedStatements) catch {};
+        reporter.report(.Debug, .Hint, null, "AST", "{s}", .{ast_dump.items});
+    }
+
     profiler.startPhase(Phase.SEMANTIC_A);
     var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), &reporter, &memoryManager, &parser);
     defer semantic_analyzer.deinit();
