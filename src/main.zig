@@ -15,7 +15,6 @@ const TokenLiteral = TypesImport.TokenLiteral;
 const Environment = TypesImport.Environment;
 const env = @import("./interpreter/environment.zig");
 const AST = @import("./ast/ast.zig");
-const ast = AST;
 const SoxaCompiler = @import("./codegen/hir/soxa.zig");
 const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("./codegen/hir/soxa_parser.zig").SoxaTextParser;
@@ -162,9 +161,9 @@ fn writeBytecodeArtifact(bytecode_module: *BytecodeModule, path: []const u8) !vo
     try BytecodeWriter.writeBytecodeModuleToFile(bytecode_module, path);
 }
 
-fn generateHIRProgram(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
+fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
     var constant_folder = ConstantFolder.init(memoryManager.getAnalysisAllocator());
-    var folded_statements = std.array_list.Managed(ast.Stmt).init(memoryManager.getAnalysisAllocator());
+    var folded_statements = std.array_list.Managed(AST.Stmt).init(memoryManager.getAnalysisAllocator());
     defer folded_statements.deinit();
 
     for (statements) |stmt| {
@@ -229,16 +228,16 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []ast.Stmt, par
     return hir_program;
 }
 
-fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
+fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
     var hir_program = try generateHIRProgram(memoryManager, statements, parser, semantic_analyzer, source_path, soxa_path, reporter);
     defer hir_program.deinit();
 }
 
-fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, reporter: *Reporter, output_dir: []const u8) !?std.StringHashMap(VM.ZigRuntimeModule) {
+fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, output_dir: []const u8) !?std.StringHashMap(VM.ZigRuntimeModule) {
     return inline_zig_compiler.compileInlineZigModules(memoryManager, statements, parser, reporter, output_dir);
 }
 
-fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []ast.Stmt, parser: *Parser, reporter: *Reporter, output_dir: []const u8) ![]const []const u8 {
+fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, output_dir: []const u8) ![]const []const u8 {
     return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, output_dir);
 }
 fn runBytecodeModule(memoryManager: *MemoryManager, bytecode_module: *BytecodeModule, reporter: *Reporter, zig_modules: ?std.StringHashMap(VM.ZigRuntimeModule), program_args: []const []const u8) !void {
