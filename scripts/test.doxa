@@ -1,0 +1,40 @@
+module answers from "./test/answers.doxa"
+module std from "std"
+
+pub function run(path :: string) {
+    var test_cases :: answers.peek_result[]
+    const output is std.process.execCapture(path + " build run -- run ./test/misc/bigfile.doxa")
+    
+    var capture_type :: tetra
+    var capture_value :: tetra
+    var type :: string
+    var value :: string
+    for i while i < @length(output) do i += 1 {
+        if output[i] == ":" then {
+            if output[i + 1] == ":" then {
+                capture_type is true
+                i += 3
+
+            }
+        }
+        if output[i] == " " then {
+            if output[i + 1] == "i" and output[i + 2] == "s" and output[i + 3] == " " then {
+                capture_type is false
+                capture_value is true
+                i += 4
+            }
+        }
+
+        if output[i] == "\n" then {
+            capture_value is false
+            @push(test_cases, $answers.peek_result { type is type, value is value })
+            type is ""
+            value is ""
+        }
+        if capture_type  then @push(type, output[i])
+        if capture_value then @push(value, output[i])
+    }
+    @print("{test_cases}")
+}
+
+run("zig")
