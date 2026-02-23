@@ -6,5 +6,4 @@ venv
 site
 
 last_diagnostics.log
-test.doxa
 release.py
