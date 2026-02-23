@@ -22,8 +22,67 @@ zig Process {
             else => 1,
         };
     }
+
+    fn exec_capture_stdout(input: []const u8) []const u8 {
+        const argv = if (builtin.os.tag == .windows)
+            [_][]const u8{ "cmd", "/C", input }
+        else
+            [_][]const u8{ "sh", "-c", input };
+
+        var cmd = std.process.Child.init(&argv, std.heap.page_allocator);
+        cmd.stdout_behavior = .Pipe;
+        cmd.stderr_behavior = .Pipe;
+
+        cmd.spawn() catch |err| {
+            return std.fmt.allocPrint(std.heap.page_allocator, "failed to run command: {s}", .{@errorName(err)}) catch "";
+        };
+
+        var stdout = std.ArrayList(u8).empty;
+        defer stdout.deinit(std.heap.page_allocator);
+        var stderr = std.ArrayList(u8).empty;
+        defer stderr.deinit(std.heap.page_allocator);
+
+        cmd.collectOutput(std.heap.page_allocator, &stdout, &stderr, 8 * 1024 * 1024) catch |err| {
+            _ = cmd.kill() catch {};
+            _ = cmd.wait() catch {};
+            return std.fmt.allocPrint(std.heap.page_allocator, "failed to collect output: {s}", .{@errorName(err)}) catch "";
+        };
+
+        _ = cmd.wait() catch {
+            return std.fmt.allocPrint(std.heap.page_allocator, "failed waiting for command", .{}) catch "";
+        };
+        return std.heap.page_allocator.dupe(u8, stdout.items) catch "";
+    }
 }
 
 pub function exec(input :: string) returns int {
-    return Process.exec_cmd(input);
+    var input_string :: string
+    if @os() == "windows" then {
+        each c in input {
+            if c == "/" then {
+                @push(input_string, "\\")
+            } else {
+                @push(input_string, c)
+            }
+        }
+    } else {
+        input_string is input
+    }
+    return Process.exec_cmd(input_string);
+}
+
+pub function execCapture(input :: string) returns string {
+    var input_string :: string
+    if @os() == "windows" then {
+        each c in input {
+            if c == "/" then {
+                @push(input_string, "\\")
+            } else {
+                @push(input_string, c)
+            }
+        }
+    } else {
+        input_string is input
+    }
+    return Process.exec_capture_stdout(input_string)
 }

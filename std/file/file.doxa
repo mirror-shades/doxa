@@ -162,7 +162,15 @@ zig File {
             return;
         };
     }
-    
+
+    fn IsDir(path: []const u8) bool {
+        const cwd = std.fs.cwd();
+        var dir = cwd.openDir(path, .{}) catch {
+            return false;
+        };
+        dir.close();
+        return true;
+    }
 }
 
 pub function makeDir(path :: string) {
@@ -173,7 +181,7 @@ pub function copyFile(source :: string, destination :: string) {
     File.copyFile(source, destination)
 }
 
-pub function delete(path :: string, recursive :: bool) {
+pub function delete(path :: string, recursive :: tetra) {
     File.delete(path, recursive)
 }
 
@@ -183,4 +191,8 @@ pub function copyDir(source :: string, destination :: string) {
 
 pub function unzipFile(zip_path :: string, unzip_path :: string) {
     File.unzipFile(zip_path, unzip_path)
+}
+
+pub function IsDir(path :: string) returns tetra {
+    return File.IsDir(path)
 }
