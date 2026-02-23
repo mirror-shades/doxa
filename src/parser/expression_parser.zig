@@ -794,9 +794,13 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             },
         };
     } else if (type_token.type == .IDENTIFIER) {
-        // Treat all identifiers as custom types - semantic analysis will validate them
+        // Treat identifiers (including module-qualified forms like A.B) as custom types.
         self.advance();
         consumed_token = true;
+        var custom_type_token = type_token;
+        if (self.peek().type == .DOT) {
+            custom_type_token = try parseQualifiedCustomTypeToken(self, type_token);
+        }
         base_type_expr = try self.allocator.create(ast.TypeExpr);
         base_type_expr.?.* = .{
             .base = .{
@@ -804,7 +808,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 .span = ast.SourceSpan.fromToken(type_token),
             },
             .data = .{
-                .Custom = type_token,
+                .Custom = custom_type_token,
             },
         };
     } else {
@@ -894,6 +898,33 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     }
 
     return base_type_expr;
+}
+
+fn parseQualifiedCustomTypeToken(self: *Parser, first_token: token.Token) !token.Token {
+    var builder = std.array_list.Managed(u8).init(self.allocator);
+    errdefer builder.deinit();
+
+    try builder.appendSlice(first_token.lexeme);
+
+    while (self.peek().type == .DOT) {
+        self.advance();
+        if (self.peek().type != .IDENTIFIER) return error.ExpectedIdentifier;
+
+        try builder.append('.');
+        try builder.appendSlice(self.peek().lexeme);
+        self.advance();
+    }
+
+    const qualified_lexeme = try builder.toOwnedSlice();
+    return token.Token{
+        .type = .IDENTIFIER,
+        .lexeme = qualified_lexeme,
+        .literal = .nothing,
+        .line = first_token.line,
+        .column = first_token.column,
+        .file = first_token.file,
+        .file_uri = first_token.file_uri,
+    };
 }
 
 pub fn allocExpr(self: *Parser, expr: ast.Expr) ErrorList!*ast.Expr {
@@ -1464,6 +1495,10 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         if (type_token.type == .IDENTIFIER) {
             self.advance();
             consumed_token = true;
+            var custom_type_token = type_token;
+            if (self.peek().type == .DOT) {
+                custom_type_token = try parseQualifiedCustomTypeToken(self, type_token);
+            }
 
             const type_expr = try self.allocator.create(ast.TypeExpr);
             type_expr.* = .{
@@ -1472,7 +1507,7 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                     .span = ast.SourceSpan.fromToken(type_token),
                 },
                 .data = .{
-                    .Custom = type_token,
+                    .Custom = custom_type_token,
                 },
             };
             base_type_expr = type_expr;
