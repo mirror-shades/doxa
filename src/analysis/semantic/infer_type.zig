@@ -661,11 +661,106 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
             if (resolved_object_type.base == .Custom) {
                 if (resolved_object_type.custom_type) |custom_type_name| {
-                    if (helpers.isModuleNamespace(self, custom_type_name)) {
-                        return helpers.handleModuleFieldAccess(self, custom_type_name, field.field.lexeme, .{ .location = getLocationFromBase(expr.base) });
+                    const resolved_custom_name = self.resolveTypeAlias(custom_type_name);
+                    var custom_type_lookup_name = resolved_custom_name;
+                    var module_struct_type_info: ?*ast.TypeInfo = null;
+
+                    if (!self.custom_types.contains(resolved_custom_name)) {
+                        if (self.parser) |parser| {
+                            var module_it = parser.module_namespaces.iterator();
+                            find_unqualified_struct: while (module_it.next()) |entry| {
+                                const module_info = entry.value_ptr.*;
+                                if (module_info.ast) |module_ast| {
+                                    if (module_ast.data == .Block) {
+                                        for (module_ast.data.Block.statements) |stmt| {
+                                            switch (stmt.data) {
+                                                .Expression => |expr_opt| {
+                                                    if (expr_opt) |stmt_expr| {
+                                                        if (stmt_expr.data == .StructDecl) {
+                                                            const sd = stmt_expr.data.StructDecl;
+                                                            if (!sd.is_public or !std.mem.eql(u8, sd.name.lexeme, resolved_custom_name)) continue;
+                                                            const struct_fields = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
+                                                            for (sd.fields, 0..) |decl_field, i| {
+                                                                struct_fields[i] = .{
+                                                                    .name = decl_field.name.lexeme,
+                                                                    .type_info = try self.typeExprToTypeInfo(decl_field.type_expr),
+                                                                    .is_public = decl_field.is_public,
+                                                                };
+                                                            }
+                                                            const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
+                                                            resolved_type_info.* = ast.TypeInfo{
+                                                                .base = .Struct,
+                                                                .custom_type = resolved_custom_name,
+                                                                .struct_fields = struct_fields,
+                                                                .is_mutable = object_type.is_mutable,
+                                                            };
+                                                            module_struct_type_info = resolved_type_info;
+                                                            break :find_unqualified_struct;
+                                                        }
+                                                    }
+                                                },
+                                                else => {},
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
-                    if (self.custom_types.get(custom_type_name)) |custom_type| {
+                    if (std.mem.lastIndexOfScalar(u8, resolved_custom_name, '.')) |dot_idx| {
+                        const module_root = resolved_custom_name[0..dot_idx];
+                        const type_name = resolved_custom_name[dot_idx + 1 ..];
+                        if (helpers.isModuleNamespace(self, module_root) and self.custom_types.contains(type_name)) {
+                            custom_type_lookup_name = type_name;
+                        }
+
+                        if (helpers.isModuleNamespace(self, module_root) and !self.custom_types.contains(type_name)) {
+                            if (self.parser) |parser| {
+                                if (parser.module_namespaces.get(module_root)) |module_info| {
+                                    if (module_info.ast) |module_ast| {
+                                        if (module_ast.data == .Block) {
+                                            find_struct: for (module_ast.data.Block.statements) |stmt| {
+                                                switch (stmt.data) {
+                                                    .Expression => |expr_opt| {
+                                                        if (expr_opt) |stmt_expr| {
+                                                            if (stmt_expr.data == .StructDecl) {
+                                                                const sd = stmt_expr.data.StructDecl;
+                                                                if (!sd.is_public or !std.mem.eql(u8, sd.name.lexeme, type_name)) continue;
+                                                                const struct_fields = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
+                                                                for (sd.fields, 0..) |decl_field, i| {
+                                                                    struct_fields[i] = .{
+                                                                        .name = decl_field.name.lexeme,
+                                                                        .type_info = try self.typeExprToTypeInfo(decl_field.type_expr),
+                                                                        .is_public = decl_field.is_public,
+                                                                    };
+                                                                }
+                                                                const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
+                                                                resolved_type_info.* = ast.TypeInfo{
+                                                                    .base = .Struct,
+                                                                    .custom_type = resolved_custom_name,
+                                                                    .struct_fields = struct_fields,
+                                                                    .is_mutable = object_type.is_mutable,
+                                                                };
+                                                                module_struct_type_info = resolved_type_info;
+                                                                custom_type_lookup_name = type_name;
+                                                                break :find_struct;
+                                                            }
+                                                        }
+                                                    },
+                                                    else => {},
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Prefer struct field lookup when this is a known struct type (e.g. answers.peek_result),
+                    // so .kind/.value etc. resolve to struct fields, not module symbols.
+                    if (self.custom_types.get(custom_type_lookup_name)) |custom_type| {
                         if (custom_type.kind == .Struct) {
                             const struct_fields = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
                             for (custom_type.struct_fields.?, 0..) |custom_field, i| {
@@ -676,18 +771,27 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 };
                             }
                             const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
-                            resolved_type_info.* = ast.TypeInfo{ .base = .Struct, .custom_type = custom_type_name, .struct_fields = struct_fields, .is_mutable = object_type.is_mutable };
+                            resolved_type_info.* = ast.TypeInfo{
+                                .base = .Struct,
+                                .custom_type = resolved_custom_name,
+                                .struct_fields = struct_fields,
+                                .is_mutable = object_type.is_mutable,
+                            };
                             resolved_object_type = resolved_type_info;
                         } else {
-                            type_info.* = .{ .base = .Custom, .custom_type = custom_type_name };
+                            type_info.* = .{ .base = .Custom, .custom_type = resolved_custom_name };
                             return type_info;
                         }
+                    } else if (module_struct_type_info) |resolved_type_info| {
+                        resolved_object_type = resolved_type_info;
+                    } else if (helpers.isModuleNamespace(self, resolved_custom_name)) {
+                        return helpers.handleModuleFieldAccess(self, resolved_custom_name, field.field.lexeme, .{ .location = getLocationFromBase(expr.base) });
                     } else {
                         self.reporter.reportCompileError(
                             getLocationFromBase(expr.base),
                             ErrorCode.TYPE_MISMATCH,
                             "Undefined type '{s}'",
-                            .{custom_type_name},
+                            .{resolved_custom_name},
                         );
                         self.fatal_error = true;
                         type_info.base = .Nothing;

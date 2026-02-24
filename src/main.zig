@@ -515,6 +515,12 @@ fn lexicAnalysis(memoryManager: *MemoryManager, source: []const u8, path: []cons
     return tokens;
 }
 
+fn exitIfCompileErrors(reporter: *Reporter) void {
+    if (reporter.hasCompileErrors()) {
+        std.process.exit(EXIT_CODE_USAGE);
+    }
+}
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
 
@@ -597,6 +603,7 @@ pub fn main() !void {
     defer parser.deinit();
     const parsedStatements = try parser.execute();
     profiler.stopPhase();
+    exitIfCompileErrors(&reporter);
 
     if (cli_options.reporter_options.debug_parser) {
         var ast_dump = std.array_list.Managed(u8).init(memoryManager.getAnalysisAllocator());
@@ -610,6 +617,7 @@ pub fn main() !void {
     defer semantic_analyzer.deinit();
     try semantic_analyzer.analyze(parsedStatements);
     profiler.stopPhase();
+    exitIfCompileErrors(&reporter);
 
     if (cli_options.reporter_options.debug_memory) {
         memoryManager.dumpState(&reporter);
@@ -620,6 +628,7 @@ pub fn main() !void {
     const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa", cli_options.output_dir);
 
     const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, &parser, &semantic_analyzer, &reporter);
+    exitIfCompileErrors(&reporter);
     try SoxaCompiler.writeSoxaFile(&hir_program_for_bytecode, soxa_path, path, memoryManager.getExecutionAllocator());
     profiler.stopPhase();
 
