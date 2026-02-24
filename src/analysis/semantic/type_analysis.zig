@@ -570,12 +570,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
             } else if (object_type.base == .Custom) {
                 // Handle custom type field access
                 if (object_type.custom_type) |custom_type_name| {
-                    // First check if this is a module namespace
-                    if (helpers.isModuleNamespace(@constCast(ctx), custom_type_name)) {
-                        // Handle module namespace access
-                        return helpers.handleModuleFieldAccess(@constCast(ctx), custom_type_name, field_access.field.lexeme, .{ .location = getLocationFromBase(expr.base) });
-                    }
-
+                    // Prefer struct field lookup when this is a known struct type
                     if (ctx.custom_types.get(custom_type_name)) |custom_type| {
                         if (custom_type.kind == .Struct and custom_type.struct_fields != null) {
                             const fields = custom_type.struct_fields.?;
@@ -585,7 +580,20 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                                     return type_info;
                                 }
                             }
+                            // Known struct but field not found
+                            ctx.reporter.reportCompileError(
+                                getLocationFromBase(expr.base),
+                                ErrorCode.FIELD_NOT_FOUND,
+                                "Struct has no field '{s}'",
+                                .{field_access.field.lexeme},
+                            );
+                            ctx.fatal_error.* = true;
+                            type_info.base = .Nothing;
+                            return type_info;
                         }
+                    }
+                    if (helpers.isModuleNamespace(@constCast(ctx), custom_type_name)) {
+                        return helpers.handleModuleFieldAccess(@constCast(ctx), custom_type_name, field_access.field.lexeme, .{ .location = getLocationFromBase(expr.base) });
                     }
                 }
                 ctx.reporter.reportCompileError(
