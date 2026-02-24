@@ -2,6 +2,8 @@
 [Documentation](https:#mirror-shades.github.io/doxa/)  
 [![DeepWiki](https:#deepwiki.com/badge.svg)](https:#deepwiki.com/mirror-shades/doxa)  
 
+Doxa is high level, statically typed, memory managed language. It has a highly readable and consistant syntax aimed at reducing cognative load, and producing code which is simple and aesthetic. It features a novel memory management system based on arena allocation. It eschews privleged error and optional channels in favor of robust type union and narrowing system. It interfaces with Zig, which brings along all of Zig's C interoperability.
+
 Doxa is inspired by Nagarjuna's four cornered logic, known as Catuṣkoṭi. Doxa does not use bools but instead a novel logical type called a tetra. A tetra (short for tetralemma) has four possible states or corners:
 
 ```
@@ -10,9 +12,6 @@ P (true)
 P ∧ ¬ P (both)
 ¬ ( P ∨ ¬ P ) (neither)
 ```
-
-Doxa is high level, statically typed, memory managed language. It has a highly readable and consistant syntax aimed at reducing cognative load, and producing code which is simple and aesthetic while remaining type safe. It features an extended logical value called a tetra, as well as a full suite of first order logic operators including existential and universal quantifers. 
-
 
 ## Usage
 
@@ -84,8 +83,11 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 
 ## TODO:
 
-- standard lib
-- finish the last few internal methods
+- finish standard lib
+- sandbox zig execution
+- harden import path traversal normalization
+- add better bounding to lsp mode
+- remove host/process intrinsics from core (`@read`, `@input`, `@build`, `@os`, `@arch`, `@abi`, `@time`, `@tick`, `@argc`, `@argv`, `@sleep`, `@exit`) and expose them via stdlib modules
 
 ## Example
 
