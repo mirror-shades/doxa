@@ -188,11 +188,11 @@ fn compileOneInlineModule(
 
     try file_buf.appendSlice("pub export fn ");
     try file_buf.appendSlice(free_sym);
-    try file_buf.appendSlice("(v: DoxaAbiValue) callconv(.c) void {\n");
-    try file_buf.appendSlice("    if (v.tag != .String) return;\n");
-    try file_buf.appendSlice("    if (v.payload0 == 0) return;\n");
-    try file_buf.appendSlice("    const n: usize = @intCast(v.payload1);\n");
-    try file_buf.appendSlice("    const p: [*]u8 = @ptrFromInt(v.payload0);\n");
+    try file_buf.appendSlice("(v: *const DoxaAbiValue) callconv(.c) void {\n");
+    try file_buf.appendSlice("    if (v.*.tag != .String) return;\n");
+    try file_buf.appendSlice("    if (v.*.payload0 == 0) return;\n");
+    try file_buf.appendSlice("    const n: usize = @intCast(v.*.payload1);\n");
+    try file_buf.appendSlice("    const p: [*]u8 = @ptrFromInt(v.*.payload0);\n");
     try file_buf.appendSlice("    __doxa_std.heap.page_allocator.free(p[0..n]);\n");
     try file_buf.appendSlice("}\n\n");
 
