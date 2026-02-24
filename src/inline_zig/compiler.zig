@@ -65,7 +65,7 @@ fn collectInlineZigDecls(
 fn compileOneInlineModule(
     memoryManager: *MemoryManager,
     reporter: *Reporter,
-    output_dir: []const u8,
+    cache_dir: []const u8,
     decl: ZigDeclInfo,
     modules: *std.StringHashMap(VM.ZigRuntimeModule),
 ) !void {
@@ -86,7 +86,7 @@ fn compileOneInlineModule(
     const short_hex = hex_buf[0..16];
 
     var zig_path_buf: [512]u8 = undefined;
-    const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/zig/cache/{s}-{s}.zig", .{ output_dir, decl.module_name, short_hex });
+    const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/{s}-{s}.zig", .{ cache_dir, decl.module_name, short_hex });
 
     var lib_path_buf: [512]u8 = undefined;
     const lib_ext = switch (builtin.os.tag) {
@@ -94,7 +94,7 @@ fn compileOneInlineModule(
         .macos => "dylib",
         else => "so",
     };
-    const lib_path = try std.fmt.bufPrint(&lib_path_buf, "{s}/zig/cache/{s}-{s}.{s}", .{ output_dir, decl.module_name, short_hex, lib_ext });
+    const lib_path = try std.fmt.bufPrint(&lib_path_buf, "{s}/{s}-{s}.{s}", .{ cache_dir, decl.module_name, short_hex, lib_ext });
 
     var functions = std.StringHashMap(VM.ZigRuntimeFn).init(memoryManager.getAllocator());
     errdefer {
@@ -543,7 +543,8 @@ pub fn compileInlineZigModules(
     defer memoryManager.getAllocator().free(zig_decls);
     if (zig_decls.len == 0) return null;
 
-    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{output_dir});
+    const nonce: u64 = @intCast(@as(u128, @bitCast(std.time.nanoTimestamp())));
+    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache/{x}", .{ output_dir, nonce });
     defer memoryManager.getAllocator().free(zig_cache_path);
     try std.fs.cwd().makePath(zig_cache_path);
 
@@ -559,7 +560,7 @@ pub fn compileInlineZigModules(
     }
 
     for (zig_decls) |decl| {
-        try compileOneInlineModule(memoryManager, reporter, output_dir, decl, &modules);
+        try compileOneInlineModule(memoryManager, reporter, zig_cache_path, decl, &modules);
     }
     return modules;
 }
@@ -576,7 +577,8 @@ pub fn compileInlineZigObjects(
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
 
-    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{output_dir});
+    const nonce: u64 = @intCast(@as(u128, @bitCast(std.time.nanoTimestamp())));
+    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache/{x}", .{ output_dir, nonce });
     defer memoryManager.getAllocator().free(zig_cache_path);
     try std.fs.cwd().makePath(zig_cache_path);
 
@@ -586,18 +588,19 @@ pub fn compileInlineZigObjects(
         out_paths.deinit();
     }
 
-    var maybe_modules = try compileInlineZigModules(memoryManager, statements, parser, reporter, output_dir);
+    var maybe_modules = std.StringHashMap(VM.ZigRuntimeModule).init(memoryManager.getAllocator());
     defer {
-        if (maybe_modules) |*mods| {
-            var it = mods.iterator();
-            while (it.next()) |entry| {
-                const key = entry.key_ptr.*;
-                var m = entry.value_ptr.*;
-                m.deinit(memoryManager.getAllocator());
-                memoryManager.getAllocator().free(@constCast(key));
-            }
-            mods.deinit();
+        var it = maybe_modules.iterator();
+        while (it.next()) |entry| {
+            const key = entry.key_ptr.*;
+            var m = entry.value_ptr.*;
+            m.deinit(memoryManager.getAllocator());
+            memoryManager.getAllocator().free(@constCast(key));
         }
+        maybe_modules.deinit();
+    }
+    for (zig_decls) |decl| {
+        try compileOneInlineModule(memoryManager, reporter, zig_cache_path, decl, &maybe_modules);
     }
 
     for (zig_decls) |decl| {
@@ -615,11 +618,11 @@ pub fn compileInlineZigObjects(
         const short_hex = hex_buf[0..16];
 
         var zig_path_buf: [512]u8 = undefined;
-        const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/zig/cache/{s}-{s}.zig", .{ output_dir, decl.module_name, short_hex });
+        const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/{s}-{s}.zig", .{ zig_cache_path, decl.module_name, short_hex });
 
         var obj_path_buf: [512]u8 = undefined;
         const obj_ext = if (builtin.os.tag == .windows) "obj" else "o";
-        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/zig/cache/{s}-{s}.{s}", .{ output_dir, decl.module_name, short_hex, obj_ext });
+        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}-{s}.{s}", .{ zig_cache_path, decl.module_name, short_hex, obj_ext });
 
         const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{obj_path});
         defer std.heap.page_allocator.free(emit_flag);
