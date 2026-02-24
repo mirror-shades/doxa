@@ -1,7 +1,9 @@
+module file from "std/file/file.doxa"
+
 
 
 entry function main() {
-    const input is @read("./advent4.txt")
+    const input is file.read("./advent4.txt")
     const split_input is split(input, "\n")
     var accessable_paper :: int
     const rows is @length(split_input)

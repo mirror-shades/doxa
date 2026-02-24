@@ -1,5 +1,8 @@
+module file from "std/file/file.doxa"
+module time from "std/time/time.doxa"
+
 entry function main() {
-    const input is @read("./advent2.txt")
+    const input is file.read("./advent2.txt")
     const split_input is split(input, ",")
     var invalid_sum :: int
     
@@ -9,13 +12,13 @@ entry function main() {
         var current is @int(split_pair[0])
         var limit is @int(split_pair[1])
         @print("checking {current}-{limit} (total {limit - current + 1})\n")
-        var start_time is @tick()
+        var start_time is time.tick()
         while current <= limit do current += 1 {
             if isInvalid(current) then {
                 invalid_sum += current
             } 
         }
-        var end_time is @tick()
+        var end_time is time.tick()
         @print("Time taken: {(end_time - start_time) / 1000000000} s\n")
     }
     @print("Invalid sum: {invalid_sum}\n")

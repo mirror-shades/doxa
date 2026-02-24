@@ -1,0 +1,29 @@
+zig Time {
+    const std = @import("std");
+
+    fn unixSeconds() i64 {
+        return std.time.timestamp();
+    }
+
+    fn tickNs() i64 {
+        return @intCast(std.time.nanoTimestamp());
+    }
+
+    fn sleepMs(ms_text: []const u8) void {
+        const ms = std.fmt.parseInt(i64, ms_text, 10) catch return;
+        if (ms <= 0) return;
+        std.Thread.sleep(@as(u64, @intCast(ms)) * std.time.ns_per_ms);
+    }
+}
+
+pub function unix() returns int {
+    return Time.unixSeconds();
+}
+
+pub function tick() returns int {
+    return Time.tickNs();
+}
+
+pub function sleep(ms :: int) {
+    Time.sleepMs(@string(ms));
+}

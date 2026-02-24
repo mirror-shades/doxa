@@ -1,10 +1,13 @@
-@build("./test/misc/bigfile.doxa", "./test/out/bigfile", @arch(), @os(), @abi(), true)
-@build("./test/misc/complex_print.doxa", "./test/out/complex_print", @arch(), @os(), @abi(), true)
-@build("./test/misc/expressions.doxa", "./test/out/expressions", @arch(), @os(), @abi(), true)
-@build("./test/misc/array_storage_migration.doxa", "./test/out/array_storage_migration", @arch(), @os(), @abi(), true)
-@build("./test/misc/methods.doxa", "./test/out/methods", @arch(), @os(), @abi(), true)
-@build("./test/misc/union_enum_return.doxa", "./test/out/union_enum_return", @arch(), @os(), @abi(), true)
-@build("./test/misc/inline_zig_string.doxa", "./test/out/inline_zig_string", @arch(), @os(), @abi(), true)
-@build("./test/misc/inline_zig_test.doxa", "./test/out/inline_zig_test", @arch(), @os(), @abi(), true)
-@build("./test/examples/brainfuck.doxa", "./test/out/brainfuck", @arch(), @os(), @abi(), true)
-@build("./test/examples/calculator.doxa", "./test/out/calculator", @arch(), @os(), @abi(), true)
+module build from "std/build/build.doxa"
+module host from "std/host/host.doxa"
+
+build.compile("./test/misc/bigfile.doxa", "./test/out/bigfile", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/misc/complex_print.doxa", "./test/out/complex_print", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/misc/expressions.doxa", "./test/out/expressions", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/misc/array_storage_migration.doxa", "./test/out/array_storage_migration", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/misc/methods.doxa", "./test/out/methods", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/misc/union_enum_return.doxa", "./test/out/union_enum_return", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/misc/inline_zig_string.doxa", "./test/out/inline_zig_string", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/misc/inline_zig_test.doxa", "./test/out/inline_zig_test", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/examples/brainfuck.doxa", "./test/out/brainfuck", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/examples/calculator.doxa", "./test/out/calculator", host.arch(), host.os(), host.abi(), true)

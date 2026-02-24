@@ -1,3 +1,5 @@
+module io from "std/io/io.doxa"
+
 enum Error {
     FailedToEvaluate,
     FailedToShunt,
@@ -256,6 +258,6 @@ function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
 }
 
 entry function main() {
-    const expr is @input()
+    const expr is io.input()
     calculate(expr)
 }

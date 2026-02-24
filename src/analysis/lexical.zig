@@ -921,32 +921,8 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.ASSERT, .nothing);
         } else if (std.mem.eql(u8, method_name, "panic")) {
             try self.addToken(.PANIC, .nothing);
-        } else if (std.mem.eql(u8, method_name, "input")) {
-            try self.addToken(.INPUT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "os")) {
-            try self.addToken(.OS, .nothing);
-        } else if (std.mem.eql(u8, method_name, "arch")) {
-            try self.addToken(.ARCH, .nothing);
-        } else if (std.mem.eql(u8, method_name, "abi")) {
-            try self.addToken(.ABI, .nothing);
-        } else if (std.mem.eql(u8, method_name, "argc")) {
-            try self.addToken(.ARGC, .nothing);
-        } else if (std.mem.eql(u8, method_name, "argv")) {
-            try self.addToken(.ARGV, .nothing);
-        } else if (std.mem.eql(u8, method_name, "time")) {
-            try self.addToken(.TIME, .nothing);
-        } else if (std.mem.eql(u8, method_name, "tick")) {
-            try self.addToken(.TICK, .nothing);
-        } else if (std.mem.eql(u8, method_name, "exit")) {
-            try self.addToken(.EXIT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "sleep")) {
-            try self.addToken(.SLEEP, .nothing);
         } else if (std.mem.eql(u8, method_name, "random")) {
             try self.addToken(.RANDOM, .nothing);
-        } else if (std.mem.eql(u8, method_name, "build")) {
-            try self.addToken(.BUILD, .nothing);
-        } else if (std.mem.eql(u8, method_name, "read")) {
-            try self.addToken(.READ, .nothing);
         } else {
             return error.InvalidInternalMethod;
         }

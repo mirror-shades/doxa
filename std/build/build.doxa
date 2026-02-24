@@ -1,0 +1,41 @@
+zig Build {
+    const std = @import("std");
+
+    fn compileDoxa(src: []const u8, out: []const u8, arch: []const u8, os: []const u8, abi: []const u8, debug_text: []const u8) i64 {
+        var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+
+        const self_path_opt = std.fs.selfExePathAlloc(a) catch null;
+        const doxa_path = self_path_opt orelse "doxa";
+
+        const debug = std.mem.eql(u8, debug_text, "true");
+        const opt_flag = if (debug) "-O0" else "-O-1";
+
+        var args = std.array_list.Managed([]const u8).init(a);
+        defer args.deinit();
+        args.append(doxa_path) catch return 1;
+        args.append("compile") catch return 1;
+        args.append(src) catch return 1;
+        args.append("-o") catch return 1;
+        args.append(out) catch return 1;
+        args.append(opt_flag) catch return 1;
+        if (arch.len > 0) args.append(std.fmt.allocPrint(a, "--arch={s}", .{arch}) catch return 1) catch return 1;
+        if (os.len > 0) args.append(std.fmt.allocPrint(a, "--os={s}", .{os}) catch return 1) catch return 1;
+        if (abi.len > 0) args.append(std.fmt.allocPrint(a, "--abi={s}", .{abi}) catch return 1) catch return 1;
+
+        var child = std.process.Child.init(args.items, a);
+        child.stdout_behavior = .Inherit;
+        child.stderr_behavior = .Inherit;
+
+        const term = child.spawnAndWait() catch return 1;
+        return switch (term) {
+            .Exited => |code| @as(i64, code),
+            else => 1,
+        };
+    }
+}
+
+pub function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int {
+    return Build.compileDoxa(src, out, arch, os, abi, @string(debug));
+}

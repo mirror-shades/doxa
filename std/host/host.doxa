@@ -1,0 +1,27 @@
+zig Host {
+    const builtin = @import("builtin");
+
+    fn osName() []const u8 {
+        return @tagName(builtin.os.tag);
+    }
+
+    fn archName() []const u8 {
+        return @tagName(builtin.cpu.arch);
+    }
+
+    fn abiName() []const u8 {
+        return @tagName(builtin.abi);
+    }
+}
+
+pub function os() returns string {
+    return Host.osName();
+}
+
+pub function arch() returns string {
+    return Host.archName();
+}
+
+pub function abi() returns string {
+    return Host.abiName();
+}

@@ -1,7 +1,9 @@
+module file from "std/file/file.doxa"
 
 
 
-const input is @read("./advent4.txt")
+
+const input is file.read("./advent4.txt")
 const split_input :: string[] is split(input, "\n")
 const rows is @length(split_input)
 const cols is @length(split_input[0])

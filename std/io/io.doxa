@@ -1,15 +1,22 @@
 zig IO {
     const std = @import("std");
 
-    fn print(input: []const u8) void {
+    fn print(text: []const u8) void {
         var stdout_buffer: [1024]u8 = undefined;
         var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
         const stdout = &stdout_writer.interface;
-        stdout.print("{s}", .{input}) catch return;
+        stdout.print("{s}", .{text}) catch return;
         
         stdout.flush() catch return;
     }
-    
+
+    fn input() []const u8 {
+        var stdin_buffer: [4096]u8 = undefined;
+        var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+        const stdin = &stdin_reader.interface;
+        const line = stdin.takeDelimiterExclusive('\n') catch return "";
+        return std.heap.page_allocator.dupe(u8, line) catch "";
+    }
 }
 
 pub function print(input :: string) {
@@ -18,5 +25,9 @@ pub function print(input :: string) {
 
 pub function println(input :: string) {
     IO.print(input + "\n");
+}
+
+pub function input() returns string {
+    return IO.input();
 }
 
