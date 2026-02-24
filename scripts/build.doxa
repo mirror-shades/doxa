@@ -43,28 +43,20 @@ function build(os :: string, arch :: string) {
         return
     }
 
+    const ext is if os == "windows" then ".zip" else ".tar.xz"
     const target_string is "zig-" + getTargetString(target) + "-0.15.2"
-    const target_zip_string is target_string + ".zip"
-    const target_url_string is "https://ziglang.org/download/0.15.2/" + target_zip_string
+    const target_zip_string is "./external/" + target_string + ext
 
     @print("building for {arch}-{os}\n")
 
     @print("making directories\n")
     std.file.makeDir("doxa")
     std.file.makeDir("doxa/bin")
-
-    @print("downloading zig dependency\n")
-    std.http.downloadUrl(target_url_string, target_zip_string)
     
     @print("unzipping\n")
-    std.file.unzipFile(target_zip_string, ".")
-
-    @print("copying zig\n")
-    std.file.copyDir(target_string, "doxa/lib/zig")
-        
-    @print("cleaning up\n")
-    std.file.delete(target_string, true)
-    std.file.delete(target_zip_string, true)
+    std.file.unzipFile(target_zip_string, "./doxa/lib")
+    @print("renaming {target_string}\n")
+    std.file.renameDir("./doxa/lib/" + target_string, "./doxa/lib/zig")
 
     @print("compiling Doxa\n")
     var zig_build_cmd :: string is "./doxa/lib/zig/zig build-exe src/main.zig -femit-bin=doxa/bin/doxa"
