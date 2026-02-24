@@ -1,5 +1,7 @@
+module file from "std/file/file.doxa"
+
 entry function main() {
-    const input is @read("./advent2.txt")
+    const input is file.read("./advent2.txt")
     const split_input is split(input, ",")
     var invalid_sum :: int
     

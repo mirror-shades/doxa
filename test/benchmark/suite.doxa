@@ -1,3 +1,5 @@
+module time from "std/time/time.doxa"
+
 const limit :: int is 100_000_000;
 
 function diceRoll() returns int {
@@ -12,20 +14,20 @@ function add(a :: int, b :: int) returns int {
 # Dice roll benchmark
 function diceRollBenchmark() {
     var count is 0
-    var startTime is @tick()
+    var startTime is time.tick()
     
     for i is 1 while i <= limit do i += 1 {
         const roll is diceRoll()
         count is count + roll  # Prevent optimization
     }
     
-    var endTime is @tick()
+    var endTime is time.tick()
     @print("Dice rolls: {count}, Time: {(endTime - startTime) / 1000000000 }s\n")
 }
 
 # FizzBuzz benchmark
 function fizzbuzzBenchmark() {
-    var startTime is @tick()
+    var startTime is time.tick()
     
     for i is 1 while i <= limit do i += 1 {
         if i % 15 == 0 then "FizzBuzz"
@@ -34,32 +36,32 @@ function fizzbuzzBenchmark() {
         else @string(i)
     }
     
-    var endTime is @tick()
+    var endTime is time.tick()
     @print("FizzBuzz time: {(endTime - startTime) / 1000000000 }s\n")
 }
 
 # Arithmetic benchmark
 function arithmeticBenchmark() {
     var sum is 0
-    var start is @tick()
+    var start is time.tick()
     
     each i in 1 to limit {
         sum += i * 2 + 1
     }
     
-    @print("Arithmetic: {sum}, Time: {(@tick() - start) / 1000000000}s\n")
+    @print("Arithmetic: {sum}, Time: {(time.tick() - start) / 1000000000}s\n")
 }
 
 # Function call benchmark  
 function callBenchmark() {
     var sum is 0
-    var start is @tick()
+    var start is time.tick()
     
     each i in 1 to limit {
         sum += add(i, i + 1)
     }
     
-    @print("Function calls: {sum}, Time: {(@tick() - start) / 1000000000}s\n")
+    @print("Function calls: {sum}, Time: {(time.tick() - start) / 1000000000}s\n")
 }
 
 # Run all benchmarks

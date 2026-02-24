@@ -1,5 +1,7 @@
+module file from "std/file/file.doxa"
+
 entry function main() {
-    const input is @read("./advent3.txt")
+    const input is file.read("./advent3.txt")
     const split_input is split(input, "\n")
     var total_power :: int
     each line in split_input {

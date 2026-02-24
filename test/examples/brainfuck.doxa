@@ -1,3 +1,5 @@
+module io from "std/io/io.doxa"
+
 # a brainfuck interpreter implemented in doxa
 # mirror-shades
 
@@ -5,7 +7,7 @@ const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
 
 function getInput() returns byte {
     @print("Input: ")
-    var userInput :: string is @input()
+    var userInput :: string is io.input()
     var newByte :: byte is @byte(userInput[0])
     return newByte
 }

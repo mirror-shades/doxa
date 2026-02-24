@@ -73,16 +73,6 @@ const METHODS = &[_]Method{
         .documentation = "**Input**: any\n**Output**: string\nUse to inspect values in debugging.",
     },
     .{
-        .label = "@time",
-        .detail = "Return the current Unix timestamp",
-        .documentation = "**Input**: none\n**Output**: int\nSeconds since the Unix epoch.",
-    },
-    .{
-        .label = "@tick",
-        .detail = "Return a high-resolution monotonic counter",
-        .documentation = "**Input**: none\n**Output**: int\nNanoseconds from an unspecified epoch.",
-    },
-    .{
         .label = "@random",
         .detail = "Produce a pseudo-random floating point value",
         .documentation = "**Input**: none\n**Output**: float\nReturns a random number between 0.0 and 1.0; may error at compile time if randomness is unavailable.",
@@ -101,51 +91,6 @@ const METHODS = &[_]Method{
         .label = "@panic",
         .detail = "Abort execution with a message",
         .documentation = "**Input**: string\n**Output**: never\nAlways halts the program with the given message.",
-    },
-    .{
-        .label = "@sleep",
-        .detail = "Pause execution for a duration",
-        .documentation = "**Input**: int (milliseconds)\n**Output**: nothing\nPanics on system failures.",
-    },
-    .{
-        .label = "@exit",
-        .detail = "Exit the program immediately",
-        .documentation = "**Input**: int\n**Output**: never\nTerminates with the given exit code.",
-    },
-    .{
-        .label = "@input",
-        .detail = "Read from standard input",
-        .documentation = "**Input**: none\n**Output**: string\nBlocks until input is available.",
-    },
-    .{
-        .label = "@build",
-        .detail = "Compile a Doxa source file",
-        .documentation = "**Input**: string (src), string (out), string (arch), string (os), string (abi), tetra (debug)\n**Output**: int\nReturns exit code from compilation.",
-    },
-    .{
-        .label = "@os",
-        .detail = "Return the current operating system name",
-        .documentation = "**Input**: none\n**Output**: string\nHelps tailor behavior per OS.",
-    },
-    .{
-        .label = "@arch",
-        .detail = "Return the CPU architecture",
-        .documentation = "**Input**: none\n**Output**: string\nMatches the target architecture at compile time.",
-    },
-    .{
-        .label = "@abi",
-        .detail = "Return the ABI (Application Binary Interface)",
-        .documentation = "**Input**: none\n**Output**: string\nMatches the target ABI at compile time (e.g., \"gnu\", \"musl\", \"msvc\").",
-    },
-    .{
-        .label = "@argc",
-        .detail = "Return the number of user program arguments",
-        .documentation = "**Input**: none\n**Output**: int\nReturns total argc where `@argv(0)` is the program path/name.",
-    },
-    .{
-        .label = "@argv",
-        .detail = "Return a user program argument by index",
-        .documentation = "**Input**: int\n**Output**: string\n`@argv(0)` is the program path/name; panics on out-of-bounds indexes.",
     },
 };
 

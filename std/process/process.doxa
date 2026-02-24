@@ -3,12 +3,12 @@ zig Process {
     const builtin = @import("builtin");
 
     fn exec_cmd(input: []const u8) i64 {
-        const argv = if (builtin.os.tag == .windows)
+        const cmd_argv = if (builtin.os.tag == .windows)
             [_][]const u8{ "cmd", "/C", input }
         else
             [_][]const u8{ "sh", "-c", input };
 
-        var cmd = std.process.Child.init(&argv, std.heap.page_allocator);
+        var cmd = std.process.Child.init(&cmd_argv, std.heap.page_allocator);
         cmd.stdout_behavior = .Inherit;
         cmd.stderr_behavior = .Inherit;
 
@@ -24,12 +24,12 @@ zig Process {
     }
 
     fn exec_capture_stdout(input: []const u8) []const u8 {
-        const argv = if (builtin.os.tag == .windows)
+        const cmd_argv = if (builtin.os.tag == .windows)
             [_][]const u8{ "cmd", "/C", input }
         else
             [_][]const u8{ "sh", "-c", input };
 
-        var cmd = std.process.Child.init(&argv, std.heap.page_allocator);
+        var cmd = std.process.Child.init(&cmd_argv, std.heap.page_allocator);
         cmd.stdout_behavior = .Pipe;
         cmd.stderr_behavior = .Pipe;
 
@@ -53,11 +53,36 @@ zig Process {
         };
         return std.heap.page_allocator.dupe(u8, stdout.items) catch "";
     }
+
+    fn osName() []const u8 {
+        return @tagName(builtin.os.tag);
+    }
+
+    fn argCount() i64 {
+        const args = std.process.argsAlloc(std.heap.page_allocator) catch return 0;
+        defer std.process.argsFree(std.heap.page_allocator, args);
+        return @intCast(args.len);
+    }
+
+    fn argAt(index_text: []const u8) []const u8 {
+        const index = std.fmt.parseInt(i64, index_text, 10) catch return "";
+        if (index < 0) return "";
+        const args = std.process.argsAlloc(std.heap.page_allocator) catch return "";
+        defer std.process.argsFree(std.heap.page_allocator, args);
+        const idx: usize = @intCast(index);
+        if (idx >= args.len) return "";
+        return std.heap.page_allocator.dupe(u8, args[idx]) catch "";
+    }
+
+    fn exitCode(code_text: []const u8) void {
+        const code = std.fmt.parseInt(i64, code_text, 10) catch 1;
+        std.process.exit(@intCast(code));
+    }
 }
 
 pub function exec(input :: string) returns int {
     var input_string :: string
-    if @os() == "windows" then {
+    if Process.osName() == "windows" then {
         each c in input {
             if c == "/" then {
                 @push(input_string, "\\")
@@ -73,7 +98,7 @@ pub function exec(input :: string) returns int {
 
 pub function execCapture(input :: string) returns string {
     var input_string :: string
-    if @os() == "windows" then {
+    if Process.osName() == "windows" then {
         each c in input {
             if c == "/" then {
                 @push(input_string, "\\")
@@ -85,4 +110,16 @@ pub function execCapture(input :: string) returns string {
         input_string is input
     }
     return Process.exec_capture_stdout(input_string)
+}
+
+pub function argc() returns int {
+    return Process.argCount();
+}
+
+pub function argv(index :: int) returns string {
+    return Process.argAt(@string(index));
+}
+
+pub function exit(code :: int) {
+    Process.exitCode(@string(code));
 }

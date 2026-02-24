@@ -87,7 +87,6 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - sandbox zig execution
 - harden import path traversal normalization
 - add better bounding to lsp mode
-- remove host/process intrinsics from core (`@read`, `@input`, `@build`, `@os`, `@arch`, `@abi`, `@time`, `@tick`, `@argc`, `@argv`, `@sleep`, `@exit`) and expose them via stdlib modules
 
 ## Example
 
@@ -95,11 +94,13 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 # a brainfuck interpreter implemented in doxa
 # mirror-shades
 
+module std from "std"
+
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
 
 function getInput() returns byte {
     @print("Input: ")
-    var userInput :: string is @input()
+    var userInput :: string is std.io.input()
     var newByte :: byte is @byte(userInput[0])
     return newByte
 }

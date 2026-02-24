@@ -226,23 +226,7 @@ pub const rules = blk: {
 
     // Control flow
     r.set(.PANIC, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.EXIT, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.SLEEP, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.RANDOM, .{ .prefix = internalCallExpr, .precedence = .CALL });
-
-    // Add input support
-    r.set(.INPUT, .{ .prefix = Parser.input, .precedence = .PRIMARY });
-
-    // System information
-    r.set(.OS, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.ARCH, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.ABI, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.ARGC, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.ARGV, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.TIME, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.TICK, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.BUILD, .{ .prefix = internalCallExpr, .precedence = .CALL });
-    r.set(.READ, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Add cast operator support
     r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });

@@ -1,5 +1,7 @@
+module file from "std/file/file.doxa"
+
 entry function main() {
-    const input is @read("./advent1.txt")
+    const input is file.read("./advent1.txt")
     var new_count is 50
     var previous_count is 50
     var zeroes_hit :: int

@@ -78,7 +78,7 @@ function build(os :: string, arch :: string) {
 }
 
 entry function main() {
-    const os is @os()
-    const arch is @arch()
+    const os is std.host.os()
+    const arch is std.host.arch()
     build(os, arch)
 }

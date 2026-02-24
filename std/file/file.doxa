@@ -171,6 +171,14 @@ zig File {
         dir.close();
         return true;
     }
+
+    fn read(path: []const u8) []const u8 {
+        const cwd = std.fs.cwd();
+        const file = cwd.openFile(path, .{}) catch return "";
+        defer file.close();
+        const content = file.readToEndAlloc(std.heap.page_allocator, std.math.maxInt(usize)) catch return "";
+        return content;
+    }
 }
 
 pub function makeDir(path :: string) {
@@ -195,4 +203,8 @@ pub function unzipFile(zip_path :: string, unzip_path :: string) {
 
 pub function IsDir(path :: string) returns tetra {
     return File.IsDir(path)
+}
+
+pub function read(path :: string) returns string {
+    return File.read(path)
 }
