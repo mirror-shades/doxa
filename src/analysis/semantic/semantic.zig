@@ -1714,12 +1714,21 @@ pub const SemanticAnalyzer = struct {
                     }
                 }
 
-                self.reporter.reportCompileError(
-                    getLocationFromBase(expr.base),
-                    ErrorCode.UNDEFINED_VARIABLE,
-                    "Undefined variable: '{s}'",
-                    .{var_token.lexeme},
-                );
+                if (helpers.suggestVariableName(self, var_token.lexeme)) |suggested| {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.UNDEFINED_VARIABLE,
+                        "Undefined variable: '{s}'. Did you mean '{s}'?",
+                        .{ var_token.lexeme, suggested },
+                    );
+                } else {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.UNDEFINED_VARIABLE,
+                        "Undefined variable: '{s}'",
+                        .{var_token.lexeme},
+                    );
+                }
                 self.fatal_error = true;
                 return TokenLiteral{ .nothing = {} };
             },

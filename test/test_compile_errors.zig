@@ -99,6 +99,11 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected = .{ .exit_code = 1, .contains_message = "Undefined variable", .error_code = "E1001" },
         },
         .{
+            .name = "undefined variable suggestion",
+            .path = "./test/misc/undefined_variable_suggestion.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Did you mean 'total'?", .error_code = "E1001" },
+        },
+        .{
             .name = "as fallback type mismatch",
             .path = "./test/syntax/as_fallback_type_error.doxa",
             .expected = .{ .exit_code = 1, .contains_message = "Fallback for 'as' must produce type float, got int", .error_code = "E1003" },
