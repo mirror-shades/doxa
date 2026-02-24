@@ -545,6 +545,78 @@ pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
     return null;
 }
 
+pub fn suggestVariableName(self: *SemanticAnalyzer, name: []const u8) ?[]const u8 {
+    var best: ?[]const u8 = null;
+    var best_score: usize = std.math.maxInt(usize);
+
+    var scope = self.current_scope;
+    while (scope) |s| {
+        var it = s.name_map.iterator();
+        while (it.next()) |entry| {
+            const candidate = entry.key_ptr.*;
+            updateBestSuggestion(name, candidate, &best, &best_score);
+        }
+        scope = s.parent;
+    }
+
+    if (self.parser) |parser| {
+        if (parser.imported_symbols) |imported_symbols| {
+            var import_it = imported_symbols.iterator();
+            while (import_it.next()) |entry| {
+                const candidate = entry.key_ptr.*;
+                updateBestSuggestion(name, candidate, &best, &best_score);
+            }
+        }
+
+        var module_it = parser.module_namespaces.iterator();
+        while (module_it.next()) |entry| {
+            const candidate = entry.key_ptr.*;
+            updateBestSuggestion(name, candidate, &best, &best_score);
+        }
+    }
+
+    if (best) |suggested| {
+        const max_acceptable = @max(@as(usize, 2), name.len / 3);
+        if (best_score <= max_acceptable) {
+            return suggested;
+        }
+    }
+
+    return null;
+}
+
+fn updateBestSuggestion(name: []const u8, candidate: []const u8, best: *?[]const u8, best_score: *usize) void {
+    if (candidate.len == 0) return;
+    if (std.mem.eql(u8, name, candidate)) return;
+
+    const score = nameDistanceScore(name, candidate);
+    if (score < best_score.*) {
+        best_score.* = score;
+        best.* = candidate;
+        return;
+    }
+
+    if (score == best_score.* and best.* != null) {
+        if (std.mem.lessThan(u8, candidate, best.*.?)) {
+            best.* = candidate;
+        }
+    }
+}
+
+fn nameDistanceScore(a: []const u8, b: []const u8) usize {
+    const min_len = @min(a.len, b.len);
+    var mismatches: usize = 0;
+    var i: usize = 0;
+    while (i < min_len) : (i += 1) {
+        const ac = std.ascii.toLower(a[i]);
+        const bc = std.ascii.toLower(b[i]);
+        if (ac != bc) mismatches += 1;
+    }
+
+    const len_penalty = if (a.len > b.len) a.len - b.len else b.len - a.len;
+    return mismatches + (len_penalty * 2);
+}
+
 pub fn createModuleNamespaceVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
     const type_info = ast.TypeInfo.createDefault(self.allocator) catch return null;
     errdefer self.allocator.destroy(type_info);

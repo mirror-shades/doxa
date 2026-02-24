@@ -1,0 +1,6 @@
+# Undefined variable should include nearest in-scope suggestion
+function main() {
+    var total is 10
+    var result is toatl
+    @print("{result}\n")
+}
