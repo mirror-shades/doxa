@@ -508,7 +508,7 @@ fn compileOneInlineModule(
         "-dynamic",
         zig_path,
         emit_flag,
-        "-OReleaseFast",
+        "-OReleaseSafe",
     });
 
     var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
@@ -631,7 +631,7 @@ pub fn compileInlineZigObjects(
             "build-obj",
             zig_path,
             emit_flag,
-            "-OReleaseFast",
+            "-OReleaseSafe",
         });
 
         var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
