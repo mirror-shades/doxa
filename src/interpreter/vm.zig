@@ -2279,7 +2279,7 @@ pub const VM = struct {
             }
 
             const lib = &mod_ptr.lib.?;
-            const FreeAbiStringFn = *const fn (DoxaAbiValue) callconv(.c) void;
+            const FreeAbiStringFn = *const fn (*const DoxaAbiValue) callconv(.c) void;
             const free_abi_string: ?FreeAbiStringFn = blk: {
                 const sym = mod_ptr.free_cstr_symbol orelse break :blk null;
                 const sym_z = self.allocator.dupeZ(u8, sym) catch break :blk null;
@@ -2446,7 +2446,7 @@ pub const VM = struct {
                         self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Inline zig string return missing free hook for {s}", .{qualified_name});
                         return ErrorList.RuntimeError;
                     }
-                    defer free_abi_string.?(out_ret);
+                    defer free_abi_string.?(&out_ret);
                     const slice = if (out_ret.payload1 == 0) "" else blk: {
                         const p: [*]const u8 = @ptrFromInt(out_ret.payload0);
                         const n: usize = @intCast(out_ret.payload1);
