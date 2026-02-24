@@ -1,13 +1,13 @@
 module answers from "./test/answers.doxa"
 module std from "std"
 
-pub function run(path :: string) {
+pub function parse_run_output(zig_path :: string, test_path :: string) returns answers.peek_result[] {
     var test_cases :: answers.peek_result[]
-    const output is std.process.execCapture(path + " build run -- run ./test/misc/bigfile.doxa")
+    const output is std.process.execCapture(zig_path + " build run -- run " + test_path)
     
     var capture_type :: tetra
     var capture_value :: tetra
-    var type :: string
+    var kind :: string
     var value :: string
     for i while i < @length(output) do i += 1 {
         if output[i] == ":" then {
@@ -17,7 +17,7 @@ pub function run(path :: string) {
 
             }
         }
-        if output[i] == " " then {
+        if output[i] == " " and capture_type then {
             if output[i + 1] == "i" and output[i + 2] == "s" and output[i + 3] == " " then {
                 capture_type is false
                 capture_value is true
@@ -27,14 +27,30 @@ pub function run(path :: string) {
 
         if output[i] == "\n" then {
             capture_value is false
-            @push(test_cases, $answers.peek_result { type is type, value is value })
-            type is ""
+            @push(test_cases, $answers.peek_result { kind is kind, value is value })
+            kind is ""
             value is ""
         }
-        if capture_type  then @push(type, output[i])
+        if capture_type  then @push(kind, output[i])
         if capture_value then @push(value, output[i])
     }
-    @print("{test_cases}")
+
+    return test_cases
 }
 
-run("zig")
+
+entry function main() {
+    var total_fails :: int
+    
+    const result is parse_run_output("zig", "./test/misc/bigfile.doxa")
+    const expected is answers.expected_bigfile_results
+
+    for i while i < @length(answers.expected_bigfile_results) do i += 1 {
+        var failed :: tetra
+        if result[i].kind != expected[i].kind then failed is true
+        if result[i].value != expected[i].value then failed is true
+        if failed then @print("test {i + 1} failed\n {result[i].kind} {result[i].value} != {expected[i].kind} {expected[i].value}\n")
+    }
+
+    if total_fails == 0 then @print("all good\n")
+}
