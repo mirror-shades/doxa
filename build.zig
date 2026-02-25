@@ -16,7 +16,80 @@ const target_names = [_][]const u8{
     "windows-x64",
 };
 
+const ZigDependency = struct {
+    folder_name: []const u8,
+    archive_ext: []const u8,
+};
+
+fn getZigDependencyForTarget(target: std.Target) ?ZigDependency {
+    const archive_ext: []const u8 = if (target.os.tag == .windows) ".zip" else ".tar.xz";
+
+    const folder_name = switch (target.os.tag) {
+        .windows => switch (target.cpu.arch) {
+            .x86_64 => "zig-x86_64-windows-0.15.2",
+            else => return null,
+        },
+        .macos => switch (target.cpu.arch) {
+            .x86_64 => "zig-x86_64-macos-0.15.2",
+            .aarch64 => "zig-aarch64-macos-0.15.2",
+            else => return null,
+        },
+        .linux => switch (target.cpu.arch) {
+            .x86_64 => "zig-x86_64-linux-0.15.2",
+            .aarch64 => "zig-aarch64-linux-0.15.2",
+            else => return null,
+        },
+        else => return null,
+    };
+
+    return .{
+        .folder_name = folder_name,
+        .archive_ext = archive_ext,
+    };
+}
+
+fn addUnpackZigDependencyStep(
+    b: *std.Build,
+    host_os: std.Target.Os.Tag,
+    archive_path: []const u8,
+    destination_lib_dir: []const u8,
+    extracted_folder_name: []const u8,
+) *std.Build.Step.Run {
+    const unzip_script =
+        \\import os, shutil, sys, tarfile, zipfile
+        \\archive, dest, extracted = sys.argv[1:4]
+        \\os.makedirs(dest, exist_ok=True)
+        \\final = os.path.join(dest, "zig")
+        \\if os.path.exists(final):
+        \\    shutil.rmtree(final)
+        \\if archive.endswith(".zip"):
+        \\    with zipfile.ZipFile(archive) as zf:
+        \\        zf.extractall(dest)
+        \\else:
+        \\    with tarfile.open(archive) as tf:
+        \\        tf.extractall(dest)
+        \\source = os.path.join(dest, extracted)
+        \\if not os.path.isdir(source):
+        \\    raise SystemExit(f"Expected extracted folder not found: {source}")
+        \\shutil.move(source, final)
+    ;
+
+    const cmd = switch (host_os) {
+        .windows => b.addSystemCommand(&[_][]const u8{ "py", "-3", "-c", unzip_script }),
+        else => b.addSystemCommand(&[_][]const u8{ "python3", "-c", unzip_script }),
+    };
+    cmd.addArgs(&[_][]const u8{
+        archive_path,
+        destination_lib_dir,
+        extracted_folder_name,
+    });
+    return cmd;
+}
+
 pub fn build(b: *std.Build) void {
+    const output_dir = b.option([]const u8, "output-dir", "Install output directory (default: doxa)") orelse "doxa";
+    b.resolveInstallPrefix(output_dir, .{});
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const host_target = b.graph.host;
@@ -41,8 +114,21 @@ pub fn build(b: *std.Build) void {
     });
     b.getInstallStep().dependOn(&install_std.step);
 
+    if (getZigDependencyForTarget(target.result)) |zig_dep| {
+        const archive_path = b.pathJoin(&.{ "external", b.fmt("{s}{s}", .{ zig_dep.folder_name, zig_dep.archive_ext }) });
+        const destination_lib_dir = b.getInstallPath(.prefix, "lib");
+        const unpack_zig_dep = addUnpackZigDependencyStep(
+            b,
+            host_target.result.os.tag,
+            archive_path,
+            destination_lib_dir,
+            zig_dep.folder_name,
+        );
+        b.getInstallStep().dependOn(&unpack_zig_dep.step);
+    }
+
     const run_exe_name = if (target.result.os.tag == .windows) "doxa.exe" else "doxa";
-    const run_doxa_path = b.pathJoin(&.{ "zig-out", "bin", run_exe_name });
+    const run_doxa_path = b.getInstallPath(.bin, run_exe_name);
     const run_exe = b.addSystemCommand(&[_][]const u8{run_doxa_path});
     run_exe.step.dependOn(b.getInstallStep());
 
@@ -78,6 +164,19 @@ pub fn build(b: *std.Build) void {
             .install_subdir = b.fmt("{s}/lib/std", .{target_names[i]}),
         });
 
+        if (getZigDependencyForTarget(b.resolveTargetQuery(t).result)) |zig_dep| {
+            const archive_path = b.pathJoin(&.{ "external", b.fmt("{s}{s}", .{ zig_dep.folder_name, zig_dep.archive_ext }) });
+            const destination_lib_dir = b.getInstallPath(.prefix, b.fmt("{s}/lib", .{target_names[i]}));
+            const unpack_zig_dep = addUnpackZigDependencyStep(
+                b,
+                host_target.result.os.tag,
+                archive_path,
+                destination_lib_dir,
+                zig_dep.folder_name,
+            );
+            release_step.dependOn(&unpack_zig_dep.step);
+        }
+
         release_step.dependOn(&target_output.step);
         release_step.dependOn(&target_std.step);
     }
@@ -100,12 +199,12 @@ pub fn build(b: *std.Build) void {
     });
 
     // Dedicated install location for tests so a long-running editor/LSP instance
-    // doesn't lock `zig-out/bin/doxa(.exe)` and break `zig build test` on Windows.
+    // doesn't lock the default installed binary and break `zig build test` on Windows.
     const test_install = b.addInstallArtifact(exe, .{
         .dest_dir = .{ .override = .{ .custom = "test-bin" } },
     });
     const exe_name = if (target.result.os.tag == .windows) "doxa.exe" else "doxa";
-    const test_doxa_path = b.pathJoin(&.{ "zig-out", "test-bin", exe_name });
+    const test_doxa_path = b.getInstallPath(.{ .custom = "test-bin" }, exe_name);
 
     const test_suite_exe = b.addTest(.{
         .root_module = b.createModule(.{

@@ -65,6 +65,7 @@ fn collectInlineZigDecls(
 fn compileOneInlineModule(
     memoryManager: *MemoryManager,
     reporter: *Reporter,
+    zig_exe_path: []const u8,
     cache_dir: []const u8,
     decl: ZigDeclInfo,
     modules: *std.StringHashMap(VM.ZigRuntimeModule),
@@ -503,7 +504,7 @@ fn compileOneInlineModule(
     const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{lib_path});
     defer std.heap.page_allocator.free(emit_flag);
     try args_list.appendSlice(&[_][]const u8{
-        "zig",
+        zig_exe_path,
         "build-lib",
         "-dynamic",
         zig_path,
@@ -537,6 +538,7 @@ pub fn compileInlineZigModules(
     statements: []ast.Stmt,
     parser: *Parser,
     reporter: *Reporter,
+    zig_exe_path: []const u8,
     output_dir: []const u8,
 ) !?std.StringHashMap(VM.ZigRuntimeModule) {
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
@@ -560,7 +562,7 @@ pub fn compileInlineZigModules(
     }
 
     for (zig_decls) |decl| {
-        try compileOneInlineModule(memoryManager, reporter, zig_cache_path, decl, &modules);
+        try compileOneInlineModule(memoryManager, reporter, zig_exe_path, zig_cache_path, decl, &modules);
     }
     return modules;
 }
@@ -570,6 +572,7 @@ pub fn compileInlineZigObjects(
     statements: []ast.Stmt,
     parser: *Parser,
     reporter: *Reporter,
+    zig_exe_path: []const u8,
     output_dir: []const u8,
 ) ![]const []const u8 {
     const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -600,7 +603,7 @@ pub fn compileInlineZigObjects(
         maybe_modules.deinit();
     }
     for (zig_decls) |decl| {
-        try compileOneInlineModule(memoryManager, reporter, zig_cache_path, decl, &maybe_modules);
+        try compileOneInlineModule(memoryManager, reporter, zig_exe_path, zig_cache_path, decl, &maybe_modules);
     }
 
     for (zig_decls) |decl| {
@@ -630,7 +633,7 @@ pub fn compileInlineZigObjects(
         var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
         defer args_list.deinit();
         try args_list.appendSlice(&[_][]const u8{
-            "zig",
+            zig_exe_path,
             "build-obj",
             zig_path,
             emit_flag,

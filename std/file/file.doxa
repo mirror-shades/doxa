@@ -172,6 +172,15 @@ zig File {
         return true;
     }
 
+    fn renameDir(old_folder: []const u8, new_folder: []const u8) void {
+        const cwd = std.fs.cwd();
+
+        cwd.rename(old_folder, new_folder) catch |err| {
+            std.debug.print("failed to rename directory {s}\n", .{ @errorName(err) });
+            return;
+        };
+    }
+
     fn read(path: []const u8) []const u8 {
         const cwd = std.fs.cwd();
         const file = cwd.openFile(path, .{}) catch return "";
@@ -203,6 +212,10 @@ pub function unzipFile(zip_path :: string, unzip_path :: string) {
 
 pub function IsDir(path :: string) returns tetra {
     return File.IsDir(path)
+}
+
+pub function renameDir(old_folder :: string, new_folder :: string) {
+    File.renameDir(old_folder, new_folder)
 }
 
 pub function read(path :: string) returns string {
