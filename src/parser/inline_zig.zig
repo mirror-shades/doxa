@@ -200,9 +200,17 @@ fn tokenIs(tok: Token, kind: TokenKind, lexeme: []const u8) bool {
 
 fn parseAllowedType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.TypeInfo {
     const tok_opt = try ts.next();
-    if (tok_opt == null) return switch (which) {
-        .param => error.InvalidParamType,
-        .ret => error.InvalidReturnType,
+    if (tok_opt == null) switch (which) {
+        .param => {
+            std.debug.print("Invalid param type in inline zig function\n", .{});
+            std.debug.print("Allowed types are: i64, f64, u8, bool, []const u8, and void\n", .{});
+            return error.InvalidParamType;
+        },
+        .ret => {
+            std.debug.print("Invalid return type in inline zig function\n", .{});
+            std.debug.print("Allowed types are: i64, f64, u8, bool, []const u8, and void\n", .{});
+            return error.InvalidReturnType;
+        },
     };
     const tok = tok_opt.?;
 

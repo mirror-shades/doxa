@@ -1605,7 +1605,7 @@ pub const VM = struct {
             defer arena.deinit();
             const a = arena.allocator();
 
-            // Resolve doxa executable path: self-exe -> DOXA_EXE env -> ./zig-out/bin/doxa -> PATH "doxa"
+            // Resolve doxa executable path: self-exe -> DOXA_EXE env -> ./zig-out/bin/doxa -> default "doxa" command name
             var doxa_path: []const u8 = "doxa";
             const self_path_opt = std.fs.selfExePathAlloc(a) catch null;
             if (self_path_opt) |self_path| {

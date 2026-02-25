@@ -234,11 +234,28 @@ fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []AST.Stm
 }
 
 fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, output_dir: []const u8) !?std.StringHashMap(VM.ZigRuntimeModule) {
-    return inline_zig_compiler.compileInlineZigModules(memoryManager, statements, parser, reporter, output_dir);
+    const zig_exe_path = try resolveBundledZigExecutable(memoryManager.getAllocator());
+    defer memoryManager.getAllocator().free(zig_exe_path);
+    return inline_zig_compiler.compileInlineZigModules(memoryManager, statements, parser, reporter, zig_exe_path, output_dir);
 }
 
 fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, output_dir: []const u8) ![]const []const u8 {
-    return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, output_dir);
+    const zig_exe_path = try resolveBundledZigExecutable(memoryManager.getAllocator());
+    defer memoryManager.getAllocator().free(zig_exe_path);
+    return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, output_dir);
+}
+
+fn resolveBundledZigExecutable(allocator: std.mem.Allocator) ![]u8 {
+    const exe_dir = try std.fs.selfExeDirPathAlloc(allocator);
+    defer allocator.free(exe_dir);
+
+    const zig_exe_name = if (builtin.os.tag == .windows) "zig.exe" else "zig";
+    const zig_path = try std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "zig", zig_exe_name });
+    errdefer allocator.free(zig_path);
+
+    const file = std.fs.openFileAbsolute(zig_path, .{}) catch return error.FileNotFound;
+    file.close();
+    return zig_path;
 }
 fn runBytecodeModule(memoryManager: *MemoryManager, bytecode_module: *BytecodeModule, reporter: *Reporter, zig_modules: ?std.StringHashMap(VM.ZigRuntimeModule), program_args: []const []const u8) !void {
     var vm = try VM.init(memoryManager.getAllocator(), bytecode_module, reporter, memoryManager, zig_modules, program_args);
@@ -677,6 +694,8 @@ pub fn main() !void {
 
     if (cli_options.mode == .COMPILE) {
         profiler.startPhase(Phase.GENERATE_L);
+        const zig_exe_path = try resolveBundledZigExecutable(gpa.allocator());
+        defer gpa.allocator().free(zig_exe_path);
 
         const artifact_stem = blk: {
             if (cli_options.output_path) |op| break :blk op;
@@ -747,7 +766,7 @@ pub fn main() !void {
             defer std.heap.page_allocator.free(ir_filename);
             const obj_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.o", .{stem_for_derivatives});
             defer std.heap.page_allocator.free(obj_filename);
-            try args.appendSlice(&[_][]const u8{ "zig", "cc", "-c", ir_filename, "-o", obj_filename });
+            try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-c", ir_filename, "-o", obj_filename });
             if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
                 try args.append("-target");
                 const arch = cli_options.target_arch orelse "";
@@ -794,7 +813,7 @@ pub fn main() !void {
 
             var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer args_list.deinit();
-            try args_list.appendSlice(&[_][]const u8{ "zig", "build-obj", RUNTIME_SOURCE_PATH, emit_flag });
+            try args_list.appendSlice(&[_][]const u8{ zig_exe_path, "build-obj", RUNTIME_SOURCE_PATH, emit_flag });
             if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
                 try args_list.append("-target");
                 const arch = cli_options.target_arch orelse "";
@@ -837,7 +856,7 @@ pub fn main() !void {
         {
             var args_ln = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer args_ln.deinit();
-            try args_ln.append("zig");
+            try args_ln.append(zig_exe_path);
             try args_ln.append("cc");
             try args_ln.append(obj_path);
             try args_ln.append(rt_obj);
