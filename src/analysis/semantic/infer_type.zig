@@ -1301,17 +1301,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 std.mem.eql(u8, fname, "int") or
                 std.mem.eql(u8, fname, "float") or
                 std.mem.eql(u8, fname, "byte") or
-                std.mem.eql(u8, fname, "type") or
-                std.mem.eql(u8, fname, "input") or
-                std.mem.eql(u8, fname, "os") or
-                std.mem.eql(u8, fname, "arch") or
-                std.mem.eql(u8, fname, "abi") or
-                std.mem.eql(u8, fname, "argc") or
-                std.mem.eql(u8, fname, "argv") or
-                std.mem.eql(u8, fname, "time") or
-                std.mem.eql(u8, fname, "tick") or
-                std.mem.eql(u8, fname, "random") or
-                std.mem.eql(u8, fname, "read"))
+                std.mem.eql(u8, fname, "type"))
             {
                 // Simple builtins: validate args and return type from centralized data
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
@@ -1321,18 +1311,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
                 // Fallback for methods not in data structure
                 return type_info;
-            } else if (std.mem.eql(u8, fname, "exit") or std.mem.eql(u8, fname, "sleep")) {
+            } else if (std.mem.eql(u8, fname, "exit")) {
                 // Validate argument count using centralized data
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 // Validate argument type (int | byte)
                 if (bc.arguments.len > 0) {
                     const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
                     if (arg_type.base != .Int and arg_type.base != .Byte) {
-                        if (std.mem.eql(u8, fname, "exit")) {
-                            self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
-                        } else {
-                            self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@sleep: argument must be an integer", .{});
-                        }
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
                         self.fatal_error = true;
                     }
                 }
@@ -1391,38 +1377,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         "@wait: argument must be process id (int)",
                         .{},
                     );
-                    self.fatal_error = true;
-                }
-                type_info.* = .{ .base = .Int };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "build")) {
-                // @build(source_path: string, output_path: string, arch: string, os: string, abi: string, debug: tetra) -> int
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const src_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
-                const out_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
-                const arch_t = try infer_type.inferTypeFromExpr(self, bc.arguments[2]);
-                const os_t = try infer_type.inferTypeFromExpr(self, bc.arguments[3]);
-                const abi_t = try infer_type.inferTypeFromExpr(self, bc.arguments[4]);
-                const dbg_t = try infer_type.inferTypeFromExpr(self, bc.arguments[5]);
-
-                if (src_t.base != .String or out_t.base != .String) {
-                    self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.TYPE_MISMATCH, "@build expects first two arguments to be strings (source, output)", .{});
-                    self.fatal_error = true;
-                }
-                if (arch_t.base != .String) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[2].base), ErrorCode.TYPE_MISMATCH, "@build arch must be string", .{});
-                    self.fatal_error = true;
-                }
-                if (os_t.base != .String) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[3].base), ErrorCode.TYPE_MISMATCH, "@build os must be string", .{});
-                    self.fatal_error = true;
-                }
-                if (abi_t.base != .String) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[4].base), ErrorCode.TYPE_MISMATCH, "@build abi must be string", .{});
-                    self.fatal_error = true;
-                }
-                if (dbg_t.base != .Tetra) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[5].base), ErrorCode.TYPE_MISMATCH, "@build debug must be tetra", .{});
                     self.fatal_error = true;
                 }
                 type_info.* = .{ .base = .Int };
@@ -1487,80 +1441,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             const method_name = method_call.method.lexeme;
 
             switch (method_call.method.type) {
-                .BUILD => {
-                    const argc = method_call.arguments.len;
-                    if (builtin_methods.getArgCountRange(.BUILD)) |range| {
-                        if (argc < range.min or argc > range.max) {
-                            if (argc < range.min) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(expr.base),
-                                    ErrorCode.TOO_FEW_ARGUMENTS,
-                                    "Too few arguments to @build: expected {d}, got {d}",
-                                    .{ range.min, argc },
-                                );
-                            } else {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(expr.base),
-                                    ErrorCode.TOO_MANY_ARGUMENTS,
-                                    "Too many arguments to @build: expected {d}, got {d}",
-                                    .{ range.max, argc },
-                                );
-                            }
-                            self.fatal_error = true;
-                            type_info.base = .Nothing;
-                            return type_info;
-                        }
-                    } else {
-                        // @build should always be in the data structure, but handle gracefully if not
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.NOT_IMPLEMENTED,
-                            "@build method metadata not found",
-                            .{},
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                        return type_info;
-                    }
-
-                    // Basic type validation: src/out/arch/os/abi strings; debug tetra
-                    const src_expr = method_call.arguments[0];
-                    const out_expr = method_call.arguments[1];
-                    const arch_expr = method_call.arguments[2];
-                    const os_expr = method_call.arguments[3];
-                    const abi_expr = method_call.arguments[4];
-                    const debug_expr = method_call.arguments[5];
-
-                    const src_t = try infer_type.inferTypeFromExpr(self, src_expr);
-                    const out_t = try infer_type.inferTypeFromExpr(self, out_expr);
-                    const arch_t = try infer_type.inferTypeFromExpr(self, arch_expr);
-                    const os_t = try infer_type.inferTypeFromExpr(self, os_expr);
-                    const abi_t = try infer_type.inferTypeFromExpr(self, abi_expr);
-                    const dbg_t = try infer_type.inferTypeFromExpr(self, debug_expr);
-
-                    if (src_t.base != .String) {
-                        self.reporter.reportCompileError(getLocationFromBase(src_expr.base), ErrorCode.TYPE_MISMATCH, "@build src must be string", .{});
-                    }
-                    if (out_t.base != .String) {
-                        self.reporter.reportCompileError(getLocationFromBase(out_expr.base), ErrorCode.TYPE_MISMATCH, "@build out must be string", .{});
-                    }
-                    if (arch_t.base != .String) {
-                        self.reporter.reportCompileError(getLocationFromBase(arch_expr.base), ErrorCode.TYPE_MISMATCH, "@build arch must be string", .{});
-                    }
-                    if (os_t.base != .String) {
-                        self.reporter.reportCompileError(getLocationFromBase(os_expr.base), ErrorCode.TYPE_MISMATCH, "@build os must be string", .{});
-                    }
-                    if (abi_t.base != .String) {
-                        self.reporter.reportCompileError(getLocationFromBase(abi_expr.base), ErrorCode.TYPE_MISMATCH, "@build abi must be string", .{});
-                    }
-                    if (dbg_t.base != .Tetra) {
-                        self.reporter.reportCompileError(getLocationFromBase(debug_expr.base), ErrorCode.TYPE_MISMATCH, "@build debug must be tetra", .{});
-                    }
-
-                    // Return int status code
-                    type_info.base = .Int;
-                    return type_info;
-                },
                 .PUSH,
                 .POP,
                 .INSERT,
@@ -1875,33 +1755,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     }
                 },
 
-                .OS, .ARCH, .ABI, .ARGC, .TIME, .TICK => {
-                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = &[_]*ast.Expr{} } };
-                    return try infer_type.inferTypeFromExpr(self, expr);
-                },
-                .ARGV => {
-                    if (method_call.arguments.len == 1) {
-                        expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = method_call.arguments } };
-                        return try infer_type.inferTypeFromExpr(self, expr);
-                    }
-
-                    if (method_call.arguments.len == 0 and method_call.receiver.data != .Literal) {
-                        var args = try self.allocator.alloc(*ast.Expr, 1);
-                        args[0] = method_call.receiver;
-                        expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                        return try infer_type.inferTypeFromExpr(self, expr);
-                    }
-
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_ARGUMENT_COUNT,
-                        "@argv requires exactly 1 argument",
-                        .{},
-                    );
-                    self.fatal_error = true;
-                    type_info.* = .{ .base = .Nothing };
-                    return type_info;
-                },
                 .ASSERT => {
                     const argc = method_call.arguments.len;
                     if (argc < 1 or argc > 2) {

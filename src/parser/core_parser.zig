@@ -396,38 +396,6 @@ pub const Parser = struct {
         };
     }
 
-    pub fn input(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        _ = left;
-
-        const input_token = self.peek();
-        self.advance();
-
-        const empty_prompt = token.Token{
-            .file = self.current_file,
-            .file_uri = self.current_file_uri,
-            .type = .STRING,
-            .lexeme = "",
-            .literal = .{ .string = "" },
-            .line = input_token.line,
-            .column = input_token.column,
-        };
-
-        const input_expr = try self.allocator.create(ast.Expr);
-        input_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(input_token),
-            },
-            .data = .{
-                .Input = .{
-                    .prompt = empty_prompt,
-                },
-            },
-        };
-
-        return input_expr;
-    }
-
     pub fn internalCallExpr(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
         return internal_call_parser.internalCallExpr(self, left, precedence);
     }

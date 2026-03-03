@@ -1,7 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const MapRuntime = @import("map_runtime.zig");
-const MAX_STDIN_READ_BYTES: usize = 1024 * 1024;
 
 fn writeStdout(slice: []const u8) void {
     if (builtin.os.tag == .windows) {
@@ -80,22 +79,6 @@ pub export fn doxa_set_args(argc: i32, argv: ?[*][*:0]u8) callconv(.c) void {
     startup_argv = argv;
 }
 
-pub export fn doxa_argc() callconv(.c) i64 {
-    if (startup_argc <= 0) return 0;
-    return @as(i64, startup_argc);
-}
-
-pub export fn doxa_argv(index: i64) callconv(.c) ?[*:0]u8 {
-    if (index < 0) return null;
-    if (startup_argc <= 0) return null;
-
-    const argc_i64: i64 = @as(i64, startup_argc);
-    if (index >= argc_i64) return null;
-
-    const argv_ptr = startup_argv orelse return null;
-    const actual_index: usize = @intCast(index);
-    return argv_ptr[actual_index];
-}
 
 pub export fn doxa_int_from_cstr(ptr: ?[*:0]const u8) callconv(.c) i64 {
     if (ptr == null) return 0;
@@ -280,22 +263,6 @@ fn getEnumVariantName(type_name: []const u8, variant_index: i64) []const u8 {
 
 var rng_state: ?std.Random.DefaultPrng = null;
 
-pub export fn doxa_random() callconv(.c) f64 {
-    if (rng_state == null) {
-        const seed = @as(u64, @intCast(std.time.timestamp()));
-        rng_state = std.Random.DefaultPrng.init(seed);
-    }
-    return rng_state.?.random().float(f64);
-}
-
-pub export fn doxa_random_int() callconv(.c) i64 {
-    if (rng_state == null) {
-        const seed = @as(u64, @intCast(std.time.timestamp()));
-        rng_state = std.Random.DefaultPrng.init(seed);
-    }
-    return rng_state.?.random().intRangeAtMost(i64, 0, 5) + 1;
-}
-
 pub export fn doxa_dice_roll() callconv(.c) i64 {
     if (rng_state == null) {
         const seed = @as(u64, @intCast(std.time.timestamp()));
@@ -306,33 +273,6 @@ pub export fn doxa_dice_roll() callconv(.c) i64 {
 
 pub export fn doxa_int(value: f64) callconv(.c) i64 {
     return @intFromFloat(value);
-}
-
-pub export fn doxa_tick() callconv(.c) i64 {
-    return @intCast(std.time.nanoTimestamp());
-}
-
-pub export fn doxa_input() callconv(.c) ?[*:0]u8 {
-    const stdin_file = std.fs.File.stdin();
-    var tmp: [256]u8 = undefined;
-    var bytes = std.array_list.Managed(u8).init(std.heap.page_allocator);
-    defer bytes.deinit();
-
-    while (true) {
-        const n = stdin_file.read(&tmp) catch return null;
-        if (n == 0) break;
-        for (tmp[0..n]) |ch| {
-            if (ch == '\n') break;
-            if (ch == '\r') continue;
-            bytes.append(ch) catch return null;
-        }
-        if (std.mem.indexOfScalar(u8, tmp[0..n], '\n') != null) break;
-        if (bytes.items.len >= MAX_STDIN_READ_BYTES) break;
-    }
-
-    const out = std.heap.page_allocator.allocSentinel(u8, bytes.items.len, 0) catch return null;
-    @memcpy(out[0..bytes.items.len], bytes.items);
-    return out.ptr;
 }
 
 pub export fn doxa_find(collection: ?*anyopaque, value: i64) callconv(.c) i64 {

@@ -96,19 +96,7 @@ pub const TokenType = enum {
     SLICE, // @slice       - get substring/subarray
     ASSERT, // @assert      - assert condition with message
     PANIC, // @panic       - panic with message
-    INPUT, // @input       - read from stdin
-    READ, // @read       - read file contents
-    OS, // @os     - get operating system
-    ARCH, // @arch     - get architecture
-    ABI, // @abi     - get ABI
-    ARGC, // @argc     - get argument count (includes argv[0] program name/path)
-    ARGV, // @argv     - get argument by index (argv[0] is program name/path)
-    TIME, // @time       - get current time (Unix seconds)
-    TICK, // @tick      - monotonic high-resolution time in nanoseconds
     EXIT, // @exit     - exit program
-    SLEEP, // @sleep       - sleep for a given number of milliseconds
-    RANDOM, // @random       - get random number
-    BUILD, // @build       - compile doxa file to executable
 
     // keywords with alternate tokens
     AND, // and ∧
