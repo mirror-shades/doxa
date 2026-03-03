@@ -57,13 +57,8 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare i64 @doxa_map_get_i64(ptr, i64)\n");
             try w.writeAll("declare i8 @doxa_map_try_get_i64(ptr, i64, ptr)\n");
             try w.writeAll("declare double @llvm.pow.f64(double, double)\n");
-            try w.writeAll("declare double @doxa_random()\n");
-            try w.writeAll("declare i64 @doxa_tick()\n");
             try w.writeAll("declare void @doxa_set_args(i32, ptr)\n");
-            try w.writeAll("declare i64 @doxa_argc()\n");
-            try w.writeAll("declare ptr @doxa_argv(i64)\n");
             try w.writeAll("declare i64 @doxa_int(double)\n");
-            try w.writeAll("declare ptr @doxa_input()\n");
             // Legacy type check ABI (i64 + tag + ptr). Implemented as a shim over
             // the canonical DoxaValue-based helper so older IR keeps working.
             try w.writeAll("declare i64 @doxa_type_check(i64, i64, ptr)\n");

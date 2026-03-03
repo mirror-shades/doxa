@@ -1,15 +1,10 @@
 const std = @import("std");
 const HIRValue = @import("../../codegen/hir/soxa_values.zig").HIRValue;
-const HIRStruct = @import("../../codegen/hir/soxa_values.zig").HIRStruct;
-const HIRStructField = @import("../../codegen/hir/soxa_values.zig").HIRStructField;
 const Core = @import("../core.zig");
 const HIRFrame = Core.HIRFrame;
 const CallFrame = Core.CallFrame;
 const Errors = @import("../../utils/errors.zig");
-const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
-const debug_print = @import("../calls/print.zig");
-const PrintOps = debug_print.PrintOps;
 
 pub const FunctionOps = struct {
     pub fn execTailCall(vm: anytype, c: anytype) !void {
@@ -123,22 +118,8 @@ pub const FunctionOps = struct {
         {
             // Quantifier functions are handled directly in VM's execBuiltin function
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Quantifier functions should be handled by VM", .{});
-        } else if (std.mem.eql(u8, c.qualified_name, "input")) {
-            try execBuiltinInput(vm);
-        } else if (std.mem.eql(u8, c.qualified_name, "os")) {
-            try execBuiltinOS(vm);
-        } else if (std.mem.eql(u8, c.qualified_name, "arch")) {
-            try execBuiltinArch(vm);
-        } else if (std.mem.eql(u8, c.qualified_name, "time")) {
-            try execBuiltinTime(vm);
-        } else if (std.mem.eql(u8, c.qualified_name, "tick")) {
-            try execBuiltinTick(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "exit")) {
             try execBuiltinExit(vm);
-        } else if (std.mem.eql(u8, c.qualified_name, "sleep")) {
-            try execBuiltinSleep(vm);
-        } else if (std.mem.eql(u8, c.qualified_name, "random")) {
-            try execBuiltinRandom(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "clear")) {
             try execBuiltinClear(vm);
         } else if (std.mem.eql(u8, c.qualified_name, "find")) {
@@ -386,170 +367,6 @@ pub const FunctionOps = struct {
         try vm.stack.push(HIRFrame.initFloat(result));
     }
 
-    fn execBuiltinInput(vm: anytype) !void {
-        if (vm.call_stack.sp > 0) {
-            const call_info = vm.call_stack.frames[vm.call_stack.sp - 1];
-            if (call_info.arg_count > 0) {
-                const prompt_frame = try vm.stack.pop();
-                switch (prompt_frame.value) {
-                    .string => |prompt_str| {
-                        const stdout_file = std.fs.File.stdout();
-                        _ = try stdout_file.write(prompt_str);
-                    },
-                    else => {
-                        try PrintOps.formatHIRValueRaw(vm, prompt_frame.value);
-                    },
-                }
-            }
-        }
-
-        var stdin_buffer: [4096]u8 = undefined;
-        var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
-        const stdin = &stdin_reader.interface;
-
-        const input_line = stdin.takeDelimiterExclusive('\n') catch |err| switch (err) {
-            error.EndOfStream => {
-                vm.running = false;
-                return;
-            },
-            error.StreamTooLong => {
-                const line = stdin.takeDelimiterExclusive('\n') catch "";
-                if (line.len == 0) {
-                    vm.running = false;
-                    return;
-                }
-                return processInputLine(vm, line);
-            },
-            error.ReadFailed => {
-                vm.running = false;
-                return;
-            },
-            else => return err,
-        };
-
-        try processInputLine(vm, input_line);
-    }
-
-    fn processInputLine(vm: anytype, line: []const u8) !void {
-        var clean_line = line;
-        if (clean_line.len > 0 and clean_line[clean_line.len - 1] == '\r') {
-            clean_line = clean_line[0 .. clean_line.len - 1];
-        }
-
-        const input_string = try vm.runtimeAllocator().dupe(u8, clean_line);
-        try vm.stack.push(HIRFrame.initString(input_string));
-    }
-
-    fn execBuiltinOS(vm: anytype) !void {
-        const builtin = @import("builtin");
-        const os_name = switch (builtin.os.tag) {
-            .windows => "windows",
-            .macos => "macos",
-            .linux => "linux",
-            .freebsd => "freebsd",
-            .netbsd => "netbsd",
-            .dragonfly => "dragonfly",
-            .openbsd => "openbsd",
-            .wasi => "wasi",
-            .emscripten => "emscripten",
-            .plan9 => "plan9",
-            .haiku => "haiku",
-            .solaris => "solaris",
-            .fuchsia => "fuchsia",
-            .ios => "ios",
-            .tvos => "tvos",
-            .watchos => "watchos",
-            .visionos => "visionos",
-            .driverkit => "driverkit",
-            .aix => "aix",
-            .hurd => "hurd",
-            .rtems => "rtems",
-            .serenity => "serenity",
-            .zos => "zos",
-            .illumos => "illumos",
-            .uefi => "uefi",
-            .ps3 => "ps3",
-            .ps4 => "ps4",
-            .ps5 => "ps5",
-            .amdhsa => "amdhsa",
-            .amdpal => "amdpal",
-            .cuda => "cuda",
-            .mesa3d => "mesa3d",
-            .nvcl => "nvcl",
-            .opencl => "opencl",
-            .opengl => "opengl",
-            .vulkan => "vulkan",
-            .contiki => "contiki",
-            .hermit => "hermit",
-            .freestanding => "freestanding",
-            .other => "other",
-        };
-        try vm.stack.push(HIRFrame.initString(try vm.runtimeAllocator().dupe(u8, os_name)));
-    }
-
-    fn execBuiltinArch(vm: anytype) !void {
-        const builtin = @import("builtin");
-        const arch_name = switch (builtin.cpu.arch) {
-            .amdgcn => "amdgcn",
-            .arc => "arc",
-            .arm => "arm",
-            .armeb => "armeb",
-            .thumb => "thumb",
-            .thumbeb => "thumbeb",
-            .aarch64 => "aarch64",
-            .aarch64_be => "aarch64_be",
-            .avr => "avr",
-            .bpfel => "bpfel",
-            .bpfeb => "bpfeb",
-            .csky => "csky",
-            .hexagon => "hexagon",
-            .kalimba => "kalimba",
-            .lanai => "lanai",
-            .loongarch32 => "loongarch32",
-            .loongarch64 => "loongarch64",
-            .m68k => "m68k",
-            .mips => "mips",
-            .mipsel => "mipsel",
-            .mips64 => "mips64",
-            .mips64el => "mips64el",
-            .msp430 => "msp430",
-            .nvptx => "nvptx",
-            .nvptx64 => "nvptx64",
-            .or1k => "or1k",
-            .powerpc => "powerpc",
-            .powerpcle => "powerpcle",
-            .powerpc64 => "powerpc64",
-            .powerpc64le => "powerpc64le",
-            .propeller => "propeller",
-            .riscv32 => "riscv32",
-            .riscv64 => "riscv64",
-            .s390x => "s390x",
-            .sparc => "sparc",
-            .sparc64 => "sparc64",
-            .spirv32 => "spirv32",
-            .spirv64 => "spirv64",
-            .ve => "ve",
-            .wasm32 => "wasm32",
-            .wasm64 => "wasm64",
-            .x86 => "x86",
-            .x86_64 => "x86_64",
-            .xcore => "xcore",
-            .xtensa => "xtensa",
-        };
-        try vm.stack.push(HIRFrame.initString(try vm.runtimeAllocator().dupe(u8, arch_name)));
-    }
-
-    fn execBuiltinTime(vm: anytype) !void {
-        const timestamp = std.time.timestamp();
-        try vm.stack.push(HIRFrame.initInt(timestamp));
-    }
-
-    fn execBuiltinTick(vm: anytype) !void {
-        const ns = std.time.nanoTimestamp();
-        const ns_i64: i64 = @as(i64, @intCast(ns));
-        try vm.stack.push(HIRFrame.initInt(ns_i64));
-    }
-
     fn execBuiltinExit(vm: anytype) !void {
         const exit_code_frame = try vm.stack.pop();
         _ = switch (exit_code_frame.value) {
@@ -563,22 +380,4 @@ pub const FunctionOps = struct {
         vm.running = false;
     }
 
-    fn execBuiltinSleep(vm: anytype) !void {
-        const duration_frame = try vm.stack.pop();
-        const duration_ms = switch (duration_frame.value) {
-            .int => |i| @as(u64, @intCast(i)),
-            .byte => |b| @as(u64, b),
-            else => {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@sleep: argument must be an integer", .{});
-            },
-        };
-
-        std.Thread.sleep(duration_ms * std.time.ns_per_ms);
-    }
-
-    fn execBuiltinRandom(vm: anytype) !void {
-        const random_value = std.crypto.random.float(f64);
-
-        try vm.stack.push(HIRFrame.initFloat(random_value));
-    }
 };

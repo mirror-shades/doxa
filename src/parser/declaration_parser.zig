@@ -749,15 +749,10 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
 
     var initializer: ?*ast.Expr = null;
 
-    if (self.peek().type == .INPUT) {
-        initializer = try Parser.input(self, null, .NONE);
-        if (initializer == null) return error.ExpectedExpression;
-    } else if (self.peek().type == .ASSIGN) {
+    if (self.peek().type == .ASSIGN) {
         self.advance();
 
-        if (self.peek().type == .INPUT) {
-            initializer = try Parser.input(self, null, .NONE);
-        } else if (self.peek().type == .STRUCT_INSTANCE) {
+        if (self.peek().type == .STRUCT_INSTANCE) {
             if (try Parser.parseStructInit(self)) |struct_init| {
                 initializer = struct_init;
             } else {

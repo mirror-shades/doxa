@@ -34,7 +34,6 @@ pub const BUILTINS = [_]BuiltinInfo{
     // ── Math ────────────────────────────────────────────────────────────
     .{ .name = "power", .return_type = .Float, .param_count = 2 },
     .{ .name = "powi", .return_type = .Int, .param_count = 2 },
-    .{ .name = "random", .return_type = .Float, .param_count = 0 },
     .{ .name = "dice_roll", .return_type = .Int, .param_count = 0 },
 
     // ── System / timing ─────────────────────────────────────────────────

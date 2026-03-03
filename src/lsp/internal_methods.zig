@@ -73,11 +73,6 @@ const METHODS = &[_]Method{
         .documentation = "**Input**: any\n**Output**: string\nUse to inspect values in debugging.",
     },
     .{
-        .label = "@random",
-        .detail = "Produce a pseudo-random floating point value",
-        .documentation = "**Input**: none\n**Output**: float\nReturns a random number between 0.0 and 1.0; may error at compile time if randomness is unavailable.",
-    },
-    .{
         .label = "@print",
         .detail = "Write text to the standard output",
         .documentation = "**Input**: string\n**Output**: nothing\nPanics on I/O failures.",

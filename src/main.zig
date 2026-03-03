@@ -483,7 +483,6 @@ fn printUsage() void {
     std.debug.print("Doxa Programming Language\n", .{});
     std.debug.print("\nUsage:\n", .{});
     std.debug.print("  doxa run [general options] <file.doxa>\n", .{});
-    std.debug.print("       append `-- <args...>` to pass runtime args to @argc/@argv\n", .{});
     std.debug.print("  doxa compile [general options] <file.doxa> -o <output> [compile options]\n", .{});
     std.debug.print("  doxa --lsp [--lsp-debug-io]     # Start the Language Server Protocol loop\n", .{});
     std.debug.print("  doxa --lsp-debug <file.doxa>    # Run the in-process LSP debug harness\n", .{});

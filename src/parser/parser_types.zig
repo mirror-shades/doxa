@@ -1479,64 +1479,6 @@ pub const Parser = struct {
         return length_expr;
     }
 
-    pub fn input(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-        self.advance();
-
-        var prompt: token.Token = token.Token{
-            .type = .STRING,
-            .lexeme = "",
-            .literal = .{ .string = "" },
-            .line = 0,
-            .column = 0,
-            .file = "",
-            .file_uri = "",
-        };
-        if (self.peek().type == .LEFT_PAREN) {
-            self.advance();
-
-            if (self.peek().type == .RIGHT_PAREN) {
-                self.advance();
-            } else if (self.peek().type == .STRING) {
-                prompt = self.peek();
-                self.advance();
-                if (self.peek().type != .RIGHT_PAREN) {
-                    return error.ExpectedRightParen;
-                }
-                self.advance();
-            } else {
-                return error.ExpectedString;
-            }
-        } else if (self.peek().type == .STRING) {
-            prompt = self.peek();
-            self.advance();
-        } else {
-            prompt = token.Token{
-                .file = self.current_file,
-                .file_uri = self.current_file_uri,
-                .type = .STRING,
-                .lexeme = "",
-                .literal = .{ .string = "" },
-                .line = self.peek().line,
-                .column = self.peek().column,
-            };
-        }
-
-        const input_expr = try self.allocator.create(ast.Expr);
-        input_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(self.peek()),
-            },
-            .data = .{
-                .Input = .{
-                    .prompt = prompt,
-                },
-            },
-        };
-
-        return input_expr;
-    }
-
     pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
         const module_info = try module_resolver.resolveModule(self, module_path);
 
