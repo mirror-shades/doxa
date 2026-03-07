@@ -34,6 +34,16 @@ function setTarget(^target :: Target, os :: string, arch :: string) {
     }
 }
 
+function ensureIO(result :: nothing | std.error.IO | std.error.Common, context :: string) returns tetra {
+    result as nothing then {
+        return true
+    }
+    else {
+        @print("{context} failed: {result}\n")
+        return false
+    }
+}
+
 function build(os :: string, arch :: string) {
     var target :: Target is .not_found
     setTarget(^target, os, arch)
@@ -50,23 +60,35 @@ function build(os :: string, arch :: string) {
     @print("building for {arch}-{os}\n")
 
     @print("making directories\n")
-    std.file.makeDir("doxa")
-    std.file.makeDir("doxa/bin")
-    
+    if ensureIO(std.file.makeDir("doxa"), "std.file.makeDir(doxa)") == false then return
+    if ensureIO(std.file.makeDir("doxa/bin"), "std.file.makeDir(doxa/bin)") == false then return
+
     @print("unzipping\n")
-    std.file.unzipFile(target_zip_string, "./doxa/lib")
+    if ensureIO(std.file.unzipFile(target_zip_string, "./doxa/lib"), "std.file.unzipFile") == false then return
+
     @print("renaming {target_string}\n")
-    std.file.renameDir("./doxa/lib/" + target_string, "./doxa/lib/zig")
+    if ensureIO(std.file.renameDir("./doxa/lib/" + target_string, "./doxa/lib/zig"), "std.file.renameDir") == false then return
 
     @print("compiling Doxa\n")
     var zig_build_cmd :: string is "./doxa/lib/zig/zig build-exe src/main.zig -femit-bin=doxa/bin/doxa"
     if os == "windows" then {
         zig_build_cmd is ".\\doxa\\lib\\zig\\zig.exe build-exe .\\src\\main.zig -femit-bin=doxa\\bin\\doxa.exe"
     }
-    std.process.exec(zig_build_cmd)
-   
+
+    const run_result is std.process.exec(zig_build_cmd)
+    run_result as int then {
+        if run_result != 0 then {
+            @print("build command failed with non-zero exit code\n")
+            return
+        }
+    }
+    else {
+        @print("std.process.exec failed: {run_result}\n")
+        return
+    }
+
     @print("copying doxa std\n")
-    std.file.copyDir("std", "doxa/lib/std")
+    if ensureIO(std.file.copyDir("std", "doxa/lib/std"), "std.file.copyDir") == false then return
 }
 
 entry function main() {

@@ -1,41 +1,195 @@
+module error from "../error/error.doxa"
+
 zig Build {
     const std = @import("std");
+    const builtin = @import("builtin");
+
+    fn errorState(mode: i64, value: i64) i64 {
+        const State = struct {
+            var last_error_code: i64 = 0;
+        };
+        if (mode == 0) {
+            State.last_error_code = value;
+            return 0;
+        }
+        if (mode == 1) {
+            return State.last_error_code;
+        }
+        if (mode == 2) {
+            const code = State.last_error_code;
+            State.last_error_code = 0;
+            return code;
+        }
+        return 0;
+    }
+
+    fn clearLastError() void {
+        _ = errorState(0, 0);
+    }
+
+    fn setLastError(code: i64) void {
+        _ = errorState(0, code);
+    }
+
+    fn takeLastErrorCode() i64 {
+        return errorState(2, 0);
+    }
 
     fn compileDoxa(src: []const u8, out: []const u8, arch: []const u8, os: []const u8, abi: []const u8, debug_text: []const u8) i64 {
+        clearLastError();
+
+        if (src.len == 0 or out.len == 0) {
+            setLastError(1);
+            return 0;
+        }
+
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
         const a = arena.allocator();
 
-        const self_path_opt = std.fs.selfExePathAlloc(a) catch null;
-        const doxa_path = self_path_opt orelse "doxa";
+        const self_path_opt = std.fs.selfExePathAlloc(a) catch {
+            setLastError(105);
+            return 0;
+        };
+        const doxa_path = self_path_opt;
 
         const debug = std.mem.eql(u8, debug_text, "true");
         const opt_flag = if (debug) "-O0" else "-O-1";
 
         var args = std.array_list.Managed([]const u8).init(a);
         defer args.deinit();
-        args.append(doxa_path) catch return 1;
-        args.append("compile") catch return 1;
-        args.append(src) catch return 1;
-        args.append("-o") catch return 1;
-        args.append(out) catch return 1;
-        args.append(opt_flag) catch return 1;
-        if (arch.len > 0) args.append(std.fmt.allocPrint(a, "--arch={s}", .{arch}) catch return 1) catch return 1;
-        if (os.len > 0) args.append(std.fmt.allocPrint(a, "--os={s}", .{os}) catch return 1) catch return 1;
-        if (abi.len > 0) args.append(std.fmt.allocPrint(a, "--abi={s}", .{abi}) catch return 1) catch return 1;
+
+        args.append(doxa_path) catch {
+            setLastError(117);
+            return 0;
+        };
+        args.append("compile") catch {
+            setLastError(117);
+            return 0;
+        };
+        args.append(src) catch {
+            setLastError(117);
+            return 0;
+        };
+        args.append("-o") catch {
+            setLastError(117);
+            return 0;
+        };
+        args.append(out) catch {
+            setLastError(117);
+            return 0;
+        };
+        args.append(opt_flag) catch {
+            setLastError(117);
+            return 0;
+        };
+
+        if (arch.len > 0) {
+            const arch_arg = std.fmt.allocPrint(a, "--arch={s}", .{arch}) catch {
+            setLastError(117);
+                return 0;
+            };
+            args.append(arch_arg) catch {
+            setLastError(117);
+                return 0;
+            };
+        }
+
+        if (os.len > 0) {
+            const os_arg = std.fmt.allocPrint(a, "--os={s}", .{os}) catch {
+            setLastError(117);
+                return 0;
+            };
+            args.append(os_arg) catch {
+            setLastError(117);
+                return 0;
+            };
+        }
+
+        if (abi.len > 0) {
+            const abi_arg = std.fmt.allocPrint(a, "--abi={s}", .{abi}) catch {
+            setLastError(117);
+                return 0;
+            };
+            args.append(abi_arg) catch {
+            setLastError(117);
+                return 0;
+            };
+        }
 
         var child = std.process.Child.init(args.items, a);
         child.stdout_behavior = .Inherit;
         child.stderr_behavior = .Inherit;
 
-        const term = child.spawnAndWait() catch return 1;
+        const term = child.spawnAndWait() catch {
+            setLastError(105);
+            return 0;
+        };
+
         return switch (term) {
             .Exited => |code| @as(i64, code),
-            else => 1,
+            else => {
+                setLastError(117);
+                return 0;
+            },
         };
+    }
+
+    fn compileHost(src: []const u8, out: []const u8, debug_text: []const u8) i64 {
+        return compileDoxa(
+            src,
+            out,
+            @tagName(builtin.cpu.arch),
+            @tagName(builtin.os.tag),
+            @tagName(builtin.abi),
+            debug_text,
+        );
     }
 }
 
-pub function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int {
-    return Build.compileDoxa(src, out, arch, os, abi, @string(debug));
+function mapBuildError(code :: int) returns error.IO | error.Common {
+    return match code {
+        1 then error.Common.InvalidArgument,
+        2 then error.Common.OutOfMemory,
+        3 then error.Common.PermissionDenied,
+        4 then error.Common.NotSupported,
+        5 then error.Common.Unexpected,
+        100 then error.IO.NotFound,
+        101 then error.IO.AlreadyExists,
+        102 then error.IO.NotDirectory,
+        103 then error.IO.IsDirectory,
+        104 then error.IO.InvalidPath,
+        105 then error.IO.OpenFailed,
+        106 then error.IO.ReadFailed,
+        107 then error.IO.WriteFailed,
+        108 then error.IO.CreateFailed,
+        109 then error.IO.DeleteFailed,
+        110 then error.IO.RenameFailed,
+        111 then error.IO.CopyFailed,
+        112 then error.IO.IterateFailed,
+        113 then error.IO.InvalidData,
+        114 then error.IO.ConnectionFailed,
+        115 then error.IO.Timeout,
+        116 then error.IO.HttpStatus,
+        117 then error.IO.Unexpected,
+        else error.Common.Unexpected,
+    }
 }
+
+pub function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.IO | error.Common {
+    const code is Build.compileDoxa(src, out, arch, os, abi, @string(debug));
+    const err is Build.takeLastErrorCode()
+    if err == 0 then return code
+    return mapBuildError(err)
+}
+
+pub function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.IO | error.Common {
+    const code is Build.compileHost(src, out, @string(debug));
+    const err is Build.takeLastErrorCode()
+    if err == 0 then return code
+    return mapBuildError(err)
+}
+
+
+
+

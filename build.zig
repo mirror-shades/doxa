@@ -50,34 +50,13 @@ fn getZigDependencyForTarget(target: std.Target) ?ZigDependency {
 
 fn addUnpackZigDependencyStep(
     b: *std.Build,
-    host_os: std.Target.Os.Tag,
+    archive_tool: *std.Build.Step.Compile,
     archive_path: []const u8,
     destination_lib_dir: []const u8,
     extracted_folder_name: []const u8,
 ) *std.Build.Step.Run {
-    const unzip_script =
-        \\import os, shutil, sys, tarfile, zipfile
-        \\archive, dest, extracted = sys.argv[1:4]
-        \\os.makedirs(dest, exist_ok=True)
-        \\final = os.path.join(dest, "zig")
-        \\if os.path.exists(final):
-        \\    shutil.rmtree(final)
-        \\if archive.endswith(".zip"):
-        \\    with zipfile.ZipFile(archive) as zf:
-        \\        zf.extractall(dest)
-        \\else:
-        \\    with tarfile.open(archive) as tf:
-        \\        tf.extractall(dest)
-        \\source = os.path.join(dest, extracted)
-        \\if not os.path.isdir(source):
-        \\    raise SystemExit(f"Expected extracted folder not found: {source}")
-        \\shutil.move(source, final)
-    ;
-
-    const cmd = switch (host_os) {
-        .windows => b.addSystemCommand(&[_][]const u8{ "py", "-3", "-c", unzip_script }),
-        else => b.addSystemCommand(&[_][]const u8{ "python3", "-c", unzip_script }),
-    };
+    const cmd = b.addRunArtifact(archive_tool);
+    cmd.addArg("unpack-zig-dep");
     cmd.addArgs(&[_][]const u8{
         archive_path,
         destination_lib_dir,
@@ -96,6 +75,14 @@ pub fn build(b: *std.Build) void {
     const can_run_target =
         target.result.os.tag == host_target.result.os.tag and
         target.result.cpu.arch == host_target.result.cpu.arch;
+    const archive_tool = b.addExecutable(.{
+        .name = "archive_tool",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("scripts/archive_tool.zig"),
+            .target = host_target,
+            .optimize = .ReleaseSafe,
+        }),
+    });
 
     const exe = b.addExecutable(.{
         .name = "doxa",
@@ -119,7 +106,7 @@ pub fn build(b: *std.Build) void {
         const destination_lib_dir = b.getInstallPath(.prefix, "lib");
         const unpack_zig_dep = addUnpackZigDependencyStep(
             b,
-            host_target.result.os.tag,
+            archive_tool,
             archive_path,
             destination_lib_dir,
             zig_dep.folder_name,
@@ -169,7 +156,7 @@ pub fn build(b: *std.Build) void {
             const destination_lib_dir = b.getInstallPath(.prefix, b.fmt("{s}/lib", .{target_names[i]}));
             const unpack_zig_dep = addUnpackZigDependencyStep(
                 b,
-                host_target.result.os.tag,
+                archive_tool,
                 archive_path,
                 destination_lib_dir,
                 zig_dep.folder_name,
@@ -182,10 +169,9 @@ pub fn build(b: *std.Build) void {
     }
 
     const compress_step = b.step("compress", "Create zip archives of release binaries");
-
-    const compress_cmd = b.addSystemCommand(&[_][]const u8{
-        "python3",
-        "compress_releases.py",
+    const compress_cmd = b.addRunArtifact(archive_tool);
+    compress_cmd.addArgs(&[_][]const u8{
+        "compress-releases",
         "--cwd",
         b.getInstallPath(.prefix, ""),
     });
@@ -218,6 +204,7 @@ pub fn build(b: *std.Build) void {
     run_test_suite.skip_foreign_checks = true;
     run_test_suite.step.dependOn(&test_install.step);
     run_test_suite.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
+    run_test_suite.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
 
     const reporting_module = b.createModule(.{
         .root_source_file = b.path("src/utils/reporting.zig"),
@@ -235,6 +222,7 @@ pub fn build(b: *std.Build) void {
     run_test_lsp.skip_foreign_checks = true;
     run_test_lsp.step.dependOn(&test_install.step);
     run_test_lsp.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
+    run_test_lsp.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
 
     const test_step = b.step("test", "Run all tests");
     if (can_run_target) {

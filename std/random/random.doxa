@@ -1,0 +1,11 @@
+zig Random {
+    const std = @import("std");
+
+    fn floatUnit() f64 {
+        return std.crypto.random.float(f64);
+    }
+}
+
+pub function random() returns float {
+    return Random.floatUnit();
+}

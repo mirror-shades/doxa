@@ -258,6 +258,10 @@ function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
 }
 
 entry function main() {
-    const expr is io.input()
-    calculate(expr)
+    const expr_result is io.input()
+    expr_result as string then {
+        calculate(expr_result)
+    } else {
+        @print("Input failed\n")
+    }
 }

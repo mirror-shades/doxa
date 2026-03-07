@@ -1,39 +1,163 @@
+module error from "../error/error.doxa"
+
 zig File {
     const std = @import("std");
 
+    fn errorState(mode: i64, value: i64) i64 {
+        const State = struct {
+            var last_error_code: i64 = 0;
+        };
+        if (mode == 0) {
+            State.last_error_code = value;
+            return 0;
+        }
+        if (mode == 1) {
+            return State.last_error_code;
+        }
+        if (mode == 2) {
+            const code = State.last_error_code;
+            State.last_error_code = 0;
+            return code;
+        }
+        return 0;
+    }
+
+    fn clearLastError() void {
+        _ = errorState(0, 0);
+    }
+
+    fn setLastError(code: i64) void {
+        _ = errorState(0, code);
+    }
+
+    fn takeLastErrorCode() i64 {
+        return errorState(2, 0);
+    }
+
+    fn mapCommon(err: anyerror) ?i64 {
+        return switch (err) {
+            error.InvalidArgument => 1,
+            error.OutOfMemory => 2,
+            error.AccessDenied, error.PermissionDenied => 3,
+            error.NotSupported, error.OperationNotSupported => 4,
+            else => null,
+        };
+    }
+
+    fn mapPath(err: anyerror) i64 {
+        if (mapCommon(err)) |code| return code;
+        return switch (err) {
+            error.FileNotFound => 100,
+            error.PathAlreadyExists => 101,
+            error.NotDir => 102,
+            error.IsDir => 103,
+            error.BadPathName, error.NameTooLong, error.InvalidUtf8 => 104,
+            else => 117,
+        };
+    }
+
     fn makeDir(path: []const u8) void {
+        clearLastError();
+        if (path.len == 0) {
+            setLastError(1);
+            return;
+        }
         std.fs.cwd().makeDir(path) catch |err| {
-            std.debug.print("failed to make directory: {s}\n", .{@errorName(err)});
+            setLastError(mapPath(err));
+            return;
+        };
+    }
+
+    fn makePath(path: []const u8) void {
+        clearLastError();
+        if (path.len == 0) {
+            setLastError(1);
+            return;
+        }
+        std.fs.cwd().makePath(path) catch |err| {
+            setLastError(mapPath(err));
+            return;
         };
     }
 
     fn copyFile(source: []const u8, destination: []const u8) void {
+        clearLastError();
+        if (source.len == 0 or destination.len == 0) {
+            setLastError(1);
+            return;
+        }
+
         const cwd = std.fs.cwd();
         cwd.copyFile(source, cwd, destination, .{}) catch |err| {
-            std.debug.print("failed to copy file: {s}\n", .{@errorName(err)});
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(switch (err) {
+                error.FileNotFound => 100,
+                error.PathAlreadyExists => 101,
+                error.NotDir => 102,
+                error.IsDir => 103,
+                error.BadPathName, error.NameTooLong, error.InvalidUtf8 => 104,
+                else => 111,
+            });
+            return;
         };
     }
 
     fn delete(path: []const u8, recursive: bool) void {
+        clearLastError();
+        if (path.len == 0) {
+            setLastError(1);
+            return;
+        }
+
         const cwd = std.fs.cwd();
         cwd.deleteFile(path) catch |err| {
             if (err == error.IsDir) {
                 if (recursive) {
                     cwd.deleteTree(path) catch |e| {
-                        std.debug.print("failed to delete directory: {s}\n", .{@errorName(e)});
+                        if (mapCommon(e)) |code| {
+                            setLastError(code);
+                            return;
+                        }
+                        setLastError(109);
+                        return;
                     };
                 } else {
                     cwd.deleteDir(path) catch |e| {
-                        std.debug.print("failed to delete directory: {s}\n", .{@errorName(e)});
+                        if (mapCommon(e)) |code| {
+                            setLastError(code);
+                            return;
+                        }
+                        setLastError(109);
+                        return;
                     };
                 }
-            } else {
-                std.debug.print("failed to delete file: {s}\n", .{@errorName(err)});
+                return;
             }
+
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(switch (err) {
+                error.FileNotFound => 100,
+                error.NotDir => 102,
+                error.BadPathName, error.NameTooLong, error.InvalidUtf8 => 104,
+                else => 109,
+            });
+            return;
         };
     }
 
     fn copyDir(source: []const u8, destination: []const u8) void {
+        clearLastError();
+        if (source.len == 0 or destination.len == 0) {
+            setLastError(1);
+            return;
+        }
+
         const allocator = std.heap.page_allocator;
         const Task = struct {
             src: []u8,
@@ -50,18 +174,32 @@ zig File {
         }
 
         const root_src = allocator.dupe(u8, source) catch |err| {
-            std.debug.print("copyDir alloc source failed ({s}): {s}\n", .{ source, @errorName(err) });
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(117);
             return;
         };
+
         const root_dst = allocator.dupe(u8, destination) catch |err| {
             allocator.free(root_src);
-            std.debug.print("copyDir alloc destination failed ({s}): {s}\n", .{ destination, @errorName(err) });
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(117);
             return;
         };
+
         stack.append(.{ .src = root_src, .dst = root_dst }) catch |err| {
             allocator.free(root_src);
             allocator.free(root_dst);
-            std.debug.print("copyDir queue root failed: {s}\n", .{@errorName(err)});
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(117);
             return;
         };
 
@@ -71,27 +209,43 @@ zig File {
             defer allocator.free(task.dst);
 
             var src_dir = std.fs.cwd().openDir(task.src, .{ .iterate = true }) catch |err| {
-                std.debug.print("copyDir open source failed ({s}): {s}\n", .{ task.src, @errorName(err) });
-                continue;
+                if (mapCommon(err)) |code| {
+                    setLastError(code);
+                    return;
+                }
+                setLastError(105);
+                return;
             };
             defer src_dir.close();
 
             std.fs.cwd().makePath(task.dst) catch |err| {
-                std.debug.print("copyDir make destination failed ({s}): {s}\n", .{ task.dst, @errorName(err) });
-                continue;
+                if (mapCommon(err)) |code| {
+                    setLastError(code);
+                    return;
+                }
+                setLastError(108);
+                return;
             };
 
             var dst_dir = std.fs.cwd().openDir(task.dst, .{ .iterate = true }) catch |err| {
-                std.debug.print("copyDir open destination failed ({s}): {s}\n", .{ task.dst, @errorName(err) });
-                continue;
+                if (mapCommon(err)) |code| {
+                    setLastError(code);
+                    return;
+                }
+                setLastError(105);
+                return;
             };
             defer dst_dir.close();
 
             var iter = src_dir.iterate();
             while (true) {
                 const next_entry = iter.next() catch |err| {
-                    std.debug.print("copyDir iterate failed ({s}): {s}\n", .{ task.src, @errorName(err) });
-                    break;
+                    if (mapCommon(err)) |code| {
+                        setLastError(code);
+                        return;
+                    }
+                    setLastError(112);
+                    return;
                 };
                 const entry = next_entry orelse break;
                 const name = entry.name;
@@ -100,32 +254,53 @@ zig File {
                 switch (entry.kind) {
                     .file => {
                         const src_file_path = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.src, std.fs.path.sep_str, name }) catch |err| {
-                            std.debug.print("copyDir build source file path failed ({s}): {s}\n", .{ name, @errorName(err) });
-                            continue;
+                            if (mapCommon(err)) |code| {
+                                setLastError(code);
+                                return;
+                            }
+                            setLastError(111);
+                            return;
                         };
                         defer allocator.free(src_file_path);
 
                         std.fs.cwd().copyFile(src_file_path, dst_dir, name, .{}) catch |err| {
-                            std.debug.print("copyDir file copy failed ({s}): {s}\n", .{ src_file_path, @errorName(err) });
-                            continue;
+                            if (mapCommon(err)) |code| {
+                                setLastError(code);
+                                return;
+                            }
+                            setLastError(111);
+                            return;
                         };
                     },
                     .directory => {
                         const sub_src = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.src, std.fs.path.sep_str, name }) catch |err| {
-                            std.debug.print("copyDir build source dir path failed ({s}): {s}\n", .{ name, @errorName(err) });
-                            continue;
+                            if (mapCommon(err)) |code| {
+                                setLastError(code);
+                                return;
+                            }
+                            setLastError(111);
+                            return;
                         };
+
                         const sub_dst = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.dst, std.fs.path.sep_str, name }) catch |err| {
                             allocator.free(sub_src);
-                            std.debug.print("copyDir build destination dir path failed ({s}): {s}\n", .{ name, @errorName(err) });
-                            continue;
+                            if (mapCommon(err)) |code| {
+                                setLastError(code);
+                                return;
+                            }
+                            setLastError(111);
+                            return;
                         };
 
                         stack.append(.{ .src = sub_src, .dst = sub_dst }) catch |err| {
                             allocator.free(sub_src);
                             allocator.free(sub_dst);
-                            std.debug.print("copyDir queue subdir failed ({s}): {s}\n", .{ name, @errorName(err) });
-                            continue;
+                            if (mapCommon(err)) |code| {
+                                setLastError(code);
+                                return;
+                            }
+                            setLastError(111);
+                            return;
                         };
                     },
                     else => {},
@@ -135,21 +310,39 @@ zig File {
     }
 
     fn unzipFile(zip_path: []const u8, out_dir_path: []const u8) void {
+        clearLastError();
+        if (zip_path.len == 0 or out_dir_path.len == 0) {
+            setLastError(1);
+            return;
+        }
+
         const cwd = std.fs.cwd();
 
         cwd.makePath(out_dir_path) catch |err| {
-            std.debug.print("failed to create path {s}\n", .{ @errorName(err) });
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(108);
             return;
         };
 
         var out_dir = cwd.openDir(out_dir_path, .{}) catch |err| {
-            std.debug.print("failed to open dir {s}\n", .{ @errorName(err) });
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(105);
             return;
         };
         defer out_dir.close();
 
         var zip_file = cwd.openFile(zip_path, .{}) catch |err| {
-            std.debug.print("failed to open file {s}\n", .{ @errorName(err) });
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(105);
             return;
         };
         defer zip_file.close();
@@ -158,7 +351,11 @@ zig File {
         var r = zip_file.reader(&buf);
 
         std.zip.extract(out_dir, &r, .{}) catch |err| {
-            std.debug.print("failed to extract {s}\n", .{ @errorName(err) });
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(113);
             return;
         };
     }
@@ -173,51 +370,341 @@ zig File {
     }
 
     fn renameDir(old_folder: []const u8, new_folder: []const u8) void {
-        const cwd = std.fs.cwd();
+        clearLastError();
+        if (old_folder.len == 0 or new_folder.len == 0) {
+            setLastError(1);
+            return;
+        }
 
+        const cwd = std.fs.cwd();
         cwd.rename(old_folder, new_folder) catch |err| {
-            std.debug.print("failed to rename directory {s}\n", .{ @errorName(err) });
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(switch (err) {
+                error.FileNotFound => 100,
+                error.PathAlreadyExists => 101,
+                error.NotDir => 102,
+                error.IsDir => 103,
+                error.BadPathName, error.NameTooLong, error.InvalidUtf8 => 104,
+                else => 110,
+            });
+            return;
+        };
+    }
+
+    fn rename(old_path: []const u8, new_path: []const u8) void {
+        clearLastError();
+        if (old_path.len == 0 or new_path.len == 0) {
+            setLastError(1);
+            return;
+        }
+
+        const cwd = std.fs.cwd();
+        cwd.rename(old_path, new_path) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(switch (err) {
+                error.FileNotFound => 100,
+                error.PathAlreadyExists => 101,
+                error.NotDir => 102,
+                error.IsDir => 103,
+                error.BadPathName, error.NameTooLong, error.InvalidUtf8 => 104,
+                else => 110,
+            });
             return;
         };
     }
 
     fn read(path: []const u8) []const u8 {
+        clearLastError();
+        if (path.len == 0) {
+            setLastError(1);
+            return "";
+        }
+
         const cwd = std.fs.cwd();
-        const file = cwd.openFile(path, .{}) catch return "";
+        const file = cwd.openFile(path, .{}) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return "";
+            }
+            setLastError(switch (err) {
+                error.FileNotFound => 100,
+                error.BadPathName, error.NameTooLong, error.InvalidUtf8 => 104,
+                error.IsDir => 103,
+                else => 105,
+            });
+            return "";
+        };
         defer file.close();
-        const content = file.readToEndAlloc(std.heap.page_allocator, std.math.maxInt(usize)) catch return "";
+
+        const content = file.readToEndAlloc(std.heap.page_allocator, std.math.maxInt(usize)) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return "";
+            }
+            setLastError(106);
+            return "";
+        };
+
+        const State = struct {
+            var cache: ?[]u8 = null;
+        };
+
+        if (State.cache) |prev| {
+            std.heap.page_allocator.free(prev);
+        }
+        State.cache = content;
         return content;
+    }
+
+    fn write(path: []const u8, content: []const u8) void {
+        clearLastError();
+        if (path.len == 0) {
+            setLastError(1);
+            return;
+        }
+
+        const cwd = std.fs.cwd();
+        cwd.writeFile(.{
+            .sub_path = path,
+            .data = content,
+        }) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(107);
+            return;
+        };
+    }
+
+    fn append(path: []const u8, content: []const u8) void {
+        clearLastError();
+        if (path.len == 0) {
+            setLastError(1);
+            return;
+        }
+
+        const cwd = std.fs.cwd();
+        var file = cwd.createFile(path, .{
+            .read = true,
+            .truncate = false,
+        }) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(108);
+            return;
+        };
+        defer file.close();
+
+        file.seekFromEnd(0) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(107);
+            return;
+        };
+
+        file.writeAll(content) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(107);
+            return;
+        };
+    }
+
+    fn exists(path: []const u8) bool {
+        std.fs.cwd().access(path, .{}) catch return false;
+        return true;
+    }
+
+    fn isFile(path: []const u8) bool {
+        var file = std.fs.cwd().openFile(path, .{}) catch return false;
+        file.close();
+        return true;
+    }
+
+    fn cwd() []const u8 {
+        clearLastError();
+        const content = std.process.getCwdAlloc(std.heap.page_allocator) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return "";
+            }
+            setLastError(105);
+            return "";
+        };
+
+        const State = struct {
+            var cache: ?[]u8 = null;
+        };
+
+        if (State.cache) |prev| {
+            std.heap.page_allocator.free(prev);
+        }
+        State.cache = content;
+        return content;
+    }
+
+    fn touch(path: []const u8) void {
+        clearLastError();
+        if (path.len == 0) {
+            setLastError(1);
+            return;
+        }
+
+        var file = std.fs.cwd().createFile(path, .{
+            .truncate = false,
+        }) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(108);
+            return;
+        };
+        file.close();
     }
 }
 
-pub function makeDir(path :: string) {
+function mapFileError(code :: int) returns error.IO | error.Common {
+    return match code {
+        1 then error.Common.InvalidArgument,
+        2 then error.Common.OutOfMemory,
+        3 then error.Common.PermissionDenied,
+        4 then error.Common.NotSupported,
+        5 then error.Common.Unexpected,
+        100 then error.IO.NotFound,
+        101 then error.IO.AlreadyExists,
+        102 then error.IO.NotDirectory,
+        103 then error.IO.IsDirectory,
+        104 then error.IO.InvalidPath,
+        105 then error.IO.OpenFailed,
+        106 then error.IO.ReadFailed,
+        107 then error.IO.WriteFailed,
+        108 then error.IO.CreateFailed,
+        109 then error.IO.DeleteFailed,
+        110 then error.IO.RenameFailed,
+        111 then error.IO.CopyFailed,
+        112 then error.IO.IterateFailed,
+        113 then error.IO.InvalidData,
+        114 then error.IO.ConnectionFailed,
+        115 then error.IO.Timeout,
+        116 then error.IO.HttpStatus,
+        117 then error.IO.Unexpected,
+        else error.Common.Unexpected,
+    }
+}
+
+pub function makeDir(path :: string) returns error.IO | error.Common {
     File.makeDir(path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
 }
 
-pub function copyFile(source :: string, destination :: string) {
+pub function makePath(path :: string) returns error.IO | error.Common {
+    File.makePath(path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+
+pub function copyFile(source :: string, destination :: string) returns error.IO | error.Common {
     File.copyFile(source, destination)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
 }
 
-pub function delete(path :: string, recursive :: tetra) {
+pub function delete(path :: string, recursive :: tetra) returns error.IO | error.Common {
     File.delete(path, recursive)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
 }
 
-pub function copyDir(source :: string, destination :: string) {
+pub function copyDir(source :: string, destination :: string) returns error.IO | error.Common {
     File.copyDir(source, destination)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
 }
 
-pub function unzipFile(zip_path :: string, unzip_path :: string) {
+pub function unzipFile(zip_path :: string, unzip_path :: string) returns error.IO | error.Common {
     File.unzipFile(zip_path, unzip_path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
 }
 
 pub function IsDir(path :: string) returns tetra {
     return File.IsDir(path)
 }
 
-pub function renameDir(old_folder :: string, new_folder :: string) {
+pub function renameDir(old_folder :: string, new_folder :: string) returns error.IO | error.Common {
     File.renameDir(old_folder, new_folder)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
 }
 
-pub function read(path :: string) returns string {
-    return File.read(path)
+pub function rename(old_path :: string, new_path :: string) returns error.IO | error.Common {
+    File.rename(old_path, new_path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+
+pub function read(path :: string) returns string | error.IO | error.Common {
+    const value is File.read(path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return value
+    return mapFileError(err)
+}
+
+pub function write(path :: string, content :: string) returns error.IO | error.Common {
+    File.write(path, content)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+
+pub function append(path :: string, content :: string) returns error.IO | error.Common {
+    File.append(path, content)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+
+pub function exists(path :: string) returns tetra {
+    return File.exists(path)
+}
+
+pub function isFile(path :: string) returns tetra {
+    return File.isFile(path)
+}
+
+pub function cwd() returns string | error.IO | error.Common {
+    const value is File.cwd()
+    const err is File.takeLastErrorCode()
+    if err == 0 then return value
+    return mapFileError(err)
+}
+
+pub function touch(path :: string) returns error.IO | error.Common {
+    File.touch(path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
 }

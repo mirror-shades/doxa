@@ -7,9 +7,7 @@ const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
 
 function getInput() returns byte {
     @print("Input: ")
-    var userInput :: string is io.input()
-    var newByte :: byte is @byte(userInput[0])
-    return newByte
+    return 0x00
 }
 
 function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {
@@ -77,3 +75,4 @@ entry function main() {
     interpret("++.>+++.")
     interpret("+++[>+++<-]>.")
 }
+

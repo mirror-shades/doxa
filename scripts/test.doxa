@@ -3,45 +3,51 @@ module std from "std"
 
 pub function parse_run_output(zig_path :: string, test_path :: string) returns answers.peek_result[] {
     var test_cases :: answers.peek_result[]
-    const output is std.process.execCapture(zig_path + " build run -- run " + test_path)
-    
-    var capture_type :: tetra
-    var capture_value :: tetra
-    var kind :: string
-    var value :: string
-    for i while i < @length(output) do i += 1 {
-        if output[i] == ":" then {
-            if output[i + 1] == ":" then {
-                capture_type is true
-                i += 3
 
-            }
-        }
-        if output[i] == " " and capture_type then {
-            if output[i + 1] == "i" and output[i + 2] == "s" and output[i + 3] == " " then {
-                capture_type is false
-                capture_value is true
-                i += 4
-            }
-        }
+    const output_result is std.process.execCapture(zig_path + " build run -- run " + test_path)
+    output_result as string then {
+        const output is output_result
 
-        if output[i] == "\n" then {
-            capture_value is false
-            @push(test_cases, $answers.peek_result { kind is kind, value is value })
-            kind is ""
-            value is ""
+        var capture_type :: tetra
+        var capture_value :: tetra
+        var kind :: string
+        var value :: string
+        for i while i < @length(output) do i += 1 {
+            if output[i] == ":" then {
+                if output[i + 1] == ":" then {
+                    capture_type is true
+                    i += 3
+                }
+            }
+            if output[i] == " " and capture_type then {
+                if output[i + 1] == "i" and output[i + 2] == "s" and output[i + 3] == " " then {
+                    capture_type is false
+                    capture_value is true
+                    i += 4
+                }
+            }
+
+            if output[i] == "\n" then {
+                capture_value is false
+                @push(test_cases, $answers.peek_result { kind is kind, value is value })
+                kind is ""
+                value is ""
+            }
+            if capture_type then @push(kind, output[i])
+            if capture_value then @push(value, output[i])
         }
-        if capture_type  then @push(kind, output[i])
-        if capture_value then @push(value, output[i])
+    }
+    else {
+        @print("execCapture failed: {output_result}\n")
+        return []
     }
 
     return test_cases
 }
 
-
 entry function main() {
     var total_fails :: int
-    
+
     const result is parse_run_output("zig", "./test/misc/bigfile.doxa")
     const expected is answers.expected_bigfile_results
 
