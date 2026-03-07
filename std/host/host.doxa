@@ -12,6 +12,18 @@ zig Host {
     fn abiName() []const u8 {
         return @tagName(builtin.abi);
     }
+
+    fn isWindows() bool {
+        return builtin.os.tag == .windows;
+    }
+
+    fn isLinux() bool {
+        return builtin.os.tag == .linux;
+    }
+
+    fn isMac() bool {
+        return builtin.os.tag == .macos;
+    }
 }
 
 pub function os() returns string {
@@ -24,4 +36,16 @@ pub function arch() returns string {
 
 pub function abi() returns string {
     return Host.abiName();
+}
+
+pub function isWindows() returns tetra {
+    return Host.isWindows();
+}
+
+pub function isLinux() returns tetra {
+    return Host.isLinux();
+}
+
+pub function isMac() returns tetra {
+    return Host.isMac();
 }

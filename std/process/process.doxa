@@ -1,8 +1,72 @@
+module error from "../error/error.doxa"
+
 zig Process {
     const std = @import("std");
     const builtin = @import("builtin");
 
+    fn errorState(mode: i64, value: i64) i64 {
+        var last_error_code: i64 = 0;
+        if (mode == 0) {
+            last_error_code = value;
+            return 0;
+        }
+        if (mode == 1) {
+            return last_error_code;
+        }
+        if (mode == 2) {
+            const code = last_error_code;
+            last_error_code = 0;
+            return code;
+        }
+        return 0;
+    }
+
+    fn clearLastError() void {
+        _ = errorState(0, 0);
+    }
+
+    fn setLastError(code: i64) void {
+        _ = errorState(0, code);
+    }
+
+    fn takeLastErrorCode() i64 {
+        return errorState(2, 0);
+    }
+
+    fn mapCommon(err: anyerror) ?i64 {
+        return switch (err) {
+            error.InvalidArgument => 1,
+            error.OutOfMemory => 2,
+            error.AccessDenied, error.PermissionDenied => 3,
+            error.NotSupported, error.OperationNotSupported => 4,
+            else => null,
+        };
+    }
+
+    fn mapProcessSpawn(err: anyerror) i64 {
+        if (mapCommon(err)) |code| return code;
+        return switch (err) {
+            error.FileNotFound => 200,
+            error.InvalidExe => 201,
+            else => 202,
+        };
+    }
+
+    fn mapProcessWait(err: anyerror) i64 {
+        if (mapCommon(err)) |code| return code;
+        return switch (err) {
+            error.ProcessNotRunning => 203,
+            else => 203,
+        };
+    }
+
     fn exec_cmd(input: []const u8) i64 {
+        clearLastError();
+        if (input.len == 0) {
+            setLastError(1);
+            return 0;
+        }
+
         const cmd_argv = if (builtin.os.tag == .windows)
             [_][]const u8{ "cmd", "/C", input }
         else
@@ -13,17 +77,32 @@ zig Process {
         cmd.stderr_behavior = .Inherit;
 
         const term = cmd.spawnAndWait() catch |err| {
-            std.debug.print("failed to run command: {s}\n", .{@errorName(err)});
-            return 1;
+            setLastError(mapProcessSpawn(err));
+            return 0;
         };
 
         return switch (term) {
-            .Exited => |code| @as(i64, code),
-            else => 1,
+            .Exited => |code| blk: {
+                if (code != 0) {
+                    setLastError(207);
+                    break :blk @as(i64, code);
+                }
+                break :blk @as(i64, code);
+            },
+            else => {
+                setLastError(208);
+                return 0;
+            },
         };
     }
 
     fn exec_capture_stdout(input: []const u8) []const u8 {
+        clearLastError();
+        if (input.len == 0) {
+            setLastError(1);
+            return "";
+        }
+
         const cmd_argv = if (builtin.os.tag == .windows)
             [_][]const u8{ "cmd", "/C", input }
         else
@@ -34,7 +113,8 @@ zig Process {
         cmd.stderr_behavior = .Pipe;
 
         cmd.spawn() catch |err| {
-            return std.fmt.allocPrint(std.heap.page_allocator, "failed to run command: {s}", .{@errorName(err)}) catch "";
+            setLastError(mapProcessSpawn(err));
+            return "";
         };
 
         var stdout = std.ArrayList(u8).empty;
@@ -43,15 +123,60 @@ zig Process {
         defer stderr.deinit(std.heap.page_allocator);
 
         cmd.collectOutput(std.heap.page_allocator, &stdout, &stderr, 8 * 1024 * 1024) catch |err| {
-            _ = cmd.kill() catch {};
-            _ = cmd.wait() catch {};
-            return std.fmt.allocPrint(std.heap.page_allocator, "failed to collect output: {s}", .{@errorName(err)}) catch "";
+            _ = cmd.kill() catch {
+                setLastError(204);
+                return "";
+            };
+            _ = cmd.wait() catch {
+                setLastError(203);
+                return "";
+            };
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return "";
+            }
+            setLastError(switch (err) {
+                error.StdoutStreamTooLong, error.StderrStreamTooLong => 206,
+                else => 205,
+            });
+            return "";
         };
 
-        _ = cmd.wait() catch {
-            return std.fmt.allocPrint(std.heap.page_allocator, "failed waiting for command", .{}) catch "";
+        const term = cmd.wait() catch |err| {
+            setLastError(mapProcessWait(err));
+            return "";
         };
-        return std.heap.page_allocator.dupe(u8, stdout.items) catch "";
+
+        switch (term) {
+            .Exited => |code| {
+                if (code != 0) {
+                    setLastError(207);
+                    return "";
+                }
+            },
+            else => {
+                setLastError(208);
+                return "";
+            },
+        }
+
+        var cache: ?[]u8 = null;
+
+        if (cache) |prev| {
+            std.heap.page_allocator.free(prev);
+        }
+
+        const duped = std.heap.page_allocator.dupe(u8, stdout.items) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return "";
+            }
+            setLastError(205);
+            return "";
+        };
+
+        cache = duped;
+        return duped;
     }
 
     fn osName() []const u8 {
@@ -59,28 +184,138 @@ zig Process {
     }
 
     fn argCount() i64 {
-        const args = std.process.argsAlloc(std.heap.page_allocator) catch return 0;
+        clearLastError();
+        const args = std.process.argsAlloc(std.heap.page_allocator) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return 0;
+            }
+            setLastError(208);
+            return 0;
+        };
         defer std.process.argsFree(std.heap.page_allocator, args);
         return @intCast(args.len);
     }
 
     fn argAt(index_text: []const u8) []const u8 {
-        const index = std.fmt.parseInt(i64, index_text, 10) catch return "";
-        if (index < 0) return "";
-        const args = std.process.argsAlloc(std.heap.page_allocator) catch return "";
+        clearLastError();
+
+        const index = std.fmt.parseInt(i64, index_text, 10) catch {
+            setLastError(1);
+            return "";
+        };
+        if (index < 0) {
+            setLastError(1);
+            return "";
+        }
+
+        const args = std.process.argsAlloc(std.heap.page_allocator) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return "";
+            }
+            setLastError(208);
+            return "";
+        };
         defer std.process.argsFree(std.heap.page_allocator, args);
+
         const idx: usize = @intCast(index);
-        if (idx >= args.len) return "";
-        return std.heap.page_allocator.dupe(u8, args[idx]) catch "";
+        if (idx >= args.len) {
+            setLastError(1);
+            return "";
+        }
+
+        var cache: ?[]u8 = null;
+
+        if (cache) |prev| {
+            std.heap.page_allocator.free(prev);
+        }
+
+        const duped = std.heap.page_allocator.dupe(u8, args[idx]) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return "";
+            }
+            setLastError(208);
+            return "";
+        };
+
+        cache = duped;
+        return duped;
     }
 
     fn exitCode(code_text: []const u8) void {
         const code = std.fmt.parseInt(i64, code_text, 10) catch 1;
         std.process.exit(@intCast(code));
     }
+
+    fn cwd() []const u8 {
+        clearLastError();
+        const content = std.process.getCwdAlloc(std.heap.page_allocator) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return "";
+            }
+            setLastError(208);
+            return "";
+        };
+
+        var cache: ?[]u8 = null;
+
+        if (cache) |prev| {
+            std.heap.page_allocator.free(prev);
+        }
+        cache = content;
+        return content;
+    }
+
+    fn getEnv(name: []const u8) []const u8 {
+        clearLastError();
+        if (name.len == 0) {
+            setLastError(1);
+            return "";
+        }
+
+        const content = std.process.getEnvVarOwned(std.heap.page_allocator, name) catch |err| {
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return "";
+            }
+            setLastError(208);
+            return "";
+        };
+
+        var cache: ?[]u8 = null;
+
+        if (cache) |prev| {
+            std.heap.page_allocator.free(prev);
+        }
+        cache = content;
+        return content;
+    }
 }
 
-pub function exec(input :: string) returns int {
+function mapProcessError(code :: int) returns error.Process | error.Common {
+    return match code {
+        1 then error.Common.InvalidArgument,
+        2 then error.Common.OutOfMemory,
+        3 then error.Common.PermissionDenied,
+        4 then error.Common.NotSupported,
+        5 then error.Common.Unexpected,
+        200 then error.Process.CommandNotFound,
+        201 then error.Process.NotExecutable,
+        202 then error.Process.SpawnFailed,
+        203 then error.Process.WaitFailed,
+        204 then error.Process.KillFailed,
+        205 then error.Process.CaptureFailed,
+        206 then error.Process.OutputTooLarge,
+        207 then error.Process.NonZeroExit,
+        208 then error.Process.Unexpected,
+        else error.Common.Unexpected,
+    }
+}
+
+pub function exec(input :: string) returns int | error.Process | error.Common {
     var input_string :: string
     if Process.osName() == "windows" then {
         each c in input {
@@ -93,10 +328,14 @@ pub function exec(input :: string) returns int {
     } else {
         input_string is input
     }
-    return Process.exec_cmd(input_string);
+
+    const code is Process.exec_cmd(input_string)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return code
+    return mapProcessError(err)
 }
 
-pub function execCapture(input :: string) returns string {
+pub function execCapture(input :: string) returns string | error.Process | error.Common {
     var input_string :: string
     if Process.osName() == "windows" then {
         each c in input {
@@ -109,17 +348,51 @@ pub function execCapture(input :: string) returns string {
     } else {
         input_string is input
     }
-    return Process.exec_capture_stdout(input_string)
+
+    const output is Process.exec_capture_stdout(input_string)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return output
+    return mapProcessError(err)
 }
 
-pub function argc() returns int {
-    return Process.argCount();
+pub function execOk(input :: string) returns tetra {
+    const result is exec(input)
+    result as int then {
+        return true
+    }
+    else {
+        return false
+    }
 }
 
-pub function argv(index :: int) returns string {
-    return Process.argAt(@string(index));
+pub function argc() returns int | error.Process | error.Common {
+    const count is Process.argCount();
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return count
+    return mapProcessError(err)
+}
+
+pub function argv(index :: int) returns string | error.Process | error.Common {
+    const value is Process.argAt(@string(index));
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return value
+    return mapProcessError(err)
 }
 
 pub function exit(code :: int) {
     Process.exitCode(@string(code));
+}
+
+pub function cwd() returns string | error.Process | error.Common {
+    const value is Process.cwd();
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return value
+    return mapProcessError(err)
+}
+
+pub function getenv(name :: string) returns string | error.Process | error.Common {
+    const value is Process.getEnv(name);
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return value
+    return mapProcessError(err)
 }

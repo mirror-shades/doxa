@@ -1,33 +1,177 @@
+module error from "../error/error.doxa"
+
 zig IO {
     const std = @import("std");
 
+    fn errorState(mode: i64, value: i64) i64 {
+        const State = struct {
+            var last_error_code: i64 = 0;
+        };
+        if (mode == 0) {
+            State.last_error_code = value;
+            return 0;
+        }
+        if (mode == 1) {
+            return State.last_error_code;
+        }
+        if (mode == 2) {
+            const code = State.last_error_code;
+            State.last_error_code = 0;
+            return code;
+        }
+        return 0;
+    }
+
+    fn clearLastError() void {
+        _ = errorState(0, 0);
+    }
+
+    fn setLastError(code: i64) void {
+        _ = errorState(0, code);
+    }
+
+    fn takeLastErrorCode() i64 {
+        return errorState(2, 0);
+    }
+
     fn print(text: []const u8) void {
+        clearLastError();
         var stdout_buffer: [1024]u8 = undefined;
         var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
         const stdout = &stdout_writer.interface;
-        stdout.print("{s}", .{text}) catch return;
-        
-        stdout.flush() catch return;
+
+        stdout.print("{s}", .{text}) catch {
+            setLastError(107);
+            return;
+        };
+
+        stdout.flush() catch {
+            setLastError(107);
+            return;
+        };
+    }
+
+    fn eprint(text: []const u8) void {
+        clearLastError();
+        var stderr_buffer: [1024]u8 = undefined;
+        var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+        const stderr = &stderr_writer.interface;
+
+        stderr.print("{s}", .{text}) catch {
+            setLastError(107);
+            return;
+        };
+
+        stderr.flush() catch {
+            setLastError(107);
+            return;
+        };
     }
 
     fn input() []const u8 {
+        clearLastError();
         var stdin_buffer: [4096]u8 = undefined;
         var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
         const stdin = &stdin_reader.interface;
-        const line = stdin.takeDelimiterExclusive('\n') catch return "";
-        return std.heap.page_allocator.dupe(u8, line) catch "";
+
+        const line = stdin.takeDelimiterExclusive('\n') catch {
+            setLastError(106);
+            return "";
+        };
+
+        const State = struct {
+            var cache: ?[]u8 = null;
+        };
+
+        if (State.cache) |prev| {
+            std.heap.page_allocator.free(prev);
+        }
+
+        const duped = std.heap.page_allocator.dupe(u8, line) catch {
+            setLastError(106);
+            return "";
+        };
+
+        State.cache = duped;
+        return duped;
+    }
+
+    fn inputPrompt(prompt: []const u8) []const u8 {
+        print(prompt);
+        if (errorState(1, 0) != 0) {
+            return "";
+        }
+        return input();
     }
 }
 
-pub function print(input :: string) {
+function mapIOError(code :: int) returns error.IO | error.Common {
+    return match code {
+        1 then error.Common.InvalidArgument,
+        2 then error.Common.OutOfMemory,
+        3 then error.Common.PermissionDenied,
+        4 then error.Common.NotSupported,
+        5 then error.Common.Unexpected,
+        100 then error.IO.NotFound,
+        101 then error.IO.AlreadyExists,
+        102 then error.IO.NotDirectory,
+        103 then error.IO.IsDirectory,
+        104 then error.IO.InvalidPath,
+        105 then error.IO.OpenFailed,
+        106 then error.IO.ReadFailed,
+        107 then error.IO.WriteFailed,
+        108 then error.IO.CreateFailed,
+        109 then error.IO.DeleteFailed,
+        110 then error.IO.RenameFailed,
+        111 then error.IO.CopyFailed,
+        112 then error.IO.IterateFailed,
+        113 then error.IO.InvalidData,
+        114 then error.IO.ConnectionFailed,
+        115 then error.IO.Timeout,
+        116 then error.IO.HttpStatus,
+        117 then error.IO.Unexpected,
+        else error.Common.Unexpected,
+    }
+}
+
+pub function print(input :: string) returns error.IO | error.Common {
     IO.print(input);
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
 }
 
-pub function println(input :: string) {
+pub function println(input :: string) returns error.IO | error.Common {
     IO.print(input + "\n");
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
 }
 
-pub function input() returns string {
-    return IO.input();
+pub function eprint(input :: string) returns error.IO | error.Common {
+    IO.eprint(input);
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
 }
 
+pub function eprintln(input :: string) returns error.IO | error.Common {
+    IO.eprint(input + "\n");
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+
+pub function input() returns string | error.IO | error.Common {
+    const value is IO.input();
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return value
+    return mapIOError(err)
+}
+
+pub function inputPrompt(prompt :: string) returns string | error.IO | error.Common {
+    const value is IO.inputPrompt(prompt);
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return value
+    return mapIOError(err)
+}

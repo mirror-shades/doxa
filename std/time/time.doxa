@@ -9,10 +9,20 @@ zig Time {
         return @intCast(std.time.nanoTimestamp());
     }
 
+    fn unixMillis() i64 {
+        return std.time.milliTimestamp();
+    }
+
     fn sleepMs(ms_text: []const u8) void {
         const ms = std.fmt.parseInt(i64, ms_text, 10) catch return;
         if (ms <= 0) return;
         std.Thread.sleep(@as(u64, @intCast(ms)) * std.time.ns_per_ms);
+    }
+
+    fn sleepSeconds(s_text: []const u8) void {
+        const s = std.fmt.parseInt(i64, s_text, 10) catch return;
+        if (s <= 0) return;
+        std.Thread.sleep(@as(u64, @intCast(s)) * std.time.ns_per_s);
     }
 }
 
@@ -24,6 +34,14 @@ pub function tick() returns int {
     return Time.tickNs();
 }
 
+pub function unixMs() returns int {
+    return Time.unixMillis();
+}
+
 pub function sleep(ms :: int) {
     Time.sleepMs(@string(ms));
+}
+
+pub function sleepSeconds(s :: int) {
+    Time.sleepSeconds(@string(s));
 }

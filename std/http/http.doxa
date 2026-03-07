@@ -1,5 +1,48 @@
+module error from "../error/error.doxa"
+
 zig HTTP {
     const std = @import("std");
+
+    fn errorState(mode: i64, value: i64) i64 {
+        const State = struct {
+            var last_error_code: i64 = 0;
+        };
+        if (mode == 0) {
+            State.last_error_code = value;
+            return 0;
+        }
+        if (mode == 1) {
+            return State.last_error_code;
+        }
+        if (mode == 2) {
+            const code = State.last_error_code;
+            State.last_error_code = 0;
+            return code;
+        }
+        return 0;
+    }
+
+    fn clearLastError() void {
+        _ = errorState(0, 0);
+    }
+
+    fn setLastError(code: i64) void {
+        _ = errorState(0, code);
+    }
+
+    fn takeLastErrorCode() i64 {
+        return errorState(2, 0);
+    }
+
+    fn mapCommon(err: anyerror) ?i64 {
+        return switch (err) {
+            error.InvalidArgument => 1,
+            error.OutOfMemory => 2,
+            error.AccessDenied, error.PermissionDenied => 3,
+            error.NotSupported, error.OperationNotSupported => 4,
+            else => null,
+        };
+    }
 
     fn filenameFromUrl(url: []const u8) []const u8 {
         const query_idx = std.mem.indexOfScalar(u8, url, '?');
@@ -13,6 +56,12 @@ zig HTTP {
     }
 
     pub fn downloadUrl(url: []const u8, destination: []const u8) void {
+        clearLastError();
+        if (url.len == 0 or destination.len == 0) {
+            setLastError(1);
+            return;
+        }
+
         var gpa = std.heap.GeneralPurposeAllocator(.{}){};
         defer _ = gpa.deinit();
         const allocator = gpa.allocator();
@@ -21,13 +70,16 @@ zig HTTP {
         defer client.deinit();
 
         var file = std.fs.cwd().createFile(destination, .{}) catch |err| {
-            std.debug.print("error creating file: {}\n", .{err});
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(108);
             return;
         };
         defer file.close();
 
         var buf: [16 * 1024]u8 = undefined;
-
         var file_writer = file.writer(&buf);
         const writer = &file_writer.interface;
 
@@ -36,19 +88,99 @@ zig HTTP {
             .method = .GET,
             .response_writer = writer,
         }) catch |err| {
-            std.debug.print("error fetching: {}\n", .{err});
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(switch (err) {
+                error.TemporaryNameServerFailure,
+                error.NameServerFailure,
+                error.ConnectionRefused,
+                error.ConnectionTimedOut,
+                error.ConnectionResetByPeer,
+                error.NetworkUnreachable,
+                error.HostUnreachable => 114,
+                error.Timeout => 115,
+                else => 114,
+            });
             return;
         };
 
         writer.flush() catch |err| {
-            std.debug.print("error flushing: {}\n", .{err});
+            if (mapCommon(err)) |code| {
+                setLastError(code);
+                return;
+            }
+            setLastError(107);
             return;
         };
 
-        std.debug.print("download done: status={}\n", .{res.status});
+        const status_code = @intFromEnum(res.status);
+        if (status_code < 200 or status_code >= 300) {
+            setLastError(116);
+            return;
+        }
+    }
+
+    fn download(url: []const u8) void {
+        clearLastError();
+        const name = filenameFromUrl(url);
+        downloadUrl(url, name);
+    }
+
+    fn getText(_url: []const u8) []const u8 {
+        clearLastError();
+        setLastError(4);
+        return "";
     }
 }
 
-pub function downloadUrl(url :: string, destination :: string) {
+function mapIOError(code :: int) returns error.IO | error.Common {
+    return match code {
+        1 then error.Common.InvalidArgument,
+        2 then error.Common.OutOfMemory,
+        3 then error.Common.PermissionDenied,
+        4 then error.Common.NotSupported,
+        5 then error.Common.Unexpected,
+        100 then error.IO.NotFound,
+        101 then error.IO.AlreadyExists,
+        102 then error.IO.NotDirectory,
+        103 then error.IO.IsDirectory,
+        104 then error.IO.InvalidPath,
+        105 then error.IO.OpenFailed,
+        106 then error.IO.ReadFailed,
+        107 then error.IO.WriteFailed,
+        108 then error.IO.CreateFailed,
+        109 then error.IO.DeleteFailed,
+        110 then error.IO.RenameFailed,
+        111 then error.IO.CopyFailed,
+        112 then error.IO.IterateFailed,
+        113 then error.IO.InvalidData,
+        114 then error.IO.ConnectionFailed,
+        115 then error.IO.Timeout,
+        116 then error.IO.HttpStatus,
+        117 then error.IO.Unexpected,
+        else error.Common.Unexpected,
+    }
+}
+
+pub function downloadUrl(url :: string, destination :: string) returns error.IO | error.Common {
     HTTP.downloadUrl(url, destination)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+
+pub function download(url :: string) returns error.IO | error.Common {
+    HTTP.download(url)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+
+pub function getText(url :: string) returns string | error.IO | error.Common {
+    const value is HTTP.getText(url)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return value
+    return mapIOError(err)
 }
