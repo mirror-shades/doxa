@@ -203,6 +203,9 @@ pub fn build(b: *std.Build) void {
     const run_test_suite = b.addRunArtifact(test_suite_exe);
     run_test_suite.skip_foreign_checks = true;
     run_test_suite.step.dependOn(&test_install.step);
+    // Ensure bundled runtime assets (lib/std and bundled zig under lib/zig)
+    // are installed, because test-bin/doxa.exe resolves them via ../lib.
+    run_test_suite.step.dependOn(b.getInstallStep());
     run_test_suite.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
     run_test_suite.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
 
@@ -221,6 +224,7 @@ pub fn build(b: *std.Build) void {
     const run_test_lsp = b.addRunArtifact(test_lsp_exe);
     run_test_lsp.skip_foreign_checks = true;
     run_test_lsp.step.dependOn(&test_install.step);
+    run_test_lsp.step.dependOn(b.getInstallStep());
     run_test_lsp.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
     run_test_lsp.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
 
