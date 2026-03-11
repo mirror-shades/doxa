@@ -90,6 +90,9 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
             .target = target,
             .optimize = optimize,
+            // Use system dlopen/dlsym on Linux for inline-zig .so modules.
+            // Without libc, std.DynLib uses ElfDynLib, which is less robust.
+            .link_libc = target.result.os.tag == .linux,
         }),
     });
 
@@ -129,13 +132,15 @@ pub fn build(b: *std.Build) void {
     const release_step = b.step("release", "Build release binaries for all platforms");
 
     for (targets, 0..) |t, i| {
+        const release_target = b.resolveTargetQuery(t);
         const release_exe = b.addExecutable(.{
             .name = "doxa",
             .root_module = b.createModule(.{
                 .root_source_file = b.path("src/main.zig"),
-                .target = b.resolveTargetQuery(t),
+                .target = release_target,
                 .optimize = .ReleaseFast,
                 .strip = true,
+                .link_libc = release_target.result.os.tag == .linux,
             }),
         });
         const target_output = b.addInstallArtifact(release_exe, .{
@@ -151,7 +156,7 @@ pub fn build(b: *std.Build) void {
             .install_subdir = b.fmt("{s}/lib/std", .{target_names[i]}),
         });
 
-        if (getZigDependencyForTarget(b.resolveTargetQuery(t).result)) |zig_dep| {
+        if (getZigDependencyForTarget(release_target.result)) |zig_dep| {
             const archive_path = b.pathJoin(&.{ "external", b.fmt("{s}{s}", .{ zig_dep.folder_name, zig_dep.archive_ext }) });
             const destination_lib_dir = b.getInstallPath(.prefix, b.fmt("{s}/lib", .{target_names[i]}));
             const unpack_zig_dep = addUnpackZigDependencyStep(
