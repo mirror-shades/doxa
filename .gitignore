@@ -4,6 +4,4 @@ out/
 test/out/
 venv
 site
-
-last_diagnostics.log
-release.py
+doxa
