@@ -1,0 +1,5 @@
+var hello is "hello... world"
+
+entry function main() {
+    hello
+ }
