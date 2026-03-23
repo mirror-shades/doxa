@@ -24,17 +24,11 @@ fn isAlternateToken(token_type: token.TokenType) bool {
 }
 
 fn hasAllBlockBranches(e: *ast.Expr) bool {
-    return switch (e.*) {
-        .If => |if_expr| switch (if_expr.then_branch.?.*) {
-            .Block => switch (if_expr.else_branch.?.*) {
-                .Block => true,
-                .If => hasAllBlockBranches(if_expr.else_branch.?),
-                else => false,
-            },
-            else => false,
-        },
-        else => false,
-    };
+    if (e.* != .If) return false;
+    if (e.then_branch.?.* != .Block) return false;
+    if (e.else_branch.?.* == .If) return hasAllBlockBranches(e.else_branch.?);
+    if (e.else_branch.?.* != .Block) return false;
+    return true;
 }
 
 fn infix_call(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
