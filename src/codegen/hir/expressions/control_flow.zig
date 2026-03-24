@@ -15,8 +15,25 @@ const generateStatement = @import("../soxa_statements.zig").generateStatement;
 pub const ControlFlowHandler = struct {
     generator: *HIRGenerator,
 
+    const PatternLiteralLowering = struct {
+        value: HIRValue,
+        operand_type: HIRType,
+    };
+
     pub fn init(generator: *HIRGenerator) ControlFlowHandler {
         return .{ .generator = generator };
+    }
+
+    fn lowerMatchPatternLiteral(literal: ast.TokenLiteral) PatternLiteralLowering {
+        return switch (literal) {
+            .int => |v| .{ .value = .{ .int = v }, .operand_type = .Int },
+            .byte => |v| .{ .value = .{ .byte = v }, .operand_type = .Byte },
+            .float => |v| .{ .value = .{ .float = v }, .operand_type = .Float },
+            .string => |v| .{ .value = .{ .string = v }, .operand_type = .String },
+            .tetra => |v| .{ .value = .{ .tetra = HIRGenerator.tetraFromEnum(v) }, .operand_type = .Tetra },
+            .nothing => .{ .value = .{ .nothing = .{} }, .operand_type = .Nothing },
+            else => .{ .value = .{ .string = "" }, .operand_type = .String },
+        };
     }
 
     /// Generate HIR for if expressions
@@ -322,13 +339,11 @@ pub const ControlFlowHandler = struct {
                         try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value2, .constant_id = pattern_idx2 } });
                         try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = HIRType{ .Enum = 0 } } });
                     } else {
-                        // Regular string literal pattern
-                        const pattern_value = HIRValue{ .string = pattern.literal.string };
-                        const pattern_constant_idx = try self.generator.addConstant(pattern_value);
-                        try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_constant_idx } });
-
-                        // Compare and jump if equal (use String operand type)
-                        try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = .String } });
+                        // Regular literal pattern (int/byte/float/string/tetra/nothing)
+                        const lowered = lowerMatchPatternLiteral(pattern.literal);
+                        const pattern_constant_idx = try self.generator.addConstant(lowered.value);
+                        try self.generator.instructions.append(.{ .Const = .{ .value = lowered.value, .constant_id = pattern_constant_idx } });
+                        try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = lowered.operand_type } });
                     }
 
                     // For the last pattern in this case, determine where to jump if no match
