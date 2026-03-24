@@ -1,0 +1,7 @@
+pub function run() returns int {
+    return addOne(41);
+}
+
+function addOne(v :: int) returns int {
+    return v + 1;
+}

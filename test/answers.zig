@@ -322,6 +322,10 @@ pub const expected_methods_results = [_]peek_result{
     .{ .type = "string", .value = "\"end\"" },
 };
 
+pub const expected_module_private_call_results = [_]peek_result{
+    .{ .type = "int", .value = "42" },
+};
+
 pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "81" },
     .{ .type = "string", .value = "\"Overflow\"" },

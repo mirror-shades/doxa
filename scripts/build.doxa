@@ -20,33 +20,23 @@ function getTargetString(target :: Target) returns string {
     }
 }
 
-function setTarget(^target :: Target, os :: string, arch :: string) {
+function setTarget(^target :: Target, os :: string, arch :: string) returns Target {
     if os == "windows" then {
-        if arch == "x86_64" then target is .x86_windows
+        if arch == "x86_64" then return .x86_windows
     }
     if os == "mac" then {
-        if arch == "x86_64" then target is .x86_macos
-        if arch == "aarch64" then target is .aarch_macos
+        if arch == "x86_64" then return .x86_macos
+        if arch == "aarch64" then return .aarch_macos
     }
     if os == "linux" then {
-        if arch == "x86_64" then target is .x86_linux
-        if arch == "aarch64" then target is .aarch_linux
+        if arch == "x86_64" then return .x86_linux
+        if arch == "aarch64" then return .aarch_linux
     }
-}
-
-function ensureIO(result :: nothing | std.error.IO | std.error.Common, context :: string) returns tetra {
-    result as nothing then {
-        return true
-    }
-    else {
-        @print("{context} failed: {result}\n")
-        return false
-    }
+    return .not_found
 }
 
 function build(os :: string, arch :: string) {
-    var target :: Target is .not_found
-    setTarget(^target, os, arch)
+    var target is setTarget(target, os, arch)
 
     if target == .not_found {
         @print("build not supported for this target system")
@@ -60,14 +50,26 @@ function build(os :: string, arch :: string) {
     @print("building for {arch}-{os}\n")
 
     @print("making directories\n")
-    if ensureIO(std.file.makeDir("doxa"), "std.file.makeDir(doxa)") == false then return
-    if ensureIO(std.file.makeDir("doxa/bin"), "std.file.makeDir(doxa/bin)") == false then return
+    std.file.makeDir("doxa"), "std.file.makeDir(doxa)") as nothing else {
+        @print("std.file.makeDir(doxa) failed: {result}\n")
+        return
+    }
+    std.file.makeDir("doxa/bin"), "std.file.makeDir(doxa/bin)") as nothing else {
+        @print("std.file.makeDir(doxa/bin) failed: {result}\n")
+        return
+    }
 
     @print("unzipping\n")
-    if ensureIO(std.file.unzipFile(target_zip_string, "./doxa/lib"), "std.file.unzipFile") == false then return
+    std.file.unzipFile(target_zip_string, "./doxa/lib"), "std.file.unzipFile") as nothing else {
+        @print("std.file.unzipFile(target_zip_string, ./doxa/lib) failed: {result}\n")
+        return
+    }
 
     @print("renaming {target_string}\n")
-    if ensureIO(std.file.renameDir("./doxa/lib/" + target_string, "./doxa/lib/zig"), "std.file.renameDir") == false then return
+    if std.file.renameDir("./doxa/lib/" + target_string, "./doxa/lib/zig"), "std.file.renameDir") as nothing else {
+        @print("std.file.renameDir(./doxa/lib/{target_string}, ./doxa/lib/zig) failed: {result}\n")
+        return
+    }
 
     @print("compiling Doxa\n")
     var zig_build_cmd :: string is "./doxa/lib/zig/zig build-exe src/main.zig -femit-bin=doxa/bin/doxa"
@@ -88,7 +90,10 @@ function build(os :: string, arch :: string) {
     }
 
     @print("copying doxa std\n")
-    if ensureIO(std.file.copyDir("std", "doxa/lib/std"), "std.file.copyDir") == false then return
+    std.file.copyDir("std", "doxa/lib/std"), "std.file.copyDir") as nothing else {
+        @print("std.file.copyDir(std, doxa/lib/std) failed: {result}\n")
+        return
+    }
 }
 
 entry function main() {

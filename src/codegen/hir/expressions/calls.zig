@@ -182,15 +182,10 @@ pub const CallsHandler = struct {
                 }
             },
             .Variable => |var_token| {
-                function_name = var_token.lexeme;
-                if (self.generator.getFunctionIndex(function_name)) |index| {
-                    function_index = index;
-                    call_kind = .LocalFunction;
-                } else if (function_name.len > 0 and function_name[0] == '@') {
-                    call_kind = .BuiltinFunction;
-                } else {
-                    call_kind = .ModuleFunction;
-                }
+                const resolved = self.generator.resolveCallee(var_token.lexeme);
+                function_name = resolved.qualified_name;
+                call_kind = resolved.call_kind;
+                function_index = resolved.function_index orelse 0;
             },
             else => {
                 self.generator.reporter.reportCompileError(

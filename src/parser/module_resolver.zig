@@ -28,7 +28,12 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
                 return self.reportCircularImport(normalized_path);
             },
             .COMPLETED => {
-                return self.module_cache.get(normalized_path).?;
+                if (self.module_cache.get(normalized_path)) |cached| {
+                    return cached;
+                }
+                // Recover from stale resolution state when a child parser inherited
+                // status without the corresponding cache entry.
+                _ = self.module_resolution_status.remove(normalized_path);
             },
             .NOT_STARTED => {
                 unreachable;
@@ -76,6 +81,11 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
         if (!std.mem.eql(u8, entry.key_ptr.*, normalized_path)) {
             try new_parser.module_resolution_status.put(entry.key_ptr.*, entry.value_ptr.*);
         }
+    }
+    new_parser.module_cache = std.StringHashMap(ModuleInfo).init(self.allocator);
+    var cache_it = self.module_cache.iterator();
+    while (cache_it.next()) |entry| {
+        try new_parser.module_cache.put(entry.key_ptr.*, entry.value_ptr.*);
     }
     new_parser.import_stack = try self.import_stack.clone();
 

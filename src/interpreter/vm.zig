@@ -19,11 +19,6 @@ const runtime = @import("runtime.zig");
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
 const Memory = @import("../utils/memory.zig");
 const Managed = std.array_list.Managed;
-const ArrayTypeKey = struct {
-    base: module.BytecodeType,
-    nested: module.BytecodeType,
-    has_nested: bool,
-};
 const ops_arith = @import("ops/arith.zig");
 const ops_compare = @import("ops/compare.zig");
 const ops_logical = @import("ops/logical.zig");
@@ -39,7 +34,14 @@ const ErrorCode = Errors.ErrorCode;
 
 const SlotManager = @import("../codegen/hir/slot_manager.zig").SlotManager;
 const DeferAction = *const fn () void;
-const DEFAULT_STACK_CAPACITY: usize = 1024 * 1024; // 1M frames initial capacity, grows dynamically
+
+const DEFAULT_STACK_CAPACITY: usize = 1024 * 1024;
+
+const ArrayTypeKey = struct {
+    base: module.BytecodeType,
+    nested: module.BytecodeType,
+    has_nested: bool,
+};
 
 pub const ScopeRecord = struct {
     id: u32,
@@ -1945,6 +1947,7 @@ pub const VM = struct {
     }
 
     fn handleCall(self: *VM, payload: anytype) VmError!void {
+        std.debug.print("{t}", .{payload.target.call_kind});
         switch (payload.target.call_kind) {
             .LocalFunction => {
                 const function_index = self.resolveFunctionIndex(payload.target.function_index, payload.target.qualified_name);

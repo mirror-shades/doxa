@@ -238,6 +238,14 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected_print = null,
             .expected_peek = answers.expected_union_enum_return_results[0..],
         },
+        .{
+            .name = "module private call",
+            .path = "./test/misc/module_private_call.doxa",
+            .mode = .PEEK,
+            .input = null,
+            .expected_print = null,
+            .expected_peek = answers.expected_module_private_call_results[0..],
+        },
     };
 
     harness.printSection("RUN");

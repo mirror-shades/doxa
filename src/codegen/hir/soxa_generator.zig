@@ -110,6 +110,12 @@ pub const HIRGenerator = struct {
         instruction_index: u32,
     };
 
+    pub const ResolvedCallee = struct {
+        qualified_name: []const u8,
+        call_kind: CallKind,
+        function_index: ?u32,
+    };
+
     pub const LoopContext = struct {
         break_label: []const u8,
         continue_label: []const u8,
@@ -384,8 +390,6 @@ pub const HIRGenerator = struct {
                     for (mod_statements) |mod_stmt| {
                         switch (mod_stmt.data) {
                             .FunctionDecl => |func| {
-                                if (!func.is_public) continue;
-
                                 const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ alias, func.name.lexeme });
                                 const return_type = self.convertTypeInfo(func.return_type_info);
                                 const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified_name}));
@@ -457,7 +461,6 @@ pub const HIRGenerator = struct {
                         for (mod_statements2) |mod_stmt2| {
                             switch (mod_stmt2.data) {
                                 .FunctionDecl => |func2| {
-                                    if (!func2.is_public) continue;
                                     if (!std.mem.eql(u8, func2.name.lexeme, sym_name)) continue;
                                     found = true;
                                     func_return_type = self.convertTypeInfo(func2.return_type_info);
@@ -936,6 +939,55 @@ pub const HIRGenerator = struct {
         return null;
     }
 
+    /// Resolve `simple_name` to `Module.simple_name` when compiling a body nested under that
+    /// module (e.g. inside `Lexer.lex`, callee `makeAlpha` -> existing body `Lexer.makeAlpha`).
+    pub fn resolveQualifiedModuleLocalFunction(self: *HIRGenerator, simple_name: []const u8) ?[]const u8 {
+        const cf = self.current_function orelse return null;
+        const last_dot = std.mem.lastIndexOfScalar(u8, cf, '.') orelse return null;
+        const module_prefix = cf[0..last_dot];
+        for (self.function_bodies.items) |fb| {
+            const name = fb.function_info.name;
+            if (!std.mem.startsWith(u8, name, module_prefix)) continue;
+            if (name.len != module_prefix.len + 1 + simple_name.len) continue;
+            if (name[module_prefix.len] != '.') continue;
+            if (!std.mem.eql(u8, name[module_prefix.len + 1 ..], simple_name)) continue;
+            return name;
+        }
+        return null;
+    }
+
+    pub fn resolveCallee(self: *HIRGenerator, bare_name: []const u8) ResolvedCallee {
+        if (self.getFunctionIndex(bare_name)) |idx| {
+            return .{
+                .qualified_name = bare_name,
+                .call_kind = .LocalFunction,
+                .function_index = idx,
+            };
+        }
+
+        if (self.resolveQualifiedModuleLocalFunction(bare_name)) |qualified_name| {
+            return .{
+                .qualified_name = qualified_name,
+                .call_kind = .ModuleFunction,
+                .function_index = self.getFunctionIndex(qualified_name),
+            };
+        }
+
+        if (bare_name.len > 0 and bare_name[0] == '@') {
+            return .{
+                .qualified_name = bare_name,
+                .call_kind = .BuiltinFunction,
+                .function_index = null,
+            };
+        }
+
+        return .{
+            .qualified_name = bare_name,
+            .call_kind = .ModuleFunction,
+            .function_index = null,
+        };
+    }
+
     pub fn isModuleFunction(self: *HIRGenerator, function_name: []const u8) bool {
         if (self.imported_symbols) |imported_symbols| {
             if (imported_symbols.get(function_name)) |imported_symbol| {
@@ -1390,29 +1442,31 @@ pub const HIRGenerator = struct {
             .FunctionCall => |call| {
                 switch (call.callee.data) {
                     .Variable => |var_token| {
-                        const function_name = var_token.lexeme;
+                        const resolved = self.resolveCallee(var_token.lexeme);
+                        const function_name = resolved.qualified_name;
+                        const call_kind = resolved.call_kind;
 
                         for (call.arguments) |arg| {
                             self.generateExpression(arg.expr, true, true) catch return false;
                         }
 
-                        if (self.getFunctionIndex(function_name)) |function_index| {
-                            const return_type = self.inferCallReturnType(function_name, .LocalFunction) catch .Nothing;
-
-                            const tail_call = HIRInstruction{ .TailCall = .{
-                                .function_index = function_index,
-                                .qualified_name = function_name,
-                                .arg_count = @intCast(call.arguments.len),
-                                .call_kind = .LocalFunction,
-                                .target_module = null,
-                                .return_type = return_type,
-                            } };
-
-                            self.instructions.append(tail_call) catch return false;
-                            return true;
-                        } else {
+                        const function_index = resolved.function_index orelse {
                             return false;
-                        }
+                        };
+
+                        const return_type = self.inferCallReturnType(function_name, call_kind) catch .Nothing;
+                        const target_module = self.computeTargetModule(function_name, call_kind) catch return false;
+                        const tail_call = HIRInstruction{ .TailCall = .{
+                            .function_index = function_index,
+                            .qualified_name = function_name,
+                            .arg_count = @intCast(call.arguments.len),
+                            .call_kind = call_kind,
+                            .target_module = target_module,
+                            .return_type = return_type,
+                        } };
+
+                        self.instructions.append(tail_call) catch return false;
+                        return true;
                     },
                     .FieldAccess => |field_access| {
                         const module_name = switch (field_access.object.data) {
@@ -1483,10 +1537,9 @@ pub const HIRGenerator = struct {
 
                 switch (call.callee.data) {
                     .Variable => |var_token| {
-                        function_name = var_token.lexeme;
-                        if (self.getFunctionIndex(function_name) == null) {
-                            call_kind = .BuiltinFunction;
-                        }
+                        const resolved = self.resolveCallee(var_token.lexeme);
+                        function_name = resolved.qualified_name;
+                        call_kind = resolved.call_kind;
                     },
                     .FieldAccess => |field_access| {
                         if (field_access.object.data == .Variable) {
