@@ -721,6 +721,28 @@ pub const CallsHandler = struct {
             } else {
                 try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
             }
+        } else if (std.mem.eql(u8, name, "push")) {
+            if (internal_data.arguments.len != 1) {
+                return error.InvalidArgumentCount;
+            }
+            const target_type = self.generator.inferTypeFromExpression(internal_data.receiver);
+            try self.generator.generateExpression(internal_data.receiver, true, false);
+            try self.generator.generateExpression(internal_data.arguments[0], true, false);
+            if (target_type == .String) {
+                try self.generator.instructions.append(.Swap);
+                try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
+            } else {
+                try self.generator.instructions.append(.{ .ArrayPush = .{ .resize_behavior = .Double } });
+            }
+            if (internal_data.receiver.data == .Variable) {
+                const var_name = internal_data.receiver.data.Variable.lexeme;
+                const var_idx = try self.generator.getOrCreateVariable(var_name);
+                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+            }
+            const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
+            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
         } else if (std.mem.eql(u8, name, "pop")) {
             try self.generator.generateExpression(internal_data.receiver, true, false);
             const target_type = self.generator.inferTypeFromExpression(internal_data.receiver);
