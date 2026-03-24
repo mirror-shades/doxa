@@ -1795,7 +1795,9 @@ pub const VM = struct {
                             else => false,
                         },
                         .enum_variant => |e_entry| switch (key_frame.value) {
-                            .enum_variant => |e_key| e_entry.variant_index == e_key.variant_index,
+                            .enum_variant => |e_key| e_entry.variant_index == e_key.variant_index and
+                                std.mem.eql(u8, e_entry.type_name, e_key.type_name) and
+                                std.mem.eql(u8, e_entry.variant_name, e_key.variant_name),
                             else => false,
                         },
                         else => false,
@@ -1843,7 +1845,9 @@ pub const VM = struct {
                             else => false,
                         },
                         .enum_variant => |e_entry| switch (key_frame.value) {
-                            .enum_variant => |e_key| e_entry.variant_index == e_key.variant_index,
+                            .enum_variant => |e_key| e_entry.variant_index == e_key.variant_index and
+                                std.mem.eql(u8, e_entry.type_name, e_key.type_name) and
+                                std.mem.eql(u8, e_entry.variant_name, e_key.variant_name),
                             else => false,
                         },
                         else => false,
@@ -1947,7 +1951,6 @@ pub const VM = struct {
     }
 
     fn handleCall(self: *VM, payload: anytype) VmError!void {
-        std.debug.print("{t}", .{payload.target.call_kind});
         switch (payload.target.call_kind) {
             .LocalFunction => {
                 const function_index = self.resolveFunctionIndex(payload.target.function_index, payload.target.qualified_name);

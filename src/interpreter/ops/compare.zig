@@ -62,7 +62,9 @@ fn compareEqual(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
         },
         .enum_variant => |a_val| switch (b.value) {
             .enum_variant => |b_val| {
-                return a_val.variant_index == b_val.variant_index;
+                return a_val.variant_index == b_val.variant_index and
+                    std.mem.eql(u8, a_val.type_name, b_val.type_name) and
+                    std.mem.eql(u8, a_val.variant_name, b_val.variant_name);
             },
             else => false,
         },
