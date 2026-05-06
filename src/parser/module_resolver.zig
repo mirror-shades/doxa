@@ -488,6 +488,8 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                             .kind = .Enum,
                                             .name = enum_decl.name.lexeme,
                                             .original_module = module_path,
+                                            .enum_role = .Type,
+                                            .enum_type_name = enum_decl.name.lexeme,
                                         });
 
                                         for (enum_decl.variants) |variant| {
@@ -496,6 +498,8 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                                 .kind = .Enum,
                                                 .name = variant.lexeme,
                                                 .original_module = module_path,
+                                                .enum_role = .Variant,
+                                                .enum_type_name = enum_decl.name.lexeme,
                                             });
                                         }
                                     }
@@ -504,6 +508,8 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                         .kind = .Enum,
                                         .name = enum_decl.name.lexeme,
                                         .original_module = module_path,
+                                        .enum_role = .Type,
+                                        .enum_type_name = enum_decl.name.lexeme,
                                     });
 
                                     for (enum_decl.variants) |variant| {
@@ -512,6 +518,8 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                             .kind = .Enum,
                                             .name = variant.lexeme,
                                             .original_module = module_path,
+                                            .enum_role = .Variant,
+                                            .enum_type_name = enum_decl.name.lexeme,
                                         });
                                     }
                                 }
@@ -593,6 +601,19 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
 
     if (self.imported_symbols == null) {
         self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
+    }
+
+    // Propagate nested module imported symbols (including enum type/variant metadata)
+    // into the parent parser symbol table so downstream HIR generation can resolve
+    // imported enums used inside module bodies.
+    if (module_parser.imported_symbols) |nested_imported| {
+        var nested_it = nested_imported.iterator();
+        while (nested_it.next()) |nested_entry| {
+            const nested_key = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ name, nested_entry.key_ptr.* });
+            if (!self.imported_symbols.?.contains(nested_key)) {
+                try self.imported_symbols.?.put(nested_key, nested_entry.value_ptr.*);
+            }
+        }
     }
 
     if (module_ast.data == .Block) {
@@ -722,6 +743,8 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                                 .kind = .Enum,
                                 .name = enum_decl.name.lexeme,
                                 .original_module = module_path,
+                                .enum_role = .Type,
+                                .enum_type_name = enum_decl.name.lexeme,
                             });
 
                             for (enum_decl.variants) |variant| {
@@ -730,6 +753,8 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                                     .kind = .Enum,
                                     .name = variant.lexeme,
                                     .original_module = module_path,
+                                    .enum_role = .Variant,
+                                    .enum_type_name = enum_decl.name.lexeme,
                                 });
                             }
                         }

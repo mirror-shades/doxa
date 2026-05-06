@@ -25,19 +25,9 @@ pub const BinaryExpressionHandler = struct {
         // If one side is an enum-typed expression (or a field whose declared type is an enum),
         // set enum context while lowering a bare EnumMember (e.g., `.NUMBER`) on the other side.
         if (bin.operator.type == .EQUALITY or bin.operator.type == .BANG_EQUAL) {
-            var enum_ctx: ?[]const u8 = null;
-
-            // Try to derive enum context from left expression via field resolution
-            if (left_type == .Enum) {
-                if (self.generator.resolveFieldAccessType(bin.left.?)) |res| {
-                    if (res.custom_type_name) |ctn| enum_ctx = ctn;
-                }
-            }
-            // If not found, try right expression
-            if (enum_ctx == null and right_type == .Enum) {
-                if (self.generator.resolveFieldAccessType(bin.right.?)) |res| {
-                    if (res.custom_type_name) |ctn| enum_ctx = ctn;
-                }
+            var enum_ctx: ?[]const u8 = self.resolveEnumContextFromExpr(bin.left.?);
+            if (enum_ctx == null) {
+                enum_ctx = self.resolveEnumContextFromExpr(bin.right.?);
             }
 
             // Generate left with possible enum context if it is an EnumMember literal
@@ -90,6 +80,29 @@ pub const BinaryExpressionHandler = struct {
                 return ErrorList.UnsupportedOperator;
             },
         }
+    }
+
+    fn resolveEnumContextFromExpr(self: *BinaryExpressionHandler, expr: *ast.Expr) ?[]const u8 {
+        if (self.generator.resolveFieldAccessType(expr)) |res| {
+            if (res.t == .Enum and res.custom_type_name != null) {
+                return res.custom_type_name.?;
+            }
+        }
+
+        return switch (expr.data) {
+            .Variable => |var_tok| blk: {
+                if (self.generator.isCustomType(var_tok.lexeme)) |ct| {
+                    if (ct.kind == .Enum) break :blk var_tok.lexeme;
+                }
+                if (self.generator.symbol_table.getVariableCustomType(var_tok.lexeme)) |custom_name| {
+                    if (self.generator.type_system.custom_types.get(custom_name)) |ct2| {
+                        if (ct2.kind == .Enum) break :blk custom_name;
+                    }
+                }
+                break :blk null;
+            },
+            else => null,
+        };
     }
 
     pub fn generateLogical(self: *BinaryExpressionHandler, log: ast.Logical, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {

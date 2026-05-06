@@ -5,6 +5,9 @@ const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
 const HIREnum = @import("../soxa_values.zig").HIREnum;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
+const Location = @import("../../../utils/reporting.zig").Location;
+const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
+const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 
 
 /// Handle struct operations, field access, and type declarations
@@ -188,7 +191,7 @@ pub const StructsHandler = struct {
             if (self.generator.type_system.custom_types.get(var_token.lexeme)) |custom_type| {
                 if (custom_type.kind == .Enum) {
                     // This is Color.Blue syntax - generate enum variant
-                    const variant_index = custom_type.getEnumVariantIndex(field.field.lexeme) orelse 0;
+                    const variant_index = try self.resolveEnumVariantIndex(var_token.lexeme, field.field);
 
                     const enum_value = HIRValue{
                         .enum_variant = HIREnum{
@@ -268,6 +271,51 @@ pub const StructsHandler = struct {
                 },
             });
         }
+    }
+
+    fn resolveEnumVariantIndex(self: *StructsHandler, enum_type_name: []const u8, variant_token: ast.Token) ErrorList!u32 {
+        const location = Location{
+            .file = variant_token.file,
+            .file_uri = variant_token.file_uri,
+            .range = .{
+                .start_line = variant_token.line,
+                .start_col = variant_token.column,
+                .end_line = variant_token.line,
+                .end_col = variant_token.column + variant_token.lexeme.len,
+            },
+        };
+
+        if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type| {
+            if (custom_type.kind != .Enum) {
+                self.generator.reporter.reportCompileError(
+                    location,
+                    ErrorCode.TYPE_MISMATCH,
+                    "'{s}' is not an enum type",
+                    .{enum_type_name},
+                );
+                return ErrorList.TypeMismatch;
+            }
+
+            if (custom_type.getEnumVariantIndex(variant_token.lexeme)) |index| {
+                return index;
+            }
+
+            self.generator.reporter.reportCompileError(
+                location,
+                ErrorCode.VARIABLE_NOT_FOUND,
+                "Unknown enum variant '{s}' for enum '{s}'",
+                .{ variant_token.lexeme, enum_type_name },
+            );
+            return ErrorList.InvalidEnumVariant;
+        }
+
+        self.generator.reporter.reportCompileError(
+            location,
+            ErrorCode.UNKNOWN_TYPE,
+            "Unknown enum type '{s}'",
+            .{enum_type_name},
+        );
+        return ErrorList.UnknownCustomType;
     }
 
     /// Generate HIR for field assignment expressions

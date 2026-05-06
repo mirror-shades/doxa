@@ -829,46 +829,79 @@ pub const HIRGenerator = struct {
     /// Pass 1.5: Process imported enum symbols and register them in type system
     fn processImportedEnumSymbols(self: *HIRGenerator) !void {
         if (self.imported_symbols) |imported_symbols| {
+            var seen_enum_bindings = std.StringHashMap(void).init(self.allocator);
+            defer seen_enum_bindings.deinit();
+
             var it = imported_symbols.iterator();
             while (it.next()) |entry| {
-                const symbol_name = entry.key_ptr.*;
                 const symbol = entry.value_ptr.*;
+                if (symbol.kind != .Enum) continue;
+                if (symbol.enum_role == null or symbol.enum_role.? != .Type) continue;
+                const binding_name = symbol.name;
+                if (binding_name.len == 0) continue;
+                if (seen_enum_bindings.contains(binding_name)) continue;
+                try seen_enum_bindings.put(binding_name, {});
 
-                if (symbol.kind == .Enum) {
-                    // Get the actual enum variants based on the symbol name
-                    // This is a temporary solution - ideally we'd parse the original module to get the actual variants
-                    var variants: []const []const u8 = undefined;
-
-                    if (std.mem.eql(u8, symbol_name, "Token")) {
-                        variants = &[_][]const u8{
-                            "INT_LITERAL",
-                            "FLOAT_LITERAL",
-                            "BYTE_LITERAL",
-                            "TETRA_LITERAL",
-                            "STRING_LITERAL",
-                            "NOTHING_LITERAL",
-                        };
-                    } else {
-                        variants = &[_][]const u8{"PLACEHOLDER"};
-                    }
-
-                    try self.registerEnumType(symbol_name, variants);
-
-                    const var_idx = try self.getOrCreateVariable(symbol_name);
-                    try self.trackVariableType(symbol_name, HIRType{ .Enum = 0 });
-
-                    const enum_type_value = HIRValue{ .string = symbol_name };
-                    const const_idx = try self.addConstant(enum_type_value);
-                    try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
-                    try self.instructions.append(.{ .StoreConst = .{
-                        .var_index = var_idx,
-                        .var_name = symbol_name,
-                        .scope_kind = .GlobalLocal,
-                        .module_context = null,
-                    } });
+                var has_enum_type = false;
+                if (self.type_system.custom_types.get(binding_name)) |existing| {
+                    has_enum_type = (existing.kind == .Enum);
                 }
+
+                const variants = try self.collectEnumVariantsFromImportedSymbols(imported_symbols, binding_name);
+                if (!has_enum_type) {
+                    if (variants.len == 0) {
+                        self.reporter.reportCompileError(
+                            null,
+                            ErrorCode.INTERNAL_ERROR,
+                            "Imported enum '{s}' has no variant metadata",
+                            .{binding_name},
+                        );
+                        return ErrorList.InvalidEnumVariant;
+                    }
+                    try self.registerEnumType(binding_name, variants);
+                }
+
+                const var_idx = try self.getOrCreateVariable(binding_name);
+                try self.trackVariableType(binding_name, HIRType{ .Enum = 0 });
+
+                const enum_type_value = HIRValue{ .string = binding_name };
+                const const_idx = try self.addConstant(enum_type_value);
+                try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
+                try self.instructions.append(.{ .StoreConst = .{
+                    .var_index = var_idx,
+                    .var_name = binding_name,
+                    .scope_kind = .GlobalLocal,
+                    .module_context = null,
+                } });
             }
         }
+    }
+
+    fn collectEnumVariantsFromImportedSymbols(self: *HIRGenerator, imported_symbols: std.StringHashMap(import_parser.ImportedSymbol), enum_name: []const u8) ![]const []const u8 {
+        var variants = std.array_list.Managed([]const u8).init(self.allocator);
+        defer variants.deinit();
+
+        var it = imported_symbols.iterator();
+        while (it.next()) |entry| {
+            const sym = entry.value_ptr.*;
+            if (sym.kind != .Enum) continue;
+            if (sym.enum_role == null or sym.enum_role.? != .Variant) continue;
+            if (sym.enum_type_name == null) continue;
+            if (!std.mem.eql(u8, sym.enum_type_name.?, enum_name)) continue;
+
+            var already_added = false;
+            for (variants.items) |existing| {
+                if (std.mem.eql(u8, existing, sym.name)) {
+                    already_added = true;
+                    break;
+                }
+            }
+            if (!already_added) {
+                try variants.append(sym.name);
+            }
+        }
+
+        return try variants.toOwnedSlice();
     }
 
     /// Pass 2: Initialize global variables at module level (before main program execution)

@@ -486,6 +486,21 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
     return struct_expr;
 }
 
+fn isValidFunctionName(token_type: token.TokenType) bool {
+    return switch (token_type) {
+        .IDENTIFIER,
+        .VAR, .CONST, .IMPORT, .MODULE, .PUBLIC, .RETURN,
+        .BREAK, .FUNCTION, .METHOD, .CONTINUE, .MATCH,
+        .WHILE, .DO, .FOR, .EACH, .IN, .AT, .XOR,
+        .EXISTS, .FORALL, .FROM, .AS, .TO, .NOT,
+        .IMPLIES, .ASYNC, .AWAIT, .ENTRY, .RANGE,
+        .RETURNS, .THIS, .UNREACHABLE,
+        .AND, .OR, .WHERE, .IF, .IFF, .THEN, .ELSE,
+        => true,
+        else => false,
+    };
+}
+
 pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     var is_entry = false;
     var is_public = false;
@@ -499,6 +514,17 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
         is_entry = true;
 
         if (self.has_entry_point) {
+            const location = Location{
+                .file = self.current_file,
+                .file_uri = self.current_file_uri,
+                .range = .{
+                    .start_line = self.peek().line,
+                    .start_col = self.peek().column,
+                    .end_line = self.peek().line,
+                    .end_col = self.peek().column,
+                },
+            };
+            self.reporter.reportCompileError(location, ErrorCode.MISSING_ENTRY_POINT_FUNCTION, "multiple entry point functions are not allowed", .{});
             return error.MultipleEntryPoints;
         }
 
@@ -508,11 +534,35 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     if (self.peek().type != .FUNCTION) {
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .file_uri = self.current_file_uri,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.SYNTAX_ERROR, "expected 'function' keyword", .{});
         return error.ExpectedFunction;
     }
     self.advance();
 
-    if (self.peek().type != .IDENTIFIER) {
+    if (!isValidFunctionName(self.peek().type)) {
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .file_uri = self.current_file_uri,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_FUNCTION_NAME, "expected function name after 'function' keyword, got '{s}'", .{current_token.lexeme});
         return error.ExpectedIdentifier;
     }
     const function_name = self.peek();
@@ -523,6 +573,18 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     if (self.peek().type != .LEFT_PAREN) {
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .file_uri = self.current_file_uri,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.SYNTAX_ERROR, "expected '(' after function name", .{});
         return error.ExpectedLeftParen;
     }
     self.advance();
@@ -537,18 +599,56 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                 self.advance();
                 is_alias = true;
             }
-            if (self.peek().type != .IDENTIFIER) {
+            if (!isValidFunctionName(self.peek().type)) {
+                const current_token = self.peek();
+                const location = Location{
+                    .file = self.current_file,
+                    .file_uri = self.current_file_uri,
+                    .range = .{
+                        .start_line = current_token.line,
+                        .start_col = current_token.column,
+                        .end_line = current_token.line,
+                        .end_col = current_token.column,
+                    },
+                };
+                self.reporter.reportCompileError(location, ErrorCode.EXPECTED_FUNCTION_PARAM, "expected parameter name", .{});
                 return error.ExpectedIdentifier;
             }
             const param_name = self.peek();
             self.advance();
 
             if (self.peek().type != .TYPE_SYMBOL) {
+                const current_token = self.peek();
+                const location = Location{
+                    .file = self.current_file,
+                    .file_uri = self.current_file_uri,
+                    .range = .{
+                        .start_line = current_token.line,
+                        .start_col = current_token.column,
+                        .end_line = current_token.line,
+                        .end_col = current_token.column,
+                    },
+                };
+                self.reporter.reportCompileError(location, ErrorCode.MISSING_PARAMETER_TYPE, "expected '::' type annotation after parameter name", .{});
                 return error.ExpectedTypeAnnotation;
             }
             self.advance();
 
-            const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+            const type_expr = try expression_parser.parseTypeExpr(self) orelse {
+                const current_token = self.peek();
+                const location = Location{
+                    .file = self.current_file,
+                    .file_uri = self.current_file_uri,
+                    .range = .{
+                        .start_line = current_token.line,
+                        .start_col = current_token.column,
+                        .end_line = current_token.line,
+                        .end_col = current_token.column,
+                    },
+                };
+                self.reporter.reportCompileError(location, ErrorCode.EXPECTED_TYPE, "expected type after '::'", .{});
+                return error.ExpectedType;
+            };
 
             var default_value: ?*ast.Expr = null;
             if (self.peek().type == .ASSIGN) {
@@ -565,6 +665,18 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
 
             if (self.peek().type == .RIGHT_PAREN) break;
             if (self.peek().type != .COMMA) {
+                const current_token = self.peek();
+                const location = Location{
+                    .file = self.current_file,
+                    .file_uri = self.current_file_uri,
+                    .range = .{
+                        .start_line = current_token.line,
+                        .start_col = current_token.column,
+                        .end_line = current_token.line,
+                        .end_col = current_token.column,
+                    },
+                };
+                self.reporter.reportCompileError(location, ErrorCode.EXPECTED_COMMA_OR_PAREN, "expected ',' or ')' after parameter", .{});
                 return error.ExpectedCommaOrParen;
             }
             self.advance();
@@ -576,7 +688,21 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     if (self.peek().type == .RETURNS) {
         self.advance();
 
-        const type_expr = try expression_parser.parseTypeExpr(self) orelse return error.ExpectedType;
+        const type_expr = try expression_parser.parseTypeExpr(self) orelse {
+            const current_token = self.peek();
+            const location = Location{
+                .file = self.current_file,
+                .file_uri = self.current_file_uri,
+                .range = .{
+                    .start_line = current_token.line,
+                    .start_col = current_token.column,
+                    .end_line = current_token.line,
+                    .end_col = current_token.column,
+                },
+            };
+            self.reporter.reportCompileError(location, ErrorCode.MISSING_RETURN_TYPE, "expected return type after 'returns'", .{});
+            return error.ExpectedType;
+        };
         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
         return_type = type_info_ptr.*;
         self.allocator.destroy(type_info_ptr);
@@ -597,6 +723,18 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     if (self.peek().type != .LEFT_BRACE) {
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .file_uri = self.current_file_uri,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_LEFT_BRACE_OR_RETURNS_KEYWORD, "expected '{{' to start function body", .{});
         return error.ExpectedLeftBraceOrReturnsKeyword;
     }
     self.advance();
@@ -615,6 +753,18 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     if (self.peek().type != .RIGHT_BRACE) {
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .file_uri = self.current_file_uri,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_RIGHT_BRACE, "expected '}}' to close function body", .{});
         return error.ExpectedRightBrace;
     }
     self.advance();
