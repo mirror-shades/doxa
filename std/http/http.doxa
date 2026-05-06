@@ -34,14 +34,14 @@ zig HTTP {
         return errorState(2, 0);
     }
 
-    fn mapCommon(err: anyerror) ?i64 {
-        return switch (err) {
-            error.InvalidArgument => 1,
-            error.OutOfMemory => 2,
-            error.AccessDenied, error.PermissionDenied => 3,
-            error.NotSupported, error.OperationNotSupported => 4,
-            else => null,
-        };
+    fn mapCommon(err_name: []const u8) i64 {
+        if (std.mem.eql(u8, err_name, "InvalidArgument")) return 1;
+        if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
+        if (std.mem.eql(u8, err_name, "AccessDenied")) return 3;
+        if (std.mem.eql(u8, err_name, "PermissionDenied")) return 3;
+        if (std.mem.eql(u8, err_name, "NotSupported")) return 4;
+        if (std.mem.eql(u8, err_name, "OperationNotSupported")) return 4;
+        return -1;
     }
 
     fn filenameFromUrl(url: []const u8) []const u8 {
@@ -70,8 +70,9 @@ zig HTTP {
         defer client.deinit();
 
         var file = std.fs.cwd().createFile(destination, .{}) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(108);
@@ -88,8 +89,9 @@ zig HTTP {
             .method = .GET,
             .response_writer = writer,
         }) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(switch (err) {
@@ -107,8 +109,9 @@ zig HTTP {
         };
 
         writer.flush() catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(107);
