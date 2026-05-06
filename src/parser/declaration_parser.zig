@@ -764,7 +764,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                 .end_col = current_token.column,
             },
         };
-        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_RIGHT_BRACE, "expected '}}' to close function body", .{});
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_CLOSING_BRACE, "expected '}}' to close function body", .{});
         return error.ExpectedRightBrace;
     }
     self.advance();
