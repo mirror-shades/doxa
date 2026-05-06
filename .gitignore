@@ -5,6 +5,7 @@
 !src
 !std
 !test
+!.github
 !.gitignore
 !build.zig
 !build.zig.zon
