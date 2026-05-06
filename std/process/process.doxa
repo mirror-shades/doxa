@@ -33,31 +33,28 @@ zig Process {
         return errorState(2, 0);
     }
 
-    fn mapCommon(err: anyerror) ?i64 {
-        return switch (err) {
-            error.InvalidArgument => 1,
-            error.OutOfMemory => 2,
-            error.AccessDenied, error.PermissionDenied => 3,
-            error.NotSupported, error.OperationNotSupported => 4,
-            else => null,
-        };
+    fn mapCommon(err_name: []const u8) i64 {
+        if (std.mem.eql(u8, err_name, "InvalidArgument")) return 1;
+        if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
+        if (std.mem.eql(u8, err_name, "AccessDenied")) return 3;
+        if (std.mem.eql(u8, err_name, "PermissionDenied")) return 3;
+        if (std.mem.eql(u8, err_name, "NotSupported")) return 4;
+        if (std.mem.eql(u8, err_name, "OperationNotSupported")) return 4;
+        return -1;
     }
 
-    fn mapProcessSpawn(err: anyerror) i64 {
-        if (mapCommon(err)) |code| return code;
-        return switch (err) {
-            error.FileNotFound => 200,
-            error.InvalidExe => 201,
-            else => 202,
-        };
+    fn mapProcessSpawn(err_name: []const u8) i64 {
+        const common = mapCommon(err_name);
+        if (common >= 0) return common;
+        if (std.mem.eql(u8, err_name, "FileNotFound")) return 200;
+        if (std.mem.eql(u8, err_name, "InvalidExe")) return 201;
+        return 202;
     }
 
-    fn mapProcessWait(err: anyerror) i64 {
-        if (mapCommon(err)) |code| return code;
-        return switch (err) {
-            error.ProcessNotRunning => 203,
-            else => 203,
-        };
+    fn mapProcessWait(err_name: []const u8) i64 {
+        const common = mapCommon(err_name);
+        if (common >= 0) return common;
+        return 203;
     }
 
     fn exec_cmd(input: []const u8) i64 {
@@ -77,7 +74,7 @@ zig Process {
         cmd.stderr_behavior = .Inherit;
 
         const term = cmd.spawnAndWait() catch |err| {
-            setLastError(mapProcessSpawn(err));
+            setLastError(mapProcessSpawn(@errorName(err)));
             return 0;
         };
 
@@ -113,7 +110,7 @@ zig Process {
         cmd.stderr_behavior = .Pipe;
 
         cmd.spawn() catch |err| {
-            setLastError(mapProcessSpawn(err));
+            setLastError(mapProcessSpawn(@errorName(err)));
             return "";
         };
 
@@ -131,8 +128,9 @@ zig Process {
                 setLastError(203);
                 return "";
             };
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc1 = mapCommon(@errorName(err));
+            if (mc1 >= 0) {
+                setLastError(mc1);
                 return "";
             }
             setLastError(switch (err) {
@@ -143,7 +141,7 @@ zig Process {
         };
 
         const term = cmd.wait() catch |err| {
-            setLastError(mapProcessWait(err));
+            setLastError(mapProcessWait(@errorName(err)));
             return "";
         };
 
@@ -167,8 +165,9 @@ zig Process {
         }
 
         const duped = std.heap.page_allocator.dupe(u8, stdout.items) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return "";
             }
             setLastError(205);
@@ -186,8 +185,9 @@ zig Process {
     fn argCount() i64 {
         clearLastError();
         const args = std.process.argsAlloc(std.heap.page_allocator) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return 0;
             }
             setLastError(208);
@@ -210,8 +210,9 @@ zig Process {
         }
 
         const args = std.process.argsAlloc(std.heap.page_allocator) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return "";
             }
             setLastError(208);
@@ -232,8 +233,9 @@ zig Process {
         }
 
         const duped = std.heap.page_allocator.dupe(u8, args[idx]) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return "";
             }
             setLastError(208);
@@ -252,8 +254,9 @@ zig Process {
     fn cwd() []const u8 {
         clearLastError();
         const content = std.process.getCwdAlloc(std.heap.page_allocator) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return "";
             }
             setLastError(208);
@@ -277,8 +280,9 @@ zig Process {
         }
 
         const content = std.process.getEnvVarOwned(std.heap.page_allocator, name) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return "";
             }
             setLastError(208);

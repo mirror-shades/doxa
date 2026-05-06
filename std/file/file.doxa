@@ -34,26 +34,27 @@ zig File {
         return errorState(2, 0);
     }
 
-    fn mapCommon(err: anyerror) ?i64 {
-        return switch (err) {
-            error.InvalidArgument => 1,
-            error.OutOfMemory => 2,
-            error.AccessDenied, error.PermissionDenied => 3,
-            error.NotSupported, error.OperationNotSupported => 4,
-            else => null,
-        };
+    fn mapCommon(err_name: []const u8) i64 {
+        if (std.mem.eql(u8, err_name, "InvalidArgument")) return 1;
+        if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
+        if (std.mem.eql(u8, err_name, "AccessDenied")) return 3;
+        if (std.mem.eql(u8, err_name, "PermissionDenied")) return 3;
+        if (std.mem.eql(u8, err_name, "NotSupported")) return 4;
+        if (std.mem.eql(u8, err_name, "OperationNotSupported")) return 4;
+        return -1;
     }
 
-    fn mapPath(err: anyerror) i64 {
-        if (mapCommon(err)) |code| return code;
-        return switch (err) {
-            error.FileNotFound => 100,
-            error.PathAlreadyExists => 101,
-            error.NotDir => 102,
-            error.IsDir => 103,
-            error.BadPathName, error.NameTooLong, error.InvalidUtf8 => 104,
-            else => 117,
-        };
+    fn mapPath(err_name: []const u8) i64 {
+        const common = mapCommon(err_name);
+        if (common >= 0) return common;
+        if (std.mem.eql(u8, err_name, "FileNotFound")) return 100;
+        if (std.mem.eql(u8, err_name, "PathAlreadyExists")) return 101;
+        if (std.mem.eql(u8, err_name, "NotDir")) return 102;
+        if (std.mem.eql(u8, err_name, "IsDir")) return 103;
+        if (std.mem.eql(u8, err_name, "BadPathName")) return 104;
+        if (std.mem.eql(u8, err_name, "NameTooLong")) return 104;
+        if (std.mem.eql(u8, err_name, "InvalidUtf8")) return 104;
+        return 117;
     }
 
     fn makeDir(path: []const u8) void {
@@ -63,7 +64,7 @@ zig File {
             return;
         }
         std.fs.cwd().makeDir(path) catch |err| {
-            setLastError(mapPath(err));
+            setLastError(mapPath(@errorName(err)));
             return;
         };
     }
@@ -75,7 +76,7 @@ zig File {
             return;
         }
         std.fs.cwd().makePath(path) catch |err| {
-            setLastError(mapPath(err));
+            setLastError(mapPath(@errorName(err)));
             return;
         };
     }
@@ -89,8 +90,9 @@ zig File {
 
         const cwd = std.fs.cwd();
         cwd.copyFile(source, cwd, destination, .{}) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(switch (err) {
@@ -117,8 +119,9 @@ zig File {
             if (err == error.IsDir) {
                 if (recursive) {
                     cwd.deleteTree(path) catch |e| {
-                        if (mapCommon(e)) |code| {
-                            setLastError(code);
+                        const mc = mapCommon(@errorName(e));
+                        if (mc >= 0) {
+                            setLastError(mc);
                             return;
                         }
                         setLastError(109);
@@ -126,8 +129,9 @@ zig File {
                     };
                 } else {
                     cwd.deleteDir(path) catch |e| {
-                        if (mapCommon(e)) |code| {
-                            setLastError(code);
+                        const mc = mapCommon(@errorName(e));
+                        if (mc >= 0) {
+                            setLastError(mc);
                             return;
                         }
                         setLastError(109);
@@ -137,8 +141,9 @@ zig File {
                 return;
             }
 
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(switch (err) {
@@ -174,8 +179,9 @@ zig File {
         }
 
         const root_src = allocator.dupe(u8, source) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(117);
@@ -184,8 +190,9 @@ zig File {
 
         const root_dst = allocator.dupe(u8, destination) catch |err| {
             allocator.free(root_src);
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(117);
@@ -195,8 +202,9 @@ zig File {
         stack.append(.{ .src = root_src, .dst = root_dst }) catch |err| {
             allocator.free(root_src);
             allocator.free(root_dst);
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(117);
@@ -209,8 +217,9 @@ zig File {
             defer allocator.free(task.dst);
 
             var src_dir = std.fs.cwd().openDir(task.src, .{ .iterate = true }) catch |err| {
-                if (mapCommon(err)) |code| {
-                    setLastError(code);
+                const mc = mapCommon(@errorName(err));
+                if (mc >= 0) {
+                    setLastError(mc);
                     return;
                 }
                 setLastError(105);
@@ -219,8 +228,9 @@ zig File {
             defer src_dir.close();
 
             std.fs.cwd().makePath(task.dst) catch |err| {
-                if (mapCommon(err)) |code| {
-                    setLastError(code);
+                const mc = mapCommon(@errorName(err));
+                if (mc >= 0) {
+                    setLastError(mc);
                     return;
                 }
                 setLastError(108);
@@ -228,8 +238,9 @@ zig File {
             };
 
             var dst_dir = std.fs.cwd().openDir(task.dst, .{ .iterate = true }) catch |err| {
-                if (mapCommon(err)) |code| {
-                    setLastError(code);
+                const mc = mapCommon(@errorName(err));
+                if (mc >= 0) {
+                    setLastError(mc);
                     return;
                 }
                 setLastError(105);
@@ -240,8 +251,9 @@ zig File {
             var iter = src_dir.iterate();
             while (true) {
                 const next_entry = iter.next() catch |err| {
-                    if (mapCommon(err)) |code| {
-                        setLastError(code);
+                    const mc = mapCommon(@errorName(err));
+                    if (mc >= 0) {
+                        setLastError(mc);
                         return;
                     }
                     setLastError(112);
@@ -254,8 +266,9 @@ zig File {
                 switch (entry.kind) {
                     .file => {
                         const src_file_path = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.src, std.fs.path.sep_str, name }) catch |err| {
-                            if (mapCommon(err)) |code| {
-                                setLastError(code);
+                            const mc = mapCommon(@errorName(err));
+                            if (mc >= 0) {
+                                setLastError(mc);
                                 return;
                             }
                             setLastError(111);
@@ -264,8 +277,9 @@ zig File {
                         defer allocator.free(src_file_path);
 
                         std.fs.cwd().copyFile(src_file_path, dst_dir, name, .{}) catch |err| {
-                            if (mapCommon(err)) |code| {
-                                setLastError(code);
+                            const mc = mapCommon(@errorName(err));
+                            if (mc >= 0) {
+                                setLastError(mc);
                                 return;
                             }
                             setLastError(111);
@@ -274,8 +288,9 @@ zig File {
                     },
                     .directory => {
                         const sub_src = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.src, std.fs.path.sep_str, name }) catch |err| {
-                            if (mapCommon(err)) |code| {
-                                setLastError(code);
+                            const mc = mapCommon(@errorName(err));
+                            if (mc >= 0) {
+                                setLastError(mc);
                                 return;
                             }
                             setLastError(111);
@@ -284,8 +299,9 @@ zig File {
 
                         const sub_dst = std.fmt.allocPrint(allocator, "{s}{s}{s}", .{ task.dst, std.fs.path.sep_str, name }) catch |err| {
                             allocator.free(sub_src);
-                            if (mapCommon(err)) |code| {
-                                setLastError(code);
+                            const mc = mapCommon(@errorName(err));
+                            if (mc >= 0) {
+                                setLastError(mc);
                                 return;
                             }
                             setLastError(111);
@@ -295,8 +311,9 @@ zig File {
                         stack.append(.{ .src = sub_src, .dst = sub_dst }) catch |err| {
                             allocator.free(sub_src);
                             allocator.free(sub_dst);
-                            if (mapCommon(err)) |code| {
-                                setLastError(code);
+                            const mc = mapCommon(@errorName(err));
+                            if (mc >= 0) {
+                                setLastError(mc);
                                 return;
                             }
                             setLastError(111);
@@ -319,8 +336,9 @@ zig File {
         const cwd = std.fs.cwd();
 
         cwd.makePath(out_dir_path) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(108);
@@ -328,8 +346,9 @@ zig File {
         };
 
         var out_dir = cwd.openDir(out_dir_path, .{}) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(105);
@@ -338,8 +357,9 @@ zig File {
         defer out_dir.close();
 
         var zip_file = cwd.openFile(zip_path, .{}) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(105);
@@ -351,8 +371,9 @@ zig File {
         var r = zip_file.reader(&buf);
 
         std.zip.extract(out_dir, &r, .{}) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(113);
@@ -378,8 +399,9 @@ zig File {
 
         const cwd = std.fs.cwd();
         cwd.rename(old_folder, new_folder) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(switch (err) {
@@ -403,8 +425,9 @@ zig File {
 
         const cwd = std.fs.cwd();
         cwd.rename(old_path, new_path) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(switch (err) {
@@ -428,8 +451,9 @@ zig File {
 
         const cwd = std.fs.cwd();
         const file = cwd.openFile(path, .{}) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return "";
             }
             setLastError(switch (err) {
@@ -443,8 +467,9 @@ zig File {
         defer file.close();
 
         const content = file.readToEndAlloc(std.heap.page_allocator, std.math.maxInt(usize)) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return "";
             }
             setLastError(106);
@@ -474,8 +499,9 @@ zig File {
             .sub_path = path,
             .data = content,
         }) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(107);
@@ -495,8 +521,9 @@ zig File {
             .read = true,
             .truncate = false,
         }) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(108);
@@ -505,8 +532,9 @@ zig File {
         defer file.close();
 
         file.seekFromEnd(0) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(107);
@@ -514,8 +542,9 @@ zig File {
         };
 
         file.writeAll(content) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(107);
@@ -537,8 +566,9 @@ zig File {
     fn cwd() []const u8 {
         clearLastError();
         const content = std.process.getCwdAlloc(std.heap.page_allocator) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return "";
             }
             setLastError(105);
@@ -566,8 +596,9 @@ zig File {
         var file = std.fs.cwd().createFile(path, .{
             .truncate = false,
         }) catch |err| {
-            if (mapCommon(err)) |code| {
-                setLastError(code);
+            const mc = mapCommon(@errorName(err));
+            if (mc >= 0) {
+                setLastError(mc);
                 return;
             }
             setLastError(108);
