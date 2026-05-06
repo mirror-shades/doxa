@@ -5,7 +5,7 @@
 !src
 !std
 !test
-!.github
+!.github/workflows/ci.yml
 !.gitignore
 !build.zig
 !build.zig.zon
