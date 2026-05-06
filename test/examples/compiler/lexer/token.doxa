@@ -6,8 +6,10 @@ pub enum TokenType {
     TETRA_LITERAL,
     STRING_LITERAL,
     NOTHING_LITERAL,
+    NEW_LINE,
 
     #keywords
+    KEYWORD,
     VAR,
     CONST,
     FUNCTION,

@@ -611,7 +611,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                         .end_col = current_token.column,
                     },
                 };
-                self.reporter.reportCompileError(location, ErrorCode.EXPECTED_FUNCTION_PARAM, "expected parameter name", .{});
+                self.reporter.reportCompileError(location, ErrorCode.EXPECTED_FUNCTION_PARAMS, "expected parameter name", .{});
                 return error.ExpectedIdentifier;
             }
             const param_name = self.peek();
@@ -676,7 +676,7 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
                         .end_col = current_token.column,
                     },
                 };
-                self.reporter.reportCompileError(location, ErrorCode.EXPECTED_COMMA_OR_PAREN, "expected ',' or ')' after parameter", .{});
+                self.reporter.reportCompileError(location, ErrorCode.EXPECTED_CLOSING_PARENTHESIS, "expected ',' or ')' after parameter", .{});
                 return error.ExpectedCommaOrParen;
             }
             self.advance();
