@@ -233,6 +233,17 @@ fn parseAllowedType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.Ty
         return .{ .base = .String, .is_mutable = false };
     }
 
+    switch (which) {
+        .param => {
+            std.debug.print("Invalid param type in inline zig function: `{s}`\n", .{tok.lexeme});
+            std.debug.print("Allowed types are: i64, f64, u8, bool, []const u8, and void\n", .{});
+        },
+        .ret => {
+            std.debug.print("Invalid return type in inline zig function: `{s}`\n", .{tok.lexeme});
+            std.debug.print("Allowed types are: i64, f64, u8, bool, []const u8, and void\n", .{});
+        },
+    }
+
     return switch (which) {
         .param => error.InvalidParamType,
         .ret => error.InvalidReturnType,

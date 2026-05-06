@@ -100,9 +100,6 @@ pub const VM = struct {
     scope_stack: Managed(ScopeRecord),
     try_stack: Managed(usize),
     skip_next_enter_scope: bool = false,
-    // Track VM-owned allocations for cleanup
-    vm_token_variants: ?[]CustomTypeInfo.EnumVariant = null,
-    vm_tokentype_variants: ?[]CustomTypeInfo.EnumVariant = null,
     array_type_cache: std.AutoHashMap(ArrayTypeKey, *hir_types.HIRType),
     array_type_nodes: Managed(*hir_types.HIRType),
 
@@ -214,12 +211,6 @@ pub const VM = struct {
 
         vm.indexLabels();
 
-        // Register the Token enum for proper enum member access
-        try vm.registerTokenEnum();
-
-        // Initialize the Token variable in module state
-        try vm.initializeTokenVariable();
-
         return vm;
     }
 
@@ -234,13 +225,6 @@ pub const VM = struct {
         self.scope_stack.deinit();
         self.try_stack.deinit();
 
-        // Free VM-owned variant arrays (names are string literals, no freeing needed)
-        if (self.vm_token_variants) |variants| {
-            self.allocator.free(variants);
-        }
-        if (self.vm_tokentype_variants) |variants| {
-            self.allocator.free(variants);
-        }
         self.custom_type_registry.deinit();
         while (self.array_type_nodes.pop()) |ptr| {
             self.allocator.destroy(ptr);
@@ -2453,65 +2437,6 @@ pub const VM = struct {
 
     pub fn registerCustomType(self: *VM, type_info: CustomTypeInfo) !void {
         try self.custom_type_registry.put(type_info.name, type_info);
-    }
-
-    fn registerTokenEnum(self: *VM) !void {
-        // Create enum variants for Token enum - use string literals (no allocation needed)
-        const token_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, 6);
-        token_variants[0] = CustomTypeInfo.EnumVariant{ .name = "INT_LITERAL", .index = 0 };
-        token_variants[1] = CustomTypeInfo.EnumVariant{ .name = "FLOAT_LITERAL", .index = 1 };
-        token_variants[2] = CustomTypeInfo.EnumVariant{ .name = "BYTE_LITERAL", .index = 2 };
-        token_variants[3] = CustomTypeInfo.EnumVariant{ .name = "TETRA_LITERAL", .index = 3 };
-        token_variants[4] = CustomTypeInfo.EnumVariant{ .name = "STRING_LITERAL", .index = 4 };
-        token_variants[5] = CustomTypeInfo.EnumVariant{ .name = "NOTHING_LITERAL", .index = 5 };
-        self.vm_token_variants = token_variants;
-
-        const token_enum_info = CustomTypeInfo{
-            .name = "Token",
-            .kind = .Enum,
-            .enum_variants = token_variants,
-        };
-
-        try self.custom_type_registry.put("Token", token_enum_info);
-
-        // Create enum variants for TokenType enum
-        const tokentype_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, 16);
-        tokentype_variants[0] = CustomTypeInfo.EnumVariant{ .name = "INT_LITERAL", .index = 0 };
-        tokentype_variants[1] = CustomTypeInfo.EnumVariant{ .name = "FLOAT_LITERAL", .index = 1 };
-        tokentype_variants[2] = CustomTypeInfo.EnumVariant{ .name = "BYTE_LITERAL", .index = 2 };
-        tokentype_variants[3] = CustomTypeInfo.EnumVariant{ .name = "TETRA_LITERAL", .index = 3 };
-        tokentype_variants[4] = CustomTypeInfo.EnumVariant{ .name = "STRING_LITERAL", .index = 4 };
-        tokentype_variants[5] = CustomTypeInfo.EnumVariant{ .name = "NOTHING_LITERAL", .index = 5 };
-        tokentype_variants[6] = CustomTypeInfo.EnumVariant{ .name = "VAR", .index = 6 };
-        tokentype_variants[7] = CustomTypeInfo.EnumVariant{ .name = "CONST", .index = 7 };
-        tokentype_variants[8] = CustomTypeInfo.EnumVariant{ .name = "FUNCTION", .index = 8 };
-        tokentype_variants[9] = CustomTypeInfo.EnumVariant{ .name = "MAIN", .index = 9 };
-        tokentype_variants[10] = CustomTypeInfo.EnumVariant{ .name = "ENTRY", .index = 10 };
-        tokentype_variants[11] = CustomTypeInfo.EnumVariant{ .name = "ASSIGN", .index = 11 };
-        tokentype_variants[12] = CustomTypeInfo.EnumVariant{ .name = "MODULE", .index = 12 };
-        tokentype_variants[13] = CustomTypeInfo.EnumVariant{ .name = "IMPORT", .index = 13 };
-        tokentype_variants[14] = CustomTypeInfo.EnumVariant{ .name = "FROM", .index = 14 };
-        tokentype_variants[15] = CustomTypeInfo.EnumVariant{ .name = "IDENTIFIER", .index = 15 };
-        self.vm_tokentype_variants = tokentype_variants;
-
-        const tokentype_enum_info = CustomTypeInfo{
-            .name = "TokenType",
-            .kind = .Enum,
-            .enum_variants = tokentype_variants,
-        };
-
-        try self.custom_type_registry.put("TokenType", tokentype_enum_info);
-    }
-
-    fn initializeTokenVariable(self: *VM) !void {
-        // Initialize the Token variable in slot 0 of module 0 as a string value
-        if (self.module_state.len > 0) {
-            const module_state = &self.module_state[0];
-            const token_slot = module_state.pointer(0); // Slot 0
-            const token_name = try module_state.allocator.dupe(u8, "Token");
-            token_slot.store(HIRValue{ .string = token_name });
-            module_state.markInitialized(0);
-        }
     }
 
     pub fn coerceValue(self: *VM, value: HIRValue, expected_type: ?hir_types.HIRType) HIRValue {

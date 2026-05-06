@@ -6,6 +6,7 @@ const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
 const HIREnum = @import("../soxa_values.zig").HIREnum;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
+const Location = @import("../../../utils/reporting.zig").Location;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const TETRA_TRUE = @import("../soxa_generator.zig").TETRA_TRUE;
@@ -301,10 +302,7 @@ pub const ControlFlowHandler = struct {
                         try self.generator.instructions.append(.{ .TypeCheck = .{ .target_type = type_name } });
                     } else if (match_enum_type) |enum_type_name| {
                         // Generate the pattern value (enum member with proper context)
-                        const variant_index = if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type|
-                            custom_type.getEnumVariantIndex(pattern.lexeme) orelse 0
-                        else
-                            0;
+                        const variant_index = try self.resolveEnumPatternVariantIndex(enum_type_name, pattern);
 
                         const pattern_value = HIRValue{
                             .enum_variant = HIREnum{
@@ -322,10 +320,7 @@ pub const ControlFlowHandler = struct {
                         try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = HIRType{ .Enum = 0 } } });
                     } else if (self.generator.current_enum_type) |enum_type_from_context| {
                         // Fallback: if we are in an enum context (e.g., inside var decl init), use it
-                        const variant_index2 = if (self.generator.type_system.custom_types.get(enum_type_from_context)) |custom_type|
-                            custom_type.getEnumVariantIndex(pattern.lexeme) orelse 0
-                        else
-                            0;
+                        const variant_index2 = try self.resolveEnumPatternVariantIndex(enum_type_from_context, pattern);
 
                         const pattern_value2 = HIRValue{
                             .enum_variant = HIREnum{
@@ -636,5 +631,48 @@ pub const ControlFlowHandler = struct {
 
         // End merge point
         try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+    }
+
+    fn resolveEnumPatternVariantIndex(self: *ControlFlowHandler, enum_type_name: []const u8, pattern: ast.Token) ErrorList!u32 {
+        const location = Location{
+            .file = pattern.file,
+            .file_uri = pattern.file_uri,
+            .range = .{
+                .start_line = pattern.line,
+                .start_col = pattern.column,
+                .end_line = pattern.line,
+                .end_col = pattern.column + pattern.lexeme.len,
+            },
+        };
+
+        if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type| {
+            if (custom_type.kind != .Enum) {
+                self.generator.reporter.reportCompileError(
+                    location,
+                    ErrorCode.TYPE_MISMATCH,
+                    "'{s}' is not an enum type",
+                    .{enum_type_name},
+                );
+                return ErrorList.TypeMismatch;
+            }
+            if (custom_type.getEnumVariantIndex(pattern.lexeme)) |variant_index| {
+                return variant_index;
+            }
+            self.generator.reporter.reportCompileError(
+                location,
+                ErrorCode.VARIABLE_NOT_FOUND,
+                "Unknown enum variant '{s}' for enum '{s}'",
+                .{ pattern.lexeme, enum_type_name },
+            );
+            return ErrorList.InvalidEnumVariant;
+        }
+
+        self.generator.reporter.reportCompileError(
+            location,
+            ErrorCode.UNKNOWN_TYPE,
+            "Unknown enum type '{s}'",
+            .{enum_type_name},
+        );
+        return ErrorList.UnknownCustomType;
     }
 };

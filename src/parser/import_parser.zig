@@ -11,6 +11,8 @@ const ErrorCode = Errors.ErrorCode;
 const module_resolver = @import("module_resolver.zig");
 
 pub const ImportedSymbol = struct {
+    pub const EnumRole = enum { Type, Variant };
+
     kind: enum { Function, Enum, Struct, Variable, Type, Import },
     name: []const u8,
     original_module: []const u8,
@@ -18,6 +20,8 @@ pub const ImportedSymbol = struct {
     param_count: ?u32 = null,
     param_types: ?[]ast.TypeInfo = null,
     return_type_info: ?ast.TypeInfo = null,
+    enum_role: ?EnumRole = null,
+    enum_type_name: ?[]const u8 = null,
 };
 
 pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
@@ -305,7 +309,20 @@ fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []c
                                 .kind = .Enum,
                                 .name = enum_decl.name.lexeme,
                                 .original_module = module_path,
+                                .enum_role = .Type,
+                                .enum_type_name = enum_decl.name.lexeme,
                             });
+
+                            for (enum_decl.variants) |variant| {
+                                const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ symbol_name, variant.lexeme });
+                                try self.imported_symbols.?.put(variant_full_name, .{
+                                    .kind = .Enum,
+                                    .name = variant.lexeme,
+                                    .original_module = module_path,
+                                    .enum_role = .Variant,
+                                    .enum_type_name = enum_decl.name.lexeme,
+                                });
+                            }
                             return;
                         }
                     },
@@ -359,6 +376,8 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                     .kind = .Enum,
                                     .name = enum_decl.name.lexeme,
                                     .original_module = module_path,
+                                    .enum_role = .Type,
+                                    .enum_type_name = enum_decl.name.lexeme,
                                 });
 
                                 for (enum_decl.variants) |variant| {
@@ -367,6 +386,8 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                         .kind = .Enum,
                                         .name = variant.lexeme,
                                         .original_module = module_path,
+                                        .enum_role = .Variant,
+                                        .enum_type_name = enum_decl.name.lexeme,
                                     });
                                 }
                             }
@@ -375,6 +396,8 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                 .kind = .Enum,
                                 .name = enum_decl.name.lexeme,
                                 .original_module = module_path,
+                                .enum_role = .Type,
+                                .enum_type_name = enum_decl.name.lexeme,
                             });
 
                             for (enum_decl.variants) |variant| {
@@ -383,6 +406,8 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                     .kind = .Enum,
                                     .name = variant.lexeme,
                                     .original_module = module_path,
+                                    .enum_role = .Variant,
+                                    .enum_type_name = enum_decl.name.lexeme,
                                 });
                             }
                         }

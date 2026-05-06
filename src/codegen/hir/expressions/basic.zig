@@ -8,6 +8,7 @@ const HIRGeneratorType = @import("../soxa_generator.zig").HIRGenerator;
 const ScopeKind = @import("../soxa_types.zig").ScopeKind;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
+const Location = @import("../../../utils/reporting.zig").Location;
 
 /// Handle basic expression types: literals, variables, and grouping
 pub const BasicExpressionHandler = struct {
@@ -29,11 +30,12 @@ pub const BasicExpressionHandler = struct {
             .enum_variant => |variant| blk: {
                 // Handle enum variant literals - need to find the enum type
                 if (self.generator.current_enum_type) |enum_type_name| {
-                    // Look up the actual variant index from registered enum type
-                    const variant_index = if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type|
-                        custom_type.getEnumVariantIndex(variant) orelse 0
-                    else
-                        0;
+                    const unknown_location = Location{
+                        .file = "",
+                        .file_uri = "",
+                        .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
+                    };
+                    const variant_index = try self.resolveEnumVariantIndex(enum_type_name, variant, unknown_location);
 
                     break :blk HIRValue{
                         .enum_variant = HIREnum{
@@ -187,11 +189,17 @@ pub const BasicExpressionHandler = struct {
     pub fn generateEnumMember(self: *BasicExpressionHandler, member: ast.Token) (std.mem.Allocator.Error || ErrorList)!void {
         // Generate enum member using current enum type context
         if (self.generator.current_enum_type) |enum_type_name| {
-            // Look up the actual variant index from registered enum type
-            const variant_index = if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type|
-                custom_type.getEnumVariantIndex(member.lexeme) orelse 0
-            else
-                0;
+            const location = Location{
+                .file = member.file,
+                .file_uri = member.file_uri,
+                .range = .{
+                    .start_line = member.line,
+                    .start_col = member.column,
+                    .end_line = member.line,
+                    .end_col = member.column + member.lexeme.len,
+                },
+            };
+            const variant_index = try self.resolveEnumVariantIndex(enum_type_name, member.lexeme, location);
 
             // Generate proper enum variant with correct index
             const enum_value = HIRValue{
@@ -224,11 +232,17 @@ pub const BasicExpressionHandler = struct {
             }
 
             if (inferred_enum_type) |enum_type_name| {
-                // Look up the actual variant index from registered enum type
-                const variant_index = if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type|
-                    custom_type.getEnumVariantIndex(member.lexeme) orelse 0
-                else
-                    0;
+                const location = Location{
+                    .file = member.file,
+                    .file_uri = member.file_uri,
+                    .range = .{
+                        .start_line = member.line,
+                        .start_col = member.column,
+                        .end_line = member.line,
+                        .end_col = member.column + member.lexeme.len,
+                    },
+                };
+                const variant_index = try self.resolveEnumVariantIndex(enum_type_name, member.lexeme, location);
 
                 // Generate proper enum variant with correct index
                 const enum_value = HIRValue{
@@ -262,10 +276,17 @@ pub const BasicExpressionHandler = struct {
 
                 if (matches == 1 and matched_enum_name != null) {
                     const etype = matched_enum_name.?;
-                    const variant_index = if (self.generator.type_system.custom_types.get(etype)) |custom_type|
-                        custom_type.getEnumVariantIndex(member.lexeme) orelse 0
-                    else
-                        0;
+                    const location = Location{
+                        .file = member.file,
+                        .file_uri = member.file_uri,
+                        .range = .{
+                            .start_line = member.line,
+                            .start_col = member.column,
+                            .end_line = member.line,
+                            .end_col = member.column + member.lexeme.len,
+                        },
+                    };
+                    const variant_index = try self.resolveEnumVariantIndex(etype, member.lexeme, location);
                     const enum_value = HIRValue{ .enum_variant = HIREnum{ .type_name = etype, .variant_name = member.lexeme, .variant_index = variant_index, .path = null } };
                     const const_idx = try self.generator.addConstant(enum_value);
                     try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
@@ -277,6 +298,38 @@ pub const BasicExpressionHandler = struct {
                 }
             }
         }
+    }
+
+    fn resolveEnumVariantIndex(self: *BasicExpressionHandler, enum_type_name: []const u8, variant_name: []const u8, location: Location) ErrorList!u32 {
+        if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type| {
+            if (custom_type.kind != .Enum) {
+                self.generator.reporter.reportCompileError(
+                    location,
+                    ErrorCode.TYPE_MISMATCH,
+                    "'{s}' is not an enum type",
+                    .{enum_type_name},
+                );
+                return ErrorList.TypeMismatch;
+            }
+            if (custom_type.getEnumVariantIndex(variant_name)) |index| {
+                return index;
+            }
+            self.generator.reporter.reportCompileError(
+                location,
+                ErrorCode.VARIABLE_NOT_FOUND,
+                "Unknown enum variant '{s}' for enum '{s}'",
+                .{ variant_name, enum_type_name },
+            );
+            return ErrorList.InvalidEnumVariant;
+        }
+
+        self.generator.reporter.reportCompileError(
+            location,
+            ErrorCode.UNKNOWN_TYPE,
+            "Unknown enum type '{s}'",
+            .{enum_type_name},
+        );
+        return ErrorList.UnknownCustomType;
     }
 
     /// Generate HIR for default argument placeholders

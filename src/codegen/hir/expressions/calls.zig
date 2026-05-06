@@ -246,7 +246,18 @@ pub const CallsHandler = struct {
                         return ErrorList.InvalidAliasArgument;
                     }
                 } else {
-                    try self.generator.generateExpression(arg.expr, true, false);
+                    if (arg.expr.data == .EnumMember) {
+                        if (try self.expectedEnumTypeForArg(function_name, call_kind, arg_index)) |expected_enum| {
+                            const previous = self.generator.current_enum_type;
+                            self.generator.current_enum_type = expected_enum;
+                            try self.generator.generateExpression(arg.expr, true, false);
+                            self.generator.current_enum_type = previous;
+                        } else {
+                            try self.generator.generateExpression(arg.expr, true, false);
+                        }
+                    } else {
+                        try self.generator.generateExpression(arg.expr, true, false);
+                    }
                     arg_emitted_count += 1;
                 }
             }
@@ -301,6 +312,45 @@ pub const CallsHandler = struct {
             }
         }
         return false;
+    }
+
+    fn expectedEnumTypeForArg(self: *CallsHandler, function_name: []const u8, call_kind: CallKind, arg_index: usize) !?[]const u8 {
+        // First preference: function bodies/signatures collected from source modules.
+        for (self.generator.function_bodies.items) |func_body| {
+            if (!std.mem.eql(u8, func_body.function_name, function_name)) continue;
+            if (arg_index >= func_body.function_params.len) return null;
+
+            const param = func_body.function_params[arg_index];
+            if (param.type_expr) |type_expr| {
+                const ti = try ast.typeInfoFromExpr(self.generator.allocator, type_expr);
+                if (ti.custom_type) |custom_name| {
+                    if (self.generator.type_system.custom_types.get(custom_name)) |ct| {
+                        if (ct.kind == .Enum) return custom_name;
+                    }
+                }
+            }
+            return null;
+        }
+
+        // Fallback: imported symbol metadata for module functions.
+        if (call_kind == .ModuleFunction) {
+            if (self.generator.imported_symbols) |symbols| {
+                if (symbols.get(function_name)) |sym| {
+                    if (sym.kind == .Function and sym.param_types != null) {
+                        const params = sym.param_types.?;
+                        if (arg_index < params.len) {
+                            if (params[arg_index].custom_type) |custom_name| {
+                                if (self.generator.type_system.custom_types.get(custom_name)) |ct| {
+                                    if (ct.kind == .Enum) return custom_name;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     /// Helper function to convert AST type to HIR type

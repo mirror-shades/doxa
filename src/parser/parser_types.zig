@@ -1543,7 +1543,6 @@ pub const Parser = struct {
                     if (specific_symbol) |specific| {
                         if (std.mem.eql(u8, specific, symbol_name)) {
                             const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, symbol_name });
-
                             try self.imported_symbols.?.put(full_name, .{
                                 .kind = switch (symbol.kind) {
                                     .Function => .Function,
@@ -1553,6 +1552,8 @@ pub const Parser = struct {
                                 },
                                 .name = symbol_name,
                                 .original_module = module_path,
+                                .enum_role = if (symbol.kind == .Enum) .Type else null,
+                                .enum_type_name = if (symbol.kind == .Enum) symbol_name else null,
                             });
                         }
                     } else {
@@ -1567,6 +1568,8 @@ pub const Parser = struct {
                             },
                             .name = symbol_name,
                             .original_module = module_path,
+                            .enum_role = if (symbol.kind == .Enum) .Type else null,
+                            .enum_type_name = if (symbol.kind == .Enum) symbol_name else null,
                         });
                     }
                 }
@@ -1668,7 +1671,19 @@ pub const Parser = struct {
                                     .kind = .Enum,
                                     .name = enum_decl.name.lexeme,
                                     .original_module = module_path,
+                                    .enum_role = .Type,
+                                    .enum_type_name = enum_decl.name.lexeme,
                                 });
+                                for (enum_decl.variants) |variant| {
+                                    const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ symbol_name, variant.lexeme });
+                                    try self.imported_symbols.?.put(variant_full_name, .{
+                                        .kind = .Enum,
+                                        .name = variant.lexeme,
+                                        .original_module = module_path,
+                                        .enum_role = .Variant,
+                                        .enum_type_name = enum_decl.name.lexeme,
+                                    });
+                                }
                                 return;
                             }
                         },
