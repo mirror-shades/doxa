@@ -500,27 +500,35 @@ fn compileOneInlineModule(
 
     try std.fs.cwd().writeFile(.{ .sub_path = zig_path, .data = file_buf.items });
 
-    var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
-    defer args_list.deinit();
-    const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{lib_path});
-    defer std.heap.page_allocator.free(emit_flag);
-    try args_list.appendSlice(&[_][]const u8{
-        zig_exe_path,
-        "build-lib",
-        "-dynamic",
-        zig_path,
-        emit_flag,
-        "-OReleaseSafe",
-    });
+    const already_compiled = blk: {
+        const f = std.fs.cwd().openFile(lib_path, .{}) catch break :blk false;
+        f.close();
+        break :blk true;
+    };
 
-    var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
-    child.cwd = ".";
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-    const term = try child.spawnAndWait();
-    switch (term) {
-        .Exited => |code| if (code != 0) return error.Unexpected,
-        else => return error.Unexpected,
+    if (!already_compiled) {
+        var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        defer args_list.deinit();
+        const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{lib_path});
+        defer std.heap.page_allocator.free(emit_flag);
+        try args_list.appendSlice(&[_][]const u8{
+            zig_exe_path,
+            "build-lib",
+            "-dynamic",
+            zig_path,
+            emit_flag,
+            "-OReleaseSafe",
+        });
+
+        var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
+        child.cwd = ".";
+        child.stdout_behavior = .Inherit;
+        child.stderr_behavior = .Inherit;
+        const term = try child.spawnAndWait();
+        switch (term) {
+            .Exited => |code| if (code != 0) return error.Unexpected,
+            else => return error.Unexpected,
+        }
     }
 
     const key_owned = try memoryManager.getAllocator().dupe(u8, decl.module_name);
@@ -546,8 +554,7 @@ pub fn compileInlineZigModules(
     defer memoryManager.getAllocator().free(zig_decls);
     if (zig_decls.len == 0) return null;
 
-    const nonce: u64 = @intCast(@as(u128, @bitCast(std.time.nanoTimestamp())));
-    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache/{x}", .{ output_dir, nonce });
+    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{output_dir});
     defer memoryManager.getAllocator().free(zig_cache_path);
     try std.fs.cwd().makePath(zig_cache_path);
 
@@ -581,8 +588,7 @@ pub fn compileInlineZigObjects(
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
 
-    const nonce: u64 = @intCast(@as(u128, @bitCast(std.time.nanoTimestamp())));
-    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache/{x}", .{ output_dir, nonce });
+    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{output_dir});
     defer memoryManager.getAllocator().free(zig_cache_path);
     try std.fs.cwd().makePath(zig_cache_path);
 
@@ -631,24 +637,32 @@ pub fn compileInlineZigObjects(
         const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{obj_path});
         defer std.heap.page_allocator.free(emit_flag);
 
-        var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
-        defer args_list.deinit();
-        try args_list.appendSlice(&[_][]const u8{
-            zig_exe_path,
-            "build-obj",
-            zig_path,
-            emit_flag,
-            "-OReleaseSafe",
-        });
+        const obj_already_compiled = blk: {
+            const f = std.fs.cwd().openFile(obj_path, .{}) catch break :blk false;
+            f.close();
+            break :blk true;
+        };
 
-        var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
-        child.cwd = ".";
-        child.stdout_behavior = .Inherit;
-        child.stderr_behavior = .Inherit;
-        const term = try child.spawnAndWait();
-        switch (term) {
-            .Exited => |code| if (code != 0) return error.Unexpected,
-            else => return error.Unexpected,
+        if (!obj_already_compiled) {
+            var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+            defer args_list.deinit();
+            try args_list.appendSlice(&[_][]const u8{
+                zig_exe_path,
+                "build-obj",
+                zig_path,
+                emit_flag,
+                "-OReleaseSafe",
+            });
+
+            var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
+            child.cwd = ".";
+            child.stdout_behavior = .Inherit;
+            child.stderr_behavior = .Inherit;
+            const term = try child.spawnAndWait();
+            switch (term) {
+                .Exited => |code| if (code != 0) return error.Unexpected,
+                else => return error.Unexpected,
+            }
         }
 
         try out_paths.append(try memoryManager.getAllocator().dupe(u8, obj_path));
