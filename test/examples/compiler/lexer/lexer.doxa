@@ -4,17 +4,22 @@ module SourceManager from "./source_manager.doxa"
 import Token, TokenType from "./token.doxa"
 import NumberType from "./types.doxa"
 
-pub function lex(src :: string) {
+pub function lex(src :: string) returns Token [] {
     var tokens :: Token[]
     var line_breaks :: int[]
     var line is 1
 
+    @print("{src}")
 
     each c at i in src {
-        @print("helper result: {c}\n")
         if c == "\n" then {
-            line += 1
-            @push(line_breaks, i)
+            const new_token is $Token {
+                type is TokenType.NEW_LINE
+                literal is "\\n"
+                start is i
+                end is i
+            }
+            @push(tokens, new_token)
         }
         if c == "\"" then {
             const new_token is makeString(^src, ^i)
@@ -30,15 +35,20 @@ pub function lex(src :: string) {
     }
 
     each t in tokens {
-        @print("{t.type}\n") 
+        @print("{t.type} {t.literal} {t.start} {t.end}\n") 
     }
 
-    # add to source_manager @print("there are {line_breaks} lines")
+    @print("there are {line_breaks} lines \n")
+
+    assembleTokens(tokens)
+
+    return tokens
 }
 
 function makeString(^src :: string, ^i :: int) returns Token {
     var str :: string
-    for j is i + 1 do j += 1 {
+    const initial_place is i + 1
+    for j is initial_place do j += 1 {
         const current_char :: string is src[j]
         if current_char == "\"" then {
             i is j
@@ -49,8 +59,8 @@ function makeString(^src :: string, ^i :: int) returns Token {
     return $Token {
         type is TokenType.STRING_LITERAL
         literal is str
-        start is i
-        end is i + @length(str)
+        start is initial_place
+        end is initial_place + @length(str)
     }
 }
 
@@ -67,9 +77,8 @@ function makeAlpha(^src :: string, ^i :: int, c :: string) returns Token {
         word += word_char
     }
     if Helper.isKeyword(word) then {
-        @print("the word is: {word}")
         return $Token {
-            type is TokenType.IDENTIFIER
+            type is TokenType.KEYWORD
             literal is word
             start is i
             end is i + @length(word)
@@ -119,5 +128,19 @@ function makeNumeric(^src :: string, ^i :: int) returns Token {
         literal is current_num
         start is i
         end is i + @length(current_num)
+    }
+}
+
+
+
+function assembleTokens(tokens :: Token) {
+    each token at i in tokens {
+        # this can't be infered, look into this
+        @print("{token.type}\n")
+        if token.type == .NEW_LINE then {
+            @print("\n")
+        } else {
+            @print("literal: {token.literal}\n")
+        }
     }
 }

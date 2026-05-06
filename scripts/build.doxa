@@ -50,7 +50,7 @@ function build(os :: string, arch :: string) {
     @print("building for {arch}-{os}\n")
 
     @print("making directories\n")
-    std.file.makeDir("doxa"), "std.file.makeDir(doxa)") as nothing else {
+    gtistd.file.makeDir("doxa"), "std.file.makeDir(doxa)") as nothing else {
         @print("std.file.makeDir(doxa) failed: {result}\n")
         return
     }
