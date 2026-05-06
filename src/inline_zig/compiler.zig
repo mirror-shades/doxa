@@ -186,6 +186,7 @@ fn compileOneInlineModule(
     defer memoryManager.getAllocator().free(free_sym);
 
     const free_sym_owned = try memoryManager.getAllocator().dupe(u8, free_sym);
+    errdefer memoryManager.getAllocator().free(free_sym_owned);
 
     try file_buf.appendSlice("pub export fn ");
     try file_buf.appendSlice(free_sym);

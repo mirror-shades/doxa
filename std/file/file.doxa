@@ -88,8 +88,8 @@ zig File {
             return;
         }
 
-        const cwd = std.fs.cwd();
-        cwd.copyFile(source, cwd, destination, .{}) catch |err| {
+        const _cwd = std.fs.cwd();
+        _cwd.copyFile(source, _cwd, destination, .{}) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -114,11 +114,11 @@ zig File {
             return;
         }
 
-        const cwd = std.fs.cwd();
-        cwd.deleteFile(path) catch |err| {
+        const _cwd = std.fs.cwd();
+        _cwd.deleteFile(path) catch |err| {
             if (err == error.IsDir) {
                 if (recursive) {
-                    cwd.deleteTree(path) catch |e| {
+                    _cwd.deleteTree(path) catch |e| {
                         const mc = mapCommon(@errorName(e));
                         if (mc >= 0) {
                             setLastError(mc);
@@ -128,7 +128,7 @@ zig File {
                         return;
                     };
                 } else {
-                    cwd.deleteDir(path) catch |e| {
+                    _cwd.deleteDir(path) catch |e| {
                         const mc = mapCommon(@errorName(e));
                         if (mc >= 0) {
                             setLastError(mc);
@@ -333,9 +333,9 @@ zig File {
             return;
         }
 
-        const cwd = std.fs.cwd();
+        const _cwd = std.fs.cwd();
 
-        cwd.makePath(out_dir_path) catch |err| {
+        _cwd.makePath(out_dir_path) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -345,7 +345,7 @@ zig File {
             return;
         };
 
-        var out_dir = cwd.openDir(out_dir_path, .{}) catch |err| {
+        var out_dir = _cwd.openDir(out_dir_path, .{}) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -356,7 +356,7 @@ zig File {
         };
         defer out_dir.close();
 
-        var zip_file = cwd.openFile(zip_path, .{}) catch |err| {
+        var zip_file = _cwd.openFile(zip_path, .{}) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -382,8 +382,8 @@ zig File {
     }
 
     fn IsDir(path: []const u8) bool {
-        const cwd = std.fs.cwd();
-        var dir = cwd.openDir(path, .{}) catch {
+        const _cwd = std.fs.cwd();
+        var dir = _cwd.openDir(path, .{}) catch {
             return false;
         };
         dir.close();
@@ -397,8 +397,8 @@ zig File {
             return;
         }
 
-        const cwd = std.fs.cwd();
-        cwd.rename(old_folder, new_folder) catch |err| {
+        const _cwd = std.fs.cwd();
+        _cwd.rename(old_folder, new_folder) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -423,8 +423,8 @@ zig File {
             return;
         }
 
-        const cwd = std.fs.cwd();
-        cwd.rename(old_path, new_path) catch |err| {
+        const _cwd = std.fs.cwd();
+        _cwd.rename(old_path, new_path) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -449,8 +449,8 @@ zig File {
             return "";
         }
 
-        const cwd = std.fs.cwd();
-        const file = cwd.openFile(path, .{}) catch |err| {
+        const _cwd = std.fs.cwd();
+        const file = _cwd.openFile(path, .{}) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -494,8 +494,8 @@ zig File {
             return;
         }
 
-        const cwd = std.fs.cwd();
-        cwd.writeFile(.{
+        const _cwd = std.fs.cwd();
+        _cwd.writeFile(.{
             .sub_path = path,
             .data = content,
         }) catch |err| {
@@ -516,8 +516,8 @@ zig File {
             return;
         }
 
-        const cwd = std.fs.cwd();
-        var file = cwd.createFile(path, .{
+        const _cwd = std.fs.cwd();
+        var file = _cwd.createFile(path, .{
             .read = true,
             .truncate = false,
         }) catch |err| {
