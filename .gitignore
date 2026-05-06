@@ -1,4 +1,5 @@
 *
+
 !docs/**
 !external/**
 !scripts/**
@@ -10,7 +11,7 @@
 !.gitignore
 !build.zig
 !build.zig.zon
-!LICENCE
+!LICENSE
 !mkdocs.yml
 !pipeline.png
 !README.md
