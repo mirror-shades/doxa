@@ -100,9 +100,7 @@ zig HTTP {
                 error.ConnectionRefused,
                 error.ConnectionTimedOut,
                 error.ConnectionResetByPeer,
-                error.NetworkUnreachable,
-                error.HostUnreachable => 114,
-                error.Timeout => 115,
+                error.NetworkUnreachable => 114,
                 else => 114,
             });
             return;
@@ -131,7 +129,7 @@ zig HTTP {
         downloadUrl(url, name);
     }
 
-    fn getText(_url: []const u8) []const u8 {
+    fn getText(_: []const u8) []const u8 {
         clearLastError();
         setLastError(4);
         return "";
