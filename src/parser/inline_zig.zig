@@ -201,16 +201,8 @@ fn tokenIs(tok: Token, kind: TokenKind, lexeme: []const u8) bool {
 fn parseAllowedType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.TypeInfo {
     const tok_opt = try ts.next();
     if (tok_opt == null) switch (which) {
-        .param => {
-            std.debug.print("Invalid param type in inline zig function\n", .{});
-            std.debug.print("Allowed types are: i64, f64, u8, bool, []const u8, and void\n", .{});
-            return error.InvalidParamType;
-        },
-        .ret => {
-            std.debug.print("Invalid return type in inline zig function\n", .{});
-            std.debug.print("Allowed types are: i64, f64, u8, bool, []const u8, and void\n", .{});
-            return error.InvalidReturnType;
-        },
+        .param => return error.InvalidParamType,
+        .ret => return error.InvalidReturnType,
     };
     const tok = tok_opt.?;
 
@@ -231,17 +223,6 @@ fn parseAllowedType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.Ty
         const u8_tok = (try ts.next()) orelse return error.InlineZigNotValid;
         if (!tokenIs(u8_tok, .ident, "u8")) return error.InlineZigNotValid;
         return .{ .base = .String, .is_mutable = false };
-    }
-
-    switch (which) {
-        .param => {
-            std.debug.print("Invalid param type in inline zig function: `{s}`\n", .{tok.lexeme});
-            std.debug.print("Allowed types are: i64, f64, u8, bool, []const u8, and void\n", .{});
-        },
-        .ret => {
-            std.debug.print("Invalid return type in inline zig function: `{s}`\n", .{tok.lexeme});
-            std.debug.print("Allowed types are: i64, f64, u8, bool, []const u8, and void\n", .{});
-        },
     }
 
     return switch (which) {
