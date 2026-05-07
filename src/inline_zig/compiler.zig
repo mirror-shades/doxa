@@ -519,6 +519,9 @@ fn compileOneInlineModule(
             emit_flag,
             "-OReleaseSafe",
         });
+        if (builtin.os.tag == .linux) {
+            try args_list.append("-lc");
+        }
 
         var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
         child.cwd = ".";
