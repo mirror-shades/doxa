@@ -1430,6 +1430,10 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
                 type_info.* = .{ .base = .Nothing };
                 return type_info;
+            } else if (std.mem.eql(u8, fname, "std")) {
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
+                type_info.* = .{ .base = .String };
+                return type_info;
             }
 
             self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});

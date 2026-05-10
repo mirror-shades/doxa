@@ -94,7 +94,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 # a brainfuck interpreter implemented in doxa
 # mirror-shades
 
-module std from "std"
+module std from @std()
 
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
 

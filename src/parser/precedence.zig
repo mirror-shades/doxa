@@ -228,6 +228,7 @@ pub const rules = blk: {
     r.set(.ASSERT, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.PANIC, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.EXIT, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.STD, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // Add cast operator support
     r.set(.AS, .{ .infix = expr_parser.castExpr, .precedence = .CALL });

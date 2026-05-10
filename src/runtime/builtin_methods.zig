@@ -38,6 +38,7 @@ pub fn getMethodInfo(method_type: token.TokenType) ?*const BuiltinMethodInfo {
         .ASSERT => &METHODS[14],
         .PANIC => &METHODS[15],
         .EXIT => &METHODS[16],
+        .STD => &METHODS[17],
         else => null,
     };
 }
@@ -259,5 +260,13 @@ const METHODS = [_]BuiltinMethodInfo{
         .input_types = &[_]InputTypeSpec{Input{ .Union = &int_byte }},
         .return_type = T.Nothing,
         .can_panic = true,
+    },
+    .{
+        .name = "std",
+        .arg_count_min = 0,
+        .arg_count_max = 0,
+        .input_types = &[_]InputTypeSpec{},
+        .return_type = T.String,
+        .can_panic = false,
     },
 };

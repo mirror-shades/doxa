@@ -726,6 +726,13 @@ pub const CallsHandler = struct {
         {
             // Use centralized data structure for simple builtin calls
             _ = try self.generateSimpleBuiltinCall(name, builtin_data.arguments);
+        } else if (std.mem.eql(u8, name, "std")) {
+            const exe_dir = std.fs.selfExeDirPathAlloc(self.generator.allocator) catch return error.PermissionDenied;
+            defer self.generator.allocator.free(exe_dir);
+            const std_path = try std.fs.path.join(self.generator.allocator, &.{ exe_dir, "..", "lib", "std", "std.doxa" });
+            const path_value = HIRValue{ .string = std_path };
+            const const_idx = try self.generator.addConstant(path_value);
+            try self.generator.instructions.append(.{ .Const = .{ .value = path_value, .constant_id = const_idx } });
         } else {
             return error.NotImplemented;
         }

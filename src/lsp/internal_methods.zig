@@ -87,6 +87,11 @@ const METHODS = &[_]Method{
         .detail = "Abort execution with a message",
         .documentation = "**Input**: string\n**Output**: never\nAlways halts the program with the given message.",
     },
+    .{
+        .label = "@std",
+        .detail = "Return the path to the standard library root module",
+        .documentation = "**Input**: none\n**Output**: string\nReturns the filesystem path to std.doxa. Useful for module imports.",
+    },
 };
 
 pub fn all() []const Method {

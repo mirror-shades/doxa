@@ -21,6 +21,10 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
         return try parseExitMethod(self);
     }
 
+    if (method_tok.type == .STD) {
+        return try parseStdMethod(self);
+    }
+
     self.advance();
     if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
     self.advance();
@@ -305,5 +309,33 @@ pub fn parseExitMethod(self: *Parser) ErrorList!?*ast.Expr {
     };
 
     return exit_expr;
+}
+
+pub fn parseStdMethod(self: *Parser) ErrorList!?*ast.Expr {
+    const method_tok = self.peek();
+    self.advance();
+
+    if (self.peek().type != .LEFT_PAREN) {
+        return error.ExpectedLeftParen;
+    }
+    self.advance();
+
+    while (self.peek().type == .NEWLINE) self.advance();
+
+    if (self.peek().type != .RIGHT_PAREN) {
+        return error.ExpectedRightParen;
+    }
+    self.advance();
+
+    const std_expr = try self.allocator.create(ast.Expr);
+    std_expr.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .BuiltinCall = .{
+            .function = method_tok,
+            .arguments = &.{},
+        } },
+    };
+
+    return std_expr;
 }
 
