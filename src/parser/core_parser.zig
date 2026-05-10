@@ -14,28 +14,11 @@ const statement_parser = @import("statement_parser.zig");
 const expression_parser = @import("expression_parser.zig");
 const internal_call_parser = @import("internal_call_parser.zig");
 const module_resolver = @import("module_resolver.zig");
+const parser_types = @import("parser_types.zig");
 const Precedence = @import("./precedence.zig").Precedence;
 
-pub const ModuleResolutionStatus = enum {
-    NOT_STARTED,
-    IN_PROGRESS,
-    COMPLETED,
-};
-
-pub const ImportStackEntry = struct {
-    module_path: []const u8,
-    imported_from: ?[]const u8,
-
-    pub fn format(self: ImportStackEntry, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
-        if (self.imported_from) |from| {
-            try writer.print("{s} (imported from {s})", .{ self.module_path, from });
-        } else {
-            try writer.print("{s}", .{self.module_path});
-        }
-    }
-};
+pub const ModuleResolutionStatus = parser_types.ModuleResolutionStatus;
+pub const ImportStackEntry = parser_types.ImportStackEntry;
 
 pub const Parser = struct {
     tokens: []const token.Token,

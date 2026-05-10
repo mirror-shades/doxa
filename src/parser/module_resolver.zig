@@ -136,7 +136,7 @@ fn normalizeModulePath(self: *Parser, module_path: []const u8) ![]const u8 {
     return try self.allocator.dupe(u8, clean_path);
 }
 
-fn reportCircularImport(self: *Parser, current_module: []const u8) ErrorList!ast.ModuleInfo {
+pub fn reportCircularImport(self: *Parser, current_module: []const u8) ErrorList!ast.ModuleInfo {
     var error_msg = std.array_list.Managed(u8).init(self.allocator);
     defer error_msg.deinit();
 
@@ -157,14 +157,10 @@ fn reportCircularImport(self: *Parser, current_module: []const u8) ErrorList!ast
     return error.CircularImport;
 }
 
-const ModuleData = struct {
+pub const ModuleData = struct {
     source: []const u8,
     resolved_path: []const u8,
 };
-
-fn isReservedStdModule(module_name: []const u8) bool {
-    return std.mem.eql(u8, module_name, "std");
-}
 
 fn readModuleDataFromFile(alloc: std.mem.Allocator, file_path: []const u8) !ModuleData {
     var file = if (std.fs.path.isAbsolute(file_path))
@@ -195,30 +191,10 @@ fn readModuleDataFromFile(alloc: std.mem.Allocator, file_path: []const u8) !Modu
     };
 }
 
-fn tryLoadBundledStdModule(alloc: std.mem.Allocator) !?ModuleData {
-    const exe_dir = std.fs.selfExeDirPathAlloc(alloc) catch return null;
-    defer alloc.free(exe_dir);
-
-    const bundled_path = try std.fs.path.join(alloc, &.{ exe_dir, "..", "lib", "std", "std.doxa" });
-    defer alloc.free(bundled_path);
-    if (readModuleDataFromFile(alloc, bundled_path)) |data| {
-        return data;
-    } else |_| {}
-
-    return null;
-}
-
 pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorList!ModuleData {
     var clean_name = module_name;
     if (std.mem.startsWith(u8, clean_name, "./")) {
         clean_name = clean_name[2..];
-    }
-
-    if (isReservedStdModule(clean_name)) {
-        if (try tryLoadBundledStdModule(self.allocator)) |data| {
-            return data;
-        }
-        return error.ModuleNotFound;
     }
 
     // If the path is absolute, try reading it directly first
