@@ -97,6 +97,7 @@ pub const TokenType = enum {
     ASSERT, // @assert      - assert condition with message
     PANIC, // @panic       - panic with message
     EXIT, // @exit     - exit program
+    STD, // @std        - get path to standard library
 
     // keywords with alternate tokens
     AND, // and ∧

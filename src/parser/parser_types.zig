@@ -604,6 +604,9 @@ pub const Parser = struct {
         if (std.mem.eql(u8, name, "panic")) return .PANIC;
         if (std.mem.eql(u8, name, "assert")) return .ASSERT;
 
+        // System / introspection
+        if (std.mem.eql(u8, name, "std")) return .STD;
+
         return null;
     }
 
@@ -1246,6 +1249,15 @@ pub const Parser = struct {
                 return data;
             }
             return error.ModuleNotFound;
+        }
+
+        // If the path is absolute, try reading it directly first
+        if (std.fs.path.isAbsolute(clean_name)) {
+            if (readModuleDataFromFile(self.allocator, clean_name)) |data| {
+                return data;
+            } else |e| {
+                return e;
+            }
         }
 
         const has_doxa_ext = std.mem.endsWith(u8, clean_name, ".doxa");

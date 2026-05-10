@@ -62,7 +62,7 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
     }
     self.advance();
 
-    if (self.peek().type != .STRING) {
+    if (self.peek().type != .STRING and self.peek().type != .STD) {
         const current_token = self.peek();
         const location = Location{
             .file = self.current_file,
@@ -78,11 +78,21 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
         return error.ExpectedModulePath;
     }
 
-    var module_path = self.peek().lexeme;
-    if (module_path.len >= 2 and module_path[0] == '"' and module_path[module_path.len - 1] == '"') {
-        module_path = module_path[1 .. module_path.len - 1];
+    var module_path: []const u8 = undefined;
+    if (self.peek().type == .STRING) {
+        module_path = self.peek().lexeme;
+        if (module_path.len >= 2 and module_path[0] == '"' and module_path[module_path.len - 1] == '"') {
+            module_path = module_path[1 .. module_path.len - 1];
+        }
+        self.advance();
+    } else if (self.peek().type == .STD) {
+        self.advance(); // @std
+        if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
+        self.advance(); // (
+        if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+        self.advance(); // )
+        module_path = try resolveStdPath(self.allocator);
     }
-    self.advance();
 
     if (self.peek().type == .SEMICOLON) {
         self.advance();
@@ -479,4 +489,10 @@ fn registerPublicSymbols(self: *Parser, module_ast: *ast.Expr, module_path: []co
             }
         }
     }
+}
+
+fn resolveStdPath(allocator: std.mem.Allocator) ![]const u8 {
+    const exe_dir = std.fs.selfExeDirPathAlloc(allocator) catch return error.ModuleNotFound;
+    defer allocator.free(exe_dir);
+    return std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "std", "std.doxa" });
 }

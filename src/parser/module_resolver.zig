@@ -221,6 +221,15 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
         return error.ModuleNotFound;
     }
 
+    // If the path is absolute, try reading it directly first
+    if (std.fs.path.isAbsolute(clean_name)) {
+        if (readModuleDataFromFile(self.allocator, clean_name)) |data| {
+            return data;
+        } else |e| {
+            return e;
+        }
+    }
+
     const has_doxa_ext = std.mem.endsWith(u8, clean_name, ".doxa");
     const has_extension = has_doxa_ext;
 
