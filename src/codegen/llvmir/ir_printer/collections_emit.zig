@@ -1139,7 +1139,6 @@ pub fn Methods(comptime Ctx: type) type {
                     break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i8 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
                 },
                 .Float => {
-                    result_name = try self.nextTemp(id);
                     const pred = switch (cmp.op) {
                         .Eq => "oeq",
                         .Ne => "one",
@@ -1148,7 +1147,38 @@ pub fn Methods(comptime Ctx: type) type {
                         .Gt => "ogt",
                         .Ge => "oge",
                     };
-                    break :blk try std.fmt.allocPrint(self.allocator, "  {s} = fcmp {s} double {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
+                    const lhs_f64 = if (lhs.ty == .Value) lhs_blk: {
+                        const payload = try self.ensureI64(w, lhs, id);
+                        const tmp = try self.nextTemp(id);
+                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast i64 {s} to double\n", .{ tmp, payload.name });
+                        defer self.allocator.free(cast_line);
+                        try w.writeAll(cast_line);
+                        break :lhs_blk StackVal{ .name = tmp, .ty = .F64 };
+                    } else if (lhs.ty != .F64) lhs_blk: {
+                        const as_i64 = try self.ensureI64(w, lhs, id);
+                        const tmp = try self.nextTemp(id);
+                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ tmp, as_i64.name });
+                        defer self.allocator.free(cast_line);
+                        try w.writeAll(cast_line);
+                        break :lhs_blk StackVal{ .name = tmp, .ty = .F64 };
+                    } else lhs;
+                    const rhs_f64 = if (rhs.ty == .Value) rhs_blk: {
+                        const payload = try self.ensureI64(w, rhs, id);
+                        const tmp = try self.nextTemp(id);
+                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast i64 {s} to double\n", .{ tmp, payload.name });
+                        defer self.allocator.free(cast_line);
+                        try w.writeAll(cast_line);
+                        break :rhs_blk StackVal{ .name = tmp, .ty = .F64 };
+                    } else if (rhs.ty != .F64) rhs_blk: {
+                        const as_i64 = try self.ensureI64(w, rhs, id);
+                        const tmp = try self.nextTemp(id);
+                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ tmp, as_i64.name });
+                        defer self.allocator.free(cast_line);
+                        try w.writeAll(cast_line);
+                        break :rhs_blk StackVal{ .name = tmp, .ty = .F64 };
+                    } else rhs;
+                    result_name = try self.nextTemp(id);
+                    break :blk try std.fmt.allocPrint(self.allocator, "  {s} = fcmp {s} double {s}, {s}\n", .{ result_name, pred, lhs_f64.name, rhs_f64.name });
                 },
                 .Tetra => {
                     result_name = try self.nextTemp(id);

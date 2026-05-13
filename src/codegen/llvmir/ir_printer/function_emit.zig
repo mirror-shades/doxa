@@ -323,9 +323,30 @@ pub fn Methods(comptime Ctx: type) type {
                             defer self.allocator.free(ret_line);
                             try w.writeAll(ret_line);
                         } else {
-                            const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s}\n", .{return_type_str});
-                            defer self.allocator.free(ret_line);
-                            try w.writeAll(ret_line);
+                            if (target_return_stack_type == .Nothing) {
+                                try w.writeAll("  ret void\n");
+                            } else if (std.mem.indexOf(u8, return_type_str, "%DoxaValue") != null) {
+                                const zero = try self.nextTemp(&id);
+                                const zero_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} undef, i32 0, 0\n", .{ zero, return_type_str });
+                                defer self.allocator.free(zero_line);
+                                try w.writeAll(zero_line);
+                                const zero2 = try self.nextTemp(&id);
+                                const zero2_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i32 0, 1\n", .{ zero2, return_type_str, zero });
+                                defer self.allocator.free(zero2_line);
+                                try w.writeAll(zero2_line);
+                                const zero3 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const zero3_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 2\n", .{ zero3, return_type_str, zero2 });
+                                defer self.allocator.free(zero3_line);
+                                try w.writeAll(zero3_line);
+                                const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero3 });
+                                defer self.allocator.free(ret_line);
+                                try w.writeAll(ret_line);
+                            } else {
+                                const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} zeroinitializer\n", .{return_type_str});
+                                defer self.allocator.free(ret_line);
+                                try w.writeAll(ret_line);
+                            }
                         }
                         last_instruction_was_terminator = true;
                     },
@@ -369,6 +390,23 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(br_line);
                         stack.items.len = 0;
                         last_instruction_was_terminator = true;
+                    },
+                    .LoadModule => |lm| {
+                        const gname = lm.module_name;
+                        const st = self.global_types.get(gname) orelse .PTR;
+
+                        // Ensure the global is declared
+                        if (!self.defined_globals.contains(gname)) {
+                            _ = try self.global_types.put(gname, st);
+                            _ = try self.defined_globals.put(gname, true);
+                        }
+
+                        const gptr = try self.mangleGlobalName(gname);
+                        const struct_fields = self.global_struct_field_types.get(gname);
+                        const struct_names = self.global_struct_field_names.get(gname);
+                        const struct_type_name = self.global_struct_type_names.get(gname);
+                        try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                        last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
                         if (lv.scope_kind == .GlobalLocal) {
@@ -988,7 +1026,12 @@ pub fn Methods(comptime Ctx: type) type {
                         }
 
                         const func_info = if (c.function_index < hir.function_table.len)
-                            hir.function_table[c.function_index]
+                            blk: {
+                                const candidate = hir.function_table[c.function_index];
+                                if (std.mem.eql(u8, candidate.qualified_name, c.qualified_name))
+                                    break :blk candidate;
+                                break :blk null;
+                            }
                         else
                             null;
 
