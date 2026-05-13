@@ -212,6 +212,41 @@ pub fn Methods(comptime Ctx: type) type {
                 try self.collectFunctionStructReturnInfo(hir, func, &func_start_labels);
             }
 
+            // Pre-scan all function instructions to discover referenced globals
+            // before the global declaration pass. Functions may reference globals
+            // (e.g. module names via LoadModule) that need to be declared in the
+            // IR ahead of use.
+            for (hir.function_table) |func| {
+                const range = self.getFunctionRange(hir, func, &func_start_labels) orelse continue;
+                for (hir.instructions[range.start..range.end]) |inst| {
+                    switch (inst) {
+                        .PushStorageId => |psid| {
+                            if (psid.scope_kind == .GlobalLocal) {
+                                if (!self.defined_globals.contains(psid.var_name)) {
+                                    _ = try self.global_types.put(psid.var_name, .PTR);
+                                    _ = try self.defined_globals.put(psid.var_name, true);
+                                }
+                            }
+                        },
+                        .LoadVar => |lv| {
+                            if (lv.scope_kind == .GlobalLocal) {
+                                if (!self.defined_globals.contains(lv.var_name)) {
+                                    _ = try self.global_types.put(lv.var_name, .PTR);
+                                    _ = try self.defined_globals.put(lv.var_name, true);
+                                }
+                            }
+                        },
+                        .LoadModule => |lm| {
+                            if (!self.defined_globals.contains(lm.module_name)) {
+                                _ = try self.global_types.put(lm.module_name, .PTR);
+                                _ = try self.defined_globals.put(lm.module_name, true);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+
             var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
             defer peek_state.deinit();
 
@@ -1282,6 +1317,19 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.restoreStackForLabel(&merge_map, lbl.name, &stack, &id, w);
                     },
                     .Jump => |j| {
+                        if (std.mem.startsWith(u8, j.label, "and_end") or std.mem.startsWith(u8, j.label, "or_end")) {
+                            var i: usize = 0;
+                            while (i < stack.items.len) : (i += 1) {
+                                if (stack.items[i].ty == .I1) {
+                                    const converted_name = try self.nextTemp(&id);
+                                    const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ converted_name, stack.items[i].name });
+                                    defer self.allocator.free(zext_line);
+                                    try w.writeAll(zext_line);
+                                    stack.items[i].name = converted_name;
+                                    stack.items[i].ty = .I2;
+                                }
+                            }
+                        }
                         try self.recordStackForLabel(&merge_map, j.label, stack.items, current_block, &id, w);
                         const line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{j.label});
                         defer self.allocator.free(line);
@@ -1499,7 +1547,12 @@ pub fn Methods(comptime Ctx: type) type {
                         }
 
                         const func_info = if (c.function_index < hir.function_table.len)
-                            hir.function_table[c.function_index]
+                            blk: {
+                                const candidate = hir.function_table[c.function_index];
+                                if (std.mem.eql(u8, candidate.qualified_name, c.qualified_name))
+                                    break :blk candidate;
+                                break :blk null;
+                            }
                         else
                             null;
 
@@ -1954,6 +2007,23 @@ pub fn Methods(comptime Ctx: type) type {
                                 try stack.append(.{ .name = fallback, .ty = .I64 });
                             },
                         }
+                        last_instruction_was_terminator = false;
+                    },
+                    .LoadModule => |lm| {
+                        const gname = lm.module_name;
+                        const st = self.global_types.get(gname) orelse .PTR;
+
+                        // Ensure the global is declared
+                        if (!self.defined_globals.contains(gname)) {
+                            _ = try self.global_types.put(gname, st);
+                            _ = try self.defined_globals.put(gname, true);
+                        }
+
+                        const gptr = try self.mangleGlobalName(gname);
+                        const struct_fields = self.global_struct_field_types.get(gname);
+                        const struct_names = self.global_struct_field_names.get(gname);
+                        const struct_type_name = self.global_struct_type_names.get(gname);
+                        try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {

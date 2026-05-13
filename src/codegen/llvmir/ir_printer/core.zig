@@ -154,6 +154,126 @@ pub fn Methods(comptime Ctx: type) type {
                 return .{ .name = dv2, .ty = .Value };
             }
 
+            switch (target) {
+                .I8 => switch (incoming.ty) {
+                    .I64 => {
+                        const narrowed = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i8\n", .{ narrowed, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = narrowed, .ty = .I8 };
+                    },
+                    .I2 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i8\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .I8 };
+                    },
+                    .I1 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i8\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .I8 };
+                    },
+                    else => {},
+                },
+                .I2 => switch (incoming.ty) {
+                    .I64 => {
+                        const narrowed = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i2\n", .{ narrowed, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = narrowed, .ty = .I2 };
+                    },
+                    .I8 => {
+                        const narrowed = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i8 {s} to i2\n", .{ narrowed, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = narrowed, .ty = .I2 };
+                    },
+                    .I1 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .I2 };
+                    },
+                    else => {},
+                },
+                .I1 => switch (incoming.ty) {
+                    .I64 => {
+                        const narrowed = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i1\n", .{ narrowed, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = narrowed, .ty = .I1 };
+                    },
+                    .I8 => {
+                        const narrowed = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i8 {s} to i1\n", .{ narrowed, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = narrowed, .ty = .I1 };
+                    },
+                    .I2 => {
+                        const narrowed = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i2 {s} to i1\n", .{ narrowed, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = narrowed, .ty = .I1 };
+                    },
+                    else => {},
+                },
+                .I64 => switch (incoming.ty) {
+                    .I8 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i8 {s} to i64\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .I64 };
+                    },
+                    .I2 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i64\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .I64 };
+                    },
+                    .I1 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i64\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .I64 };
+                    },
+                    .PTR => {
+                        const as_i64 = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ as_i64, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = as_i64, .ty = .I64 };
+                    },
+                    else => {},
+                },
+                .PTR => switch (incoming.ty) {
+                    .I64 => {
+                        const as_ptr = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = as_ptr, .ty = .PTR };
+                    },
+                    .I1, .I2, .I8, .F64 => {
+                        return self.ensurePointer(w, incoming, id);
+                    },
+                    else => {},
+                },
+                else => {},
+            }
+
             return incoming;
         }
 

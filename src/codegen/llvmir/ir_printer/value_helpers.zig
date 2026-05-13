@@ -109,6 +109,13 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(line);
                 return .{ .name = tmp, .ty = .I64 };
             },
+            .Value => {
+                const tmp = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ tmp, value.name });
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                return .{ .name = tmp, .ty = .I64 };
+            },
             else => return value,
         }
     }
