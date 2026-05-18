@@ -136,7 +136,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64 }\n\n");
             try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n");
 
-            try w.writeAll("@tetra_not_lut = private constant [4 x i8] [i8 1, i8 0, i8 3, i8 2]\n");
+            try w.writeAll("@tetra_not_lut = private constant [4 x i8] [i8 1, i8 0, i8 2, i8 3]\n");
             try w.writeAll("@tetra_and_lut = private constant [4 x [4 x i8]] [\n");
             try w.writeAll("  [4 x i8] [i8 0, i8 0, i8 0, i8 0],\n");
             try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 2, i8 3],\n");
@@ -260,9 +260,25 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
-            if (!has_entry_function) {
-                try self.writeMainProgram(hir, w, functions_start_idx, &peek_state);
-            }
+            const entry_mangled_name_owned = if (entry_function_name) |name|
+                (if (std.mem.eql(u8, name, "main")) null else try std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{name}))
+            else
+                null;
+            defer if (entry_mangled_name_owned) |name| self.allocator.free(name);
+            const entry_mangled_name: ?[]const u8 = if (has_entry_function)
+                if (entry_function_name) |name|
+                    (if (std.mem.eql(u8, name, "main")) "doxa_user_main" else entry_mangled_name_owned.?)
+                else
+                    "doxa_user_main"
+            else
+                null;
+
+            const top_level_end_idx: usize = if (entry_mangled_name != null)
+                self.findTopLevelInitEnd(hir, functions_start_idx) orelse functions_start_idx
+            else
+                functions_start_idx;
+
+            try self.writeMainProgram(hir, w, top_level_end_idx, &peek_state, entry_mangled_name);
 
             if (self.defined_globals.count() > 0) {
                 try w.writeAll("\n");
@@ -284,29 +300,6 @@ pub fn Methods(comptime Ctx: type) type {
                 try self.writeFunction(hir, w, func, &func_start_labels, &peek_state);
             }
 
-            if (has_entry_function) {
-                const entry_mangled_name_owned = if (entry_function_name) |name|
-                    (if (std.mem.eql(u8, name, "main")) null else try std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{name}))
-                else
-                    null;
-                defer if (entry_mangled_name_owned) |name| self.allocator.free(name);
-                const entry_mangled_name = if (entry_function_name) |name|
-                    (if (std.mem.eql(u8, name, "main")) "doxa_user_main" else entry_mangled_name_owned.?)
-                else
-                    "doxa_user_main";
-
-                try w.writeAll("define i32 @main(i32 %argc, ptr %argv_raw) {\n");
-                try w.writeAll("entry:\n");
-                try w.writeAll("  call void @doxa_set_args(i32 %argc, ptr %argv_raw)\n");
-                var init_id: usize = 0;
-                try self.emitEnumInitCalls(w, &peek_state, &init_id);
-                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}()\n", .{entry_mangled_name});
-                defer self.allocator.free(call_line);
-                try w.writeAll(call_line);
-                try w.writeAll("  ret i32 0\n");
-                try w.writeAll("}\n");
-            }
-
             if (peek_state.globals.items.len > 0) {
                 try w.writeAll("\n");
                 for (peek_state.globals.items) |global_line| {
@@ -326,12 +319,28 @@ pub fn Methods(comptime Ctx: type) type {
             return hir.instructions.len;
         }
 
+        /// Index in `hir.instructions` of the synthetic `Call` to the entry function at the end of
+        /// the top-level program section (global init + main statements). Used to omit that call,
+        /// trailing `Pop`, and `Halt` when `@main` invokes the entry function directly.
+        pub fn findTopLevelInitEnd(self: *IRPrinter, hir: *const HIR.HIRProgram, limit: usize) ?usize {
+            _ = self;
+            for (hir.instructions[0..limit], 0..) |inst, idx| {
+                if (inst != .Call) continue;
+                const c = inst.Call;
+                if (c.function_index >= hir.function_table.len) continue;
+                const f = hir.function_table[c.function_index];
+                if (f.is_entry and std.mem.eql(u8, f.qualified_name, c.qualified_name)) return idx;
+            }
+            return null;
+        }
+
         pub fn writeMainProgram(
             self: *IRPrinter,
             hir: *const HIR.HIRProgram,
             w: anytype,
-            functions_start_idx: usize,
+            top_level_end_idx: usize,
             peek_state: *PeekEmitState,
+            entry_mangled_name: ?[]const u8,
         ) !void {
             try w.writeAll("define i32 @main(i32 %argc, ptr %argv_raw) {\n");
             try w.writeAll("entry:\n");
@@ -372,7 +381,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
             var dead_block_counter: usize = 0;
 
-            for (hir.instructions[0..functions_start_idx]) |inst| {
+            for (hir.instructions[0..top_level_end_idx]) |inst| {
                 const tag = std.meta.activeTag(inst);
                 const requires_new_block = switch (tag) {
                     .Label, .ExitScope => false,
@@ -2230,9 +2239,13 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .StoreDecl => |sd| {
+                        const store_decl_is_global = switch (sd.scope_kind) {
+                            .GlobalLocal, .ModuleGlobal => true,
+                            else => false,
+                        };
                         if (stack.items.len < 1) {
                             // For StoreDecl with empty stack (nothing), just declare the variable without initial value
-                            if (sd.scope_kind == .GlobalLocal) {
+                            if (store_decl_is_global) {
                                 const stack_type = self.hirTypeToStackType(sd.declared_type);
                                 _ = try self.global_types.put(sd.var_name, stack_type);
                                 _ = try self.defined_globals.put(sd.var_name, true);
@@ -2318,7 +2331,7 @@ pub fn Methods(comptime Ctx: type) type {
                         const target_ty: StackType = if (sd.declared_type == .Unknown) value.ty else declared_stack_type;
                         value = try self.coerceForStore(value, target_ty, &id, w);
                         const llvm_ty = self.stackTypeToLLVMType(target_ty);
-                        if (sd.scope_kind == .GlobalLocal) {
+                        if (store_decl_is_global) {
                             // Record global type and emit store to module-level global
                             _ = try self.global_types.put(sd.var_name, target_ty);
                             if (value.array_type) |array_type| {
@@ -2498,6 +2511,12 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                     },
                 }
+            }
+
+            if (entry_mangled_name) |mangled| {
+                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}()\n", .{mangled});
+                defer self.allocator.free(call_line);
+                try w.writeAll(call_line);
             }
 
             // Ensure a valid exit if control falls through

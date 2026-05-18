@@ -70,7 +70,25 @@ pub fn Methods(comptime Ctx: type) type {
                                 .Array => |inner| inner.*,
                                 else => null,
                             };
-                            const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = declared_stack_type, .array_type = array_hint };
+                            var struct_field_types: ?[]HIR.HIRType = null;
+                            var struct_field_names: ?[]const []const u8 = null;
+                            var struct_type_name: ?[]const u8 = null;
+                            if (sd.declared_type == .Struct) {
+                                const sid = sd.declared_type.Struct;
+                                struct_field_types = self.struct_fields_by_id.get(sid);
+                                struct_type_name = self.struct_type_names_by_id.get(sid);
+                                if (struct_type_name) |tn| {
+                                    struct_field_names = self.struct_field_names_by_type.get(tn);
+                                }
+                            }
+                            const info = VariableInfo{
+                                .ptr_name = ptr_name,
+                                .stack_type = declared_stack_type,
+                                .array_type = array_hint,
+                                .struct_field_types = struct_field_types,
+                                .struct_field_names = struct_field_names,
+                                .struct_type_name = struct_type_name,
+                            };
                             try variables_to_allocate.put(sd.var_name, info);
                         }
                     },
@@ -1674,6 +1692,45 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .LogicalOp => |lop| {
+                        if (lop.op == .Not) {
+                            if (stack.items.len < 1) continue;
+                            const v = stack.items[stack.items.len - 1];
+                            stack.items.len -= 1;
+
+                            if (v.ty == .I2) {
+                                const idx_i64 = try self.nextTemp(&id);
+                                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i64\n", .{ idx_i64, v.name });
+                                defer self.allocator.free(zext_line);
+                                try w.writeAll(zext_line);
+
+                                const lut_ptr = try self.nextTemp(&id);
+                                const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [4 x i8], ptr @tetra_not_lut, i64 0, i64 {s}\n", .{ lut_ptr, idx_i64 });
+                                defer self.allocator.free(gep_line);
+                                try w.writeAll(gep_line);
+
+                                const result_i8 = try self.nextTemp(&id);
+                                const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i8, ptr {s}\n", .{ result_i8, lut_ptr });
+                                defer self.allocator.free(load_line);
+                                try w.writeAll(load_line);
+
+                                const result_i2 = try self.nextTemp(&id);
+                                const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i8 {s} to i2\n", .{ result_i2, result_i8 });
+                                defer self.allocator.free(trunc_line);
+                                try w.writeAll(trunc_line);
+
+                                try stack.append(.{ .name = result_i2, .ty = .I2 });
+                            } else {
+                                const bool_val = try self.ensureBool(w, v, &id);
+                                const not_result = try self.nextTemp(&id);
+                                const not_line = try std.fmt.allocPrint(self.allocator, "  {s} = xor i1 {s}, true\n", .{ not_result, bool_val.name });
+                                defer self.allocator.free(not_line);
+                                try w.writeAll(not_line);
+                                try stack.append(.{ .name = not_result, .ty = .I1 });
+                            }
+                            last_instruction_was_terminator = false;
+                            continue;
+                        }
+
                         if (stack.items.len < 2) continue;
                         const rhs = stack.items[stack.items.len - 1];
                         const lhs = stack.items[stack.items.len - 2];
@@ -2301,11 +2358,12 @@ pub fn Methods(comptime Ctx: type) type {
                 .{ .name = "forall_quantifier_eq", .runtime = "doxa_forall_quantifier_eq" },
             };
             for (wrappers) |wrap| {
-                const header = try std.fmt.allocPrint(self.allocator, "define i2 @{s}(ptr %hdr, i64 %value) {{\n", .{wrap.name});
+                const header = try std.fmt.allocPrint(self.allocator, "define i2 @{s}(ptr %hdr, ptr %value) {{\n", .{wrap.name});
                 defer self.allocator.free(header);
                 try w.writeAll(header);
                 try w.writeAll("entry:\n");
-                const call_line = try std.fmt.allocPrint(self.allocator, "  %res = call i8 @{s}(ptr %hdr, i64 %value)\n", .{wrap.runtime});
+                try w.writeAll("  %value_bits = ptrtoint ptr %value to i64\n");
+                const call_line = try std.fmt.allocPrint(self.allocator, "  %res = call i8 @{s}(ptr %hdr, i64 %value_bits)\n", .{wrap.runtime});
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
                 try w.writeAll("  %cast = trunc i8 %res to i2\n");

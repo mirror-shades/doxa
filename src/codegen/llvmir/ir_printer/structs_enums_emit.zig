@@ -1,6 +1,15 @@
 const std = @import("std");
 const DoxaUnionMeta = @import("../../../runtime/doxa_rt.zig").DoxaUnionMeta;
 
+fn resolveStructFieldIndex(field_name: []const u8, field_names: ?[]const []const u8, hir_index: u32) u32 {
+    if (field_names) |names| {
+        for (names, 0..) |name, idx| {
+            if (std.mem.eql(u8, name, field_name)) return @intCast(idx);
+        }
+    }
+    return hir_index;
+}
+
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
     const HIR = Ctx.HIR;
@@ -980,31 +989,42 @@ pub fn Methods(comptime Ctx: type) type {
         if (struct_val.ty != .PTR) {
             var as_ptr = try self.ensurePointer(w, struct_val, id);
             as_ptr.struct_field_types = struct_val.struct_field_types;
+            as_ptr.struct_field_names = struct_val.struct_field_names;
+            as_ptr.struct_type_name = struct_val.struct_type_name;
             struct_val = as_ptr;
         }
 
-        const struct_type_llvm = try self.buildFallbackStructType(gf.field_index);
+        if (struct_val.struct_field_types == null) {
+            if (struct_val.struct_type_name) |tn| {
+                struct_val.struct_field_types = self.global_struct_field_types.get(tn);
+                struct_val.struct_field_names = self.struct_field_names_by_type.get(tn);
+            } else if (self.struct_fields_by_id.get(gf.struct_id)) |fts| {
+                struct_val.struct_field_types = fts;
+                struct_val.struct_type_name = self.struct_type_names_by_id.get(gf.struct_id);
+                if (struct_val.struct_type_name) |tn| {
+                    struct_val.struct_field_names = self.struct_field_names_by_type.get(tn);
+                }
+            }
+        }
+
+        const field_types: ?[]HIR.HIRType = struct_val.struct_field_types;
+        const field_count: usize = if (field_types) |fts| fts.len else @intCast(gf.field_index + 1);
+        const field_index: u32 = resolveStructFieldIndex(gf.field_name, struct_val.struct_field_names, gf.field_index);
+        if (field_index >= field_count) return error.StackUnderflow;
+
+        const struct_type_llvm = try self.buildI64StructType(field_count);
         defer self.allocator.free(struct_type_llvm);
-        const actual_struct_field_types: ?[]HIR.HIRType = struct_val.struct_field_types;
 
         // Get field type; prefer metadata from the struct value.
-        // If we don't have metadata, fall back to the HIR-provided field_type
-        // instead of blindly treating everything as int. This is critical for
-        // fields like strings/enums coming from arrays of structs (e.g. Animal[]).
-        const field_type: HIR.HIRType = if (actual_struct_field_types) |fts|
-            fts[@intCast(gf.field_index)]
-        else if (struct_val.struct_field_types) |fts|
-            fts[@intCast(gf.field_index)]
+        const field_type: HIR.HIRType = if (field_types) |fts|
+            fts[@intCast(field_index)]
         else if (gf.field_type != .Unknown and gf.field_type != .Nothing)
             gf.field_type
         else switch (gf.container_type) {
-            .Struct => |_| HIR.HIRType{ .Int = {} }, // Final conservative fallback
+            .Struct => |_| HIR.HIRType{ .Int = {} },
             else => HIR.HIRType{ .Int = {} },
         };
-        // Generate GEP to get field pointer
-        // IMPORTANT: If we're accessing a nested struct field (e.g., mike.person.age),
-        // we need to use the inner struct's type (Person) not the container's type (Employee)
-        // The struct_val.name is the pointer we're accessing, so we need to use the correct struct type
+
         const field_gep = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
         id.* += 1;
         defer self.allocator.free(field_gep);
@@ -1012,12 +1032,11 @@ pub fn Methods(comptime Ctx: type) type {
         const gep_line = try std.fmt.allocPrint(
             self.allocator,
             "  {s} = getelementptr inbounds {s}, ptr {s}, i32 0, i32 {d}\n",
-            .{ field_gep, struct_type_llvm, struct_val.name, gf.field_index },
+            .{ field_gep, struct_type_llvm, struct_val.name, field_index },
         );
         defer self.allocator.free(gep_line);
         try w.writeAll(gep_line);
 
-        // Load field value
         const field_val = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
         id.* += 1;
 
@@ -1031,11 +1050,17 @@ pub fn Methods(comptime Ctx: type) type {
 
         const storage = StackVal{ .name = field_val, .ty = .I64 };
         var pushed = try self.convertArrayStorageToValue(w, storage, field_type, id);
-        if (field_type == .Enum and struct_val.struct_type_name != null) {
-            if (self.struct_field_enum_type_names_by_type.get(struct_val.struct_type_name.?)) |enum_type_names| {
-                const idx: usize = @intCast(gf.field_index);
-                if (idx < enum_type_names.len) {
-                    pushed.enum_type_name = enum_type_names[idx];
+        if (field_type == .Enum) {
+            const type_name = struct_val.struct_type_name orelse blk: {
+                if (self.struct_type_names_by_id.get(gf.struct_id)) |tn| break :blk tn;
+                break :blk null;
+            };
+            if (type_name) |tn| {
+                if (self.struct_field_enum_type_names_by_type.get(tn)) |enum_type_names| {
+                    const idx: usize = @intCast(field_index);
+                    if (idx < enum_type_names.len) {
+                        pushed.enum_type_name = enum_type_names[idx];
+                    }
                 }
             }
         }
@@ -1063,25 +1088,36 @@ pub fn Methods(comptime Ctx: type) type {
             struct_val = as_ptr;
         }
 
-        const struct_type_llvm_set = try self.buildFallbackStructType(sf.field_index);
-        defer self.allocator.free(struct_type_llvm_set);
-        const actual_struct_field_types_set: ?[]HIR.HIRType = struct_val.struct_field_types;
+        if (struct_val.struct_field_types == null) {
+            if (struct_val.struct_type_name) |tn| {
+                struct_val.struct_field_types = self.global_struct_field_types.get(tn);
+                struct_val.struct_field_names = self.struct_field_names_by_type.get(tn);
+            } else if (self.struct_fields_by_id.get(sf.struct_id)) |fts| {
+                struct_val.struct_field_types = fts;
+                struct_val.struct_type_name = self.struct_type_names_by_id.get(sf.struct_id);
+                if (struct_val.struct_type_name) |tn| {
+                    struct_val.struct_field_names = self.struct_field_names_by_type.get(tn);
+                }
+            }
+        }
 
-        // Get field type; prefer metadata from the struct value.
-        // If metadata is missing, use the HIR field_type when available so that
-        // we store the correct representation (e.g. ptr for strings).
-        const field_type: HIR.HIRType = if (actual_struct_field_types_set) |fts|
-            fts[@intCast(sf.field_index)]
-        else if (struct_val.struct_field_types) |fts|
-            fts[@intCast(sf.field_index)]
+        const set_field_types: ?[]HIR.HIRType = struct_val.struct_field_types;
+        const set_field_count: usize = if (set_field_types) |fts| fts.len else @intCast(sf.field_index + 1);
+        const set_field_index: u32 = resolveStructFieldIndex(sf.field_name, struct_val.struct_field_names, sf.field_index);
+        if (set_field_index >= set_field_count) return error.StackUnderflow;
+
+        const struct_type_llvm_set = try self.buildI64StructType(set_field_count);
+        defer self.allocator.free(struct_type_llvm_set);
+
+        const field_type: HIR.HIRType = if (set_field_types) |fts|
+            fts[@intCast(set_field_index)]
         else if (sf.field_type != .Unknown and sf.field_type != .Nothing)
             sf.field_type
         else switch (sf.container_type) {
-            .Struct => |_| HIR.HIRType{ .Int = {} }, // Final conservative fallback
+            .Struct => |_| HIR.HIRType{ .Int = {} },
             else => HIR.HIRType{ .Int = {} },
         };
 
-        // Generate GEP to get field pointer
         const field_gep = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
         id.* += 1;
         defer self.allocator.free(field_gep);
@@ -1089,7 +1125,7 @@ pub fn Methods(comptime Ctx: type) type {
         const gep_line = try std.fmt.allocPrint(
             self.allocator,
             "  {s} = getelementptr inbounds {s}, ptr {s}, i32 0, i32 {d}\n",
-            .{ field_gep, struct_type_llvm_set, struct_val.name, sf.field_index },
+            .{ field_gep, struct_type_llvm_set, struct_val.name, set_field_index },
         );
         defer self.allocator.free(gep_line);
         try w.writeAll(gep_line);
