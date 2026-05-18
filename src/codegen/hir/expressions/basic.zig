@@ -64,18 +64,6 @@ pub const BasicExpressionHandler = struct {
 
     /// Generate HIR for variable access
     pub fn generateVariable(self: *BasicExpressionHandler, var_token: ast.Token) (std.mem.Allocator.Error || ErrorList)!void {
-        if (self.generator.isModuleNamespace(var_token.lexeme)) {
-            const bindings = try self.generator.resolveModuleBindings(var_token.lexeme);
-            try self.generator.instructions.append(.{
-                .LoadModule = .{
-                    .module_name = var_token.lexeme,
-                    .field_names = bindings.names,
-                    .field_slots = bindings.slots,
-                },
-            });
-            return;
-        }
-
         // Compile-time validation: Ensure variable has been declared
         const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
         if (maybe_idx) |existing_idx| {
@@ -110,6 +98,18 @@ pub const BasicExpressionHandler = struct {
                 try self.generator.instructions.append(load_var_inst);
             }
         } else {
+            if (self.generator.isModuleNamespace(var_token.lexeme)) {
+                const bindings = try self.generator.resolveModuleBindings(var_token.lexeme);
+                try self.generator.instructions.append(.{
+                    .LoadModule = .{
+                        .module_name = var_token.lexeme,
+                        .field_names = bindings.names,
+                        .field_slots = bindings.slots,
+                    },
+                });
+                return;
+            }
+
             // Check if this is an alias parameter that wasn't found in the symbol table
             if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
                 // For alias parameters, get the correct slot from the slot manager
