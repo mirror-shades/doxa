@@ -1,0 +1,3 @@
+pub function directValue() returns int {
+    return 3
+}

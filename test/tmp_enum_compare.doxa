@@ -1,0 +1,18 @@
+enum Color {
+    Red,
+    Green,
+}
+
+enum Stoplight {
+    Red,
+    Yellow,
+}
+
+entry function main() {
+    const a is Color.Red
+    const b is Stoplight.Red
+    const c is Color.Green
+
+    (a == b)?
+    (a == c)?
+}
