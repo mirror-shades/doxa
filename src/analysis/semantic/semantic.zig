@@ -328,16 +328,16 @@ pub const SemanticAnalyzer = struct {
                                         const ret_type2 = try allocator.create(HIRType);
                                         ret_type2.* = .Unknown;
                                         break :blk4 HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type2 } };
-                                },
-                                .Union => blk5: {
-                                    const unknown_type = try allocator.create(HIRType);
-                                    unknown_type.* = .Unknown;
-                                    break :blk5 HIRType{ .Union = .{ .id = 0, .members = &[_]*const HIRType{unknown_type} } };
-                                },
-                            };
-                            member_types[in] = member_type;
-                        }
-                        break :blk HIRType{ .Union = .{ .id = 0, .members = member_types } };
+                                    },
+                                    .Union => blk5: {
+                                        const unknown_type = try allocator.create(HIRType);
+                                        unknown_type.* = .Unknown;
+                                        break :blk5 HIRType{ .Union = .{ .id = 0, .members = &[_]*const HIRType{unknown_type} } };
+                                    },
+                                };
+                                member_types[in] = member_type;
+                            }
+                            break :blk HIRType{ .Union = .{ .id = 0, .members = member_types } };
                         } else {
                             break :blk .Unknown;
                         }
@@ -360,6 +360,11 @@ pub const SemanticAnalyzer = struct {
         const root_scope = try self.memory.scope_manager.createScope(null, self.memory);
         self.memory.scope_manager.root_scope = root_scope;
         self.current_scope = root_scope;
+
+        if (self.parser) |p| {
+            const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(p);
+            try parser_mut.ensureSpecificImports();
+        }
 
         // Process imported symbols to register their methods
         try self.processImportedSymbols();
@@ -2631,7 +2636,7 @@ pub const SemanticAnalyzer = struct {
                         } else if (expression.data == .Loop) {
                             // Handle each loops - check if they contain terminating returns
                             const loop_expr = expression.data.Loop;
-                        if (loop_expr.body.data == .Block) {
+                            if (loop_expr.body.data == .Block) {
                                 try self.findTerminatingReturns(loop_expr.body.data.Block.statements, terminating_return_type, all_return_types, false);
                             } else {
                                 // Single expression loop body

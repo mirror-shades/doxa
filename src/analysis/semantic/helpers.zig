@@ -533,11 +533,15 @@ pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
         if (result != null) return result;
     }
     if (self.parser) |parser| {
+        const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
+        _ = parser_mut.ensureImportedSymbol(name) catch false;
+
         if (parser.imported_symbols) |imported_symbols| {
             if (imported_symbols.get(name)) |imported_symbol| {
                 return createImportedSymbolVariable(self, name, imported_symbol);
             }
         }
+        _ = parser_mut.ensureModuleNamespace(name) catch null;
         if (parser.module_namespaces.contains(name)) {
             return createModuleNamespaceVariable(self, name);
         }
@@ -634,10 +638,13 @@ pub fn createModuleNamespaceVariable(self: *SemanticAnalyzer, name: []const u8) 
 
 pub fn isModuleNamespace(self: *SemanticAnalyzer, name: []const u8) bool {
     if (self.parser) |parser| {
+        const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
+        _ = parser_mut.ensureModuleNamespace(name) catch null;
         if (parser.module_namespaces.contains(name)) return true;
 
         if (std.mem.indexOfScalar(u8, name, '.')) |dot_idx| {
             const root = name[0..dot_idx];
+            _ = parser_mut.ensureModuleNamespace(root) catch null;
             if (parser.module_namespaces.contains(root)) return true;
             var it = parser.module_namespaces.iterator();
             while (it.next()) |entry| {
@@ -655,11 +662,14 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
     errdefer self.allocator.destroy(type_info);
 
     if (self.parser) |parser| {
+        const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
+        _ = parser_mut.ensureModuleNamespace(module_name) catch null;
         if (parser.module_namespaces.get(module_name)) |module_info| {
             for (module_info.imports) |import_info| {
                 if (!import_info.is_public or import_info.import_type != .Module) continue;
                 if (import_info.namespace_alias) |alias| {
                     if (std.mem.eql(u8, alias, field_name)) {
+                        _ = parser_mut.ensureNestedModuleNamespace(module_name, field_name) catch null;
                         const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name });
                         type_info.* = ast.TypeInfo{
                             .base = .Custom,
@@ -675,6 +685,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
         const nested_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name }) catch null;
         if (nested_name) |qualified| {
             defer self.allocator.free(qualified);
+            _ = parser_mut.ensureNestedModuleNamespace(module_name, field_name) catch null;
             if (parser.module_namespaces.contains(qualified)) {
                 const owned = try self.allocator.dupe(u8, qualified);
                 type_info.* = ast.TypeInfo{

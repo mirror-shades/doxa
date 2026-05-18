@@ -53,6 +53,19 @@ pub const ModuleImportEntry = struct {
     is_public: bool,
 };
 
+pub const SpecificImportEntry = struct {
+    importer_path: []const u8,
+    module_path: []const u8,
+    symbol_name: []const u8,
+    is_public: bool,
+};
+
+const PendingModuleDependency = struct {
+    module_path: []const u8,
+    alias: []const u8,
+    parent_file: []const u8,
+};
+
 pub const Parser = struct {
     tokens: []const token.Token,
     current: usize,
@@ -70,6 +83,7 @@ pub const Parser = struct {
     module_namespaces: std.StringHashMap(ModuleInfo),
 
     module_imports: std.StringHashMap(std.StringHashMap(ModuleImportEntry)),
+    specific_imports: std.StringHashMap(SpecificImportEntry),
 
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
@@ -89,6 +103,7 @@ pub const Parser = struct {
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap(ModuleImportEntry)).init(allocator),
+            .specific_imports = std.StringHashMap(SpecificImportEntry).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
             .declared_types = std.StringHashMap(void).init(allocator),
             .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
@@ -102,6 +117,7 @@ pub const Parser = struct {
         self.module_cache.deinit();
         self.module_namespaces.deinit();
         self.module_imports.deinit();
+        self.specific_imports.deinit();
         if (self.imported_symbols) |*imported_symbols| {
             imported_symbols.deinit();
         }
@@ -1282,101 +1298,244 @@ pub const Parser = struct {
         return length_expr;
     }
 
-    pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
+    pub fn registerModuleAlias(self: *Parser, importer_path: []const u8, namespace: []const u8, module_path: []const u8, is_public: bool) ErrorList!void {
+        try module_resolver.recordModuleImport(self, importer_path, namespace, module_path, is_public);
+        if (!self.module_namespaces.contains(namespace)) {
+            try self.module_namespaces.put(namespace, .{
+                .name = namespace,
+                .imports = &[_]ast.ImportInfo{},
+                .ast = null,
+                .file_path = module_path,
+                .symbols = null,
+            });
+        }
+    }
+
+    pub fn recordSpecificImport(self: *Parser, importer_path: []const u8, module_path: []const u8, symbol_name: []const u8, is_public: bool) ErrorList!void {
+        try self.specific_imports.put(symbol_name, .{
+            .importer_path = importer_path,
+            .module_path = module_path,
+            .symbol_name = symbol_name,
+            .is_public = is_public,
+        });
+    }
+
+    pub fn ensureModuleNamespace(self: *Parser, namespace: []const u8) ErrorList!?ast.ModuleInfo {
+        if (self.module_namespaces.get(namespace)) |existing| {
+            if (existing.ast != null) return existing;
+            const module_info = try self.loadAndRegisterModule(existing.file_path, namespace, null);
+            return module_info;
+        }
+        return null;
+    }
+
+    pub fn ensureNestedModuleNamespace(self: *Parser, module_name: []const u8, field_name: []const u8) ErrorList!?ast.ModuleInfo {
+        const parent_info = (try self.ensureModuleNamespace(module_name)) orelse return null;
+        for (parent_info.imports) |import| {
+            if (!import.is_public or import.import_type != .Module) continue;
+            const alias = import.namespace_alias orelse continue;
+            if (!std.mem.eql(u8, alias, field_name)) continue;
+
+            const qualified_alias = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name });
+            if (try self.namespaceChainContainsImport(module_name, import.module_path)) {
+                _ = self.reportCircularImport(import.module_path) catch {};
+                return error.CircularImport;
+            }
+            if (self.module_namespaces.get(qualified_alias)) |existing| {
+                if (existing.ast != null) return existing;
+            }
+
+            const previous_current_file = self.current_file;
+            const previous_current_file_uri = self.current_file_uri;
+            self.current_file = parent_info.file_path;
+            self.current_file_uri = try self.reporter.ensureFileUri(parent_info.file_path);
+            defer {
+                self.current_file = previous_current_file;
+                self.current_file_uri = previous_current_file_uri;
+            }
+
+            const child_info = try self.loadAndRegisterModule(import.module_path, qualified_alias, import.specific_symbol);
+            return child_info;
+        }
+        return null;
+    }
+
+    fn namespaceChainContainsImport(self: *Parser, module_name: []const u8, import_path: []const u8) !bool {
+        const target_key = try normalizedImportSuffix(self.allocator, import_path);
+        defer self.allocator.free(target_key);
+
+        var current_name = module_name;
+        while (true) {
+            if (self.module_namespaces.get(current_name)) |module_info| {
+                if (std.mem.endsWith(u8, module_info.file_path, target_key)) return true;
+            }
+
+            const dot_idx = std.mem.lastIndexOfScalar(u8, current_name, '.') orelse break;
+            current_name = current_name[0..dot_idx];
+        }
+
+        return false;
+    }
+
+    fn normalizedImportSuffix(allocator: std.mem.Allocator, module_path: []const u8) ![]const u8 {
+        var clean_path = module_path;
+        if (std.mem.startsWith(u8, clean_path, "./")) {
+            clean_path = clean_path[2..];
+        }
+        if (!std.mem.endsWith(u8, clean_path, ".doxa")) {
+            return try std.fmt.allocPrint(allocator, "{s}.doxa", .{clean_path});
+        }
+        return try allocator.dupe(u8, clean_path);
+    }
+
+    pub fn ensureImportedSymbol(self: *Parser, symbol_name: []const u8) ErrorList!bool {
+        if (self.imported_symbols) |symbols| {
+            if (symbols.contains(symbol_name)) return true;
+        }
+        const import_entry = self.specific_imports.get(symbol_name) orelse return false;
+        const previous_current_file = self.current_file;
+        const previous_current_file_uri = self.current_file_uri;
+        self.current_file = import_entry.importer_path;
+        self.current_file_uri = try self.reporter.ensureFileUri(import_entry.importer_path);
+        defer {
+            self.current_file = previous_current_file;
+            self.current_file_uri = previous_current_file_uri;
+        }
+        try self.loadAndRegisterSpecificSymbol(import_entry.module_path, import_entry.symbol_name);
+        return if (self.imported_symbols) |symbols| symbols.contains(symbol_name) else false;
+    }
+
+    pub fn ensureSpecificImports(self: *Parser) ErrorList!void {
+        var it = self.specific_imports.iterator();
+        while (it.next()) |entry| {
+            const import_entry = entry.value_ptr.*;
+            _ = try self.ensureImportedSymbol(import_entry.symbol_name);
+        }
+    }
+
+    pub fn ensureReachableModuleDependencies(self: *Parser) ErrorList!void {
+        var made_progress = true;
+        while (made_progress) {
+            made_progress = false;
+
+            var pending = std.array_list.Managed(PendingModuleDependency).init(self.allocator);
+            defer pending.deinit();
+
+            var it = self.module_namespaces.iterator();
+            while (it.next()) |entry| {
+                const module_info = entry.value_ptr.*;
+                if (!moduleContributesBodies(module_info)) continue;
+
+                for (module_info.imports) |import| {
+                    switch (import.import_type) {
+                        .Module => {
+                            const alias = import.namespace_alias orelse continue;
+                            if (self.module_namespaces.get(alias)) |existing| {
+                                if (existing.ast != null) continue;
+                            }
+                            try pending.append(.{
+                                .module_path = import.module_path,
+                                .alias = alias,
+                                .parent_file = module_info.file_path,
+                            });
+                        },
+                        .Specific => {
+                            if (import.specific_symbols) |symbols| {
+                                for (symbols) |symbol_name| {
+                                    try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public);
+                                }
+                            } else if (import.specific_symbol) |symbol_name| {
+                                try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public);
+                            }
+                        },
+                    }
+                }
+            }
+
+            try self.ensureSpecificImports();
+
+            for (pending.items) |dep| {
+                if (self.module_namespaces.get(dep.alias)) |existing| {
+                    if (existing.ast != null) continue;
+                }
+
+                {
+                    const previous_current_file = self.current_file;
+                    const previous_current_file_uri = self.current_file_uri;
+                    self.current_file = dep.parent_file;
+                    self.current_file_uri = try self.reporter.ensureFileUri(dep.parent_file);
+                    defer {
+                        self.current_file = previous_current_file;
+                        self.current_file_uri = previous_current_file_uri;
+                    }
+
+                    _ = try self.loadAndRegisterModule(dep.module_path, dep.alias, null);
+                }
+                made_progress = true;
+            }
+        }
+    }
+
+    fn moduleContributesBodies(module_info: ast.ModuleInfo) bool {
+        const module_ast = module_info.ast orelse return false;
+        if (module_ast.data != .Block) return false;
+        for (module_ast.data.Block.statements) |stmt| {
+            switch (stmt.data) {
+                .FunctionDecl, .VarDecl, .ZigDecl => return true,
+                else => {},
+            }
+        }
+        return false;
+    }
+
+    pub fn collectReachableModuleNamespaces(self: *Parser, allocator: std.mem.Allocator) !std.StringHashMap(ModuleInfo) {
+        var reachable = std.StringHashMap(ModuleInfo).init(allocator);
+        var it = self.module_namespaces.iterator();
+        while (it.next()) |entry| {
+            const module_info = entry.value_ptr.*;
+            if (module_info.ast == null) continue;
+            try reachable.put(entry.key_ptr.*, module_info);
+        }
+        return reachable;
+    }
+
+    pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!ast.ModuleInfo {
         const module_info = try module_resolver.resolveModule(self, module_path);
 
         try self.module_namespaces.put(namespace, module_info);
+        try self.registerPublicSymbols(module_info, module_path, namespace, specific_symbol);
 
-        if (module_info.imports.len > 0) {
-            for (module_info.imports) |import| {
-                if (import.namespace_alias) |alias| {
-                    if (std.mem.eql(u8, import.module_path, self.current_file)) continue;
+        return module_info;
+    }
 
-                    // Ensure local alias exists for module-internal references (e.g. math.add inside safeMath).
-                    if (!self.module_namespaces.contains(alias)) {
-                        if (self.module_cache.contains(import.module_path)) {
-                            const cached_module = self.module_cache.get(import.module_path).?;
-                            try self.module_namespaces.put(alias, cached_module);
-                        } else {
-                            const previous_current_file = self.current_file;
-                            const previous_current_file_uri = self.current_file_uri;
-                            self.current_file = module_info.file_path;
-                            self.current_file_uri = try self.reporter.ensureFileUri(module_info.file_path);
-                            defer {
-                                self.current_file = previous_current_file;
-                                self.current_file_uri = previous_current_file_uri;
-                            }
-                            try self.loadAndRegisterModule(import.module_path, alias, import.specific_symbol);
-                        }
-                    }
-
-                    // Public imports are additionally exposed as nested namespaces (e.g. std.io).
-                    if (import.is_public) {
-                        const qualified_alias = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, alias });
-                        if (!self.module_namespaces.contains(qualified_alias)) {
-                            if (self.module_cache.contains(import.module_path)) {
-                                const cached_module = self.module_cache.get(import.module_path).?;
-                                try self.module_namespaces.put(qualified_alias, cached_module);
-                            } else {
-                                const previous_current_file = self.current_file;
-                                const previous_current_file_uri = self.current_file_uri;
-                                self.current_file = module_info.file_path;
-                                self.current_file_uri = try self.reporter.ensureFileUri(module_info.file_path);
-                                defer {
-                                    self.current_file = previous_current_file;
-                                    self.current_file_uri = previous_current_file_uri;
-                                }
-                                try self.loadAndRegisterModule(import.module_path, qualified_alias, import.specific_symbol);
-                            }
-                        }
-                    }
-
-                    try module_resolver.recordModuleImport(self, module_path, alias, import.module_path, import.is_public);
-                }
-            }
+    fn registerPublicSymbols(self: *Parser, module_info: ast.ModuleInfo, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
+        if (self.imported_symbols == null) {
+            self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
         }
+        if (module_info.symbols == null) return;
 
-        if (module_info.ast != null and module_info.symbols != null) {
-            var it = module_info.symbols.?.iterator();
-            while (it.next()) |entry| {
-                const symbol = entry.value_ptr.*;
-                const symbol_name = entry.key_ptr.*;
-
-                if (symbol.is_public) {
-                    if (specific_symbol) |specific| {
-                        if (std.mem.eql(u8, specific, symbol_name)) {
-                            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, symbol_name });
-                            try self.imported_symbols.?.put(full_name, .{
-                                .kind = switch (symbol.kind) {
-                                    .Function => .Function,
-                                    .Variable => .Variable,
-                                    .Struct => .Struct,
-                                    .Enum => .Enum,
-                                },
-                                .name = symbol_name,
-                                .original_module = module_path,
-                                .enum_role = if (symbol.kind == .Enum) .Type else null,
-                                .enum_type_name = if (symbol.kind == .Enum) symbol_name else null,
-                            });
-                        }
-                    } else {
-                        const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, symbol_name });
-
-                        try self.imported_symbols.?.put(full_name, .{
-                            .kind = switch (symbol.kind) {
-                                .Function => .Function,
-                                .Variable => .Variable,
-                                .Struct => .Struct,
-                                .Enum => .Enum,
-                            },
-                            .name = symbol_name,
-                            .original_module = module_path,
-                            .enum_role = if (symbol.kind == .Enum) .Type else null,
-                            .enum_type_name = if (symbol.kind == .Enum) symbol_name else null,
-                        });
-                    }
-                }
+        var it = module_info.symbols.?.iterator();
+        while (it.next()) |entry| {
+            const symbol = entry.value_ptr.*;
+            const symbol_name = entry.key_ptr.*;
+            if (!symbol.is_public) continue;
+            if (specific_symbol) |specific| {
+                if (!std.mem.eql(u8, specific, symbol_name)) continue;
             }
+
+            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, symbol_name });
+            try self.imported_symbols.?.put(full_name, .{
+                .kind = switch (symbol.kind) {
+                    .Function => .Function,
+                    .Variable => .Variable,
+                    .Struct => .Struct,
+                    .Enum => .Enum,
+                },
+                .name = symbol_name,
+                .original_module = module_path,
+                .enum_role = if (symbol.kind == .Enum) .Type else null,
+                .enum_type_name = if (symbol.kind == .Enum) symbol_name else null,
+            });
         }
     }
 

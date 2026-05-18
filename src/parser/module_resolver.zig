@@ -98,7 +98,7 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
     module_block.* = .{
         .base = .{
             .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(self.peek()),
+            .span = null,
         },
         .data = .{
             .Block = .{
@@ -579,6 +579,23 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                 });
             }
             found_imports = true;
+        }
+    }
+
+    if (module_parser.specific_imports.count() > 0) {
+        var specific_it = module_parser.specific_imports.iterator();
+        while (specific_it.next()) |entry| {
+            const import_entry = entry.value_ptr.*;
+            const symbols = try self.allocator.alloc([]const u8, 1);
+            symbols[0] = import_entry.symbol_name;
+            try imports.append(ast.ImportInfo{
+                .import_type = .Specific,
+                .module_path = import_entry.module_path,
+                .namespace_alias = null,
+                .specific_symbols = symbols,
+                .specific_symbol = import_entry.symbol_name,
+                .is_public = import_entry.is_public,
+            });
         }
     }
 

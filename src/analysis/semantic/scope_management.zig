@@ -26,6 +26,9 @@ pub fn lookupVariable(
 
     // Check for imported symbols if not found in scope
     if (parser) |p| {
+        const p_mut: *Parser = @constCast(p);
+        _ = p_mut.ensureImportedSymbol(name) catch false;
+
         if (p.imported_symbols) |imported_symbols| {
             if (imported_symbols.get(name)) |imported_symbol| {
                 // Create a variable for the imported symbol
@@ -34,6 +37,7 @@ pub fn lookupVariable(
         }
 
         // Check for module namespaces
+        _ = p_mut.ensureModuleNamespace(name) catch null;
         if (p.module_namespaces.contains(name)) {
             // Create a variable for the module namespace
             return createModuleNamespaceVariable(current_scope, allocator, name);
@@ -73,6 +77,8 @@ pub fn createModuleNamespaceVariable(
 /// Helper function to check if a name is a module namespace
 pub fn isModuleNamespace(parser: ?*const Parser, name: []const u8) bool {
     if (parser) |p| {
+        const p_mut: *Parser = @constCast(p);
+        _ = p_mut.ensureModuleNamespace(name) catch null;
         if (p.module_namespaces.contains(name)) {
             return true;
         }
@@ -93,11 +99,14 @@ pub fn handleModuleFieldAccess(
     errdefer allocator.destroy(type_info);
 
     if (parser) |p| {
+        const p_mut: *Parser = @constCast(p);
+        _ = p_mut.ensureModuleNamespace(module_name) catch null;
         if (p.module_namespaces.get(module_name)) |module_info| {
             for (module_info.imports) |import_info| {
                 if (!import_info.is_public or import_info.import_type != .Module) continue;
                 if (import_info.namespace_alias) |alias| {
                     if (std.mem.eql(u8, alias, field_name)) {
+                        _ = p_mut.ensureNestedModuleNamespace(module_name, field_name) catch null;
                         type_info.* = ast.TypeInfo{
                             .base = .Custom,
                             .is_mutable = false,
@@ -112,6 +121,7 @@ pub fn handleModuleFieldAccess(
         const nested_name = std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_name, field_name }) catch null;
         if (nested_name) |qualified| {
             defer allocator.free(qualified);
+            _ = p_mut.ensureNestedModuleNamespace(module_name, field_name) catch null;
             if (p.module_namespaces.contains(qualified)) {
                 type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try allocator.dupe(u8, qualified) };
                 return type_info;
@@ -332,6 +342,8 @@ fn findModuleVariableTypeInfo(
     field_name: []const u8,
 ) !?ast.TypeInfo {
     const p = parser orelse return null;
+    const p_mut: *Parser = @constCast(p);
+    _ = p_mut.ensureModuleNamespace(module_name) catch null;
     const module_info = p.module_namespaces.get(module_name) orelse return null;
     const module_ast = module_info.ast orelse return null;
     if (module_ast.data != .Block) return null;

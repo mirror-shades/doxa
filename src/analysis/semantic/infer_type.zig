@@ -283,6 +283,10 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     if (helpers.isModuleNamespace(self, object_name) or imported_module_fn) {
                         const module_field_type = try helpers.handleModuleFieldAccess(self, object_name, method_name, .{ .location = getLocationFromBase(expr.base) });
                         if (module_field_type.base == .Function and module_field_type.function_type != null) {
+                            if (!try validateFunctionCallArguments(self, expr, function_call.arguments, module_field_type.function_type.?)) {
+                                type_info.base = .Nothing;
+                                return type_info;
+                            }
                             type_info.* = module_field_type.function_type.?.return_type.*;
                             return type_info;
                         }
@@ -307,6 +311,10 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (helpers.isModuleNamespace(self, ct_name)) {
                                 const module_field_type = try helpers.handleModuleFieldAccess(self, ct_name, method_name, .{ .location = getLocationFromBase(expr.base) });
                                 if (module_field_type.base == .Function and module_field_type.function_type != null) {
+                                    if (!try validateFunctionCallArguments(self, expr, function_call.arguments, module_field_type.function_type.?)) {
+                                        type_info.base = .Nothing;
+                                        return type_info;
+                                    }
                                     type_info.* = module_field_type.function_type.?.return_type.*;
                                     return type_info;
                                 }
@@ -2495,6 +2503,81 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
     try self.type_cache.put(expr.base.id, type_info);
     return type_info;
+}
+
+fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, arguments: []const ast.CallArgument, func_type: *const ast.FunctionType) SemanticError!bool {
+    const expected_arg_count: usize = func_type.params.len;
+    var provided_arg_count: usize = 0;
+    var has_placeholders: bool = false;
+    for (arguments) |arg_expr_it| {
+        if (arg_expr_it.expr.data != .DefaultArgPlaceholder) {
+            provided_arg_count += 1;
+        } else {
+            has_placeholders = true;
+        }
+    }
+
+    if (arguments.len > expected_arg_count) {
+        self.reporter.reportCompileError(
+            getLocationFromBase(expr.base),
+            ErrorCode.TOO_MANY_ARGUMENTS,
+            "Too many arguments: expected at most {}, got {}",
+            .{ expected_arg_count, arguments.len },
+        );
+        self.fatal_error = true;
+        return false;
+    }
+
+    if (provided_arg_count < expected_arg_count and !has_placeholders) {
+        self.reporter.reportCompileError(
+            getLocationFromBase(expr.base),
+            ErrorCode.TOO_FEW_ARGUMENTS,
+            "Too few arguments: expected {}, got {} (use ~ to explicitly skip parameters)",
+            .{ expected_arg_count, provided_arg_count },
+        );
+        self.fatal_error = true;
+        return false;
+    }
+
+    var param_index: usize = 0;
+    for (arguments) |arg_expr_it| {
+        if (arg_expr_it.expr.data == .DefaultArgPlaceholder) {
+            if (param_index < expected_arg_count) param_index += 1;
+            continue;
+        }
+        if (param_index >= expected_arg_count) break;
+
+        if (func_type.param_aliases != null and func_type.param_aliases.?[param_index] and !arg_expr_it.is_alias) {
+            self.reporter.reportCompileError(
+                getLocationFromBase(arg_expr_it.expr.base),
+                ErrorCode.ALIAS_PARAMETER_REQUIRED,
+                "Function parameter requires an alias argument (use ^ before the argument)",
+                .{},
+            );
+            self.fatal_error = true;
+            return false;
+        }
+
+        if (func_type.param_aliases != null and !func_type.param_aliases.?[param_index] and arg_expr_it.is_alias) {
+            self.reporter.reportCompileError(
+                getLocationFromBase(arg_expr_it.expr.base),
+                ErrorCode.ALIAS_ARGUMENT_NOT_NEEDED,
+                "Function parameter does not require an alias argument (remove ^ before the argument)",
+                .{},
+            );
+            self.fatal_error = true;
+            return false;
+        }
+
+        const arg_type = try infer_type.inferTypeFromExpr(self, arg_expr_it.expr);
+        if (func_type.params[param_index].base != .Nothing) {
+            var expected_type = func_type.params[param_index];
+            try helpers.unifyTypes(self, &expected_type, arg_type, .{ .location = getLocationFromBase(expr.base) });
+        }
+        param_index += 1;
+    }
+
+    return true;
 }
 
 const MapTypeResolution = struct {
