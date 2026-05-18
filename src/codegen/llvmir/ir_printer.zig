@@ -44,6 +44,7 @@ pub const IRPrinter = struct {
     pub const writeModule = ModuleLayoutMethods.writeModule;
     pub const writeMainProgram = ModuleLayoutMethods.writeMainProgram;
     pub const findFunctionsSectionStart = ModuleLayoutMethods.findFunctionsSectionStart;
+    pub const findTopLevelInitEnd = ModuleLayoutMethods.findTopLevelInitEnd;
     pub const getFunctionRange = ModuleLayoutMethods.getFunctionRange;
     pub const collectFunctionStructReturnInfo = ModuleLayoutMethods.collectFunctionStructReturnInfo;
     pub const collectStructFieldNames = ModuleLayoutMethods.collectStructFieldNames;
