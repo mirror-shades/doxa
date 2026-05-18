@@ -1,12 +1,14 @@
 *
 
-!docs/**
-!external/**
-!scripts/**
-!src/**
-!std/**
-!test/**
-!.github/**
+!*/
+
+!docs/
+!external/
+!scripts/
+!src/
+!std/
+!test/
+!.github/
 
 !.gitignore
 !build.zig
