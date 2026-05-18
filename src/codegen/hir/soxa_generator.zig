@@ -237,9 +237,28 @@ pub const HIRGenerator = struct {
             .constant_pool = try self.constant_manager.toOwnedSlice(),
             .string_pool = try self.string_pool.toOwnedSlice(),
             .function_table = function_table,
-            .module_map = std.StringHashMap(HIRProgram.ModuleInfo).init(self.allocator),
+            .module_map = try self.buildModuleMap(),
             .allocator = self.allocator,
         };
+    }
+
+    fn buildModuleMap(self: *HIRGenerator) !std.StringHashMap(HIRProgram.ModuleInfo) {
+        var module_map = std.StringHashMap(HIRProgram.ModuleInfo).init(self.allocator);
+        errdefer module_map.deinit();
+
+        var it = self.module_namespaces.iterator();
+        while (it.next()) |entry| {
+            const module_info = entry.value_ptr.*;
+            if (module_info.ast == null) continue;
+            try module_map.put(entry.key_ptr.*, .{
+                .name = entry.key_ptr.*,
+                .imports = &[_][]const u8{},
+                .exports = &[_][]const u8{},
+                .global_var_count = 0,
+            });
+        }
+
+        return module_map;
     }
 
     /// Pass 1: Collect function signatures for forward declarations

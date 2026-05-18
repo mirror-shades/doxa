@@ -161,7 +161,7 @@ fn writeBytecodeArtifact(bytecode_module: *BytecodeModule, path: []const u8) !vo
     try BytecodeWriter.writeBytecodeModuleToFile(bytecode_module, path);
 }
 
-fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
+fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
     var constant_folder = ConstantFolder.init(memoryManager.getAnalysisAllocator());
     var folded_statements = std.array_list.Managed(AST.Stmt).init(memoryManager.getAnalysisAllocator());
     defer folded_statements.deinit();
@@ -173,7 +173,7 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, par
     }
 
     const function_return_types = semantic_analyzer.getFunctionReturnTypes();
-    var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, parser.module_namespaces, parser.imported_symbols, function_return_types, semantic_analyzer);
+    var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, function_return_types, semantic_analyzer);
     defer hir_generator.deinit();
 
     hir_generator.type_system.function_signatures = &hir_generator.function_signatures;
@@ -208,7 +208,12 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, par
 }
 
 fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
-    var hir_program = try generateHIRProgram(memoryManager, statements, parser, semantic_analyzer, source_path, soxa_path, reporter);
+    _ = source_path;
+    _ = soxa_path;
+    try parser.ensureReachableModuleDependencies();
+    var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
+    defer reachable_modules.deinit();
+    var hir_program = try generateHIRProgram(memoryManager, statements, reachable_modules, parser, semantic_analyzer, reporter);
     defer hir_program.deinit();
 }
 
@@ -622,7 +627,10 @@ pub fn main() !void {
 
     const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa", cli_options.output_dir);
 
-    const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, &parser, &semantic_analyzer, &reporter);
+    try parser.ensureReachableModuleDependencies();
+    var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
+    defer reachable_modules.deinit();
+    const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, &reporter);
     exitIfCompileErrors(&reporter);
     try SoxaCompiler.writeSoxaFile(&hir_program_for_bytecode, soxa_path, path, memoryManager.getExecutionAllocator());
     profiler.stopPhase();

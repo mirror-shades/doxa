@@ -22,4 +22,5 @@ test "compile errors suite" {
 
 test {
     _ = @import("test/test_inline_zig.zig");
+    _ = @import("test/test_lazy_modules.zig");
 }

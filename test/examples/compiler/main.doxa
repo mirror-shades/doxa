@@ -5,8 +5,19 @@ step 2
 
 
 module Lexer from "./lexer/lexer.doxa"
+module std from @std()
+
+enum Error {
+    TOO_FEW_ARGS
+}
 
 entry function main() {
+    const argc is std.process.argc() as int else 0
+    for i while i < argc do i += 1 {
+        std.process.argv(i)?
+    }
+    if argc? < 2 then return Error.TOO_FEW_ARGS
+
     var program_src is "
     ...var hello is \"hello... world\"\n
     ...\n
