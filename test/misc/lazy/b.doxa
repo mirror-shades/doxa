@@ -1,0 +1,3 @@
+pub function value() returns int {
+    return 2
+}

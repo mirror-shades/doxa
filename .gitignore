@@ -2,13 +2,14 @@
 
 !*/
 
-!docs/
-!external/
-!scripts/
-!src/
-!std/
-!test/
-!.github/
+!docs/**
+!external/**
+!scripts/**
+!src/**
+!std/**
+!test/**
+test/out/
+!.github/**
 
 !.gitignore
 !build.zig
