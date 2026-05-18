@@ -16,7 +16,7 @@ pub fn lookupVariable(
     current_scope: ?*Memory.Scope,
     parser: ?*const Parser,
     allocator: std.mem.Allocator,
-    _: *Reporter,
+    reporter: *Reporter,
     name: []const u8,
 ) ?*Variable {
     if (current_scope) |scope| {
@@ -27,7 +27,10 @@ pub fn lookupVariable(
     // Check for imported symbols if not found in scope
     if (parser) |p| {
         const p_mut: *Parser = @constCast(p);
-        _ = p_mut.ensureImportedSymbol(name) catch false;
+        _ = p_mut.ensureImportedSymbol(name) catch |err| {
+            reportLazyModuleError(reporter, null, err);
+            return null;
+        };
 
         if (p.imported_symbols) |imported_symbols| {
             if (imported_symbols.get(name)) |imported_symbol| {
@@ -37,7 +40,10 @@ pub fn lookupVariable(
         }
 
         // Check for module namespaces
-        _ = p_mut.ensureModuleNamespace(name) catch null;
+        _ = p_mut.ensureModuleNamespace(name) catch |err| {
+            reportLazyModuleError(reporter, null, err);
+            return null;
+        };
         if (p.module_namespaces.contains(name)) {
             // Create a variable for the module namespace
             return createModuleNamespaceVariable(current_scope, allocator, name);
@@ -86,6 +92,14 @@ pub fn isModuleNamespace(parser: ?*const Parser, name: []const u8) bool {
     return false;
 }
 
+fn reportLazyModuleError(reporter: *Reporter, loc: ?Reporting.Location, err: anyerror) void {
+    switch (err) {
+        error.ModuleNotFound => reporter.reportCompileError(loc, ErrorCode.MODULE_NOT_FOUND, "Module could not be resolved during lazy loading", .{}),
+        error.CircularImport => reporter.reportCompileError(loc, ErrorCode.CIRCULAR_IMPORT, "Circular import detected during lazy loading", .{}),
+        else => reporter.reportCompileError(loc, ErrorCode.INTERNAL_ERROR, "Module resolution failed during lazy loading: {s}", .{@errorName(err)}),
+    }
+}
+
 /// Helper function to handle module field access (e.g., math.add)
 pub fn handleModuleFieldAccess(
     parser: ?*const Parser,
@@ -100,13 +114,19 @@ pub fn handleModuleFieldAccess(
 
     if (parser) |p| {
         const p_mut: *Parser = @constCast(p);
-        _ = p_mut.ensureModuleNamespace(module_name) catch null;
+        _ = p_mut.ensureModuleNamespace(module_name) catch |err| {
+            reportLazyModuleError(reporter, span.location, err);
+            return err;
+        };
         if (p.module_namespaces.get(module_name)) |module_info| {
             for (module_info.imports) |import_info| {
                 if (!import_info.is_public or import_info.import_type != .Module) continue;
                 if (import_info.namespace_alias) |alias| {
                     if (std.mem.eql(u8, alias, field_name)) {
-                        _ = p_mut.ensureNestedModuleNamespace(module_name, field_name) catch null;
+                        _ = p_mut.ensureNestedModuleNamespace(module_name, field_name) catch |err| {
+                            reportLazyModuleError(reporter, span.location, err);
+                            return err;
+                        };
                         type_info.* = ast.TypeInfo{
                             .base = .Custom,
                             .is_mutable = false,
@@ -121,7 +141,10 @@ pub fn handleModuleFieldAccess(
         const nested_name = std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_name, field_name }) catch null;
         if (nested_name) |qualified| {
             defer allocator.free(qualified);
-            _ = p_mut.ensureNestedModuleNamespace(module_name, field_name) catch null;
+            _ = p_mut.ensureNestedModuleNamespace(module_name, field_name) catch |err| {
+                reportLazyModuleError(reporter, span.location, err);
+                return err;
+            };
             if (p.module_namespaces.contains(qualified)) {
                 type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try allocator.dupe(u8, qualified) };
                 return type_info;

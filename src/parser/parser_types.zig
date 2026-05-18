@@ -83,7 +83,7 @@ pub const Parser = struct {
     module_namespaces: std.StringHashMap(ModuleInfo),
 
     module_imports: std.StringHashMap(std.StringHashMap(ModuleImportEntry)),
-    specific_imports: std.StringHashMap(SpecificImportEntry),
+    specific_imports: std.array_list.Managed(SpecificImportEntry),
 
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
@@ -103,7 +103,7 @@ pub const Parser = struct {
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap(ModuleImportEntry)).init(allocator),
-            .specific_imports = std.StringHashMap(SpecificImportEntry).init(allocator),
+            .specific_imports = std.array_list.Managed(SpecificImportEntry).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
             .declared_types = std.StringHashMap(void).init(allocator),
             .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
@@ -1312,7 +1312,16 @@ pub const Parser = struct {
     }
 
     pub fn recordSpecificImport(self: *Parser, importer_path: []const u8, module_path: []const u8, symbol_name: []const u8, is_public: bool) ErrorList!void {
-        try self.specific_imports.put(symbol_name, .{
+        for (self.specific_imports.items) |entry| {
+            if (std.mem.eql(u8, entry.importer_path, importer_path) and
+                std.mem.eql(u8, entry.module_path, module_path) and
+                std.mem.eql(u8, entry.symbol_name, symbol_name))
+            {
+                return;
+            }
+        }
+
+        try self.specific_imports.append(.{
             .importer_path = importer_path,
             .module_path = module_path,
             .symbol_name = symbol_name,
@@ -1337,7 +1346,7 @@ pub const Parser = struct {
             if (!std.mem.eql(u8, alias, field_name)) continue;
 
             const qualified_alias = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name });
-            if (try self.namespaceChainContainsImport(module_name, import.module_path)) {
+            if (try self.namespaceChainContainsImport(module_name, parent_info.file_path, import.module_path)) {
                 _ = self.reportCircularImport(import.module_path) catch {};
                 return error.CircularImport;
             }
@@ -1360,14 +1369,16 @@ pub const Parser = struct {
         return null;
     }
 
-    fn namespaceChainContainsImport(self: *Parser, module_name: []const u8, import_path: []const u8) !bool {
-        const target_key = try normalizedImportSuffix(self.allocator, import_path);
-        defer self.allocator.free(target_key);
+    fn namespaceChainContainsImport(self: *Parser, module_name: []const u8, importer_file: []const u8, import_path: []const u8) !bool {
+        const target_path = try normalizeImportPathForCycleCheck(self.allocator, importer_file, import_path);
+        defer self.allocator.free(target_path);
 
         var current_name = module_name;
         while (true) {
             if (self.module_namespaces.get(current_name)) |module_info| {
-                if (std.mem.endsWith(u8, module_info.file_path, target_key)) return true;
+                const current_path = try normalizeImportPathForCycleCheck(self.allocator, ".", module_info.file_path);
+                defer self.allocator.free(current_path);
+                if (std.mem.eql(u8, current_path, target_path)) return true;
             }
 
             const dot_idx = std.mem.lastIndexOfScalar(u8, current_name, '.') orelse break;
@@ -1377,38 +1388,61 @@ pub const Parser = struct {
         return false;
     }
 
-    fn normalizedImportSuffix(allocator: std.mem.Allocator, module_path: []const u8) ![]const u8 {
+    fn normalizeImportPathForCycleCheck(allocator: std.mem.Allocator, importer_file: []const u8, module_path: []const u8) ![]const u8 {
         var clean_path = module_path;
         if (std.mem.startsWith(u8, clean_path, "./")) {
             clean_path = clean_path[2..];
         }
         if (!std.mem.endsWith(u8, clean_path, ".doxa")) {
-            return try std.fmt.allocPrint(allocator, "{s}.doxa", .{clean_path});
+            clean_path = try std.fmt.allocPrint(allocator, "{s}.doxa", .{clean_path});
+        } else {
+            clean_path = try allocator.dupe(u8, clean_path);
         }
-        return try allocator.dupe(u8, clean_path);
+        defer allocator.free(clean_path);
+
+        if (std.fs.path.isAbsolute(clean_path)) {
+            return try std.fs.path.resolve(allocator, &.{clean_path});
+        }
+
+        const base_dir = std.fs.path.dirname(importer_file) orelse ".";
+        return try std.fs.path.resolve(allocator, &.{ base_dir, clean_path });
     }
 
     pub fn ensureImportedSymbol(self: *Parser, symbol_name: []const u8) ErrorList!bool {
         if (self.imported_symbols) |symbols| {
             if (symbols.contains(symbol_name)) return true;
         }
-        const import_entry = self.specific_imports.get(symbol_name) orelse return false;
-        const previous_current_file = self.current_file;
-        const previous_current_file_uri = self.current_file_uri;
-        self.current_file = import_entry.importer_path;
-        self.current_file_uri = try self.reporter.ensureFileUri(import_entry.importer_path);
-        defer {
-            self.current_file = previous_current_file;
-            self.current_file_uri = previous_current_file_uri;
+
+        var matched = false;
+        for (self.specific_imports.items) |import_entry| {
+            if (!std.mem.eql(u8, import_entry.symbol_name, symbol_name)) continue;
+            matched = true;
+
+            {
+                const previous_current_file = self.current_file;
+                const previous_current_file_uri = self.current_file_uri;
+                self.current_file = import_entry.importer_path;
+                self.current_file_uri = try self.reporter.ensureFileUri(import_entry.importer_path);
+                defer {
+                    self.current_file = previous_current_file;
+                    self.current_file_uri = previous_current_file_uri;
+                }
+                try self.loadAndRegisterSpecificSymbol(import_entry.module_path, import_entry.symbol_name);
+            }
+
+            if (self.imported_symbols) |symbols| {
+                if (symbols.contains(symbol_name)) return true;
+            }
         }
-        try self.loadAndRegisterSpecificSymbol(import_entry.module_path, import_entry.symbol_name);
+
+        if (!matched) return false;
         return if (self.imported_symbols) |symbols| symbols.contains(symbol_name) else false;
     }
 
     pub fn ensureSpecificImports(self: *Parser) ErrorList!void {
-        var it = self.specific_imports.iterator();
-        while (it.next()) |entry| {
-            const import_entry = entry.value_ptr.*;
+        var import_index: usize = 0;
+        while (import_index < self.specific_imports.items.len) : (import_index += 1) {
+            const import_entry = self.specific_imports.items[import_index];
             _ = try self.ensureImportedSymbol(import_entry.symbol_name);
         }
     }

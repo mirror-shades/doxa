@@ -582,10 +582,8 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
         }
     }
 
-    if (module_parser.specific_imports.count() > 0) {
-        var specific_it = module_parser.specific_imports.iterator();
-        while (specific_it.next()) |entry| {
-            const import_entry = entry.value_ptr.*;
+    if (module_parser.specific_imports.items.len > 0) {
+        for (module_parser.specific_imports.items) |import_entry| {
             const symbols = try self.allocator.alloc([]const u8, 1);
             symbols[0] = import_entry.symbol_name;
             try imports.append(ast.ImportInfo{
