@@ -347,6 +347,27 @@ pub const TypeSystem = struct {
         };
     }
 
+    /// Return type for internal / receiver method calls not handled by `module_call`.
+    pub fn inferInternalMethodCallReturnType(self: *TypeSystem, expr: *ast.Expr) HIRType {
+        const call = expr.data.FunctionCall;
+        return switch (call.callee.data) {
+            .InternalCall => |method| {
+                const method_name = method.method.lexeme;
+                if (std.mem.eql(u8, method_name, "substring")) return .String;
+                if (std.mem.eql(u8, method_name, "length")) return .Int;
+                if (std.mem.eql(u8, method_name, "bytes")) return .Unknown;
+                if (std.mem.eql(u8, method_name, "int")) return .Int;
+                if (std.mem.eql(u8, method_name, "float")) return .Float;
+                if (std.mem.eql(u8, method_name, "byte")) return .Byte;
+                if (self.function_signatures) |sigs| {
+                    if (sigs.get(method_name)) |info| return info.return_type;
+                }
+                return .Unknown;
+            },
+            else => .Unknown,
+        };
+    }
+
     pub fn inferTypeFromLiteral(_: *TypeSystem, literal: TokenLiteral) HIRType {
         return switch (literal) {
             .int => .Int,
@@ -684,46 +705,6 @@ pub const TypeSystem = struct {
                     return .Unknown;
                 }
 
-                return .Unknown;
-            },
-            .FunctionCall => |call| {
-                switch (call.callee.data) {
-                    .InternalCall => |method| {
-                        const method_name = method.method.lexeme;
-                        // Well-known type-conversion / intrinsic methods
-                        if (std.mem.eql(u8, method_name, "substring")) return .String;
-                        if (std.mem.eql(u8, method_name, "length")) return .Int;
-                        if (std.mem.eql(u8, method_name, "bytes")) return .Unknown;
-                        if (std.mem.eql(u8, method_name, "int")) return .Int;
-                        if (std.mem.eql(u8, method_name, "float")) return .Float;
-                        if (std.mem.eql(u8, method_name, "byte")) return .Byte;
-                        // Fall back to function_signatures for user-defined methods
-                        if (self.function_signatures) |sigs| {
-                            if (sigs.get(method_name)) |info| return info.return_type;
-                        }
-                    },
-                    .FieldAccess => |field| {
-                        const field_name = field.field.lexeme;
-                        // Try qualified name (e.g. "module.func")
-                        if (self.function_signatures) |sigs| {
-                            if (field.object.data == .Variable) {
-                                const obj_name = field.object.data.Variable.lexeme;
-                                // Build "obj.field" key – try stack buffer first
-                                var buf: [256]u8 = undefined;
-                                const qualified = std.fmt.bufPrint(&buf, "{s}.{s}", .{ obj_name, field_name }) catch field_name;
-                                if (sigs.get(qualified)) |info| return info.return_type;
-                            }
-                            if (sigs.get(field_name)) |info| return info.return_type;
-                        }
-                    },
-                    .Variable => |var_token| {
-                        // Look up user-defined / module function return type
-                        if (self.function_signatures) |sigs| {
-                            if (sigs.get(var_token.lexeme)) |info| return info.return_type;
-                        }
-                    },
-                    else => {},
-                }
                 return .Unknown;
             },
             .Logical => .Tetra,
