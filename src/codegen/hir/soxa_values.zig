@@ -28,6 +28,7 @@ pub const HIRArray = struct {
     elements: []HIRValue,
     element_type: HIRType,
     capacity: u32,
+    length: u32 = 0,
     path: ?[]const u8 = @as(?[]const u8, null),
     nested_element_type: ?HIRType = null, // For nested arrays: what type are the nested elements?
     storage_kind: ArrayStorageKind = .dynamic,
