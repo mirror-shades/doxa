@@ -93,6 +93,27 @@ test "lazy modules: direct imports materialize without transitive siblings" {
     try testing.expect(parser.module_cache.contains("direct.doxa"));
 }
 
+test "lazy modules: reachable dependencies follow body references" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false });
+    defer reporter.deinit();
+    var parsed = try parseSource(allocator, &reporter, "module parent from \"./uses_a_only.doxa\"\n", "test/misc/lazy/uses_a_only_user.doxa");
+    defer parsed.deinit();
+    const parser = &parsed.parser;
+
+    _ = try parser.ensureModuleNamespace("parent");
+    try testing.expect(parser.module_cache.contains("uses_a_only.doxa"));
+    try testing.expect(!parser.module_cache.contains("a.doxa"));
+    try testing.expect(!parser.module_cache.contains("b.doxa"));
+
+    try parser.ensureReachableModuleDependencies();
+    try testing.expect(parser.module_cache.contains("a.doxa"));
+    try testing.expect(!parser.module_cache.contains("b.doxa"));
+}
+
 test "lazy modules: duplicate specific symbol names keep distinct import entries" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

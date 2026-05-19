@@ -40,8 +40,8 @@ fn collectInlineZigDecls(
         });
     }
 
-    var cache_it = parser.module_cache.iterator();
-    while (cache_it.next()) |entry| {
+    var module_it = parser.module_namespaces.iterator();
+    while (module_it.next()) |entry| {
         const module_info = entry.value_ptr.*;
         if (module_info.ast) |module_ast| {
             if (module_ast.data != .Block) continue;

@@ -1463,6 +1463,7 @@ pub const Parser = struct {
                 for (module_info.imports) |import| {
                     switch (import.import_type) {
                         .Module => {
+                            if (!moduleReferencesImport(module_info, import)) continue;
                             const alias = import.namespace_alias orelse continue;
                             if (self.module_namespaces.get(alias)) |existing| {
                                 if (existing.ast != null) continue;
@@ -1476,9 +1477,11 @@ pub const Parser = struct {
                         .Specific => {
                             if (import.specific_symbols) |symbols| {
                                 for (symbols) |symbol_name| {
+                                    if (!moduleReferencesName(module_info, symbol_name)) continue;
                                     try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public);
                                 }
                             } else if (import.specific_symbol) |symbol_name| {
+                                if (!moduleReferencesName(module_info, symbol_name)) continue;
                                 try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public);
                             }
                         },
@@ -1508,6 +1511,183 @@ pub const Parser = struct {
                 made_progress = true;
             }
         }
+    }
+
+    fn moduleReferencesImport(module_info: ast.ModuleInfo, import: ast.ImportInfo) bool {
+        return switch (import.import_type) {
+            .Module => if (import.namespace_alias) |alias| moduleReferencesName(module_info, alias) else false,
+            .Specific => blk: {
+                if (import.specific_symbols) |symbols| {
+                    for (symbols) |symbol_name| {
+                        if (moduleReferencesName(module_info, symbol_name)) break :blk true;
+                    }
+                    break :blk false;
+                }
+                if (import.specific_symbol) |symbol_name| {
+                    break :blk moduleReferencesName(module_info, symbol_name);
+                }
+                break :blk false;
+            },
+        };
+    }
+
+    fn moduleReferencesName(module_info: ast.ModuleInfo, name: []const u8) bool {
+        const module_ast = module_info.ast orelse return false;
+        if (module_ast.data != .Block) return false;
+        return statementsReferenceName(module_ast.data.Block.statements, name);
+    }
+
+    fn statementsReferenceName(statements: []ast.Stmt, name: []const u8) bool {
+        for (statements) |stmt| {
+            if (stmtReferencesName(stmt, name)) return true;
+        }
+        return false;
+    }
+
+    fn stmtReferencesName(stmt: ast.Stmt, name: []const u8) bool {
+        return switch (stmt.data) {
+            .Expression => |maybe_expr| if (maybe_expr) |expr| exprReferencesName(expr, name) else false,
+            .VarDecl => |decl| if (decl.initializer) |initializer| exprReferencesName(initializer, name) else false,
+            .Block => |statements| statementsReferenceName(statements, name),
+            .FunctionDecl => |func| statementsReferenceName(func.body, name),
+            .Return => |ret| if (ret.value) |value| exprReferencesName(value, name) else false,
+            .MapDecl => |decl| if (decl.else_value) |else_value| exprReferencesName(else_value, name) else false,
+            .MapLiteral => |lit| blk: {
+                for (lit.entries) |entry| {
+                    if (exprReferencesName(entry.key, name) or exprReferencesName(entry.value, name)) break :blk true;
+                }
+                if (lit.else_value) |else_value| {
+                    if (exprReferencesName(else_value, name)) break :blk true;
+                }
+                break :blk false;
+            },
+            .Assert => |assert_stmt| exprReferencesName(assert_stmt.condition, name) or
+                (if (assert_stmt.message) |message| exprReferencesName(message, name) else false),
+            .Cast => |cast| exprReferencesName(cast.value, name) or
+                (if (cast.then_branch) |then_expr| exprReferencesName(then_expr, name) else false) or
+                (if (cast.else_branch) |else_expr| exprReferencesName(else_expr, name) else false),
+            else => false,
+        };
+    }
+
+    fn exprReferencesName(expr: *const ast.Expr, name: []const u8) bool {
+        return switch (expr.data) {
+            .Variable => |tok| std.mem.eql(u8, tok.lexeme, name),
+            .Binary => |binary| (if (binary.left) |left| exprReferencesName(left, name) else false) or
+                (if (binary.right) |right| exprReferencesName(right, name) else false),
+            .Unary => |unary| if (unary.right) |right| exprReferencesName(right, name) else false,
+            .Peek => |peek_expr| exprReferencesName(peek_expr.expr, name),
+            .Print => |print_expr| blk: {
+                if (print_expr.expr) |inner| {
+                    if (exprReferencesName(inner, name)) break :blk true;
+                }
+                if (print_expr.format_template) |template| {
+                    for (template.parts) |part| {
+                        switch (part) {
+                            .Expression => |part_expr| if (exprReferencesName(part_expr, name)) break :blk true,
+                            .String => {},
+                        }
+                    }
+                }
+                if (print_expr.arguments) |args| {
+                    for (args) |arg| {
+                        if (exprReferencesName(arg, name)) break :blk true;
+                    }
+                }
+                break :blk false;
+            },
+            .PeekStruct => |peek_struct| exprReferencesName(peek_struct.expr, name),
+            .Assignment => |assign_expr| std.mem.eql(u8, assign_expr.name.lexeme, name) or
+                (if (assign_expr.value) |value| exprReferencesName(value, name) else false),
+            .Grouping => |maybe_inner| if (maybe_inner) |inner| exprReferencesName(inner, name) else false,
+            .If => |if_expr| (if (if_expr.condition) |condition| exprReferencesName(condition, name) else false) or
+                (if (if_expr.then_branch) |then_branch| exprReferencesName(then_branch, name) else false) or
+                (if (if_expr.else_branch) |else_branch| exprReferencesName(else_branch, name) else false),
+            .Block => |block_expr| statementsReferenceName(block_expr.statements, name) or
+                (if (block_expr.value) |value| exprReferencesName(value, name) else false),
+            .Array => |items| blk: {
+                for (items) |item| {
+                    if (exprReferencesName(item, name)) break :blk true;
+                }
+                break :blk false;
+            },
+            .Struct => |fields| blk: {
+                for (fields) |field| {
+                    if (exprReferencesName(field.value, name)) break :blk true;
+                }
+                break :blk false;
+            },
+            .Index => |index_expr| exprReferencesName(index_expr.array, name) or exprReferencesName(index_expr.index, name),
+            .IndexAssign => |assign| exprReferencesName(assign.array, name) or
+                exprReferencesName(assign.index, name) or
+                exprReferencesName(assign.value, name),
+            .FunctionCall => |call_expr| blk: {
+                if (exprReferencesName(call_expr.callee, name)) break :blk true;
+                for (call_expr.arguments) |arg| {
+                    if (exprReferencesName(arg.expr, name)) break :blk true;
+                }
+                break :blk false;
+            },
+            .Logical => |logical| exprReferencesName(logical.left, name) or exprReferencesName(logical.right, name),
+            .FieldAccess => |field| exprReferencesName(field.object, name),
+            .StructLiteral => |literal| blk: {
+                if (std.mem.eql(u8, literal.name.lexeme, name)) break :blk true;
+                for (literal.fields) |field| {
+                    if (exprReferencesName(field.value, name)) break :blk true;
+                }
+                break :blk false;
+            },
+            .FieldAssignment => |field_assignment| exprReferencesName(field_assignment.object, name) or exprReferencesName(field_assignment.value, name),
+            .Exists => |exists| exprReferencesName(exists.array, name) or exprReferencesName(exists.condition, name),
+            .ForAll => |forall| exprReferencesName(forall.array, name) or exprReferencesName(forall.condition, name),
+            .Match => |match_expr| blk: {
+                if (exprReferencesName(match_expr.value, name)) break :blk true;
+                for (match_expr.cases) |case| {
+                    if (exprReferencesName(case.body, name)) break :blk true;
+                }
+                break :blk false;
+            },
+            .EnumMember => |tok| std.mem.eql(u8, tok.lexeme, name),
+            .BuiltinCall => |builtin_call| blk: {
+                for (builtin_call.arguments) |arg| {
+                    if (exprReferencesName(arg, name)) break :blk true;
+                }
+                break :blk false;
+            },
+            .Map => |map_expr| mapEntriesReferenceName(map_expr.entries, name),
+            .MapLiteral => |map_expr| mapEntriesReferenceName(map_expr.entries, name) or
+                (if (map_expr.else_value) |else_value| exprReferencesName(else_value, name) else false),
+            .InternalCall => |internal_call| blk: {
+                if (exprReferencesName(internal_call.receiver, name)) break :blk true;
+                for (internal_call.arguments) |arg| {
+                    if (exprReferencesName(arg, name)) break :blk true;
+                }
+                break :blk false;
+            },
+            .Increment => |inner| exprReferencesName(inner, name),
+            .Decrement => |inner| exprReferencesName(inner, name),
+            .CompoundAssign => |assign| std.mem.eql(u8, assign.name.lexeme, name) or
+                (if (assign.value) |value| exprReferencesName(value, name) else false),
+            .Assert => |assert_expr| exprReferencesName(assert_expr.condition, name) or
+                (if (assert_expr.message) |message| exprReferencesName(message, name) else false),
+            .Cast => |cast| exprReferencesName(cast.value, name) or
+                (if (cast.then_branch) |then_expr| exprReferencesName(then_expr, name) else false) or
+                (if (cast.else_branch) |else_expr| exprReferencesName(else_expr, name) else false),
+            .ReturnExpr => |ret| if (ret.value) |value| exprReferencesName(value, name) else false,
+            .Loop => |loop| (if (loop.var_decl) |var_decl| stmtReferencesName(var_decl.*, name) else false) or
+                (if (loop.condition) |condition| exprReferencesName(condition, name) else false) or
+                (if (loop.step) |step| exprReferencesName(step, name) else false) or
+                exprReferencesName(loop.body, name),
+            .Range => |range| exprReferencesName(range.start, name) or exprReferencesName(range.end, name),
+            else => false,
+        };
+    }
+
+    fn mapEntriesReferenceName(entries: []*ast.MapEntry, name: []const u8) bool {
+        for (entries) |entry| {
+            if (exprReferencesName(entry.key, name) or exprReferencesName(entry.value, name)) return true;
+        }
+        return false;
     }
 
     fn moduleContributesBodies(module_info: ast.ModuleInfo) bool {

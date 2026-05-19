@@ -161,6 +161,7 @@ fn arrayNew(vm: anytype, a: anytype) !void {
         .array = .{
             .elements = elements,
             .capacity = @intCast(initial_capacity),
+            .length = @intCast(requested_len),
             .element_type = a.element_type,
             .nested_element_type = a.nested_element_type,
             .storage_kind = storage_kind,
@@ -179,19 +180,13 @@ fn arrayGet(vm: anytype, a: anytype) !void {
 
     switch (array.value) {
         .array => |arr| {
-            var actual_length: u32 = 0;
-            for (arr.elements) |elem| {
-                if (elem == .nothing) break;
-                actual_length += 1;
-            }
+            const resolved_index = try resolveArrayIndex(index, arr.length);
 
-            const resolved_index = try resolveArrayIndex(index, actual_length);
-
-            if (a.bounds_check and resolved_index >= actual_length) {
+            if (a.bounds_check and resolved_index >= arr.length) {
                 return ErrorList.IndexOutOfBounds;
             }
 
-            const element = if (resolved_index < actual_length)
+            const element = if (resolved_index < arr.length)
                 arr.elements[resolved_index]
             else
                 getDefaultValue(arr.element_type);
@@ -272,6 +267,9 @@ fn arraySet(vm: anytype, a: anytype) !void {
             }
 
             mutable_arr.elements[index_val] = value.value;
+            if (index_val >= mutable_arr.length) {
+                mutable_arr.length = index_val + 1;
+            }
 
             const updated_array = HIRValue{ .array = mutable_arr };
             try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
@@ -295,24 +293,20 @@ fn arrayPop(vm: anytype) !void {
             var mutable_arr = arr;
             mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
 
-            var last_index: ?u32 = null;
-            for (mutable_arr.elements, 0..) |elem, i| {
-                if (elem == .nothing) break;
-                last_index = @intCast(i);
-            }
-
-            if (last_index) |idx| {
-                const last_element = mutable_arr.elements[idx];
-
-                mutable_arr.elements[idx] = nothing_value;
-
-                const updated_array = HIRValue{ .array = mutable_arr };
-                try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
-
-                try vm.stack.push(HIRFrame.initFromHIRValue(last_element));
-            } else {
+            if (mutable_arr.length == 0) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from empty array", .{});
             }
+
+            mutable_arr.length -= 1;
+            const last_idx = mutable_arr.length;
+            const last_element = mutable_arr.elements[last_idx];
+
+            mutable_arr.elements[last_idx] = nothing_value;
+
+            const updated_array = HIRValue{ .array = mutable_arr };
+            try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
+
+            try vm.stack.push(HIRFrame.initFromHIRValue(last_element));
         },
         .string => |s_val| {
             if (s_val.len == 0) {
@@ -379,11 +373,7 @@ fn arrayInsert(vm: anytype) !void {
 
     switch (container.value) {
         .array => |arr| {
-            var logical_len: u32 = 0;
-            for (arr.elements) |elem| {
-                if (elem == .nothing) break;
-                logical_len += 1;
-            }
+            const logical_len = arr.length;
 
             if (index_val > logical_len) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {} (length: {})", .{ index_val, logical_len });
@@ -422,6 +412,7 @@ fn arrayInsert(vm: anytype) !void {
             }
 
             mutable_arr.elements[index_val] = value.value;
+            mutable_arr.length += 1;
 
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
         },
@@ -479,11 +470,7 @@ fn arrayRemove(vm: anytype) !void {
 
     switch (container.value) {
         .array => |arr| {
-            var logical_len: u32 = 0;
-            for (arr.elements) |elem| {
-                if (elem == .nothing) break;
-                logical_len += 1;
-            }
+            const logical_len = arr.length;
             if (index_val >= logical_len) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {} (length: {})", .{ index_val, logical_len });
             }
@@ -495,6 +482,7 @@ fn arrayRemove(vm: anytype) !void {
                 mutable_arr.elements[i] = mutable_arr.elements[i + 1];
             }
             mutable_arr.elements[logical_len - 1] = nothing_value;
+            mutable_arr.length -= 1;
 
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
             try vm.stack.push(HIRFrame.initFromHIRValue(removed_elem));
@@ -572,11 +560,7 @@ fn arraySlice(vm: anytype) !void {
 
     switch (container.value) {
         .array => |arr| {
-            var logical_len: u32 = 0;
-            for (arr.elements) |elem| {
-                if (elem == .nothing) break;
-                logical_len += 1;
-            }
+            const logical_len = arr.length;
 
             if (start_val > logical_len) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array start index out of bounds: {} (length: {})", .{ start_val, logical_len });
@@ -593,6 +577,7 @@ fn arraySlice(vm: anytype) !void {
             const sliced_arr = HIRValue{ .array = .{
                 .elements = sliced_elements,
                 .capacity = length_val,
+                .length = length_val,
                 .element_type = arr.element_type,
             } };
 
@@ -620,12 +605,7 @@ fn arrayLen(vm: anytype) !void {
     const value = try vm.stack.pop();
     switch (value.value) {
         .array => |arr| {
-            var length: u32 = 0;
-            for (arr.elements) |elem| {
-                if (elem == .nothing) break;
-                length += 1;
-            }
-            try vm.stack.push(HIRFrame.initInt(@as(i64, @intCast(length))));
+            try vm.stack.push(HIRFrame.initInt(@as(i64, @intCast(arr.length))));
         },
         .string => |s| {
             try vm.stack.push(HIRFrame.initInt(@as(i64, @intCast(s.len))));
@@ -644,18 +624,8 @@ fn arrayConcat(vm: anytype) !void {
         .array => |arr_a| {
             switch (b.value) {
                 .array => |arr_b| {
-                    // Calculate lengths
-                    var len_a: u32 = 0;
-                    for (arr_a.elements) |elem| {
-                        if (elem == .nothing) break;
-                        len_a += 1;
-                    }
-
-                    var len_b: u32 = 0;
-                    for (arr_b.elements) |elem| {
-                        if (elem == .nothing) break;
-                        len_b += 1;
-                    }
+                    const len_a = arr_a.length;
+                    const len_b = arr_b.length;
 
                     const new_elements = try vm.runtimeAllocator().alloc(HIRValue, len_a + len_b);
 
@@ -671,6 +641,7 @@ fn arrayConcat(vm: anytype) !void {
                         .array = .{
                             .elements = new_elements,
                             .capacity = len_a + len_b,
+                            .length = len_a + len_b,
                             .element_type = arr_a.element_type,
                         },
                     };
@@ -714,14 +685,7 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
                 coerced_element = coerceNestedArrayElement(element_value, mutable_arr.element_type);
             }
 
-            var insert_index: u32 = 0;
-            for (mutable_arr.elements, 0..) |elem, i| {
-                if (elem == .nothing) {
-                    insert_index = @intCast(i);
-                    break;
-                }
-                insert_index = @intCast(i + 1);
-            }
+            const insert_index = mutable_arr.length;
 
             if (insert_index >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, insert_index + 1);
@@ -735,6 +699,7 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
             }
 
             mutable_arr.elements[insert_index] = coerced_element;
+            mutable_arr.length += 1;
 
             const updated_array = HIRValue{ .array = mutable_arr };
             try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
@@ -797,6 +762,7 @@ fn arrayRange(vm: anytype, r: anytype) !void {
         .array = .{
             .elements = elements,
             .capacity = size,
+            .length = size,
             .element_type = r.element_type,
         },
     };
@@ -817,6 +783,7 @@ fn getDefaultValue(hir_type: HIRType) HIRValue {
             .elements = &[_]HIRValue{},
             .element_type = .Unknown,
             .capacity = 0,
+            .length = 0,
         } },
         .Struct => HIRValue{ .struct_instance = .{
             .type_name = "",
@@ -901,6 +868,9 @@ fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
                 }
             }
             mutable_arr.elements[index_val] = result;
+            if (index_val >= mutable_arr.length) {
+                mutable_arr.length = index_val + 1;
+            }
 
             try vm.stack.push(HIRFrame.initFromHIRValue(result));
         },
@@ -972,6 +942,9 @@ fn arrayGetAndSub(vm: anytype, a: anytype) !void {
                 }
             }
             mutable_arr.elements[index_val] = result;
+            if (index_val >= mutable_arr.length) {
+                mutable_arr.length = index_val + 1;
+            }
 
             try vm.stack.push(HIRFrame.initFromHIRValue(result));
         },
@@ -1043,6 +1016,9 @@ fn arrayGetAndMul(vm: anytype, a: anytype) !void {
                 }
             }
             mutable_arr.elements[index_val] = result;
+            if (index_val >= mutable_arr.length) {
+                mutable_arr.length = index_val + 1;
+            }
 
             try vm.stack.push(HIRFrame.initFromHIRValue(result));
         },
@@ -1134,6 +1110,9 @@ fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
                 }
             }
             mutable_arr.elements[index_val] = result;
+            if (index_val >= mutable_arr.length) {
+                mutable_arr.length = index_val + 1;
+            }
 
             try vm.stack.push(HIRFrame.initFromHIRValue(result));
         },
@@ -1222,6 +1201,9 @@ fn arrayGetAndMod(vm: anytype, a: anytype) !void {
                 }
             }
             mutable_arr.elements[index_val] = result;
+            if (index_val >= mutable_arr.length) {
+                mutable_arr.length = index_val + 1;
+            }
 
             try vm.stack.push(HIRFrame.initFromHIRValue(result));
         },
@@ -1264,31 +1246,30 @@ fn arrayGetAndPow(vm: anytype, a: anytype) !void {
 
             const result = switch (current_element) {
                 .int => |current| blk: {
-                    const exp_i: i64 = switch (value.value) {
+                    const exponent = switch (value.value) {
                         .int => |v| v,
                         .byte => |v| @as(i64, v),
-                        .float => |v| @as(i64, @intFromFloat(v)),
                         else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid exponent for int: {s}", .{@tagName(value.value)}),
                     };
-                    break :blk HIRValue{ .int = std.math.pow(i64, current, exp_i) };
+                    break :blk HIRValue{ .int = std.math.pow(i64, current, @intCast(exponent)) };
                 },
                 .byte => |current| blk: {
-                    const exp_b: u8 = switch (value.value) {
+                    const exponent: u8 = switch (value.value) {
                         .int => |v| @as(u8, @intCast(if (v < 0) 0 else v)),
                         .byte => |v| v,
                         else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid exponent for byte: {s}", .{@tagName(value.value)}),
                     };
-                    const p: u32 = std.math.pow(u32, @as(u32, current), @as(u32, exp_b));
+                    const p: u32 = std.math.pow(u32, @as(u32, current), @as(u32, exponent));
                     break :blk HIRValue{ .byte = if (p > 255) 255 else @intCast(p) };
                 },
                 .float => |current| blk: {
-                    const exp_f = switch (value.value) {
+                    const exponent = switch (value.value) {
                         .int => |v| @as(f64, @floatFromInt(v)),
                         .byte => |v| @as(f64, @floatFromInt(v)),
                         .float => |v| v,
                         else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid exponent for float: {s}", .{@tagName(value.value)}),
                     };
-                    break :blk HIRValue{ .float = std.math.pow(f64, current, exp_f) };
+                    break :blk HIRValue{ .float = std.math.pow(f64, current, exponent) };
                 },
                 else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
             };
@@ -1303,6 +1284,9 @@ fn arrayGetAndPow(vm: anytype, a: anytype) !void {
                 }
             }
             mutable_arr.elements[index_val] = result;
+            if (index_val >= mutable_arr.length) {
+                mutable_arr.length = index_val + 1;
+            }
 
             try vm.stack.push(HIRFrame.initFromHIRValue(result));
         },

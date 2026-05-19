@@ -1079,9 +1079,10 @@ pub const VM = struct {
         switch (array_frame.value) {
             .array => |arr| {
                 var result = if (is_exists) false else true;
-
-                for (arr.elements) |*element| {
-                    if (element.* == .nothing) break;
+                const arr_len = arr.length;
+                var i: u32 = 0;
+                while (i < arr_len) : (i += 1) {
+                    const element = &arr.elements[i];
                     const predicate_ptr = try self.runtimeAllocator().create(HIRValue);
                     predicate_ptr.* = predicate;
                     defer self.runtimeAllocator().destroy(predicate_ptr);
@@ -1261,12 +1262,7 @@ pub const VM = struct {
             const value = try self.stack.pop();
             switch (value.value) {
                 .array => |arr| {
-                    var length: usize = 0;
-                    for (arr.elements) |elem| {
-                        if (elem == .nothing) break;
-                        length += 1;
-                    }
-                    try self.stack.push(HIRFrame.initInt(@intCast(length)));
+                    try self.stack.push(HIRFrame.initInt(@intCast(arr.length)));
                 },
                 else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "length: argument must be array", .{}),
             }
@@ -1280,11 +1276,7 @@ pub const VM = struct {
             switch (array_frame.value) {
                 .array => |arr| {
                     var mutable_arr = arr;
-                    var length: usize = 0;
-                    for (mutable_arr.elements) |elem| {
-                        if (elem == .nothing) break;
-                        length += 1;
-                    }
+                    const length = mutable_arr.length;
 
                     if (length >= mutable_arr.capacity) {
                         const new_capacity = @max(mutable_arr.capacity * 2, mutable_arr.capacity + 1);
@@ -1296,6 +1288,7 @@ pub const VM = struct {
                     }
 
                     mutable_arr.elements[length] = element.value;
+                    mutable_arr.length += 1;
                     if (length + 1 < mutable_arr.elements.len) {
                         mutable_arr.elements[length + 1] = HIRValue.nothing;
                     }
@@ -1354,8 +1347,10 @@ pub const VM = struct {
             switch (array_frame.value) {
                 .array => |arr| {
                     var found = false;
-                    for (arr.elements) |elem| {
-                        if (elem == .nothing) break;
+                    const arr_len = arr.length;
+                    var j: u32 = 0;
+                    while (j < arr_len) : (j += 1) {
+                        const elem = arr.elements[j];
                         const satisfies = switch (elem) {
                             .int => |elem_int| switch (comparison_value.value) {
                                 .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
@@ -1395,10 +1390,11 @@ pub const VM = struct {
             switch (array_frame.value) {
                 .array => |arr| {
                     var all_satisfy = true;
-                    var has_elements = false;
-                    for (arr.elements) |elem| {
-                        if (elem == .nothing) break;
-                        has_elements = true;
+                    var has_elements = arr.length > 0;
+                    const arr_len = arr.length;
+                    var k: u32 = 0;
+                    while (k < arr_len) : (k += 1) {
+                        const elem = arr.elements[k];
                         const satisfies = switch (elem) {
                             .int => |elem_int| switch (comparison_value.value) {
                                 .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
@@ -1472,7 +1468,9 @@ pub const VM = struct {
                     for (mutable_arr.elements) |*elem| {
                         elem.* = HIRValue.nothing;
                     }
-                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
+                    var updated = mutable_arr;
+                    updated.length = 0;
+                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = updated }));
                 },
                 .string => |_| {
                     const empty = "";
@@ -1491,13 +1489,12 @@ pub const VM = struct {
             switch (coll.value) {
                 .array => |arr| {
                     var idx: i64 = 0;
-                    for (arr.elements) |elem| {
-                        if (elem == .nothing) break;
-                        if (valuesEqual(elem, value.value)) {
+                    const arr_len: u32 = arr.length;
+                    while (idx < arr_len) : (idx += 1) {
+                        if (valuesEqual(arr.elements[@intCast(idx)], value.value)) {
                             try self.stack.push(HIRFrame.initInt(idx));
                             return;
                         }
-                        idx += 1;
                     }
                     try self.stack.push(HIRFrame.initInt(-1));
                 },
@@ -2668,7 +2665,7 @@ pub const VM = struct {
                 for (a.elements, 0..) |_, i| {
                     elems[i] = try self.deepCopyValueToAllocator(allocator, &a.elements[i], owner);
                 }
-                break :blk HIRValue{ .array = .{ .elements = elems, .element_type = a.element_type, .capacity = a.capacity, .path = null, .nested_element_type = a.nested_element_type, .owner = owner } };
+                break :blk HIRValue{ .array = .{ .elements = elems, .element_type = a.element_type, .capacity = a.capacity, .length = a.length, .path = null, .nested_element_type = a.nested_element_type, .owner = owner } };
             },
             .enum_variant => |e| blk: {
                 const type_name = try allocator.dupe(u8, e.type_name);

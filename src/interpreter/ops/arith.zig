@@ -19,17 +19,8 @@ pub fn exec(vm: anytype, a: anytype) !void {
                 .array => |arr_a| {
                     switch (right.value) {
                         .array => |arr_b| {
-                            var len_a: u32 = 0;
-                            for (arr_a.elements) |elem| {
-                                if (elem == .nothing) break;
-                                len_a += 1;
-                            }
-
-                            var len_b: u32 = 0;
-                            for (arr_b.elements) |elem| {
-                                if (elem == .nothing) break;
-                                len_b += 1;
-                            }
+                            const len_a = arr_a.length;
+                            const len_b = arr_b.length;
 
                             const new_elements = try vm.runtimeAllocator().alloc(HIRValue, len_a + len_b);
 
@@ -45,6 +36,7 @@ pub fn exec(vm: anytype, a: anytype) !void {
                                 .array = .{
                                     .elements = new_elements,
                                     .capacity = len_a + len_b,
+                                    .length = len_a + len_b,
                                     .element_type = arr_a.element_type,
                                 },
                             };

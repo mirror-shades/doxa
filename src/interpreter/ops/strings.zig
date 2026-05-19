@@ -319,6 +319,7 @@ pub fn stringBytes(vm: anytype, a: HIRFrame) !HIRFrame {
         .elements = elements,
         .element_type = .Byte,
         .capacity = @intCast(str.len),
+        .length = @intCast(str.len),
     } };
     return HIRFrame.initFromHIRValue(array);
 }
