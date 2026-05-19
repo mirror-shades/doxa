@@ -16,7 +16,7 @@ const ErrorCode = Errors.ErrorCode;
 
 /// Resolves an array index, handling negative indices like Python
 /// Returns the resolved positive index or an error
-fn resolveArrayIndex(index: HIRFrame, array_length: usize) !u32 {
+pub fn resolveArrayIndex(index: HIRFrame, array_length: usize) !u32 {
     const index_val: i64 = switch (index.value) {
         .int => |i| i,
         .byte => |u| @as(i64, u),
@@ -58,7 +58,7 @@ fn resolveArrayIndex(index: HIRFrame, array_length: usize) !u32 {
     }
 }
 
-fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
+pub fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
     var converted = array;
 
     if (converted.owner != SoxaValues.ValueOwner.Runtime) {
@@ -95,47 +95,7 @@ fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
     return converted;
 }
 
-pub fn exec(vm: anytype, instruction: anytype) !void {
-    if (@hasField(@TypeOf(instruction), "ArrayNew")) {
-        try arrayNew(vm, instruction.ArrayNew);
-    } else if (@hasField(@TypeOf(instruction), "ArrayGet")) {
-        try arrayGet(vm, instruction.ArrayGet);
-    } else if (@hasField(@TypeOf(instruction), "ArraySet")) {
-        try arraySet(vm, instruction.ArraySet);
-    } else if (@hasField(@TypeOf(instruction), "ArrayPush")) {
-        try arrayPush(vm);
-    } else if (@hasField(@TypeOf(instruction), "ArrayPop")) {
-        try arrayPop(vm);
-    } else if (@hasField(@TypeOf(instruction), "ArrayInsert")) {
-        try arrayInsert(vm);
-    } else if (@hasField(@TypeOf(instruction), "ArrayRemove")) {
-        try arrayRemove(vm);
-    } else if (@hasField(@TypeOf(instruction), "ArraySlice")) {
-        try arraySlice(vm);
-    } else if (@hasField(@TypeOf(instruction), "ArrayLen")) {
-        try arrayLen(vm);
-    } else if (@hasField(@TypeOf(instruction), "ArrayConcat")) {
-        try arrayConcat(vm);
-    } else if (@hasField(@TypeOf(instruction), "Range")) {
-        try arrayRange(vm, instruction.Range);
-    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndAdd")) {
-        try arrayGetAndAdd(vm, instruction.ArrayGetAndAdd);
-    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndSub")) {
-        try arrayGetAndSub(vm, instruction.ArrayGetAndSub);
-    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndMul")) {
-        try arrayGetAndMul(vm, instruction.ArrayGetAndMul);
-    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndDiv")) {
-        try arrayGetAndDiv(vm, instruction.ArrayGetAndDiv);
-    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndMod")) {
-        try arrayGetAndMod(vm, instruction.ArrayGetAndMod);
-    } else if (@hasField(@TypeOf(instruction), "ArrayGetAndPow")) {
-        try arrayGetAndPow(vm, instruction.ArrayGetAndPow);
-    } else {
-        unreachable;
-    }
-}
-
-fn arrayNew(vm: anytype, a: anytype) !void {
+pub fn arrayNew(vm: anytype, a: anytype) !void {
     const storage_kind: ArrayStorageKind = if (@hasField(@TypeOf(a), "storage_kind"))
         a.storage_kind
     else
@@ -171,7 +131,7 @@ fn arrayNew(vm: anytype, a: anytype) !void {
     try vm.stack.push(HIRFrame.initFromHIRValue(new_array));
 }
 
-fn arrayGet(vm: anytype, a: anytype) !void {
+pub fn arrayGet(vm: anytype, a: anytype) !void {
     if (vm.stack.sp < 2) {
         return ErrorList.StackUnderflow;
     }
@@ -216,7 +176,7 @@ fn arrayGet(vm: anytype, a: anytype) !void {
     }
 }
 
-fn arraySet(vm: anytype, a: anytype) !void {
+pub fn arraySet(vm: anytype, a: anytype) !void {
     _ = a;
     if (vm.stack.sp < 3) {
         return ErrorList.StackUnderflow;
@@ -280,12 +240,12 @@ fn arraySet(vm: anytype, a: anytype) !void {
     }
 }
 
-fn arrayPush(vm: anytype) !void {
+pub fn arrayPush(vm: anytype) !void {
     const value = try vm.stack.pop();
     try handleArrayPush(vm, value.value);
 }
 
-fn arrayPop(vm: anytype) !void {
+pub fn arrayPop(vm: anytype) !void {
     const array = try vm.stack.pop();
 
     switch (array.value) {
@@ -342,7 +302,7 @@ fn arrayPop(vm: anytype) !void {
     }
 }
 
-fn arrayInsert(vm: anytype) !void {
+pub fn arrayInsert(vm: anytype) !void {
     const value = try vm.stack.pop();
     const index_frame = try vm.stack.pop();
     const container = try vm.stack.pop();
@@ -440,7 +400,7 @@ fn arrayInsert(vm: anytype) !void {
     }
 }
 
-fn arrayRemove(vm: anytype) !void {
+pub fn arrayRemove(vm: anytype) !void {
     const index_frame = try vm.stack.pop();
     const container = try vm.stack.pop();
 
@@ -507,7 +467,7 @@ fn arrayRemove(vm: anytype) !void {
     }
 }
 
-fn arraySlice(vm: anytype) !void {
+pub fn arraySlice(vm: anytype) !void {
     const length_frame = try vm.stack.pop();
     const start_frame = try vm.stack.pop();
     const container = try vm.stack.pop();
@@ -601,7 +561,7 @@ fn arraySlice(vm: anytype) !void {
     }
 }
 
-fn arrayLen(vm: anytype) !void {
+pub fn arrayLen(vm: anytype) !void {
     const value = try vm.stack.pop();
     switch (value.value) {
         .array => |arr| {
@@ -616,7 +576,7 @@ fn arrayLen(vm: anytype) !void {
     }
 }
 
-fn arrayConcat(vm: anytype) !void {
+pub fn arrayConcat(vm: anytype) !void {
     const b = try vm.stack.pop();
     const a = try vm.stack.pop();
 
@@ -659,7 +619,7 @@ fn arrayConcat(vm: anytype) !void {
     }
 }
 
-fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
+pub fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
     const array_frame = try vm.stack.pop();
     switch (array_frame.value) {
         .array => |arr| {
@@ -710,7 +670,7 @@ fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
     }
 }
 
-fn coerceNestedArrayElement(element_value: HIRValue, expected_element_type: HIRType) HIRValue {
+pub fn coerceNestedArrayElement(element_value: HIRValue, expected_element_type: HIRType) HIRValue {
     if (expected_element_type != .Array) return element_value;
 
     return switch (element_value) {
@@ -726,7 +686,7 @@ fn coerceNestedArrayElement(element_value: HIRValue, expected_element_type: HIRT
     };
 }
 
-fn arrayRange(vm: anytype, r: anytype) !void {
+pub fn arrayRange(vm: anytype, r: anytype) !void {
     const end_frame = try vm.stack.pop();
     const start_frame = try vm.stack.pop();
 
@@ -770,7 +730,7 @@ fn arrayRange(vm: anytype, r: anytype) !void {
     try vm.stack.push(HIRFrame.initFromHIRValue(range_array));
 }
 
-fn getDefaultValue(hir_type: HIRType) HIRValue {
+pub fn getDefaultValue(hir_type: HIRType) HIRValue {
     return switch (hir_type) {
         .Int => HIRValue{ .int = 0 },
         .Byte => HIRValue{ .byte = 0 },
@@ -806,7 +766,7 @@ fn getDefaultValue(hir_type: HIRType) HIRValue {
     };
 }
 
-fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
+pub fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
     _ = a;
     if (vm.stack.sp < 3) {
         return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
@@ -880,7 +840,7 @@ fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
     }
 }
 
-fn arrayGetAndSub(vm: anytype, a: anytype) !void {
+pub fn arrayGetAndSub(vm: anytype, a: anytype) !void {
     _ = a;
     if (vm.stack.sp < 3) {
         return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
@@ -954,7 +914,7 @@ fn arrayGetAndSub(vm: anytype, a: anytype) !void {
     }
 }
 
-fn arrayGetAndMul(vm: anytype, a: anytype) !void {
+pub fn arrayGetAndMul(vm: anytype, a: anytype) !void {
     _ = a;
     if (vm.stack.sp < 3) {
         return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
@@ -1028,7 +988,7 @@ fn arrayGetAndMul(vm: anytype, a: anytype) !void {
     }
 }
 
-fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
+pub fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
     _ = a;
     if (vm.stack.sp < 3) {
         return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
@@ -1122,7 +1082,7 @@ fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
     }
 }
 
-fn arrayGetAndMod(vm: anytype, a: anytype) !void {
+pub fn arrayGetAndMod(vm: anytype, a: anytype) !void {
     _ = a;
     if (vm.stack.sp < 3) {
         return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
@@ -1213,7 +1173,7 @@ fn arrayGetAndMod(vm: anytype, a: anytype) !void {
     }
 }
 
-fn arrayGetAndPow(vm: anytype, a: anytype) !void {
+pub fn arrayGetAndPow(vm: anytype, a: anytype) !void {
     _ = a;
     if (vm.stack.sp < 3) {
         return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});

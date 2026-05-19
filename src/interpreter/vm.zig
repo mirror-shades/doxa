@@ -531,80 +531,63 @@ pub const VM = struct {
                 try self.stack.push(second);
             },
             .ArrayNew => |payload| {
-                try ops_array.exec(self, .{ .ArrayNew = .{
+                try ops_array.arrayNew(self, .{
                     .element_type = toHIRTypeWithNested(self, payload.element_type, payload.nested_element_type),
                     .size = payload.static_size,
                     .nested_element_type = toOptionalHIRType(payload.nested_element_type),
                     .storage_kind = payload.storage_kind,
-                } });
+                });
             },
             .ArrayGet => |payload| {
-                try ops_array.exec(self, .{ .ArrayGet = .{
-                    .bounds_check = payload.bounds_check,
-                } });
+                try ops_array.arrayGet(self, payload);
             },
             .ArraySet => |payload| {
-                try ops_array.exec(self, .{ .ArraySet = .{
-                    .bounds_check = payload.bounds_check,
-                } });
+                try ops_array.arraySet(self, payload);
             },
             .ArrayPush => |payload| {
-                try ops_array.exec(self, .{ .ArrayPush = .{
-                    .resize_behavior = payload.resize,
-                } });
+                _ = payload;
+                try ops_array.arrayPush(self);
             },
             .ArrayPop => {
-                try ops_array.exec(self, .{ .ArrayPop = {} });
+                try ops_array.arrayPop(self);
             },
             .ArrayInsert => {
-                try ops_array.exec(self, .{ .ArrayInsert = {} });
+                try ops_array.arrayInsert(self);
             },
             .ArrayRemove => {
-                try ops_array.exec(self, .{ .ArrayRemove = {} });
+                try ops_array.arrayRemove(self);
             },
             .ArraySlice => {
-                try ops_array.exec(self, .{ .ArraySlice = {} });
+                try ops_array.arraySlice(self);
             },
             .ArrayLen => {
-                try ops_array.exec(self, .{ .ArrayLen = {} });
+                try ops_array.arrayLen(self);
             },
             .ArrayConcat => {
-                try ops_array.exec(self, .{ .ArrayConcat = {} });
+                try ops_array.arrayConcat(self);
             },
             .Range => |payload| {
-                try ops_array.exec(self, .{ .Range = .{
+                try ops_array.arrayRange(self, .{
                     .element_type = toHIRType(payload.element_type),
-                } });
+                });
             },
             .ArrayGetAndAdd => |payload| {
-                try ops_array.exec(self, .{ .ArrayGetAndAdd = .{
-                    .bounds_check = payload.bounds_check,
-                } });
+                try ops_array.arrayGetAndAdd(self, payload);
             },
             .ArrayGetAndSub => |payload| {
-                try ops_array.exec(self, .{ .ArrayGetAndSub = .{
-                    .bounds_check = payload.bounds_check,
-                } });
+                try ops_array.arrayGetAndSub(self, payload);
             },
             .ArrayGetAndMul => |payload| {
-                try ops_array.exec(self, .{ .ArrayGetAndMul = .{
-                    .bounds_check = payload.bounds_check,
-                } });
+                try ops_array.arrayGetAndMul(self, payload);
             },
             .ArrayGetAndDiv => |payload| {
-                try ops_array.exec(self, .{ .ArrayGetAndDiv = .{
-                    .bounds_check = payload.bounds_check,
-                } });
+                try ops_array.arrayGetAndDiv(self, payload);
             },
             .ArrayGetAndMod => |payload| {
-                try ops_array.exec(self, .{ .ArrayGetAndMod = .{
-                    .bounds_check = payload.bounds_check,
-                } });
+                try ops_array.arrayGetAndMod(self, payload);
             },
             .ArrayGetAndPow => |payload| {
-                try ops_array.exec(self, .{ .ArrayGetAndPow = .{
-                    .bounds_check = payload.bounds_check,
-                } });
+                try ops_array.arrayGetAndPow(self, payload);
             },
             .Map => |payload| {
                 try self.execMap(payload);
