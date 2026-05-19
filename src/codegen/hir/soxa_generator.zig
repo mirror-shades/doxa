@@ -39,6 +39,7 @@ const CallsHandler = @import("expressions/calls.zig").CallsHandler;
 const StructsHandler = @import("expressions/structs.zig").StructsHandler;
 const AssignmentsHandler = @import("expressions/assignments.zig").AssignmentsHandler;
 const IOHandler = @import("expressions/io.zig").IOHandler;
+const ModuleCall = @import("module_call.zig");
 
 pub const TETRA_FALSE: u8 = 0;
 pub const TETRA_TRUE: u8 = 1;
@@ -108,12 +109,6 @@ pub const HIRGenerator = struct {
         function_name: []const u8,
         is_tail_position: bool,
         instruction_index: u32,
-    };
-
-    pub const ResolvedCallee = struct {
-        qualified_name: []const u8,
-        call_kind: CallKind,
-        function_index: ?u32,
     };
 
     pub const LoopContext = struct {
@@ -425,6 +420,7 @@ pub const HIRGenerator = struct {
                                     pt = switch (pt) {
                                         .Int, .Byte, .Float, .String, .Tetra, .Nothing => pt,
                                         .Struct, .Enum => pt,
+                                        .Array, .Map, .Function, .Union => pt,
                                         else => .Int,
                                     };
                                     param_types_imported[i] = pt;
@@ -1008,38 +1004,6 @@ pub const HIRGenerator = struct {
         return null;
     }
 
-    pub fn resolveCallee(self: *HIRGenerator, bare_name: []const u8) ResolvedCallee {
-        if (self.getFunctionIndex(bare_name)) |idx| {
-            return .{
-                .qualified_name = bare_name,
-                .call_kind = .LocalFunction,
-                .function_index = idx,
-            };
-        }
-
-        if (self.resolveQualifiedModuleLocalFunction(bare_name)) |qualified_name| {
-            return .{
-                .qualified_name = qualified_name,
-                .call_kind = .ModuleFunction,
-                .function_index = self.getFunctionIndex(qualified_name),
-            };
-        }
-
-        if (bare_name.len > 0 and bare_name[0] == '@') {
-            return .{
-                .qualified_name = bare_name,
-                .call_kind = .BuiltinFunction,
-                .function_index = null,
-            };
-        }
-
-        return .{
-            .qualified_name = bare_name,
-            .call_kind = .ModuleFunction,
-            .function_index = null,
-        };
-    }
-
     pub fn isModuleFunction(self: *HIRGenerator, function_name: []const u8) bool {
         if (self.imported_symbols) |imported_symbols| {
             if (imported_symbols.get(function_name)) |imported_symbol| {
@@ -1490,77 +1454,10 @@ pub const HIRGenerator = struct {
     }
 
     pub fn tryGenerateTailCall(self: *HIRGenerator, expr: *ast.Expr) bool {
-        switch (expr.data) {
-            .FunctionCall => |call| {
-                switch (call.callee.data) {
-                    .Variable => |var_token| {
-                        const resolved = self.resolveCallee(var_token.lexeme);
-                        const function_name = resolved.qualified_name;
-                        const call_kind = resolved.call_kind;
-
-                        for (call.arguments) |arg| {
-                            self.generateExpression(arg.expr, true, true) catch return false;
-                        }
-
-                        const function_index = resolved.function_index orelse {
-                            return false;
-                        };
-
-                        const return_type = self.inferCallReturnType(function_name, call_kind) catch .Nothing;
-                        const target_module = self.computeTargetModule(function_name, call_kind) catch return false;
-                        const tail_call = HIRInstruction{ .TailCall = .{
-                            .function_index = function_index,
-                            .qualified_name = function_name,
-                            .arg_count = @intCast(call.arguments.len),
-                            .call_kind = call_kind,
-                            .target_module = target_module,
-                            .return_type = return_type,
-                        } };
-
-                        self.instructions.append(tail_call) catch return false;
-                        return true;
-                    },
-                    .FieldAccess => |field_access| {
-                        const module_name = switch (field_access.object.data) {
-                            .Variable => |var_token| var_token.lexeme,
-                            else => {
-                                return false;
-                            },
-                        };
-                        const function_name = field_access.field.lexeme;
-                        const qualified_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, function_name }) catch return false;
-
-                        for (call.arguments) |arg| {
-                            self.generateExpression(arg.expr, true, true) catch return false;
-                        }
-
-                        if (self.getFunctionIndex(qualified_name)) |function_index| {
-                            const return_type = self.inferCallReturnType(qualified_name, .ModuleFunction) catch .Nothing;
-
-                            const tail_call = HIRInstruction{ .TailCall = .{
-                                .function_index = function_index,
-                                .qualified_name = qualified_name,
-                                .arg_count = @intCast(call.arguments.len),
-                                .call_kind = .ModuleFunction,
-                                .target_module = module_name,
-                                .return_type = return_type,
-                            } };
-
-                            self.instructions.append(tail_call) catch return false;
-                            return true;
-                        } else {
-                            return false;
-                        }
-                    },
-                    else => {
-                        return false;
-                    },
-                }
-            },
-            else => {
-                return false;
-            },
-        }
+        return switch (expr.data) {
+            .FunctionCall => ModuleCall.tryEmitTailCall(self, expr),
+            else => false,
+        };
     }
 
     pub fn inferTypeFromLiteral(self: *HIRGenerator, literal: TokenLiteral) HIRType {
@@ -1572,94 +1469,11 @@ pub const HIRGenerator = struct {
     }
 
     pub fn inferTypeFromExpression(self: *HIRGenerator, expr: *ast.Expr) HIRType {
-        var allocated_name: ?[]u8 = null;
-        defer {
-            if (allocated_name) |name| {
-                self.allocator.free(name);
-            }
-        }
-
-        switch (expr.data) {
-            .Variable => {
-                return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-            },
-            .FunctionCall => |call| {
-                var function_name: []const u8 = "";
-                var call_kind: CallKind = .LocalFunction;
-
-                switch (call.callee.data) {
-                    .Variable => |var_token| {
-                        const resolved = self.resolveCallee(var_token.lexeme);
-                        function_name = resolved.qualified_name;
-                        call_kind = resolved.call_kind;
-                    },
-                    .FieldAccess => |field_access| {
-                        if (field_access.object.data == .Variable) {
-                            const object_name = field_access.object.data.Variable.lexeme;
-                            const imported_module_fn = blk: {
-                                if (self.imported_symbols) |symbols| {
-                                    const full_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme }) catch break :blk false;
-                                    defer self.allocator.free(full_name);
-                                    if (symbols.get(full_name)) |sym| {
-                                        break :blk sym.kind == .Function;
-                                    }
-                                }
-                                break :blk false;
-                            };
-                            if (self.isModuleNamespace(object_name) or imported_module_fn) {
-                                const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme }) catch return .Unknown;
-                                allocated_name = qualified;
-                                function_name = qualified;
-                                call_kind = .ModuleFunction;
-                            } else {
-                                return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-                            }
-                        } else if (field_access.object.data == .FieldAccess) {
-                            if (self.resolveFieldAccessType(field_access.object)) |resolved| {
-                                if (resolved.custom_type_name != null and self.isModuleNamespace(resolved.custom_type_name.?)) {
-                                    const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ resolved.custom_type_name.?, field_access.field.lexeme }) catch return .Unknown;
-                                    allocated_name = qualified;
-                                    function_name = qualified;
-                                    call_kind = .ModuleFunction;
-                                } else {
-                                    return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-                                }
-                            } else {
-                                return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-                            }
-                        } else {
-                            return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-                        }
-                    },
-                    else => {
-                        return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-                    },
-                }
-
-                // Special handling for builtins that need argument type information
-                if (call_kind == .BuiltinFunction and std.mem.eql(u8, function_name, "pop")) {
-                    // For @pop, infer the element type from the array/string argument
-                    if (call.arguments.len == 1) {
-                        const arg_type = self.inferTypeFromExpression(call.arguments[0].expr);
-                        switch (arg_type) {
-                            .Array => |elem_ptr| return elem_ptr.*,
-                            .String => return .String,
-                            else => return .Unknown,
-                        }
-                    }
-                    return .Unknown;
-                }
-
-                const inferred = self.inferCallReturnType(function_name, call_kind) catch {
-                    const fallback_result = self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-                    return fallback_result;
-                };
-                return inferred;
-            },
-            else => {
-                return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
-            },
-        }
+        return switch (expr.data) {
+            .Variable => self.type_system.inferTypeFromExpression(expr, &self.symbol_table),
+            .FunctionCall => ModuleCall.inferFunctionCallReturnType(self, expr),
+            else => self.type_system.inferTypeFromExpression(expr, &self.symbol_table),
+        };
     }
 
     pub fn trackVariableType(self: *HIRGenerator, var_name: []const u8, var_type: HIRType) !void {

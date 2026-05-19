@@ -13,6 +13,7 @@ const CallKind = @import("../soxa_instructions.zig").CallKind;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const builtin_methods = @import("../../../runtime/builtin_methods.zig");
+const ModuleCall = @import("../module_call.zig");
 
 pub const CallsHandler = struct {
     generator: *HIRGenerator,
@@ -24,179 +25,105 @@ pub const CallsHandler = struct {
     pub fn generateFunctionCall(self: *CallsHandler, function_call: ast.Expr.Data, should_pop_after_use: bool) !void {
         const call_data = function_call.FunctionCall;
 
-        var function_name: []const u8 = "unknown";
-        var call_kind: CallKind = .LocalFunction;
-        var function_index: u32 = 0;
+        const target = ModuleCall.classifyCallTarget(self.generator, call_data.callee) catch {
+            self.generator.reporter.reportCompileError(
+                call_data.callee.base.location(),
+                ErrorCode.UNSUPPORTED_FUNCTION_CALL_TYPE,
+                "Unsupported function call type",
+                .{},
+            );
+            return ErrorList.UnsupportedFunctionCallType;
+        };
 
-        switch (call_data.callee.data) {
-            .FieldAccess => |field_access| {
-                var handled_module_call = false;
-                if (try self.moduleNamespaceFromExpr(field_access.object)) |module_ns| {
-                    function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ module_ns, field_access.field.lexeme });
-                    call_kind = .ModuleFunction;
-                    if (self.generator.getFunctionIndex(function_name)) |idx| {
-                        function_index = idx;
-                    }
-                    handled_module_call = true;
-                }
-
-                if (field_access.object.data == .FieldAccess) {
-                    if (self.generator.resolveFieldAccessType(field_access.object)) |resolved| {
-                        if (resolved.custom_type_name != null) {
-                            const module_ns = resolved.custom_type_name.?;
-                            if (self.generator.isModuleNamespace(module_ns)) {
-                                function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ module_ns, field_access.field.lexeme });
-                                call_kind = .ModuleFunction;
-                                if (self.generator.getFunctionIndex(function_name)) |idx| {
-                                    function_index = idx;
-                                }
-                                handled_module_call = true;
-                            }
-                        }
-                    }
-                }
-
-                if (handled_module_call) {
-                    // handled below by common call emission path
-                } else if (field_access.object.data == .Variable and (self.generator.isModuleNamespace(field_access.object.data.Variable.lexeme) or self.isImportedModuleFunction(field_access.object.data.Variable.lexeme, field_access.field.lexeme))) {
-                    const object_name = field_access.object.data.Variable.lexeme;
-
-                    function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ object_name, field_access.field.lexeme });
-                    call_kind = .ModuleFunction;
-                    if (self.generator.getFunctionIndex(function_name)) |idx| {
-                        function_index = idx;
-                    }
-                } else if (field_access.object.data == .Variable) {
-                    const type_name = field_access.object.data.Variable.lexeme;
-                    if (self.generator.isCustomType(type_name)) |ct| {
-                        if (ct.kind == .Struct) {
-                            function_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ type_name, field_access.field.lexeme });
-                            if (self.generator.getFunctionIndex(function_name)) |idx| {
-                                function_index = idx;
-                                call_kind = .LocalFunction;
-                                for (call_data.arguments) |arg| {
-                                    try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
-                                }
-                                const return_type = self.generator.inferCallReturnType(function_name, .LocalFunction) catch .Nothing;
-                                try self.generator.instructions.append(.{ .Call = .{
-                                    .function_index = function_index,
-                                    .qualified_name = function_name,
-                                    .arg_count = @intCast(call_data.arguments.len),
-                                    .call_kind = call_kind,
-                                    .target_module = null,
-                                    .return_type = return_type,
-                                } });
-                                return;
-                            }
-                        }
-                    }
-
-                    const type_name2 = field_access.object.data.Variable.lexeme;
-                    if (self.generator.isCustomType(type_name2)) |ct2| {
-                        if (ct2.kind == .Struct and std.mem.eql(u8, field_access.field.lexeme, "New")) {
-                            try self.generateStructConstructorCall(type_name2, call_data.arguments);
-                            return;
-                        }
-                    }
-
-                    if (field_access.object.data == .Variable) {
-                        const recv_var_name = field_access.object.data.Variable.lexeme;
-                        const struct_name = blk: {
-                            if (self.generator.symbol_table.getVariableCustomType(recv_var_name)) |ctype| break :blk ctype;
-                            break :blk recv_var_name;
-                        };
-
-                        if (self.generator.struct_methods.get(struct_name)) |method_table| {
-                            if (method_table.get(field_access.field.lexeme)) |mi| {
-                                const qualified_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ struct_name, field_access.field.lexeme });
-
-                                 if (!mi.is_static) {
-                                     // For non-static methods, 'this' is an alias parameter
-                                     // We need to push a storage reference, not the value
-                                     if (field_access.object.data == .Variable) {
-                                         const var_token = field_access.object.data.Variable;
-                                         // Always push a storage reference for alias semantics, even for globals.
-                                         // `getOrCreateVariable` is safe here because undefined variables should
-                                         // already be rejected by semantic analysis.
-                                         const var_idx = try self.generator.getOrCreateVariable(var_token.lexeme);
-                                         const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-                                         try self.generator.instructions.append(.{
-                                             .PushStorageId = .{
-                                                 .var_index = var_idx,
-                                                 .var_name = var_token.lexeme,
-                                                 .scope_kind = scope_kind,
-                                             },
-                                         });
-                                     } else {
-                                         // For non-variable receivers (like field access), generate normally
-                                         try self.generator.generateExpression(field_access.object, true, false);
-                                     }
-                                 }
-                                for (call_data.arguments) |arg| {
-                                    try self.generator.generateExpression(arg.expr, true, false);
-                                }
-
-                                const ret_type: HIRType = self.generator.convertTypeInfo(mi.return_type.*);
-
-                                const fn_index: u32 = blk: {
-                                    if (self.generator.getFunctionIndex(qualified_name)) |idx| {
-                                        break :blk idx;
-                                    } else {
-                                        break :blk 0;
-                                    }
-                                };
-
-                                var arg_count: u32 = @intCast(call_data.arguments.len);
-                                if (!mi.is_static) arg_count += 1;
-
-                                try self.generator.instructions.append(.{
-                                    .Call = .{
-                                        .function_index = fn_index,
-                                        .qualified_name = qualified_name,
-                                        .arg_count = arg_count,
-                                        .call_kind = .LocalFunction,
-                                        .target_module = null,
-                                        .return_type = ret_type,
-                                    },
-                                });
-                                return;
-                            }
-                        }
-                    }
-
-                    try self.generator.generateInternalMethodCall(field_access.field, field_access.object, call_data.arguments, should_pop_after_use);
-                    return;
-                } else {
-                    if (field_access.object.data == .Variable) {
-                        const type_name = field_access.object.data.Variable.lexeme;
-                        if (self.generator.isCustomType(type_name)) |ct| {
-                            if (ct.kind == .Struct and std.mem.eql(u8, field_access.field.lexeme, "New")) {
-                                try self.generateStructConstructorCall(type_name, call_data.arguments);
-                                return;
-                            }
-                        }
-                    }
-
-                    try self.generator.generateInternalMethodCall(field_access.field, field_access.object, call_data.arguments, should_pop_after_use);
-                    return;
-                }
+        switch (target) {
+            .function => |resolved| {
+                return try self.emitResolvedFunctionCall(resolved, function_call, should_pop_after_use);
             },
-            .Variable => |var_token| {
-                const resolved = self.generator.resolveCallee(var_token.lexeme);
-                function_name = resolved.qualified_name;
-                call_kind = resolved.call_kind;
-                function_index = resolved.function_index orelse 0;
+            .struct_static => |ss| {
+                for (call_data.arguments) |arg| {
+                    try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
+                }
+                const return_type = self.generator.inferCallReturnType(ss.qualified_name, .LocalFunction) catch .Nothing;
+                try self.generator.instructions.append(.{ .Call = .{
+                    .function_index = ss.function_index,
+                    .qualified_name = ss.qualified_name,
+                    .arg_count = @intCast(call_data.arguments.len),
+                    .call_kind = .LocalFunction,
+                    .target_module = null,
+                    .return_type = return_type,
+                } });
             },
-            else => {
-                self.generator.reporter.reportCompileError(
-                    call_data.callee.base.location(),
-                    ErrorCode.UNSUPPORTED_FUNCTION_CALL_TYPE,
-                    "Unsupported function call type",
-                    .{},
-                );
-                return ErrorList.UnsupportedFunctionCallType;
+            .struct_method => |sm| {
+                try self.emitStructMethodCall(sm.field_access, sm.struct_name, call_data.arguments);
+            },
+            .struct_constructor => |type_name| {
+                try self.generateStructConstructorCall(type_name, call_data.arguments);
+            },
+            .internal_method => |fa| {
+                try self.generator.generateInternalMethodCall(fa.field, fa.object, call_data.arguments, should_pop_after_use);
             },
         }
+    }
+
+    fn emitStructMethodCall(
+        self: *CallsHandler,
+        field_access: ast.FieldAccess,
+        struct_name: []const u8,
+        arguments: []const ast.CallArgument,
+    ) !void {
+        const method_name = field_access.field.lexeme;
+        const mi = self.generator.struct_methods.get(struct_name).?.get(method_name).?;
+
+        const qualified_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ struct_name, method_name });
+
+        if (!mi.is_static and field_access.object.data == .Variable) {
+            const var_token = field_access.object.data.Variable;
+            const var_idx = try self.generator.getOrCreateVariable(var_token.lexeme);
+            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+            try self.generator.instructions.append(.{
+                .PushStorageId = .{
+                    .var_index = var_idx,
+                    .var_name = var_token.lexeme,
+                    .scope_kind = scope_kind,
+                },
+            });
+        } else if (!mi.is_static) {
+            try self.generator.generateExpression(field_access.object, true, false);
+        }
+
+        for (arguments) |arg| {
+            try self.generator.generateExpression(arg.expr, true, false);
+        }
+
+        const ret_type: HIRType = self.generator.inferCallReturnType(qualified_name, .LocalFunction) catch
+            self.generator.convertTypeInfo(mi.return_type.*);
+        const fn_index: u32 = self.generator.getFunctionIndex(qualified_name) orelse 0;
+
+        var arg_count: u32 = @intCast(arguments.len);
+        if (!mi.is_static) arg_count += 1;
+
+        try self.generator.instructions.append(.{
+            .Call = .{
+                .function_index = fn_index,
+                .qualified_name = qualified_name,
+                .arg_count = arg_count,
+                .call_kind = .LocalFunction,
+                .target_module = null,
+                .return_type = ret_type,
+            },
+        });
+    }
+
+    fn emitResolvedFunctionCall(
+        self: *CallsHandler,
+        resolved: ModuleCall.ResolvedCall,
+        function_call: ast.Expr.Data,
+        should_pop_after_use: bool,
+    ) !void {
+        const call_data = function_call.FunctionCall;
+        const function_name = resolved.qualified_name;
+        const call_kind = resolved.call_kind;
+        const function_index: u32 = resolved.function_index orelse 0;
 
         var arg_emitted_count: u32 = 0;
         for (call_data.arguments, 0..) |arg, arg_index| {
@@ -256,7 +183,7 @@ pub const CallsHandler = struct {
                             try self.generator.generateExpression(arg.expr, true, false);
                         }
                     } else {
-                        try self.generator.generateExpression(arg.expr, true, false);
+                        try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
                     }
                     arg_emitted_count += 1;
                 }
@@ -282,36 +209,6 @@ pub const CallsHandler = struct {
                 .return_type = return_type,
             },
         });
-    }
-
-    fn moduleNamespaceFromExpr(self: *CallsHandler, expr: *ast.Expr) !?[]const u8 {
-        return switch (expr.data) {
-            .Variable => |var_tok| blk: {
-                if (self.generator.isModuleNamespace(var_tok.lexeme)) {
-                    break :blk try self.generator.allocator.dupe(u8, var_tok.lexeme);
-                }
-                break :blk null;
-            },
-            .FieldAccess => |fa| blk: {
-                const parent = try self.moduleNamespaceFromExpr(fa.object);
-                if (parent) |p| {
-                    break :blk try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ p, fa.field.lexeme });
-                }
-                break :blk null;
-            },
-            else => null,
-        };
-    }
-
-    fn isImportedModuleFunction(self: *CallsHandler, module_name: []const u8, fn_name: []const u8) bool {
-        if (self.generator.imported_symbols) |symbols| {
-            const full_name = std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ module_name, fn_name }) catch return false;
-            defer self.generator.allocator.free(full_name);
-            if (symbols.get(full_name)) |sym| {
-                return sym.kind == .Function;
-            }
-        }
-        return false;
     }
 
     fn expectedEnumTypeForArg(self: *CallsHandler, function_name: []const u8, call_kind: CallKind, arg_index: usize) !?[]const u8 {
@@ -544,15 +441,22 @@ pub const CallsHandler = struct {
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             var t = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
-            if (t == .Unknown and builtin_data.arguments[0].data == .Variable) {
+            var use_array_len = t == .Array;
+            if (builtin_data.arguments[0].data == .Variable) {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 if (self.generator.getTrackedVariableType(var_name)) |tracked| {
-                    t = tracked;
+                    if (t == .Unknown) t = tracked;
+                    use_array_len = use_array_len or tracked == .Array;
+                }
+                // Match VM: length() on arrays uses element count even when the static annotation is wrong.
+                if (!use_array_len and self.generator.symbol_table.getTrackedArrayElementType(var_name) != null) {
+                    use_array_len = true;
                 }
             }
-            switch (t) {
-                .Array => try self.generator.instructions.append(.ArrayLen),
-                else => try self.generator.instructions.append(.{ .StringOp = .{ .op = .Length } }),
+            if (use_array_len) {
+                try self.generator.instructions.append(.ArrayLen);
+            } else {
+                try self.generator.instructions.append(.{ .StringOp = .{ .op = .Length } });
             }
         } else if (std.mem.eql(u8, name, "int")) {
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
@@ -827,25 +731,27 @@ pub const CallsHandler = struct {
             var field_names = try self.generator.allocator.alloc([]const u8, field_count);
             defer self.generator.allocator.free(field_names);
 
-            var i: usize = 0;
-            while (i < field_count and i < arguments.len) : (i += 1) {
-                const arg_expr = arguments[i].expr;
+            var remaining = field_count;
+            while (remaining > 0) {
+                remaining -= 1;
+                const field_index = remaining;
+                if (field_index >= arguments.len) continue;
+                const arg_expr = arguments[field_index].expr;
                 try self.generator.generateExpression(arg_expr, true, false);
-                const slot = field_count - 1 - i;
-                field_types[slot] = self.generator.inferTypeFromExpression(arg_expr);
-                const fname = fields_info[i].name;
-                field_names[slot] = fname;
+                field_types[field_index] = self.generator.inferTypeFromExpression(arg_expr);
+                const fname = fields_info[field_index].name;
+                field_names[field_index] = fname;
                 const fname_const = try self.generator.addConstant(HIRValue{ .string = fname });
                 try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
             }
 
+            var i = arguments.len;
             while (i < field_count) : (i += 1) {
                 const nothing_id = try self.generator.addConstant(HIRValue.nothing);
                 try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_id } });
-                const slot = field_count - 1 - i;
-                field_types[slot] = .Unknown;
+                field_types[i] = .Unknown;
                 const fname = fields_info[i].name;
-                field_names[slot] = fname;
+                field_names[i] = fname;
                 const fname_const = try self.generator.addConstant(HIRValue{ .string = fname });
                 try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
             }

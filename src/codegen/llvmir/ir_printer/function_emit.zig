@@ -1163,6 +1163,13 @@ pub fn Methods(comptime Ctx: type) type {
 
                         switch (sop.op) {
                             .Length => {
+                                if (arg.ty == .PTR and arg.array_type != null) {
+                                    try stack.append(arg);
+                                    try self.emitArrayLen(w, &stack, &id);
+                                    last_instruction_was_terminator = false;
+                                    continue;
+                                }
+
                                 const ptr_name = blk: {
                                     if (arg.ty == .PTR) break :blk arg.name;
                                     const arg_i64 = if (arg.ty == .I64) arg else try self.ensureI64(w, arg, &id);

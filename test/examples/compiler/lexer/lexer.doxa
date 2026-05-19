@@ -133,7 +133,7 @@ function makeNumeric(^src :: string, ^i :: int) returns Token {
 
 
 
-function assembleTokens(tokens :: Token) {
+function assembleTokens(tokens :: Token[]) {
     each token at i in tokens {
         # this can't be infered, look into this
         @print("{token.type}\n")

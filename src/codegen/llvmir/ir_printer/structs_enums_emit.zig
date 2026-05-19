@@ -61,6 +61,17 @@ pub fn Methods(comptime Ctx: type) type {
                     peek_type_str_owned = try self.hirTypeToTypeString(self.allocator, pk.value_type);
                     break :blk_type peek_type_str_owned.?;
                 },
+                .Union => {
+                    if (pk.union_members) |members| {
+                        const idx = self.findUnionMemberIndex(pk.value_type, value);
+                        if (idx < members.len) {
+                            break :blk_type members[idx];
+                        }
+                    }
+                    peek_type_str_owned = try self.hirTypeToTypeString(self.allocator, pk.value_type);
+                    break :blk_type peek_type_str_owned.?;
+                },
+                .Nothing => break :blk_type "nothing",
                 else => {},
             }
 
