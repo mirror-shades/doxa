@@ -14,6 +14,16 @@ Doxa is a simple to write, highly readible language based on four corned logical
 
 ## Documentation
 
-- [Language Syntax](syntax.md) - Complete language reference
-- [Tetras](tetras.md) - Four-cornered logic system
-- [Enum composition (spec)](enum-aliasing.md) - Composing enums (e.g. merged std errors)
+- [Language syntax](syntax.md) — primitives, operators, and core language rules
+- [Alias parameters](alias.md) — `^` parameters for explicit, stack-bound caller mutation
+- [Arrays](arrays.md) — dynamic and fixed-size arrays
+- [Control flow](control.md) — `if`, `match`, `as`, and related branching
+- [Loops](loops.md) — composable `for` / `while` / `do` loop forms
+- [Maps](maps.md) — key–value maps and typing
+- [Memory management](memory.md) — arena scopes and how allocation is tied to blocks
+- [Methods and intrinsics](methods.md) — `@` intrinsics and `std` calls
+- [Enum sets](sets.md) — merged enum types for APIs (specification)
+- [Structs](struct.md) — composition-based records, visibility, and `$` construction
+- [Tetras](tetras.md) — four-valued logic in place of booleans
+- [Typed unions](unions.md) — `A | B` unions and narrowing
+- [Zig blocks](zig.md) — embedded Zig modules and the inline Zig ABI

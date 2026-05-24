@@ -43,12 +43,16 @@ plugins:
 nav:
   - Home: index.md
   - Syntax: syntax.md
-  - Tetras: tetras.md
   - Alias: alias.md
-  - Inline: inline.md
-  - Maps: maps.md
-  - Structs: struct.md
-  - Unions: unions.md
+  - Arrays: arrays.md
   - Control: control.md
   - Loops: loops.md
+  - Maps: maps.md
+  - Memory: memory.md
   - Methods: methods.md
+  - Sets: sets.md
+  - Standard Library: stdlib.md
+  - Structs: struct.md
+  - Tetras: tetras.md
+  - Unions: unions.md
+  - Zig: zig.md
