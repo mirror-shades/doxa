@@ -254,8 +254,8 @@ pub const PrintOps = struct {
             .array => |arr| {
                 try printToStdout("[", .{});
                 var first = true;
-                for (arr.elements) |elem| {
-                    if (elem == .nothing) break;
+                const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
+                for (arr.elements[0..visible_len]) |elem| {
                     if (!first) try printToStdout(", ", .{});
                     try PrintOps.printHIRValue(vm, elem);
                     first = false;
@@ -337,7 +337,8 @@ pub const PrintOps = struct {
             switch (cursor) {
                 .array => |arr| {
                     depth += 1;
-                    if (firstNonNothingElement(arr.elements)) |first_elem| {
+                    const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
+                    if (firstNonNothingElement(arr.elements[0..visible_len])) |first_elem| {
                         switch (first_elem) {
                             .array => {
                                 cursor = first_elem;
@@ -422,8 +423,8 @@ pub const PrintOps = struct {
             .array => |arr| {
                 try printToStdout("[", .{});
                 var first = true;
-                for (arr.elements) |elem| {
-                    if (elem == .nothing) break;
+                const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
+                for (arr.elements[0..visible_len]) |elem| {
                     if (!first) try printToStdout(", ", .{});
                     try PrintOps.formatHIRValue(vm, elem);
                     first = false;
@@ -526,8 +527,8 @@ pub const PrintOps = struct {
             .array => |arr| {
                 try printToStdout("[", .{});
                 var first = true;
-                for (arr.elements) |elem| {
-                    if (elem == .nothing) break;
+                const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
+                for (arr.elements[0..visible_len]) |elem| {
                     if (!first) try printToStdout(", ", .{});
                     try PrintOps.formatHIRValue(vm, elem);
                     first = false;

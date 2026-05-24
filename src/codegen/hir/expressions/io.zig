@@ -25,141 +25,30 @@ pub const IOHandler = struct {
 
     /// Generate HIR for print expressions
     pub fn generatePrint(self: *IOHandler, print: ast.PrintExpr, preserve_result: bool) !void {
-        if (print.expr) |print_expr| {
-            // Legacy simple printing: lower as streaming sequence
-            try self.generator.instructions.append(.PrintBegin);
-            try self.generator.generateExpression(print_expr, true, false);
-            try self.generator.instructions.append(.PrintVal);
-            try self.generator.instructions.append(.PrintEnd);
-        } else if (print.format_template) |template| {
-            // Generate code for each template part and build correct placeholder mapping
-            var arg_count: u32 = 0;
-            var format_parts = std.array_list.Managed([]const u8).init(self.generator.allocator);
-            // VM expects placeholder_indices to be argument indices (0..N-1) by placeholder order.
-            // We will later interleave using the format part positions, so here we only record arg order.
-            var placeholder_indices = std.array_list.Managed(u32).init(self.generator.allocator);
-            var expressions = std.array_list.Managed(*ast.Expr).init(self.generator.allocator);
-            defer format_parts.deinit();
-            defer placeholder_indices.deinit();
-            defer expressions.deinit();
+        try self.generator.instructions.append(.PrintBegin);
 
-            // First pass: collect all expressions and build format parts
+        if (print.expr.data == .InterpolatedString) {
+            const template = print.expr.data.InterpolatedString;
             for (template.parts) |part| {
                 switch (part) {
-                    .String => |str| {
-                        // Add string literal to format parts
-                        try format_parts.append(str);
+                    .String => |text| {
+                        if (text.len == 0) continue;
+                        const const_id = try self.generator.addConstant(.{ .string = text });
+                        try self.generator.instructions.append(.{ .PrintStr = .{ .const_id = const_id } });
                     },
                     .Expression => |part_expr| {
-                        // Store expression for later evaluation
-                        try expressions.append(part_expr);
-                        // Map placeholder to its argument index by encounter order
-                        try placeholder_indices.append(arg_count);
-                        arg_count += 1;
+                        try self.generator.generateExpression(part_expr, true, false);
+                        try self.generator.instructions.append(.PrintVal);
                     },
                 }
             }
-
-            // If there are no placeholders, emit a simple PrintBegin → PrintStr(full) → PrintEnd
-            if (arg_count == 0) {
-                var total_len: usize = 0;
-                for (format_parts.items) |part| total_len += part.len;
-
-                var full = try self.generator.allocator.alloc(u8, total_len);
-                var offset: usize = 0;
-                for (format_parts.items) |part| {
-                    @memcpy(full[offset..(offset + part.len)], part);
-                    offset += part.len;
-                }
-
-                const const_id = try self.generator.addConstant(.{ .string = full });
-                try self.generator.instructions.append(.PrintBegin);
-                try self.generator.instructions.append(.{ .PrintStr = .{ .const_id = const_id } });
-                // If literal ends with \n, emit explicit newline and strip responsibility lies with frontend; here we just emit as-is
-                try self.generator.instructions.append(.PrintEnd);
-            } else {
-                // Second pass: evaluate expressions in REVERSE order so PrintVal pops in correct left-to-right order
-                var expr_idx: usize = expressions.items.len;
-                while (expr_idx > 0) {
-                    expr_idx -= 1;
-                    try self.generator.generateExpression(expressions.items[expr_idx], true, false);
-                }
-
-                // Store format parts as constants and get their IDs
-                var format_part_ids = try self.generator.allocator.alloc(u32, format_parts.items.len);
-                for (format_parts.items, 0..) |part, i| {
-                    const constant_id = try self.generator.addConstant(.{ .string = part });
-                    format_part_ids[i] = constant_id;
-                }
-
-                // Expand interpolated print into streaming sequence
-                try self.generator.instructions.append(.PrintBegin);
-                // Interleave string parts and PrintVal for expressions
-                var expr_index: usize = 0;
-                for (format_part_ids, 0..) |part_id, i| {
-                    if (i < format_part_ids.len and part_id != 0xFFFFFFFF) {
-                        try self.generator.instructions.append(.{ .PrintStr = .{ .const_id = part_id } });
-                    }
-                    if (i < placeholder_indices.items.len) {
-                        // Top-of-stack currently has all expressions pushed in order; we'll print values now in order by popping later at VM level via PrintVal
-                        try self.generator.instructions.append(.PrintVal);
-                        expr_index += 1;
-                    }
-                }
-                try self.generator.instructions.append(.PrintEnd);
-            }
-        } else if (print.arguments) |args| {
-            if (args.len == 0) {
-                // No interpolation - emit PrintBegin → PrintStr(original) → PrintEnd
-                if (print.format_parts) |parts| {
-                    if (parts.len > 0) {
-                        // Add the string to the constant pool first
-                        const constant_id = try self.generator.addConstant(.{ .string = parts[0] });
-                        try self.generator.instructions.append(.PrintBegin);
-                        try self.generator.instructions.append(.{ .PrintStr = .{ .const_id = constant_id } });
-                        try self.generator.instructions.append(.PrintEnd);
-                    }
-                }
-            } else {
-                // Generate code for each argument in REVERSE order so PrintVal pops in correct left-to-right order
-                var arg_idx: usize = args.len;
-                while (arg_idx > 0) {
-                    arg_idx -= 1;
-                    try self.generator.generateExpression(args[arg_idx], true, false);
-                }
-
-                // Store format parts as constants and get their IDs
-                const format_parts = print.format_parts orelse return error.MissingFormatParts;
-                const placeholder_indices = print.placeholder_indices orelse return error.MissingPlaceholderIndices;
-
-                var format_part_ids = try self.generator.allocator.alloc(u32, format_parts.len);
-                for (format_parts, 0..) |part, i| {
-                    const constant_id = try self.generator.addConstant(.{ .string = part });
-                    format_part_ids[i] = constant_id;
-                }
-
-                // Expand interpolated print into streaming sequence
-                try self.generator.instructions.append(.PrintBegin);
-                var expr_index2: usize = 0;
-                for (format_part_ids, 0..) |pid, i| {
-                    try self.generator.instructions.append(.{ .PrintStr = .{ .const_id = pid } });
-                    if (i < placeholder_indices.len) {
-                        try self.generator.instructions.append(.PrintVal);
-                        expr_index2 += 1;
-                    }
-                }
-                try self.generator.instructions.append(.PrintEnd);
-            }
         } else {
-            self.generator.reporter.reportCompileError(null, ErrorCode.INVALID_PRINT_EXPRESSION, "No expr and no arguments - InvalidPrintExpression", .{});
-            return error.InvalidPrintExpression;
+            try self.generator.generateExpression(print.expr, true, false);
+            try self.generator.instructions.append(.PrintVal);
         }
 
-        // If the caller does not need the result (statement context), drop it now
-        // Note: For interpolated printing, PrintInterpolated already consumes its arguments
-        if (!preserve_result and print.expr != null) {
-            try self.generator.instructions.append(.Pop);
-        }
+        try self.generator.instructions.append(.PrintEnd);
+        _ = preserve_result;
     }
 
     /// Generate HIR for peek expressions

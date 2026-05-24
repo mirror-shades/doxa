@@ -1858,7 +1858,19 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             const expr_type = try infer_type.inferTypeFromExpr(self, _peek_struct.expr);
             type_info.* = expr_type.*;
         },
-        .Print => {
+        .InterpolatedString => |template| {
+            for (template.parts) |part| {
+                switch (part) {
+                    .Expression => |part_expr| {
+                        _ = try infer_type.inferTypeFromExpr(self, part_expr);
+                    },
+                    .String => {},
+                }
+            }
+            type_info.* = .{ .base = .String };
+        },
+        .Print => |print_expr| {
+            _ = try infer_type.inferTypeFromExpr(self, print_expr.expr);
             type_info.* = .{ .base = .Nothing };
         },
         .IndexAssign => |index_assign| {

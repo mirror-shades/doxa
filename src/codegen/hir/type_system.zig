@@ -528,6 +528,7 @@ pub const TypeSystem = struct {
     pub fn inferTypeFromExpression(self: *TypeSystem, expr: *ast.Expr, symbol_table: *SymbolTable) HIRType {
         const result = switch (expr.data) {
             .Literal => |lit| self.inferTypeFromLiteral(lit),
+            .InterpolatedString => .String,
             .Exists => .Tetra,
             .ForAll => .Tetra,
             .StructLiteral => |struct_lit| blk: {

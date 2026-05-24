@@ -62,6 +62,42 @@ pub const BasicExpressionHandler = struct {
         }
     }
 
+    pub fn generateInterpolatedString(self: *BasicExpressionHandler, template: *ast.FormatTemplate, preserve_result: bool, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
+        var has_value = false;
+
+        for (template.parts) |part| {
+            switch (part) {
+                .String => |text| {
+                    if (text.len == 0 and has_value) continue;
+                    const value = HIRValue{ .string = text };
+                    const const_idx = try self.generator.addConstant(value);
+                    try self.generator.instructions.append(.{ .Const = .{ .value = value, .constant_id = const_idx } });
+                },
+                .Expression => |expr| {
+                    try self.generator.generateExpression(expr, true, false);
+                    try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString } });
+                },
+            }
+
+            if (has_value) {
+                try self.generator.instructions.append(.Swap);
+                try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
+            } else {
+                has_value = true;
+            }
+        }
+
+        if (!has_value) {
+            const value = HIRValue{ .string = "" };
+            const const_idx = try self.generator.addConstant(value);
+            try self.generator.instructions.append(.{ .Const = .{ .value = value, .constant_id = const_idx } });
+        }
+
+        if (!preserve_result and should_pop_after_use) {
+            try self.generator.instructions.append(.Pop);
+        }
+    }
+
     /// Generate HIR for variable access
     pub fn generateVariable(self: *BasicExpressionHandler, var_token: ast.Token) (std.mem.Allocator.Error || ErrorList)!void {
         // Compile-time validation: Ensure variable has been declared

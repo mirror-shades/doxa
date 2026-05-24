@@ -132,6 +132,7 @@ pub const rules = blk: {
     r.set(.BYTE, .{ .prefix = literal });
     r.set(.FLOAT, .{ .prefix = literal });
     r.set(.STRING, .{ .prefix = literal });
+    r.set(.SINGLE_STRING, .{ .prefix = literal });
     r.set(.LOGIC, .{ .prefix = literal });
     r.set(.NOTHING, .{ .prefix = literal });
 
@@ -550,10 +551,6 @@ fn printValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
         .data = .{
             .Print = .{
                 .expr = left.?,
-                .format_template = null,
-                .format_parts = null,
-                .arguments = null,
-                .placeholder_indices = null,
             },
         },
     };

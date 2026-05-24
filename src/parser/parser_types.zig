@@ -1066,7 +1066,7 @@ pub const Parser = struct {
             const key = blk: {
                 const token_type = self.peek().type;
                 switch (token_type) {
-                    .INT, .FLOAT, .STRING, .BYTE, .LOGIC, .IDENTIFIER, .DOT => {
+                    .INT, .FLOAT, .STRING, .SINGLE_STRING, .BYTE, .LOGIC, .IDENTIFIER, .DOT => {
                         const prec = try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
                         break :blk prec;
                     },
@@ -1577,25 +1577,16 @@ pub const Parser = struct {
                 (if (binary.right) |right| exprReferencesName(right, name) else false),
             .Unary => |unary| if (unary.right) |right| exprReferencesName(right, name) else false,
             .Peek => |peek_expr| exprReferencesName(peek_expr.expr, name),
-            .Print => |print_expr| blk: {
-                if (print_expr.expr) |inner| {
-                    if (exprReferencesName(inner, name)) break :blk true;
-                }
-                if (print_expr.format_template) |template| {
-                    for (template.parts) |part| {
-                        switch (part) {
-                            .Expression => |part_expr| if (exprReferencesName(part_expr, name)) break :blk true,
-                            .String => {},
-                        }
-                    }
-                }
-                if (print_expr.arguments) |args| {
-                    for (args) |arg| {
-                        if (exprReferencesName(arg, name)) break :blk true;
+            .InterpolatedString => |template| blk: {
+                for (template.parts) |part| {
+                    switch (part) {
+                        .Expression => |part_expr| if (exprReferencesName(part_expr, name)) break :blk true,
+                        .String => {},
                     }
                 }
                 break :blk false;
             },
+            .Print => |print_expr| exprReferencesName(print_expr.expr, name),
             .PeekStruct => |peek_struct| exprReferencesName(peek_struct.expr, name),
             .Assignment => |assign_expr| std.mem.eql(u8, assign_expr.name.lexeme, name) or
                 (if (assign_expr.value) |value| exprReferencesName(value, name) else false),

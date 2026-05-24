@@ -66,10 +66,7 @@ pub fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
         const element_count = converted.elements.len;
         const new_elements = try runtime_alloc.alloc(HIRValue, element_count);
 
-        var i: usize = 0;
-        while (i < element_count) : (i += 1) {
-            new_elements[i] = try vm.deepCopyValueToAllocator(runtime_alloc, &converted.elements[i], SoxaValues.ValueOwner.Runtime);
-        }
+        @memcpy(new_elements, converted.elements);
 
         converted.elements = new_elements;
         converted.capacity = @intCast(element_count);
@@ -84,10 +81,7 @@ pub fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
     const allocator = vm.runtimeAllocator();
     const new_elements = try allocator.alloc(HIRValue, element_count);
 
-    var i: usize = 0;
-    while (i < element_count) : (i += 1) {
-        new_elements[i] = try vm.deepCopyValueToAllocator(allocator, &converted.elements[i], SoxaValues.ValueOwner.Runtime);
-    }
+    @memcpy(new_elements, converted.elements);
 
     converted.elements = new_elements;
     converted.capacity = @intCast(element_count);
@@ -259,14 +253,15 @@ pub fn arrayPop(vm: anytype) !void {
 
             mutable_arr.length -= 1;
             const last_idx = mutable_arr.length;
-            const last_element = mutable_arr.elements[last_idx];
+            var last_element = mutable_arr.elements[last_idx];
+            const last_element_copy = try vm.deepCopyValueToAllocator(vm.runtimeAllocator(), &last_element, SoxaValues.ValueOwner.Runtime);
 
             mutable_arr.elements[last_idx] = nothing_value;
 
             const updated_array = HIRValue{ .array = mutable_arr };
             try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
 
-            try vm.stack.push(HIRFrame.initFromHIRValue(last_element));
+            try vm.stack.push(HIRFrame.initFromHIRValue(last_element_copy));
         },
         .string => |s_val| {
             if (s_val.len == 0) {
@@ -436,7 +431,8 @@ pub fn arrayRemove(vm: anytype) !void {
             }
             var mutable_arr = arr;
             mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
-            const removed_elem = mutable_arr.elements[index_val];
+            var removed_elem = mutable_arr.elements[index_val];
+            const removed_elem_copy = try vm.deepCopyValueToAllocator(vm.runtimeAllocator(), &removed_elem, SoxaValues.ValueOwner.Runtime);
             var i: u32 = index_val;
             while (i + 1 < mutable_arr.capacity and i + 1 < logical_len) : (i += 1) {
                 mutable_arr.elements[i] = mutable_arr.elements[i + 1];
@@ -445,7 +441,7 @@ pub fn arrayRemove(vm: anytype) !void {
             mutable_arr.length -= 1;
 
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
-            try vm.stack.push(HIRFrame.initFromHIRValue(removed_elem));
+            try vm.stack.push(HIRFrame.initFromHIRValue(removed_elem_copy));
         },
         .string => |s| {
             if (index_val >= s.len) {

@@ -17,6 +17,22 @@ string - []const u8
 tetra - i2
 nothing - void
 
+### Strings
+
+Double-quoted strings interpolate expressions in `{...}` anywhere a string expression is accepted:
+
+```doxa
+var name is "Doxa"
+var greeting is "Hello {name}"
+@print("{greeting}\n")
+```
+
+Single-quoted strings are literal strings. Use them when braces should be preserved as text:
+
+```doxa
+var shape is '{ y: 2, x: 5 }'
+```
+
 The `tetra` type represents a four cornered value with the possible states: `true`, `false`, `both`, and `neither`. For additional information see the tetra page.
 
 
