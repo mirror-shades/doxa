@@ -248,9 +248,11 @@ pub const SemanticAnalyzer = struct {
             .kind = switch (semantic_type.kind) {
                 .Struct => .Struct,
                 .Enum => .Enum,
+                .Set => .Set,
             },
             .enum_variants = null,
             .struct_fields = null,
+            .set_sources = null,
         };
 
         // Convert enum variants if present
@@ -351,6 +353,17 @@ pub const SemanticAnalyzer = struct {
                 };
             }
             hir_type.struct_fields = converted_fields;
+        }
+
+        if (semantic_type.set_sources) |sources| {
+            const converted_sources = try allocator.alloc(HIRTypeSystem.TypeSystem.CustomTypeInfo.SetSource, sources.len);
+            for (sources, 0..) |source, i| {
+                converted_sources[i] = .{
+                    .qualifier = source.qualifier,
+                    .source_name = source.source_name,
+                };
+            }
+            hir_type.set_sources = converted_sources;
         }
 
         return hir_type;
@@ -609,6 +622,14 @@ pub const SemanticAnalyzer = struct {
                                 }
                                 try helpers.registerEnumType(self, enum_decl.name.lexeme, variants);
                             },
+                            .SetDecl => {
+                                const set_decl = expr.data.SetDecl;
+                                const local_variant_names = try self.allocator.alloc([]const u8, set_decl.local_variants.len);
+                                for (set_decl.local_variants, local_variant_names) |variant, *name| {
+                                    name.* = variant.lexeme;
+                                }
+                                try helpers.registerSetType(self, set_decl.name.lexeme, set_decl.sources, local_variant_names);
+                            },
                             else => {},
                         }
                     }
@@ -619,6 +640,13 @@ pub const SemanticAnalyzer = struct {
                         name.* = variant.lexeme;
                     }
                     try helpers.registerEnumType(self, enum_decl.name.lexeme, variants);
+                },
+                .SetDecl => |set_decl| {
+                    const local_variant_names = try self.allocator.alloc([]const u8, set_decl.local_variants.len);
+                    for (set_decl.local_variants, local_variant_names) |variant, *name| {
+                        name.* = variant.lexeme;
+                    }
+                    try helpers.registerSetType(self, set_decl.name.lexeme, set_decl.sources, local_variant_names);
                 },
                 else => {},
             }

@@ -1,20 +1,20 @@
-pub struct IOTest {
+public struct IOTest {
     input :: string,
     expected_output :: string,
 };
 
-pub struct peek_result {
+public struct peek_result {
     kind :: string,
     value :: string,
 };
 
-pub struct print_result {
+public struct print_result {
     value :: string,
 }
 
-pub const hello :: string is "hello"
+public const hello :: string is "hello"
 
-pub const expected_bigfile_results :: peek_result[] is [
+public const expected_bigfile_results :: peek_result[] is [
     $peek_result { kind is "int", value is "81" },
     $peek_result { kind is "string", value is "\"Overflow\"" },
     $peek_result { kind is "int", value is "-1" },

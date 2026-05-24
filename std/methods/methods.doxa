@@ -1,4 +1,4 @@
-module error from "../error/error.doxa"
+module error from "../error.doxa"
 
 zig Parse {
     const std = @import("std");
@@ -45,217 +45,217 @@ function sliceOutOfBounds(start :: int, length :: int, total :: int) returns tet
     return false
 }
 
-pub function pushString(^collection :: string, value :: string) {
+public function pushString(^collection :: string, value :: string) {
     @push(collection, value)
 }
 
-pub function pushInt(^collection :: int[], value :: int) {
+public function pushInt(^collection :: int[], value :: int) {
     @push(collection, value)
 }
 
-pub function pushFloat(^collection :: float[], value :: float) {
+public function pushFloat(^collection :: float[], value :: float) {
     @push(collection, value)
 }
 
-pub function pushByte(^collection :: byte[], value :: byte) {
+public function pushByte(^collection :: byte[], value :: byte) {
     @push(collection, value)
 }
 
-pub function pushTetra(^collection :: tetra[], value :: tetra) {
+public function pushTetra(^collection :: tetra[], value :: tetra) {
     @push(collection, value)
 }
 
-pub function pushStringArray(^collection :: string[], value :: string) {
+public function pushStringArray(^collection :: string[], value :: string) {
     @push(collection, value)
 }
 
-pub function popString(^collection :: string) returns string | error.Method {
+public function popString(^collection :: string) returns string | error.Method {
     if @length(collection) == 0 then return error.Method.EmptyCollection
     return @pop(collection)
 }
 
-pub function popInt(^collection :: int[]) returns int | error.Method {
+public function popInt(^collection :: int[]) returns int | error.Method {
     if @length(collection) == 0 then return error.Method.EmptyCollection
     return @pop(collection)
 }
 
-pub function popFloat(^collection :: float[]) returns float | error.Method {
+public function popFloat(^collection :: float[]) returns float | error.Method {
     if @length(collection) == 0 then return error.Method.EmptyCollection
     return @pop(collection)
 }
 
-pub function popByte(^collection :: byte[]) returns byte | error.Method {
+public function popByte(^collection :: byte[]) returns byte | error.Method {
     if @length(collection) == 0 then return error.Method.EmptyCollection
     return @pop(collection)
 }
 
-pub function popTetra(^collection :: tetra[]) returns tetra | error.Method {
+public function popTetra(^collection :: tetra[]) returns tetra | error.Method {
     if @length(collection) == 0 then return error.Method.EmptyCollection
     return @pop(collection)
 }
 
-pub function popStringArray(^collection :: string[]) returns string | error.Method {
+public function popStringArray(^collection :: string[]) returns string | error.Method {
     if @length(collection) == 0 then return error.Method.EmptyCollection
     return @pop(collection)
 }
 
-pub function insertString(^collection :: string, index :: int, value :: string) returns error.Method {
+public function insertString(^collection :: string, index :: int, value :: string) returns error.Method {
     const len is @length(collection)
     if index < 0 then return error.Method.OutOfBounds
     if index > len then return error.Method.OutOfBounds
     @insert(collection, index, value)
 }
 
-pub function insertInt(^collection :: int[], index :: int, value :: int) returns error.Method {
+public function insertInt(^collection :: int[], index :: int, value :: int) returns error.Method {
     const len is @length(collection)
     if index < 0 then return error.Method.OutOfBounds
     if index > len then return error.Method.OutOfBounds
     @insert(collection, index, value)
 }
 
-pub function insertFloat(^collection :: float[], index :: int, value :: float) returns error.Method {
+public function insertFloat(^collection :: float[], index :: int, value :: float) returns error.Method {
     const len is @length(collection)
     if index < 0 then return error.Method.OutOfBounds
     if index > len then return error.Method.OutOfBounds
     @insert(collection, index, value)
 }
 
-pub function insertByte(^collection :: byte[], index :: int, value :: byte) returns error.Method {
+public function insertByte(^collection :: byte[], index :: int, value :: byte) returns error.Method {
     const len is @length(collection)
     if index < 0 then return error.Method.OutOfBounds
     if index > len then return error.Method.OutOfBounds
     @insert(collection, index, value)
 }
 
-pub function insertTetra(^collection :: tetra[], index :: int, value :: tetra) returns error.Method {
+public function insertTetra(^collection :: tetra[], index :: int, value :: tetra) returns error.Method {
     const len is @length(collection)
     if index < 0 then return error.Method.OutOfBounds
     if index > len then return error.Method.OutOfBounds
     @insert(collection, index, value)
 }
 
-pub function insertStringArray(^collection :: string[], index :: int, value :: string) returns error.Method {
+public function insertStringArray(^collection :: string[], index :: int, value :: string) returns error.Method {
     const len is @length(collection)
     if index < 0 then return error.Method.OutOfBounds
     if index > len then return error.Method.OutOfBounds
     @insert(collection, index, value)
 }
 
-pub function removeString(^collection :: string, index :: int) returns string | error.Method {
+public function removeString(^collection :: string, index :: int) returns string | error.Method {
     const len is @length(collection)
     if outOfBounds(index, len) then return error.Method.OutOfBounds
     return @remove(collection, index)
 }
 
-pub function removeInt(^collection :: int[], index :: int) returns int | error.Method {
+public function removeInt(^collection :: int[], index :: int) returns int | error.Method {
     const len is @length(collection)
     if outOfBounds(index, len) then return error.Method.OutOfBounds
     return @remove(collection, index)
 }
 
-pub function removeFloat(^collection :: float[], index :: int) returns float | error.Method {
+public function removeFloat(^collection :: float[], index :: int) returns float | error.Method {
     const len is @length(collection)
     if outOfBounds(index, len) then return error.Method.OutOfBounds
     return @remove(collection, index)
 }
 
-pub function removeByte(^collection :: byte[], index :: int) returns byte | error.Method {
+public function removeByte(^collection :: byte[], index :: int) returns byte | error.Method {
     const len is @length(collection)
     if outOfBounds(index, len) then return error.Method.OutOfBounds
     return @remove(collection, index)
 }
 
-pub function removeTetra(^collection :: tetra[], index :: int) returns tetra | error.Method {
+public function removeTetra(^collection :: tetra[], index :: int) returns tetra | error.Method {
     const len is @length(collection)
     if outOfBounds(index, len) then return error.Method.OutOfBounds
     return @remove(collection, index)
 }
 
-pub function removeStringArray(^collection :: string[], index :: int) returns string | error.Method {
+public function removeStringArray(^collection :: string[], index :: int) returns string | error.Method {
     const len is @length(collection)
     if outOfBounds(index, len) then return error.Method.OutOfBounds
     return @remove(collection, index)
 }
 
-pub function clearString(^collection :: string) {
+public function clearString(^collection :: string) {
     @clear(collection)
 }
 
-pub function clearInt(^collection :: int[]) {
+public function clearInt(^collection :: int[]) {
     @clear(collection)
 }
 
-pub function clearFloat(^collection :: float[]) {
+public function clearFloat(^collection :: float[]) {
     @clear(collection)
 }
 
-pub function clearByte(^collection :: byte[]) {
+public function clearByte(^collection :: byte[]) {
     @clear(collection)
 }
 
-pub function clearTetra(^collection :: tetra[]) {
+public function clearTetra(^collection :: tetra[]) {
     @clear(collection)
 }
 
-pub function clearStringArray(^collection :: string[]) {
+public function clearStringArray(^collection :: string[]) {
     @clear(collection)
 }
 
-pub function findString(collection :: string, value :: string) returns int {
+public function findString(collection :: string, value :: string) returns int {
     return @find(collection, value)
 }
 
-pub function findInt(collection :: int[], value :: int) returns int {
+public function findInt(collection :: int[], value :: int) returns int {
     return @find(collection, value)
 }
 
-pub function findFloat(collection :: float[], value :: float) returns int {
+public function findFloat(collection :: float[], value :: float) returns int {
     return @find(collection, value)
 }
 
-pub function findByte(collection :: byte[], value :: byte) returns int {
+public function findByte(collection :: byte[], value :: byte) returns int {
     return @find(collection, value)
 }
 
-pub function findTetra(collection :: tetra[], value :: tetra) returns int {
+public function findTetra(collection :: tetra[], value :: tetra) returns int {
     return @find(collection, value)
 }
 
-pub function findStringArray(collection :: string[], value :: string) returns int {
+public function findStringArray(collection :: string[], value :: string) returns int {
     return @find(collection, value)
 }
 
-pub function sliceString(collection :: string, start :: int, length :: int) returns string | error.Method {
+public function sliceString(collection :: string, start :: int, length :: int) returns string | error.Method {
     if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
     return @slice(collection, start, length)
 }
 
-pub function sliceInt(collection :: int[], start :: int, length :: int) returns int[] | error.Method {
+public function sliceInt(collection :: int[], start :: int, length :: int) returns int[] | error.Method {
     if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
     return @slice(collection, start, length)
 }
 
-pub function sliceFloat(collection :: float[], start :: int, length :: int) returns float[] | error.Method {
+public function sliceFloat(collection :: float[], start :: int, length :: int) returns float[] | error.Method {
     if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
     return @slice(collection, start, length)
 }
 
-pub function sliceByte(collection :: byte[], start :: int, length :: int) returns byte[] | error.Method {
+public function sliceByte(collection :: byte[], start :: int, length :: int) returns byte[] | error.Method {
     if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
     return @slice(collection, start, length)
 }
 
-pub function sliceTetra(collection :: tetra[], start :: int, length :: int) returns tetra[] | error.Method {
+public function sliceTetra(collection :: tetra[], start :: int, length :: int) returns tetra[] | error.Method {
     if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
     return @slice(collection, start, length)
 }
 
-pub function sliceStringArray(collection :: string[], start :: int, length :: int) returns string[] | error.Method {
+public function sliceStringArray(collection :: string[], start :: int, length :: int) returns string[] | error.Method {
     if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
     return @slice(collection, start, length)
 }
 
-pub function toInt(value :: int | float | byte | string) returns int | error.Method {
+public function toInt(value :: int | float | byte | string) returns int | error.Method {
     value as int then {
         return value
     }
@@ -275,7 +275,7 @@ pub function toInt(value :: int | float | byte | string) returns int | error.Met
     return error.Method.Unexpected
 }
 
-pub function toFloat(value :: int | float | byte | string) returns float | error.Method {
+public function toFloat(value :: int | float | byte | string) returns float | error.Method {
     value as float then {
         if value != value then return error.Method.InvalidNumber
         return value
@@ -293,7 +293,7 @@ pub function toFloat(value :: int | float | byte | string) returns float | error
     return error.Method.Unexpected
 }
 
-pub function toByte(value :: int | float | byte | string) returns byte | error.Method {
+public function toByte(value :: int | float | byte | string) returns byte | error.Method {
     value as byte then {
         return value
     }

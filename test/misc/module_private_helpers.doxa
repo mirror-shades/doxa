@@ -1,4 +1,4 @@
-pub function run() returns int {
+public function run() returns int {
     return addOne(41);
 }
 

@@ -1,4 +1,4 @@
-module error from "../error/error.doxa"
+module error from "../error.doxa"
 
 zig Process {
     const std = @import("std");

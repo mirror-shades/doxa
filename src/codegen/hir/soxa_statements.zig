@@ -455,6 +455,22 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 .module_context = null,
             } });
         },
+        .SetDecl => |set_decl| {
+            try self.registerSetType(set_decl.name.lexeme, set_decl.sources, set_decl.local_variants);
+
+            const var_idx = try self.getOrCreateVariable(set_decl.name.lexeme);
+            try self.trackVariableType(set_decl.name.lexeme, HIRType{ .Set = 0 });
+
+            const set_type_value = HIRValue{ .string = set_decl.name.lexeme };
+            const const_idx = try self.addConstant(set_type_value);
+            try self.instructions.append(.{ .Const = .{ .value = set_type_value, .constant_id = const_idx } });
+            try self.instructions.append(.{ .StoreConst = .{
+                .var_index = var_idx,
+                .var_name = set_decl.name.lexeme,
+                .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
+                .module_context = null,
+            } });
+        },
         .Assert => |assert_stmt| {
             try self.generateExpression(assert_stmt.condition, true, true);
 

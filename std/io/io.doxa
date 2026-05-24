@@ -1,4 +1,4 @@
-module error from "../error/error.doxa"
+module error from "../error.doxa"
 
 zig IO {
     const std = @import("std");
@@ -165,42 +165,42 @@ function mapIOError(code :: int) returns error.IO | error.Common {
     }
 }
 
-pub function print(input :: string) returns error.IO | error.Common {
+public function print(input :: string) returns error.IO | error.Common {
     IO.print(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-pub function println(input :: string) returns error.IO | error.Common {
+public function println(input :: string) returns error.IO | error.Common {
     IO.printlnStdout(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-pub function eprint(input :: string) returns error.IO | error.Common {
+public function eprint(input :: string) returns error.IO | error.Common {
     IO.eprint(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-pub function eprintln(input :: string) returns error.IO | error.Common {
+public function eprintln(input :: string) returns error.IO | error.Common {
     IO.eprintlnStderr(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-pub function input() returns string | error.IO | error.Common {
+public function input() returns string | error.IO | error.Common {
     const value is IO.input();
     const err is IO.takeLastErrorCode()
     if err == 0 then return value
     return mapIOError(err)
 }
 
-pub function inputPrompt(prompt :: string) returns string | error.IO | error.Common {
+public function inputPrompt(prompt :: string) returns string | error.IO | error.Common {
     const value is IO.inputPrompt(prompt);
     const err is IO.takeLastErrorCode()
     if err == 0 then return value

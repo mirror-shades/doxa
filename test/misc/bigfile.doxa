@@ -47,7 +47,7 @@ matchResult is match g {
 
 matchResult? # It's something else
 
-pub function isAlpha(char :: string) returns tetra {
+public function isAlpha(char :: string) returns tetra {
     match char[0] {
         "a", "b" then return true
     }
@@ -332,13 +332,13 @@ return_test()? # return
 # STRUCTS
 ##
 struct Person {
-    pub name :: string,
-    pub age :: int,
+    public name :: string,
+    public age :: int,
 }
 
 struct Employee {
-    pub person ::  Person,
-    pub salary :: int,
+    public person ::  Person,
+    public salary :: int,
 }
 
 var mike is $Employee {
@@ -365,28 +365,28 @@ struct Point {
     x :: int,
     y :: int,
 
-    pub function New(x :: int, y :: int) returns Point {
+    public function New(x :: int, y :: int) returns Point {
         return $Point {
             x is x,
             y is y,
         }
     }
 
-    pub method getX() { # methods are always instance methods with implicit 'this'
+    public method getX() { # methods are always instance methods with implicit 'this'
         return this.x
     }
 
-    pub method getY() {
+    public method getY() {
         return this.y
     }
 
-    pub function safeSub(a :: int, b :: int) returns int { # functions are always static
+    public function safeSub(a :: int, b :: int) returns int { # functions are always static
         const result is a - b
         if result > 255 or result < 0 then return -1
         return result
     }
 
-    pub method getDelta() returns int {
+    public method getDelta() returns int {
         return Point.safeSub(this.x, this.y)
     }
 }
@@ -400,8 +400,8 @@ Point.safeSub(2, 10)?
 point.getDelta()?
 
 struct PubPoint {
-    pub x :: int
-    pub y :: int
+    public x :: int
+    public y :: int
 }
 
 function add_points(a :: PubPoint, b :: PubPoint) returns PubPoint {
@@ -560,8 +560,8 @@ enum Species {
 }
 
 struct Animal {
-    pub animal_type :: Species,
-    pub name :: string,
+    public animal_type :: Species,
+    public name :: string,
 }
 
 const zoo :: Animal[] is [

@@ -211,11 +211,17 @@ pub const CustomTypeInfo = struct {
     kind: CustomTypeKind,
     enum_variants: ?[]EnumVariant = null,
     struct_fields: ?[]StructField = null,
+    set_sources: ?[]SetSource = null,
 
     pub const CustomTypeKind = enum {
         Struct,
         Enum,
         Set,
+    };
+
+    pub const SetSource = struct {
+        qualifier: []const u8,
+        source_name: []const u8,
     };
 
     pub const EnumVariant = struct {
@@ -224,7 +230,7 @@ pub const CustomTypeInfo = struct {
     };
 
     pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
-        if (self.kind != .Enum or self.enum_variants == null) return null;
+        if ((self.kind != .Enum and self.kind != .Set) or self.enum_variants == null) return null;
 
         for (self.enum_variants.?) |variant| {
             if (std.mem.eql(u8, variant.name, variant_name)) {

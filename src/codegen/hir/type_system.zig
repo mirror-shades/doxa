@@ -33,11 +33,17 @@ pub const TypeSystem = struct {
         kind: CustomTypeKind,
         enum_variants: ?[]EnumVariant = null,
         struct_fields: ?[]StructField = null,
+        set_sources: ?[]SetSource = null,
 
         pub const CustomTypeKind = enum {
             Struct,
             Enum,
             Set,
+        };
+
+        pub const SetSource = struct {
+            qualifier: []const u8,
+            source_name: []const u8,
         };
 
         pub const EnumVariant = struct {
@@ -53,7 +59,7 @@ pub const TypeSystem = struct {
         };
 
         pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
-            if (self.kind != .Enum or self.enum_variants == null) {
+            if ((self.kind != .Enum and self.kind != .Set) or self.enum_variants == null) {
                 return null;
             }
 
@@ -102,6 +108,12 @@ pub const TypeSystem = struct {
             return switch (custom_type.kind) {
                 .Struct => self.structTypeForName(name),
                 .Enum => self.enumTypeForName(name),
+                .Set => blk: {
+                    if (self.enum_table) |table| {
+                        if (table.getIdByName(name)) |id| break :blk HIRType{ .Set = id };
+                    }
+                    break :blk HIRType{ .Set = 0 };
+                },
             };
         }
 
@@ -113,6 +125,12 @@ pub const TypeSystem = struct {
                     return switch (custom_type.kind) {
                         .Struct => self.structTypeForName(short),
                         .Enum => self.enumTypeForName(short),
+                        .Set => blk: {
+                            if (self.enum_table) |table| {
+                                if (table.getIdByName(short)) |id| break :blk HIRType{ .Set = id };
+                            }
+                            break :blk HIRType{ .Set = 0 };
+                        },
                     };
                 }
             }
@@ -189,6 +207,37 @@ pub const TypeSystem = struct {
         try self.custom_types.put(enum_name, custom_type);
     }
 
+    pub fn registerSetType(self: *TypeSystem, set_name: []const u8, variants: []const []const u8, sources: []const ast.SetSource) !void {
+        var set_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, variants.len);
+        for (variants, 0..) |variant_name, index| {
+            set_variants[index] = CustomTypeInfo.EnumVariant{
+                .name = try self.allocator.dupe(u8, variant_name),
+                .index = @intCast(index),
+            };
+        }
+
+        var set_source_infos = try self.allocator.alloc(CustomTypeInfo.SetSource, sources.len);
+        for (sources, 0..) |source, i| {
+            var qualified: std.ArrayListUnmanaged(u8) = .{};
+            for (source.path, 0..) |token, j| {
+                if (j > 0) try qualified.appendSlice(self.allocator, ".");
+                try qualified.appendSlice(self.allocator, token.lexeme);
+            }
+            set_source_infos[i] = .{
+                .qualifier = try self.allocator.dupe(u8, source.qualifier),
+                .source_name = try qualified.toOwnedSlice(self.allocator),
+            };
+        }
+
+        const custom_type = CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, set_name),
+            .kind = .Set,
+            .enum_variants = set_variants,
+            .set_sources = set_source_infos,
+        };
+        try self.custom_types.put(set_name, custom_type);
+    }
+
     pub fn registerStructType(self: *TypeSystem, struct_name: []const u8, fields: []const []const u8) !void {
         if (self.custom_types.contains(struct_name)) return;
 
@@ -219,6 +268,7 @@ pub const TypeSystem = struct {
             return switch (custom_type.kind) {
                 .Struct => .Struct,
                 .Enum => .Enum,
+                .Set => .Set,
             };
         }
         return .Unknown;
@@ -417,6 +467,10 @@ pub const TypeSystem = struct {
                     switch (ct.kind) {
                         .Struct => break :blk FieldResolveResult{ .t = self.structTypeForName(var_token.lexeme), .custom_type_name = var_token.lexeme },
                         .Enum => break :blk FieldResolveResult{ .t = self.enumTypeForName(var_token.lexeme), .custom_type_name = var_token.lexeme },
+                        .Set => {
+                            const id = if (self.enum_table) |table| table.getIdByName(var_token.lexeme) orelse @as(u32, 0) else 0;
+                            break :blk FieldResolveResult{ .t = HIRType{ .Set = id }, .custom_type_name = var_token.lexeme };
+                        },
                     }
                 }
 
@@ -588,6 +642,7 @@ pub const TypeSystem = struct {
                     return switch (custom_type.kind) {
                         .Struct => self.structTypeForName(var_token.lexeme),
                         .Enum => HIRType{ .Enum = 0 },
+                        .Set => HIRType{ .Set = 0 },
                     };
                 }
 

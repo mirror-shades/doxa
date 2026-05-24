@@ -21,8 +21,9 @@ Doxa is a simple to write, highly readible language based on four corned logical
 - [Loops](loops.md) — composable `for` / `while` / `do` loop forms
 - [Maps](maps.md) — key–value maps and typing
 - [Memory management](memory.md) — arena scopes and how allocation is tied to blocks
-- [Methods and intrinsics](methods.md) — `@` intrinsics and `std` calls
+- [Methods and intrinsics](methods.md) — `@` intrinsics
 - [Enum sets](sets.md) — merged enum types for APIs (specification)
+- [Standard Library](stdlib.md) — standard library functions
 - [Structs](struct.md) — composition-based records, visibility, and `$` construction
 - [Tetras](tetras.md) — four-valued logic in place of booleans
 - [Typed unions](unions.md) — `A | B` unions and narrowing

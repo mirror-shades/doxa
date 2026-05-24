@@ -1,12 +1,12 @@
 import Pair from "./types.doxa"
 
-pub struct Context {
+public struct Context {
     name :: string
     literal :: string
     line_breaks :: int[]
     # TODO: add hash :: int for caching
 
-    pub function new(_name :: string, _literal :: string, _line_breaks :: int[]) returns Context {
+    public function new(_name :: string, _literal :: string, _line_breaks :: int[]) returns Context {
         return $Context {
             name is _name
             literal is _literal
@@ -15,24 +15,24 @@ pub struct Context {
     }
 }
 
-pub struct SourceManager {
+public struct SourceManager {
     var map FileToContext :: string returns Context
 
-    pub function new() returns SourceManager {
+    public function new() returns SourceManager {
         return $SourceManager {
             FileToContext is {}
         }
     }
 
-    pub method addFile(_name :: string, _literal :: string, _line_breaks :: int[]) {
+    public method addFile(_name :: string, _literal :: string, _line_breaks :: int[]) {
         this.FileToContext[_name] is Context.new(_name, _literal, _line_breaks)
     }
 
-    pub method getFile(_name :: string) returns Context {
+    public method getFile(_name :: string) returns Context {
         return this.FileToContext[_name]
     }
 
-    pub method getLineColumn(file :: string, offset :: int) returns Pair {
+    public method getLineColumn(file :: string, offset :: int) returns Pair {
         const line_break_context is this.FileToContext[file].line_breaks
         var line_number is 1
         each lb in line_break_context {
@@ -47,7 +47,7 @@ pub struct SourceManager {
         return $Pair { a is line_number, b is column }
     }
 
-    pub method hasFile(_name :: string) returns tetra {
+    public method hasFile(_name :: string) returns tetra {
         each context in FileToContext {
             if context.name == _name then return true
         }

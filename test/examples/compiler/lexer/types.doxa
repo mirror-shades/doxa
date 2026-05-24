@@ -1,9 +1,9 @@
-pub struct Pair {
+public struct Pair {
     a :: int
     b :: int
 }
 
-pub enum NumberType {
+public enum NumberType {
     INT,
     FLOAT,
     BYTE
