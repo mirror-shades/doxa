@@ -200,11 +200,17 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 .String => "string",
                                 .Tetra => "tetra",
                                 .Nothing => "nothing",
-                                .Enum => blk: {
-                                    if (self.type_system.custom_types.get("ValueError")) |_| {
-                                        break :blk "ValueError";
+                                .Enum => |eid| blk: {
+                                    if (self.type_system.enum_table) |table| {
+                                        if (table.getName(eid)) |ename| break :blk ename;
                                     }
-                                    break :blk "custom";
+                                    break :blk "(enum)";
+                                },
+                                .Struct => |sid| blk: {
+                                    if (self.type_system.struct_table) |table| {
+                                        if (table.getName(sid)) |sname| break :blk sname;
+                                    }
+                                    break :blk "(struct)";
                                 },
                                 else => "unknown",
                             };

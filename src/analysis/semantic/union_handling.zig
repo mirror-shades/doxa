@@ -7,6 +7,20 @@ const Reporter = Reporting.Reporter;
 const Errors = @import("../../utils/errors.zig");
 const ErrorCode = Errors.ErrorCode;
 
+/// Whether `candidate` is already represented in a flattened union list.
+/// Two `.Custom` arms must compare `custom_type` (e.g. `error.IO` vs `error.Common`), not only `base`.
+fn unionArmDuplicate(existing: *const TypeInfo, candidate: *const TypeInfo) bool {
+    if (existing.base != candidate.base) return false;
+    return switch (candidate.base) {
+        .Custom => {
+            if (existing.custom_type == null or candidate.custom_type == null)
+                return existing == candidate;
+            return std.mem.eql(u8, existing.custom_type.?, candidate.custom_type.?);
+        },
+        else => existing == candidate,
+    };
+}
+
 /// Flatten union types to ensure no nested unions
 pub fn flattenUnionType(allocator: std.mem.Allocator, union_type: *ast.UnionType) !*ast.UnionType {
     var flat_types = std.array_list.Managed(*ast.TypeInfo).init(allocator);
@@ -21,7 +35,7 @@ pub fn flattenUnionType(allocator: std.mem.Allocator, union_type: *ast.UnionType
                     // Check for duplicates before adding
                     var is_duplicate = false;
                     for (flat_types.items) |existing_type| {
-                        if (existing_type.base == nested_member.base) {
+                        if (unionArmDuplicate(existing_type, nested_member)) {
                             is_duplicate = true;
                             break;
                         }
@@ -35,7 +49,7 @@ pub fn flattenUnionType(allocator: std.mem.Allocator, union_type: *ast.UnionType
             // Check for duplicates before adding
             var is_duplicate = false;
             for (flat_types.items) |existing_type| {
-                if (existing_type.base == member_type.base) {
+                if (unionArmDuplicate(existing_type, member_type)) {
                     is_duplicate = true;
                     break;
                 }
@@ -69,7 +83,7 @@ pub fn createUnionType(allocator: std.mem.Allocator, types: []*ast.TypeInfo) !*a
                     // Check for duplicates
                     var is_duplicate = false;
                     for (flat_types.items) |existing| {
-                        if (existing.base == member.base) {
+                        if (unionArmDuplicate(existing, member)) {
                             is_duplicate = true;
                             break;
                         }
@@ -83,7 +97,7 @@ pub fn createUnionType(allocator: std.mem.Allocator, types: []*ast.TypeInfo) !*a
             // Check for duplicates
             var is_duplicate = false;
             for (flat_types.items) |existing| {
-                if (existing.base == type_info.base) {
+                if (unionArmDuplicate(existing, type_info)) {
                     is_duplicate = true;
                     break;
                 }

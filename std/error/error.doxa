@@ -1,4 +1,4 @@
-enum Common {
+pub enum Common {
     InvalidArgument,
     OutOfMemory,
     PermissionDenied,
@@ -6,7 +6,7 @@ enum Common {
     Unexpected,
 }
 
-enum IO {
+pub enum IO {
     NotFound,
     AlreadyExists,
     NotDirectory,
@@ -27,7 +27,7 @@ enum IO {
     Unexpected,
 }
 
-enum Process {
+pub enum Process {
     CommandNotFound,
     NotExecutable,
     SpawnFailed,
@@ -39,7 +39,7 @@ enum Process {
     Unexpected,
 }
 
-enum Method {
+pub enum Method {
     OutOfBounds,
     EmptyCollection,
     InvalidNumber,

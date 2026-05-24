@@ -2222,6 +2222,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         .EnumDecl => {
             type_info.* = .{ .base = .Enum };
         },
+        .SetDecl => {
+            type_info.* = .{ .base = .Enum, .custom_type = expr.data.SetDecl.name.lexeme };
+        },
         .ArrayType => {
             type_info.* = .{ .base = .Array };
         },

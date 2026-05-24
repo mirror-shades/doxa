@@ -117,12 +117,12 @@ pub const SemanticAnalyzer = struct {
         return_type: *ast.TypeInfo,
     };
 
-    pub fn getCustomTypes(self: *SemanticAnalyzer) std.StringHashMap(CustomTypeInfo) {
-        return self.custom_types;
+    pub fn getCustomTypes(self: *const SemanticAnalyzer) *const std.StringHashMap(CustomTypeInfo) {
+        return &self.custom_types;
     }
 
-    pub fn getStructMethods(self: *SemanticAnalyzer) std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)) {
-        return self.struct_methods;
+    pub fn getStructMethods(self: *const SemanticAnalyzer) *const std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)) {
+        return &self.struct_methods;
     }
 
     pub fn getStructTable(self: *const SemanticAnalyzer) *const StructTable {
@@ -137,8 +137,8 @@ pub const SemanticAnalyzer = struct {
         return self.struct_table.getIdByName(name);
     }
 
-    pub fn getFunctionReturnTypes(self: *SemanticAnalyzer) std.AutoHashMap(NodeId, *ast.TypeInfo) {
-        return self.function_return_types;
+    pub fn getFunctionReturnTypes(self: *const SemanticAnalyzer) *const std.AutoHashMap(NodeId, *ast.TypeInfo) {
+        return &self.function_return_types;
     }
 
     fn isEnumTypeRequiringInitializer(self: *const SemanticAnalyzer, type_info: *const ast.TypeInfo) bool {
@@ -544,6 +544,13 @@ pub const SemanticAnalyzer = struct {
                                     if (module_ast.data == .Block) {
                                         for (module_ast.data.Block.statements) |stmt| {
                                             switch (stmt.data) {
+                                                .EnumDecl => |ed| {
+                                                    if (std.mem.eql(u8, ed.name.lexeme, sym.name)) {
+                                                        const variants = try self.allocator.alloc([]const u8, ed.variants.len);
+                                                        for (ed.variants, variants) |v, *name| name.* = v.lexeme;
+                                                        try helpers.registerEnumType(self, ed.name.lexeme, variants);
+                                                    }
+                                                },
                                                 .Expression => |expr_opt| {
                                                     if (expr_opt) |expr| {
                                                         if (expr.data == .EnumDecl) {

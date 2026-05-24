@@ -215,6 +215,7 @@ pub const CustomTypeInfo = struct {
     pub const CustomTypeKind = enum {
         Struct,
         Enum,
+        Set,
     };
 
     pub const EnumVariant = struct {

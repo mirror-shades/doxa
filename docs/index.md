@@ -16,3 +16,4 @@ Doxa is a simple to write, highly readible language based on four corned logical
 
 - [Language Syntax](syntax.md) - Complete language reference
 - [Tetras](tetras.md) - Four-cornered logic system
+- [Enum composition (spec)](enum-aliasing.md) - Composing enums (e.g. merged std errors)

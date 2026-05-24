@@ -5,6 +5,8 @@ Doxa supports two method-call families:
 - Core intrinsics: `@...` calls implemented in core/compiler runtime.
 - Standard library calls: module functions such as `std.io.input()`.
 
+`std.io.println` and `std.io.eprintln` append the **native** text line terminator for the OS (`\r\n` on Windows, `\n` on POSIX-style targets), similar to the newline part of C++ `std::endl`. They still **flush** the stream after each call (like `std::endl`), via the underlying Zig stdout/stderr writers.
+
 ## Core Intrinsics
 
 These are the minimal core intrinsics intended to remain as the stable base.

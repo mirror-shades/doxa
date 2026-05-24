@@ -2,6 +2,37 @@ module error from "../error/error.doxa"
 
 zig IO {
     const std = @import("std");
+    const builtin = @import("builtin");
+
+    /// Line terminator for text streams on this OS (`\r\n` on Windows, `\n` elsewhere), like C++ `std::endl`’s newline part.
+    fn nativeNewline() []const u8 {
+        return switch (builtin.os.tag) {
+            .windows => "\r\n",
+            else => "\n",
+        };
+    }
+
+    fn printlnStdout(text: []const u8) void {
+        const alloc = std.heap.page_allocator;
+        const buf = std.mem.concat(alloc, u8, &.{ text, nativeNewline() }) catch {
+            clearLastError();
+            setLastError(2);
+            return;
+        };
+        defer alloc.free(buf);
+        print(buf);
+    }
+
+    fn eprintlnStderr(text: []const u8) void {
+        const alloc = std.heap.page_allocator;
+        const buf = std.mem.concat(alloc, u8, &.{ text, nativeNewline() }) catch {
+            clearLastError();
+            setLastError(2);
+            return;
+        };
+        defer alloc.free(buf);
+        eprint(buf);
+    }
 
     fn errorState(mode: i64, value: i64) i64 {
         const State = struct {
@@ -142,7 +173,7 @@ pub function print(input :: string) returns error.IO | error.Common {
 }
 
 pub function println(input :: string) returns error.IO | error.Common {
-    IO.print(input + "\n");
+    IO.printlnStdout(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
@@ -156,7 +187,7 @@ pub function eprint(input :: string) returns error.IO | error.Common {
 }
 
 pub function eprintln(input :: string) returns error.IO | error.Common {
-    IO.eprint(input + "\n");
+    IO.eprintlnStderr(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)

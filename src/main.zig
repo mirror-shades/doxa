@@ -161,6 +161,36 @@ fn writeBytecodeArtifact(bytecode_module: *BytecodeModule, path: []const u8) !vo
     try BytecodeWriter.writeBytecodeModuleToFile(bytecode_module, path);
 }
 
+fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *SemanticAnalyzer) !void {
+    const helpers = @import("./analysis/semantic/helpers.zig");
+    var cache_it = parser.module_cache.iterator();
+    while (cache_it.next()) |entry| {
+        const module_info = entry.value_ptr.*;
+        const module_ast = module_info.ast orelse continue;
+        if (module_ast.data != .Block) continue;
+        for (module_ast.data.Block.statements) |stmt| {
+            switch (stmt.data) {
+                .EnumDecl => |ed| {
+                    const variants = try parser.allocator.alloc([]const u8, ed.variants.len);
+                    for (ed.variants, variants) |v, *name| name.* = v.lexeme;
+                    try helpers.registerEnumType(semantic_analyzer, ed.name.lexeme, variants);
+                },
+                .Expression => |maybe_expr| {
+                    if (maybe_expr) |expr| {
+                        if (expr.data == .EnumDecl) {
+                            const ed = expr.data.EnumDecl;
+                            const variants = try parser.allocator.alloc([]const u8, ed.variants.len);
+                            for (ed.variants, variants) |v, *name| name.* = v.lexeme;
+                            try helpers.registerEnumType(semantic_analyzer, ed.name.lexeme, variants);
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+    }
+}
+
 fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
     var constant_folder = ConstantFolder.init(memoryManager.getAnalysisAllocator());
     var folded_statements = std.array_list.Managed(AST.Stmt).init(memoryManager.getAnalysisAllocator());
@@ -172,8 +202,12 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, mod
         try folded_statements.append(folded_stmt);
     }
 
-    const function_return_types = semantic_analyzer.getFunctionReturnTypes();
-    var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, function_return_types, semantic_analyzer);
+    // Enums declared in dependency modules may not appear on the root parser's
+    // `imported_symbols` map; register them from the module cache so HIR
+    // lowering resolves types like `error.IO` in return unions.
+    try registerMissingEnumsFromModuleCache(parser, semantic_analyzer);
+
+    var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer);
     defer hir_generator.deinit();
 
     hir_generator.type_system.function_signatures = &hir_generator.function_signatures;
