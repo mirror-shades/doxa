@@ -15,8 +15,8 @@ enum TokenType {
 }
 
 struct CalcToken {
-    pub token_type :: TokenType,
-    pub value :: string,
+    public token_type :: TokenType,
+    public value :: string,
 }
 
 function precedence(op :: string) returns int {

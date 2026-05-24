@@ -7,6 +7,7 @@ const Variable = @import("../../utils/memory.zig").Variable;
 const import_parser = @import("../../parser/import_parser.zig");
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const TokenType = @import("../../types/token.zig").TokenType;
+const Token = @import("../../types/token.zig").Token;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
 const EnumTable = @import("../../common/enum_table.zig").EnumTable;
 const Types = @import("../../types/types.zig");
@@ -248,6 +249,7 @@ fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType 
                             break :blk HIRType{ .Struct = 0 };
                         },
                         .Enum => break :blk HIRType{ .Enum = 0 },
+                        .Set => break :blk HIRType{ .Set = 0 },
                     }
                 }
             }
@@ -1139,6 +1141,73 @@ pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants
         // authoritative variant list, and EnumTable is just a helper.
         _ = self.enum_table.registerEnum(enum_name, variants) catch {};
     }
+}
+
+pub fn registerSetType(self: *SemanticAnalyzer, set_name: []const u8, sources: []const ast.SetSource, local_variants: []const []const u8) !void {
+    var set_source_infos = try self.allocator.alloc(CustomTypeInfo.SetSource, sources.len);
+    errdefer self.allocator.free(set_source_infos);
+
+    for (sources, 0..) |source, si| {
+        const qualified_name = try buildQualifiedName(self.allocator, source.path);
+        defer self.allocator.free(qualified_name);
+
+        set_source_infos[si] = .{
+            .qualifier = try self.allocator.dupe(u8, source.qualifier),
+            .source_name = try self.allocator.dupe(u8, qualified_name),
+        };
+    }
+
+    var set_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, local_variants.len);
+    errdefer self.allocator.free(set_variants);
+
+    for (local_variants, 0..) |variant_name, index| {
+        set_variants[index] = CustomTypeInfo.EnumVariant{
+            .name = try self.allocator.dupe(u8, variant_name),
+            .index = @intCast(index),
+        };
+    }
+
+    const custom_type = CustomTypeInfo{
+        .name = try self.allocator.dupe(u8, set_name),
+        .kind = .Set,
+        .enum_variants = set_variants,
+        .set_sources = set_source_infos,
+    };
+    try self.custom_types.put(set_name, custom_type);
+
+    var mem_set_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, local_variants.len);
+    for (local_variants, 0..) |variant_name, i| {
+        mem_set_variants[i] = CustomTypeInfo.EnumVariant{
+            .name = try self.allocator.dupe(u8, variant_name),
+            .index = @intCast(i),
+        };
+    }
+    const mem_set = CustomTypeInfo{
+        .name = try self.allocator.dupe(u8, set_name),
+        .kind = .Set,
+        .enum_variants = mem_set_variants,
+        .set_sources = set_source_infos,
+        .struct_fields = null,
+    };
+    try self.memory.registerCustomType(mem_set);
+}
+
+fn buildQualifiedName(allocator: std.mem.Allocator, path: []const Token) ![]const u8 {
+    if (path.len == 0) return "";
+    var total_len: usize = path[0].lexeme.len;
+    for (path[1..]) |token| {
+        total_len += 1 + token.lexeme.len;
+    }
+    var result = try allocator.alloc(u8, total_len);
+    @memcpy(result[0..path[0].lexeme.len], path[0].lexeme);
+    var offset: usize = path[0].lexeme.len;
+    for (path[1..]) |token| {
+        result[offset] = '.';
+        offset += 1;
+        @memcpy(result[offset .. offset + token.lexeme.len], token.lexeme);
+        offset += token.lexeme.len;
+    }
+    return result;
 }
 
 /// Helper function to get location from AST base

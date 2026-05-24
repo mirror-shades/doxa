@@ -32,7 +32,7 @@ This document specifies **enum sets**: a type that merges multiple existing enum
 A set is declared with the `set` keyword. The body lists source enums whose variants are included. Each source contributes its variants under a **qualifier** (the unqualified name of the source type).
 
 ```doxa
-pub set Std {
+public set Std {
     error.Common,
     error.IO,
     error.Process,
@@ -53,7 +53,7 @@ The qualifier defaults to the **unqualified** name of the source enum: `Common`,
 The declaring set may add its own variants alongside source members. Recommended style: source members first, then local variants.
 
 ```doxa
-pub set AppErr {
+public set AppErr {
     std.error.Std,
     UserCancelled,
     ConfigInvalid,
@@ -67,12 +67,12 @@ Local variants are **unqualified** under the declaring set: `AppErr.UserCancelle
 A set may include another set as a source member. All variants flow through transitively with the same variant identities.
 
 ```doxa
-pub set Std {
+public set Std {
     error.IO,
     error.Common,
 }
 
-pub set AppErr {
+public set AppErr {
     Std,             # includes all error.IO + error.Common variants
     UserCancelled,
 }
@@ -285,7 +285,7 @@ Zig blocks remain unaware of Doxa sets unless bridged. Doxa wrappers continue to
 ### 9.1 Module layout
 
 - Keep domain enums in `std/error/error.doxa` or split into `std/error/common.doxa`, `io.doxa`, etc.
-- Declare **`pub set Std { … }`** in `std/error/std.doxa` (or same file as enums if small).
+- Declare **`public set Std { … }`** in `std/error/std.doxa` (or same file as enums if small).
 
 ### 9.2 Public API return types
 
@@ -296,7 +296,7 @@ Zig blocks remain unaware of Doxa sets unless bridged. Doxa wrappers continue to
 ### 9.3 Migration
 
 1. Introduce `Std` as a set including existing error enums.
-2. Widen return types of `pub function` from `error.IO | error.Common` to `Std`.
+2. Widen return types of `public function` from `error.IO | error.Common` to `Std`.
 3. Keep `map*Error` returning `Std` or individual types then widen at return site.
 4. Update docs and examples.
 
@@ -331,7 +331,7 @@ VariantDecl     := IDENT ( ',' )?   # existing enum variant syntax
 
 | Feature | Rule |
 |---|---|
-| Syntax | `pub set Name { SourceType, … }` |
+| Syntax | `public set Name { SourceType, … }` |
 | Qualified names | `SetName.Qualifier.SourceVariant` |
 | Widening | Implicit, zero-cost (same variant identity) |
 | Narrowing | Explicit `as SourceType` or match wildcards |

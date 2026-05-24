@@ -1,4 +1,4 @@
-module error from "../error/error.doxa"
+module error from "../error.doxa"
 
 zig HTTP {
     const std = @import("std");
@@ -55,7 +55,7 @@ zig HTTP {
         return if (name.len == 0) "downloaded.bin" else name;
     }
 
-    pub fn downloadUrl(url: []const u8, destination: []const u8) void {
+    public fn downloadUrl(url: []const u8, destination: []const u8) void {
         clearLastError();
         if (url.len == 0 or destination.len == 0) {
             setLastError(1);
@@ -165,21 +165,21 @@ function mapIOError(code :: int) returns error.IO | error.Common {
     }
 }
 
-pub function downloadUrl(url :: string, destination :: string) returns error.IO | error.Common {
+public function downloadUrl(url :: string, destination :: string) returns error.IO | error.Common {
     HTTP.downloadUrl(url, destination)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-pub function download(url :: string) returns error.IO | error.Common {
+public function download(url :: string) returns error.IO | error.Common {
     HTTP.download(url)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-pub function getText(url :: string) returns string | error.IO | error.Common {
+public function getText(url :: string) returns string | error.IO | error.Common {
     const value is HTTP.getText(url)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return value

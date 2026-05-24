@@ -83,6 +83,7 @@ pub fn typeFromHIR(hir_type: hir_types.HIRType) !BytecodeType {
         .Struct => .Struct,
         .Map => .Map,
         .Enum => .Enum,
+        .Set => .Enum,
         .Function => .Function,
         .Union => .Union,
         .Unknown => {

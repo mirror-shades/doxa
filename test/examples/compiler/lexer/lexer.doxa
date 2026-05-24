@@ -4,7 +4,7 @@ module SourceManager from "./source_manager.doxa"
 import Token, TokenType from "./token.doxa"
 import NumberType from "./types.doxa"
 
-pub function lex(src :: string) returns Token [] {
+public function lex(src :: string) returns Token [] {
     var tokens :: Token[]
     var line_breaks :: int[]
     var line is 1

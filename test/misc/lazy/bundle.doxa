@@ -1,2 +1,2 @@
-pub module a from "./a.doxa"
-pub module b from "./b.doxa"
+public module a from "./a.doxa"
+public module b from "./b.doxa"

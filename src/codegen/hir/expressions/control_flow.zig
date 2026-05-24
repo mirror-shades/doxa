@@ -557,6 +557,7 @@ pub const ControlFlowHandler = struct {
                         break :blk switch (ct.kind) {
                             .Struct => "struct",
                             .Enum => "enum",
+                            .Set => "enum",
                         };
                     }
                     break :blk tok.lexeme;

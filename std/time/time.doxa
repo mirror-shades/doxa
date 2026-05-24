@@ -26,22 +26,22 @@ zig Time {
     }
 }
 
-pub function unix() returns int {
+public function unix() returns int {
     return Time.unixSeconds();
 }
 
-pub function tick() returns int {
+public function tick() returns int {
     return Time.tickNs();
 }
 
-pub function unixMs() returns int {
+public function unixMs() returns int {
     return Time.unixMillis();
 }
 
-pub function sleep(ms :: int) {
+public function sleep(ms :: int) {
     Time.sleepMs(@string(ms));
 }
 
-pub function sleepSeconds(s :: int) {
+public function sleepSeconds(s :: int) {
     Time.sleepSeconds(@string(s));
 }

@@ -1,6 +1,6 @@
 module a from "./a.doxa"
 module b from "./b.doxa"
 
-pub function value() returns int {
+public function value() returns int {
     return a.value()
 }

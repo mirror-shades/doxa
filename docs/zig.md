@@ -29,7 +29,7 @@ Wrappers decode by tag, then call the real Zig function.
 ### Canonical ABI value layout
 
 ```zig
-pub const DoxaAbiTag = enum(u32) {
+public const DoxaAbiTag = enum(u32) {
     Int = 0,
     Float = 1,
     Byte = 2,
@@ -38,14 +38,14 @@ pub const DoxaAbiTag = enum(u32) {
     Nothing = 5,
 };
 
-pub const DoxaAbiValue = extern struct {
+public const DoxaAbiValue = extern struct {
     tag: DoxaAbiTag,
     flags: u32,    // reserved, currently 0
     payload0: u64, // bits or pointer
     payload1: u64, // extra payload (String length)
 };
 
-pub const DoxaAbiStatus = enum(i32) {
+public const DoxaAbiStatus = enum(i32) {
     ok = 0,
     bad_arity = 1,
     bad_tag = 2,
@@ -64,7 +64,7 @@ Notes:
 Generated wrapper functions should use:
 
 ```zig
-pub export fn __doxa_export__Module_fn(
+public export fn __doxa_export__Module_fn(
     argv: [*]const DoxaAbiValue,
     argc: usize,
     out_ret: *DoxaAbiValue,

@@ -756,6 +756,10 @@ pub const HIRGenerator = struct {
                                             try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
                                             try self.trackVariableType(param.name.lexeme, HIRType{ .Enum = 0 });
                                         },
+                                        .Set => {
+                                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
+                                            try self.trackVariableType(param.name.lexeme, HIRType{ .Set = 0 });
+                                        },
                                     }
                                 }
                             }
@@ -1649,6 +1653,12 @@ pub const HIRGenerator = struct {
                 }
                 break :blk try std.fmt.allocPrint(self.allocator, "(enum#{})", .{eid});
             },
+            .Set => |sid| blk: {
+                if (self.type_system.enum_table) |table| {
+                    if (table.getName(sid)) |name| break :blk name;
+                }
+                break :blk try std.fmt.allocPrint(self.allocator, "(set#{})", .{sid});
+            },
             .Function => "function",
             .Union => |u| blk: {
                 if (u.members.len == 0) {
@@ -1711,6 +1721,14 @@ pub const HIRGenerator = struct {
 
     pub fn registerEnumType(self: *HIRGenerator, enum_name: []const u8, variants: []const []const u8) !void {
         try self.type_system.registerEnumType(enum_name, variants);
+    }
+
+    pub fn registerSetType(self: *HIRGenerator, set_name: []const u8, sources: []const ast.SetSource, local_variants: []const Token) !void {
+        var variant_names = try self.allocator.alloc([]const u8, local_variants.len);
+        for (local_variants, 0..) |variant_token, i| {
+            variant_names[i] = variant_token.lexeme;
+        }
+        try self.type_system.registerSetType(set_name, variant_names, sources);
     }
 
     pub fn registerStructType(self: *HIRGenerator, struct_name: []const u8, fields: []const []const u8) !void {

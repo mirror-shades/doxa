@@ -6,6 +6,6 @@ zig Random {
     }
 }
 
-pub function random() returns float {
+public function random() returns float {
     return Random.floatUnit();
 }

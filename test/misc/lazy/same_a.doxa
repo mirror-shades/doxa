@@ -1,3 +1,3 @@
-pub function Same() returns int {
+public function Same() returns int {
     return 1
 }

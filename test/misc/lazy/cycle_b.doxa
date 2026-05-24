@@ -1,1 +1,1 @@
-pub module a from "./cycle_a.doxa"
+public module a from "./cycle_a.doxa"

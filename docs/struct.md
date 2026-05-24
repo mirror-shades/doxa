@@ -8,9 +8,9 @@ struct Point {
     x :: int, # unless marked pub, values are private
     y :: int,
 
-    pub id :: int,
+    public id :: int,
 
-    pub function New(x :: int, y :: int) { # fucntions and methods are private unless marked pub as well
+    public function New(x :: int, y :: int) { # fucntions and methods are private unless marked public as well
         return $Point { # note the $ prefix
             x is x,
             y is y,
@@ -23,14 +23,14 @@ struct Point {
         return result
     }
 
-    pub method get() { # the `method` keyword lets you access 
+    public method get() { # the `method` keyword lets you access 
         return $Point {
             this.x,
             this.y
         }
     }
 
-    pub method getDelta() returns int {
+    public method getDelta() returns int {
         return Point.safeSub(this.x, this.y) # static methods can be called within instance methods
     }
 
@@ -48,7 +48,7 @@ struct Dog {
     animal :: Animal,
     breed :: string,
 
-    pub method bark() {
+    public method bark() {
         @print("{this.animal.name} says woof!")
     }
 }

@@ -26,26 +26,26 @@ zig Host {
     }
 }
 
-pub function os() returns string {
+public function os() returns string {
     return Host.osName();
 }
 
-pub function arch() returns string {
+public function arch() returns string {
     return Host.archName();
 }
 
-pub function abi() returns string {
+public function abi() returns string {
     return Host.abiName();
 }
 
-pub function isWindows() returns tetra {
+public function isWindows() returns tetra {
     return Host.isWindows();
 }
 
-pub function isLinux() returns tetra {
+public function isLinux() returns tetra {
     return Host.isLinux();
 }
 
-pub function isMac() returns tetra {
+public function isMac() returns tetra {
     return Host.isMac();
 }

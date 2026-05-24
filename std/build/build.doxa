@@ -1,4 +1,4 @@
-module error from "../error/error.doxa"
+module error from "../error.doxa"
 
 zig Build {
     const std = @import("std");
@@ -176,14 +176,14 @@ function mapBuildError(code :: int) returns error.IO | error.Common {
     }
 }
 
-pub function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.IO | error.Common {
+public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.IO | error.Common {
     const code is Build.compileDoxa(src, out, arch, os, abi, @string(debug));
     const err is Build.takeLastErrorCode()
     if err == 0 then return code
     return mapBuildError(err)
 }
 
-pub function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.IO | error.Common {
+public function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.IO | error.Common {
     const code is Build.compileHost(src, out, @string(debug));
     const err is Build.takeLastErrorCode()
     if err == 0 then return code

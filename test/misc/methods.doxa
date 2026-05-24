@@ -12,8 +12,8 @@ enum Species {
 }
 
 struct Animal {
-    pub name :: string
-    pub species :: Species
+    public name :: string
+    public species :: Species
 }
 
 var dog is $Animal {

@@ -1,4 +1,4 @@
-pub enum TokenType {
+public enum TokenType {
     # type literals
     INT_LITERAL,
     FLOAT_LITERAL,
@@ -23,7 +23,7 @@ pub enum TokenType {
 
 }
 
-pub struct Token {
+public struct Token {
     type :: TokenType
     literal :: string
     start :: int

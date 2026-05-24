@@ -25,6 +25,7 @@ pub const HIRType = union(enum) {
 
     Struct: StructId,
     Enum: EnumId,
+    Set: EnumId,
 
     Function: struct {
         params: []const *const HIRType,

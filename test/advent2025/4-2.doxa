@@ -9,8 +9,8 @@ const rows is @length(split_input)
 const cols is @length(split_input[0])
 
 struct Pair {
-    pub x :: int
-    pub y :: int
+    public x :: int
+    public y :: int
 }
 
 entry function main() {
