@@ -9,11 +9,12 @@ const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 pub const getTypeString = PrintOps.getTypeString;
-pub const formatHIRValue = PrintOps.formatHIRValue;
-pub const formatHIRValueRaw = PrintOps.formatHIRValueRaw;
-pub const printHIRValue = PrintOps.printHIRValue;
 const SoxaTypes = @import("../codegen/hir/soxa_types.zig");
 const HIRType = SoxaTypes.HIRType;
+
+/// Where formatted HIR output goes. Peek uses `.debug` so failures do not surface as Zig errors
+/// and debug lines are separated from normal program stdout.
+pub const PrintSink = enum { stdout, debug };
 
 fn printToStdout(comptime format: []const u8, args: anytype) !void {
     var stdout_buffer: [1024]u8 = undefined;
@@ -21,6 +22,13 @@ fn printToStdout(comptime format: []const u8, args: anytype) !void {
     const stdout = &stdout_writer.interface;
     try stdout.print(format, args);
     try stdout.flush();
+}
+
+fn printFormatted(sink: PrintSink, comptime format: []const u8, args: anytype) !void {
+    switch (sink) {
+        .stdout => try printToStdout(format, args),
+        .debug => std.debug.print(format, args),
+    }
 }
 
 pub const PrintOps = struct {
@@ -54,8 +62,8 @@ pub const PrintOps = struct {
     pub fn execPrint(vm: anytype) !void {
         const value = try vm.stack.pop();
 
-        try PrintOps.formatHIRValueRaw(vm, value.value);
-        try printToStdout("\n", .{});
+        try PrintOps.formatHIRValueRaw(vm, value.value, .stdout);
+        try printFormatted(.stdout, "\n", .{});
 
         try vm.stack.push(value);
     }
@@ -63,56 +71,56 @@ pub const PrintOps = struct {
     pub fn execPeek(vm: anytype, peek: anytype) !void {
         const value = vm.stack.peek() catch {
             // Stack might be empty after an error, handle gracefully
-            try printToStdout("(stack empty)", .{});
+            try printFormatted(.debug, "(stack empty)", .{});
             return;
         };
 
         if (peek.location) |location| {
-            try printToStdout("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
+            try printFormatted(.debug, "[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
         }
 
         if (peek.name) |name| {
             if (peek.union_members) |members| {
                 if (members.len > 1) {
                     const active = PrintOps.getTypeString(vm, value.value);
-                    try printToStdout("{s} :: ", .{name});
+                    try printFormatted(.debug, "{s} :: ", .{name});
                     for (members, 0..) |m, i| {
-                        if (i > 0) try printToStdout(" | ", .{});
-                        if (std.mem.eql(u8, m, active)) try printToStdout(">", .{});
-                        try printToStdout("{s}", .{m});
+                        if (i > 0) try printFormatted(.debug, " | ", .{});
+                        if (std.mem.eql(u8, m, active)) try printFormatted(.debug, ">", .{});
+                        try printFormatted(.debug, "{s}", .{m});
                     }
-                    try printToStdout(" is ", .{});
+                    try printFormatted(.debug, " is ", .{});
                 } else {
                     const type_string = PrintOps.getTypeString(vm, value.value);
-                    try printToStdout("{s} :: {s} is ", .{ name, type_string });
+                    try printFormatted(.debug, "{s} :: {s} is ", .{ name, type_string });
                 }
             } else {
                 const type_string = PrintOps.getTypeString(vm, value.value);
-                try printToStdout("{s} :: {s} is ", .{ name, type_string });
+                try printFormatted(.debug, "{s} :: {s} is ", .{ name, type_string });
             }
         } else {
             if (peek.union_members) |members| {
                 if (members.len > 1) {
                     const active = PrintOps.getTypeString(vm, value.value);
-                    try printToStdout(":: ", .{});
+                    try printFormatted(.debug, ":: ", .{});
                     for (members, 0..) |m, i| {
-                        if (i > 0) try printToStdout(" | ", .{});
-                        if (std.mem.eql(u8, m, active)) try printToStdout(">", .{});
-                        try printToStdout("{s}", .{m});
+                        if (i > 0) try printFormatted(.debug, " | ", .{});
+                        if (std.mem.eql(u8, m, active)) try printFormatted(.debug, ">", .{});
+                        try printFormatted(.debug, "{s}", .{m});
                     }
-                    try printToStdout(" is ", .{});
+                    try printFormatted(.debug, " is ", .{});
                 } else {
                     const type_string = PrintOps.getTypeString(vm, value.value);
-                    try printToStdout(":: {s} is ", .{type_string});
+                    try printFormatted(.debug, ":: {s} is ", .{type_string});
                 }
             } else {
                 const type_string = PrintOps.getTypeString(vm, value.value);
-                try printToStdout(":: {s} is ", .{type_string});
+                try printFormatted(.debug, ":: {s} is ", .{type_string});
             }
         }
 
-        try PrintOps.formatHIRValue(vm, value.value);
-        try printToStdout("\n", .{});
+        try PrintOps.formatHIRValue(vm, value.value, .debug);
+        try printFormatted(.debug, "\n", .{});
 
         try vm.stack.push(value);
     }
@@ -127,7 +135,7 @@ pub const PrintOps = struct {
                     field_index -= 1;
                     const field = s.fields[field_index];
                     if (i.location) |location| {
-                        try printToStdout("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
+                        try printFormatted(.debug, "[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
                     }
 
                     var field_path: []const u8 = undefined;
@@ -139,7 +147,7 @@ pub const PrintOps = struct {
                     defer vm.scopeAllocator().free(field_path);
 
                     const field_type_string = PrintOps.getTypeString(vm, field.value.*);
-                    try printToStdout(":: {s} is ", .{field_type_string});
+                    try printFormatted(.debug, ":: {s} is ", .{field_type_string});
 
                     switch (field.value.*) {
                         .struct_instance => |nested| {
@@ -171,8 +179,8 @@ pub const PrintOps = struct {
                                     if (@hasField(child, "program")) {
                                         try vm.executeInstruction(nested_peek);
                                     } else if (@hasField(child, "bytecode")) {
-                                        try PrintOps.formatHIRValue(vm, field.value.*);
-                                        try printToStdout("\n", .{});
+                                        try PrintOps.formatHIRValue(vm, field.value.*, .debug);
+                                        try printFormatted(.debug, "\n", .{});
                                         return;
                                     }
                                 },
@@ -182,8 +190,8 @@ pub const PrintOps = struct {
                             }
                         },
                         else => {
-                            try PrintOps.formatHIRValue(vm, field.value.*);
-                            try printToStdout("\n", .{});
+                            try PrintOps.formatHIRValue(vm, field.value.*, .debug);
+                            try printFormatted(.debug, "\n", .{});
                         },
                     }
                 }
@@ -191,13 +199,13 @@ pub const PrintOps = struct {
             else => {
                 if (i.field_names.len > 0) {
                     if (i.location) |location| {
-                        try printToStdout("[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
+                        try printFormatted(.debug, "[{s}:{d}:{d}] ", .{ location.file, location.range.start_line, location.range.start_col });
                     }
 
                     const value_type_string = PrintOps.getTypeString(vm, value.value);
-                    try printToStdout(":: {s} is ", .{value_type_string});
-                    try PrintOps.formatHIRValue(vm, value.value);
-                    try printToStdout("\n", .{});
+                    try printFormatted(.debug, ":: {s} is ", .{value_type_string});
+                    try PrintOps.formatHIRValue(vm, value.value, .debug);
+                    try printFormatted(.debug, "\n", .{});
                 }
             },
         }
@@ -231,58 +239,58 @@ pub const PrintOps = struct {
 
         for (actual_format_parts.items, 0..) |part, i| {
             if (part.len != 0) {
-                try printToStdout("{s}", .{part});
+                try printFormatted(.stdout, "{s}", .{part});
             }
 
             if (i < interp.placeholder_indices.len) {
                 const arg_index = interp.placeholder_indices[i];
                 if (arg_index < args.len) {
-                    try PrintOps.formatHIRValueRaw(vm, args[arg_index]);
+                    try PrintOps.formatHIRValueRaw(vm, args[arg_index], .stdout);
                 }
             }
         }
     }
 
-    pub fn printHIRValue(vm: anytype, value: HIRValue) !void {
+    pub fn printHIRValue(vm: anytype, value: HIRValue, sink: PrintSink) !void {
         switch (value) {
-            .int => |i| try printToStdout("{}", .{i}),
-            .float => |f| try printToStdout("{d}", .{f}),
-            .string => |s| try printToStdout("\"{s}\"", .{s}),
-            .tetra => |b| try printToStdout("{}", .{b}),
-            .byte => |u| try printToStdout("{}", .{u}),
-            .nothing => try printToStdout("nothing", .{}),
+            .int => |i| try printFormatted(sink, "{}", .{i}),
+            .float => |f| try printFormatted(sink, "{d}", .{f}),
+            .string => |s| try printFormatted(sink, "\"{s}\"", .{s}),
+            .tetra => |b| try printFormatted(sink, "{}", .{b}),
+            .byte => |u| try printFormatted(sink, "{}", .{u}),
+            .nothing => try printFormatted(sink, "nothing", .{}),
             .array => |arr| {
-                try printToStdout("[", .{});
+                try printFormatted(sink, "[", .{});
                 var first = true;
                 const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
                 for (arr.elements[0..visible_len]) |elem| {
-                    if (!first) try printToStdout(", ", .{});
-                    try PrintOps.printHIRValue(vm, elem);
+                    if (!first) try printFormatted(sink, ", ", .{});
+                    try PrintOps.printHIRValue(vm, elem, sink);
                     first = false;
                 }
-                try printToStdout("]", .{});
+                try printFormatted(sink, "]", .{});
             },
             .struct_instance => |s| {
-                try printToStdout("{{ ", .{});
+                try printFormatted(sink, "{{ ", .{});
                 var first: bool = true;
                 var idx: usize = s.fields.len;
                 while (idx > 0) {
                     idx -= 1;
                     const field = s.fields[idx];
-                    if (!first) try printToStdout(", ", .{});
-                    try printToStdout("{s}: ", .{field.name});
-                    try PrintOps.printHIRValue(vm, field.value.*);
+                    if (!first) try printFormatted(sink, ", ", .{});
+                    try printFormatted(sink, "{s}: ", .{field.name});
+                    try PrintOps.printHIRValue(vm, field.value.*, sink);
                     first = false;
                 }
-                try printToStdout(" }}", .{});
+                try printFormatted(sink, " }}", .{});
             },
-            .map => try printToStdout("{{map}}", .{}),
-            .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
+            .map => try printFormatted(sink, "{{map}}", .{}),
+            .enum_variant => |e| try printFormatted(sink, ".{s}", .{e.variant_name}),
             .storage_id_ref => |storage_id| {
                 if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
-                    try PrintOps.formatTokenLiteral(vm, storage.value);
+                    try PrintOps.formatTokenLiteral(vm, storage.value, sink);
                 } else {
-                    try printToStdout("storage_id_ref({})", .{storage_id});
+                    try printFormatted(sink, "storage_id_ref({})", .{storage_id});
                 }
             },
         }
@@ -406,177 +414,191 @@ pub const PrintOps = struct {
         };
     }
 
-    pub fn formatHIRValue(vm: anytype, value: HIRValue) !void {
+    pub fn formatHIRValue(vm: anytype, value: HIRValue, sink: PrintSink) !void {
         switch (value) {
-            .int => |i| try printToStdout("{}", .{i}),
-            .byte => |u| try printToStdout("0x{X:0>2}", .{u}),
-            .float => |f| try printFloat(f),
-            .string => |s| try printToStdout("\"{s}\"", .{s}),
-            .tetra => |t| try printToStdout("{s}", .{switch (t) {
+            .int => |i| try printFormatted(sink, "{}", .{i}),
+            .byte => |u| try printFormatted(sink, "0x{X:0>2}", .{u}),
+            .float => |f| try printFloat(f, sink),
+            .string => |s| try printFormatted(sink, "\"{s}\"", .{s}),
+            .tetra => |t| try printFormatted(sink, "{s}", .{switch (t) {
                 0 => "false",
                 1 => "true",
                 2 => "both",
                 3 => "neither",
                 else => "invalid",
             }}),
-            .nothing => try printToStdout("nothing", .{}),
+            .nothing => try printFormatted(sink, "nothing", .{}),
             .array => |arr| {
-                try printToStdout("[", .{});
+                try printFormatted(sink, "[", .{});
                 var first = true;
                 const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
                 for (arr.elements[0..visible_len]) |elem| {
-                    if (!first) try printToStdout(", ", .{});
-                    try PrintOps.formatHIRValue(vm, elem);
+                    if (!first) try printFormatted(sink, ", ", .{});
+                    try PrintOps.formatHIRValue(vm, elem, sink);
                     first = false;
                 }
-                try printToStdout("]", .{});
+                try printFormatted(sink, "]", .{});
             },
             .struct_instance => |s| {
-                try printToStdout("{{ ", .{});
+                try printFormatted(sink, "{{ ", .{});
                 var first: bool = true;
                 var idx: usize = s.fields.len;
                 while (idx > 0) {
                     idx -= 1;
                     const field = s.fields[idx];
-                    if (!first) try printToStdout(", ", .{});
-                    try printToStdout("{s}: ", .{field.name});
-                    try PrintOps.formatHIRValue(vm, field.value.*);
+                    if (!first) try printFormatted(sink, ", ", .{});
+                    try printFormatted(sink, "{s}: ", .{field.name});
+                    try PrintOps.formatHIRValue(vm, field.value.*, sink);
                     first = false;
                 }
-                try printToStdout(" }}", .{});
+                try printFormatted(sink, " }}", .{});
             },
-            .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
+            .enum_variant => |e| try printFormatted(sink, ".{s}", .{e.variant_name}),
             .storage_id_ref => |storage_id| {
                 if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
-                    try PrintOps.formatTokenLiteral(vm, storage.value);
+                    try PrintOps.formatTokenLiteral(vm, storage.value, sink);
                 } else {
-                    try printToStdout("storage_id_ref({})", .{storage_id});
+                    try printFormatted(sink, "storage_id_ref({})", .{storage_id});
                 }
             },
-            else => try printToStdout("{s}", .{@tagName(value)}),
+            else => try printFormatted(sink, "{s}", .{@tagName(value)}),
         }
     }
 
-    pub fn formatTokenLiteral(vm: anytype, value: TokenLiteral) !void {
+    pub fn formatTokenLiteral(vm: anytype, value: TokenLiteral, sink: PrintSink) !void {
         switch (value) {
-            .int => |i| try printToStdout("{}", .{i}),
-            .byte => |u| try printToStdout("0x{X:0>2}", .{u}),
-            .float => |f| try printFloat(f),
-            .string => |s| try printToStdout("\"{s}\"", .{s}),
-            .tetra => |t| try printToStdout("{s}", .{switch (t) {
+            .int => |i| try printFormatted(sink, "{}", .{i}),
+            .byte => |u| try printFormatted(sink, "0x{X:0>2}", .{u}),
+            .float => |f| try printFloat(f, sink),
+            .string => |s| try printFormatted(sink, "\"{s}\"", .{s}),
+            .tetra => |t| try printFormatted(sink, "{s}", .{switch (t) {
                 .false => "false",
                 .true => "true",
                 .both => "both",
                 .neither => "neither",
             }}),
-            .nothing => try printToStdout("nothing", .{}),
+            .nothing => try printFormatted(sink, "nothing", .{}),
             .array => |arr| {
-                try printToStdout("[", .{});
+                try printFormatted(sink, "[", .{});
                 var first = true;
                 for (arr) |elem| {
-                    if (!first) try printToStdout(", ", .{});
-                    try PrintOps.formatTokenLiteral(vm, elem);
+                    if (!first) try printFormatted(sink, ", ", .{});
+                    try PrintOps.formatTokenLiteral(vm, elem, sink);
                     first = false;
                 }
-                try printToStdout("]", .{});
+                try printFormatted(sink, "]", .{});
             },
             .struct_value => |s| {
-                try printToStdout("{{ ", .{});
+                try printFormatted(sink, "{{ ", .{});
                 var first: bool = true;
                 var idx: usize = s.fields.len;
                 while (idx > 0) {
                     idx -= 1;
                     const field = s.fields[idx];
-                    if (!first) try printToStdout(", ", .{});
-                    try printToStdout("{s}", .{field.name});
+                    if (!first) try printFormatted(sink, ", ", .{});
+                    try printFormatted(sink, "{s}", .{field.name});
                     first = false;
                 }
-                try printToStdout(" }}", .{});
+                try printFormatted(sink, " }}", .{});
             },
             .map => |m| {
-                try printToStdout("{{", .{});
+                try printFormatted(sink, "{{", .{});
                 var first = true;
                 var iter = m.iterator();
                 while (iter.next()) |entry| {
-                    if (!first) try printToStdout(", ", .{});
-                    try printToStdout("{s}: ", .{entry.key_ptr.*});
-                    try PrintOps.formatTokenLiteral(vm, entry.value_ptr.*);
+                    if (!first) try printFormatted(sink, ", ", .{});
+                    try printFormatted(sink, "{s}: ", .{entry.key_ptr.*});
+                    try PrintOps.formatTokenLiteral(vm, entry.value_ptr.*, sink);
                     first = false;
                 }
-                try printToStdout("}}", .{});
+                try printFormatted(sink, "}}", .{});
             },
-            .enum_variant => |e| try printToStdout(".{s}", .{e}),
-            else => try printToStdout("{s}", .{@tagName(value)}),
+            .enum_variant => |e| try printFormatted(sink, ".{s}", .{e}),
+            else => try printFormatted(sink, "{s}", .{@tagName(value)}),
         }
     }
 
-    pub fn formatHIRValueRaw(vm: anytype, value: HIRValue) !void {
+    pub fn formatHIRValueRaw(vm: anytype, value: HIRValue, sink: PrintSink) !void {
         switch (value) {
-            .int => |i| try printToStdout("{}", .{i}),
-            .byte => |u| try printToStdout("0x{X:0>2}", .{u}),
-            .float => |f| try printFloat(f),
-            .string => |s| try printToStdout("{s}", .{s}),
-            .tetra => |t| try printToStdout("{s}", .{switch (t) {
+            .int => |i| try printFormatted(sink, "{}", .{i}),
+            .byte => |u| try printFormatted(sink, "0x{X:0>2}", .{u}),
+            .float => |f| try printFloat(f, sink),
+            .string => |s| try printFormatted(sink, "{s}", .{s}),
+            .tetra => |t| try printFormatted(sink, "{s}", .{switch (t) {
                 0 => "false",
                 1 => "true",
                 2 => "both",
                 3 => "neither",
                 else => "invalid",
             }}),
-            .nothing => try printToStdout("nothing", .{}),
+            .nothing => try printFormatted(sink, "nothing", .{}),
             .array => |arr| {
-                try printToStdout("[", .{});
+                try printFormatted(sink, "[", .{});
                 var first = true;
                 const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
                 for (arr.elements[0..visible_len]) |elem| {
-                    if (!first) try printToStdout(", ", .{});
-                    try PrintOps.formatHIRValue(vm, elem);
+                    if (!first) try printFormatted(sink, ", ", .{});
+                    try PrintOps.formatHIRValue(vm, elem, sink);
                     first = false;
                 }
-                try printToStdout("]", .{});
+                try printFormatted(sink, "]", .{});
             },
             .struct_instance => |s| {
-                try printToStdout("{{ ", .{});
+                try printFormatted(sink, "{{ ", .{});
                 var first: bool = true;
                 var idx: usize = s.fields.len;
                 while (idx > 0) {
                     idx -= 1;
                     const field = s.fields[idx];
-                    if (!first) try printToStdout(", ", .{});
-                    try printToStdout(" {s}: ", .{field.name});
-                    try PrintOps.formatHIRValueRaw(vm, field.value.*);
+                    if (!first) try printFormatted(sink, ", ", .{});
+                    try printFormatted(sink, " {s}: ", .{field.name});
+                    try PrintOps.formatHIRValueRaw(vm, field.value.*, sink);
                     first = false;
                 }
-                try printToStdout(" }}", .{});
+                try printFormatted(sink, " }}", .{});
             },
-            .enum_variant => |e| try printToStdout(".{s}", .{e.variant_name}),
+            .enum_variant => |e| try printFormatted(sink, ".{s}", .{e.variant_name}),
             .storage_id_ref => |storage_id| {
                 if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
-                    try PrintOps.formatTokenLiteral(vm, storage.value);
+                    try PrintOps.formatTokenLiteral(vm, storage.value, sink);
                 } else {
-                    try printToStdout("storage_id_ref({})", .{storage_id});
+                    try printFormatted(sink, "storage_id_ref({})", .{storage_id});
                 }
             },
-            else => try printToStdout("{s}", .{@tagName(value)}),
+            else => try printFormatted(sink, "{s}", .{@tagName(value)}),
         }
     }
 
-    fn printFloat(f: f64) !void {
+    fn printFloat(f: f64, sink: PrintSink) !void {
         const roundedDown = std.math.floor(f);
         if (f - roundedDown == 0) {
-            try printToStdout("{d}.0", .{f});
+            try printFormatted(sink, "{d}.0", .{f});
         } else {
-            try printToStdout("{d}", .{f});
+            try printFormatted(sink, "{d}", .{f});
         }
     }
 
     pub fn execPrintStruct(vm: anytype, ps: anytype) !void {
         const value = try vm.stack.pop();
 
-        try PrintOps.printHIRValue(vm, value.value);
+        try PrintOps.printHIRValue(vm, value.value, .stdout);
 
         if (!ps.should_pop_after_peek) {
             try vm.stack.push(HIRFrame.initFromHIRValue(value.value));
         }
     }
 };
+
+/// Formats a value to stdout (used by `@print` and related runtime paths).
+pub fn formatHIRValue(vm: anytype, value: HIRValue) !void {
+    try PrintOps.formatHIRValue(vm, value, .stdout);
+}
+
+/// Raw string formatting without extra quotes (stdout).
+pub fn formatHIRValueRaw(vm: anytype, value: HIRValue) !void {
+    try PrintOps.formatHIRValueRaw(vm, value, .stdout);
+}
+
+pub fn printHIRValue(vm: anytype, value: HIRValue) !void {
+    try PrintOps.printHIRValue(vm, value, .stdout);
+}

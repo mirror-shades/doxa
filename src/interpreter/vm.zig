@@ -643,7 +643,7 @@ pub const VM = struct {
             },
             .PrintVal => {
                 const top = try self.popValue();
-                try PrintOps.formatHIRValueRaw(self, top);
+                try PrintOps.formatHIRValueRaw(self, top, .stdout);
             },
             .PrintNewline => {
                 try PrintOps.printRaw(self, "\n");
