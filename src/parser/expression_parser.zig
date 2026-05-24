@@ -6,6 +6,7 @@ const precedence = @import("./precedence.zig");
 const Precedence = @import("./precedence.zig").Precedence;
 const statement_parser = @import("./statement_parser.zig");
 const declaration_parser = @import("./declaration_parser.zig");
+const string_interpolation = @import("string_interpolation.zig");
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const Errors = @import("../utils/errors.zig");
@@ -90,7 +91,7 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     const starts_like_statement = first_tok == .VAR or first_tok == .CONST or first_tok == .FUNCTION or
         first_tok == .IF or first_tok == .WHILE or first_tok == .FOR or first_tok == .RETURN or
         first_tok == .BREAK or first_tok == .CONTINUE or first_tok == .IMPORT;
-    const literal_key_start = first_tok == .STRING or first_tok == .INT or first_tok == .FLOAT or first_tok == .BYTE or first_tok == .TETRA or first_tok == .DOT;
+    const literal_key_start = first_tok == .STRING or first_tok == .SINGLE_STRING or first_tok == .INT or first_tok == .FLOAT or first_tok == .BYTE or first_tok == .TETRA or first_tok == .DOT;
     const is_map = !starts_like_statement and literal_key_start and (first_tok != .RIGHT_BRACE and sep1 == .ASSIGN);
     if (is_map) {
         return self.parseMap();
@@ -1126,19 +1127,10 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
             self.advance();
             break :blk new_expr;
         },
-        .STRING => blk: {
-            const string_copy = try self.allocator.dupe(u8, current.literal.string);
-            const new_expr = try self.allocator.create(ast.Expr);
-            new_expr.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(current),
-                },
-                .data = .{
-                    .Literal = .{ .string = string_copy },
-                },
-            };
+        .STRING, .SINGLE_STRING => blk: {
             self.advance();
+            const interpolated = current.type == .STRING;
+            const new_expr = try string_interpolation.buildStringLiteralExpr(self, current.literal.string, ast.SourceSpan.fromToken(current), interpolated);
             break :blk new_expr;
         },
         else => {
@@ -1604,12 +1596,9 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
             .is_mutable = false,
         },
         .Cast => return .{ .base = .Nothing, .is_mutable = false },
+        .InterpolatedString => return .{ .base = .String, .is_mutable = false },
         .Print => |print| {
-            if (print.arguments) |args| {
-                for (args) |arg| {
-                    _ = try inferType(arg);
-                }
-            }
+            _ = try inferType(print.expr);
             return .{ .base = .Nothing, .is_mutable = false };
         },
         .Increment => |operand| {

@@ -186,15 +186,6 @@ pub const LexicalAnalyzer = struct {
         self.advance();
 
         switch (c) {
-            'r' => {
-                if (self.peekAt(0) == '"') {
-                    self.current = self.start;
-                    try self.rawString();
-                } else {
-                    try self.identifier();
-                }
-            },
-
             '/' => {
                 if (self.match('*')) {
                     self.advance();
@@ -369,6 +360,7 @@ pub const LexicalAnalyzer = struct {
             '0'...'9' => try self.number(),
 
             '"' => try self.string(),
+            '\'' => try self.singleQuotedString(),
             '[' => try self.addMinimalToken(.LEFT_BRACKET),
             ']' => try self.addMinimalToken(.RIGHT_BRACKET),
             ' ', '\r', '\t' => {},
@@ -657,8 +649,6 @@ pub const LexicalAnalyzer = struct {
                     '\\' => try result.append('\\'),
                     'n' => try result.append('\n'),
                     't' => try result.append('\t'),
-                    '{' => try result.append('{'),
-                    '}' => try result.append('}'),
                     'u' => {
                         if (self.peekAt(0) != '{') return error.InvalidUnicodeEscape;
                         self.advance();
@@ -704,19 +694,29 @@ pub const LexicalAnalyzer = struct {
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
     }
 
-    fn rawString(self: *LexicalAnalyzer) !void {
-        self.advance();
-        self.advance();
+    fn singleQuotedString(self: *LexicalAnalyzer) !void {
         var result = std.array_list.Managed(u8).init(self.allocator);
         errdefer result.deinit();
 
-        while (!self.isAtEnd()) {
-            const ch = self.peekAt(0);
-            if (ch == '"' and (self.current == 0 or self.source[self.current - 1] != '\\')) {
-                break;
-            }
-            try result.append(ch);
+        while (!self.isAtEnd() and self.peekAt(0) != '\'') {
+            const c = self.peekAt(0);
             self.advance();
+
+            if (c == '\\') {
+                if (self.isAtEnd()) {
+                    return error.UnterminatedString;
+                }
+
+                const escaped = self.peekAt(0);
+                self.advance();
+                switch (escaped) {
+                    '\'' => try result.append('\''),
+                    '\\' => try result.append('\\'),
+                    else => return error.InvalidEscapeSequence,
+                }
+            } else {
+                try result.append(c);
+            }
         }
 
         if (self.isAtEnd()) {
@@ -726,7 +726,7 @@ pub const LexicalAnalyzer = struct {
         self.advance();
         const lexeme = self.source[self.start..self.current];
         const string_content = try result.toOwnedSlice();
-        try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
+        try self.addLongToken(.SINGLE_STRING, .{ .string = string_content }, lexeme);
     }
 
     fn addZigBlock(self: *LexicalAnalyzer) !void {

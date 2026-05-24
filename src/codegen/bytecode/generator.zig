@@ -385,6 +385,38 @@ pub const BytecodeGenerator = struct {
             };
         }
 
+        fn resolveBuiltinId(name: []const u8) ?module.BuiltinId {
+            const builtin_names = std.StaticStringMap(module.BuiltinId).initComptime(.{
+                .{ "length", .length },
+                .{ "push", .push },
+                .{ "pop", .pop },
+                .{ "insert", .insert },
+                .{ "remove", .remove },
+                .{ "clear", .clear },
+                .{ "find", .find },
+                .{ "slice", .slice },
+                .{ "string", .string },
+                .{ "int", .int },
+                .{ "float", .float },
+                .{ "byte", .byte },
+                .{ "type", .type_ },
+                .{ "print", .print },
+                .{ "println", .println },
+                .{ "assert", .assert },
+                .{ "panic", .panic },
+                .{ "exit", .exit },
+                .{ "std", .std },
+                .{ "power", .power },
+                .{ "powi", .powi },
+                .{ "dice_roll", .dice_roll },
+                .{ "exists_quantifier_gt", .exists_quantifier_gt },
+                .{ "exists_quantifier_eq", .exists_quantifier_eq },
+                .{ "forall_quantifier_gt", .forall_quantifier_gt },
+                .{ "forall_quantifier_eq", .forall_quantifier_eq },
+            });
+            return builtin_names.get(name);
+        }
+
         fn lowerInstruction(self: *Context, inst: hir_instructions.HIRInstruction) !void {
             switch (inst) {
                 .Const => |payload| try self.instructions.append(self.allocator, .{ .PushConst = .{ .constant_index = payload.constant_id } }),
@@ -502,6 +534,7 @@ pub const BytecodeGenerator = struct {
                         .call_kind = payload.call_kind,
                         .target_module = payload.target_module,
                         .target_module_id = try self.resolveCallModuleId(payload.call_kind, payload.target_module),
+                        .builtin_id = if (payload.call_kind == .BuiltinFunction) resolveBuiltinId(payload.qualified_name) else null,
                     },
                     .arg_count = payload.arg_count,
                     .return_type = try module.typeFromHIR(switch (payload.return_type) {
@@ -516,6 +549,7 @@ pub const BytecodeGenerator = struct {
                         .call_kind = payload.call_kind,
                         .target_module = payload.target_module,
                         .target_module_id = try self.resolveCallModuleId(payload.call_kind, payload.target_module),
+                        .builtin_id = if (payload.call_kind == .BuiltinFunction) resolveBuiltinId(payload.qualified_name) else null,
                     },
                     .arg_count = payload.arg_count,
                     .return_type = try module.typeFromHIR(switch (payload.return_type) {

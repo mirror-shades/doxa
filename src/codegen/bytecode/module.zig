@@ -6,6 +6,35 @@ const Reporting = @import("../../utils/reporting.zig");
 
 pub const SpecVersion: u16 = 1;
 
+pub const BuiltinId = enum(u8) {
+    length,
+    push,
+    pop,
+    insert,
+    remove,
+    clear,
+    find,
+    slice,
+    string,
+    int,
+    float,
+    byte,
+    type_,
+    print,
+    println,
+    assert,
+    panic,
+    exit,
+    std,
+    power,
+    powi,
+    dice_roll,
+    exists_quantifier_gt,
+    exists_quantifier_eq,
+    forall_quantifier_gt,
+    forall_quantifier_eq,
+};
+
 pub const ModuleId = u16;
 pub const InvalidModuleId: ModuleId = std.math.maxInt(ModuleId);
 pub const SlotIndex = u32;
@@ -75,6 +104,7 @@ pub const CallTarget = struct {
     call_kind: hir_types.CallKind,
     target_module: ?[]const u8,
     target_module_id: ?ModuleId,
+    builtin_id: ?BuiltinId = null,
 };
 
 pub const Instruction = union(enum) {

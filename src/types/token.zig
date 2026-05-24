@@ -123,7 +123,8 @@ pub const TokenType = enum {
     INT, // integer
     BYTE, // hex literal u8
     FLOAT, // float
-    STRING, // string
+    STRING, // double-quoted string
+    SINGLE_STRING, // single-quoted literal string
     TETRA, // tetra
     NOTHING, // nothing
     INT_TYPE, // int type declaration
@@ -207,7 +208,7 @@ pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
         .INT => ast.TypeInfo{ .base = .Int, .is_mutable = true },
         .BYTE => ast.TypeInfo{ .base = .Byte, .is_mutable = true },
         .FLOAT => ast.TypeInfo{ .base = .Float, .is_mutable = true },
-        .STRING => ast.TypeInfo{ .base = .String, .is_mutable = true },
+        .STRING, .SINGLE_STRING => ast.TypeInfo{ .base = .String, .is_mutable = true },
         .TETRA => ast.TypeInfo{ .base = .Tetra, .is_mutable = true },
         .ARRAY => ast.TypeInfo{ .base = .Array, .is_mutable = true },
     };

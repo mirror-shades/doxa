@@ -8,8 +8,11 @@ const HIRFrame = core.HIRFrame;
 
 const BytecodeType = module.BytecodeType;
 
+const ValueOwner = @import("../codegen/hir/soxa_values.zig").ValueOwner;
+
 pub const SlotPointer = struct {
     value: *HIRValue,
+    owner: ValueOwner = .Runtime,
 
     pub fn load(self: SlotPointer) HIRValue {
         return self.value.*;

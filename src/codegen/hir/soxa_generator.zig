@@ -1113,6 +1113,7 @@ pub const HIRGenerator = struct {
         switch (expr.data) {
             .This => try basic_handler.generateThis(),
             .Literal => |lit| try basic_handler.generateLiteral(lit, preserve_result, should_pop_after_use),
+            .InterpolatedString => |template| try basic_handler.generateInterpolatedString(template, preserve_result, should_pop_after_use),
             .Variable => |var_token| try basic_handler.generateVariable(var_token),
             .Grouping => |grouping| try basic_handler.generateGrouping(grouping, preserve_result),
             .EnumMember => |member| try basic_handler.generateEnumMember(member),

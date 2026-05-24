@@ -105,7 +105,7 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
 ### Diagnostics / Output
 
 - `@print("text")`
-  - Current parser expects string-literal format input. Calls like `@print(123)` fail at compile time. Value interpolation can be done by placing expressions in curly brackets like `@print("value is {value}")`
+  - Prints any expression. Double-quoted strings interpolate `{...}` expressions before printing, so `@print("value is {value}")` prints the current value. Use single-quoted strings for literal braces, such as `@print('{ y: 2 }')`.
 - `@assert(condition, "message"?)`
   - False condition halts execution and reports assertion failure location/message.
 - `@panic(message)`

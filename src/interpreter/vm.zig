@@ -815,7 +815,9 @@ pub const VM = struct {
         return switch (operand.kind) {
             .local => blk: {
                 const frame = try self.currentFrame();
-                break :blk frame.pointer(operand.slot);
+                var ptr = frame.pointer(operand.slot);
+                ptr.owner = .Runtime;
+                break :blk ptr;
             },
             .alias => blk: {
                 const frame = try self.currentFrame();
@@ -837,17 +839,20 @@ pub const VM = struct {
             .module_global, .imported_module => blk: {
                 const module_id = operand.module_id orelse return error.MissingModule;
                 const state = try self.resolveModuleState(module_id);
-                break :blk state.pointer(operand.slot);
+                var ptr = state.pointer(operand.slot);
+                ptr.owner = ValueOwner{ .Module = module_id };
+                break :blk ptr;
             },
             .builtin => return error.UnimplementedInstruction,
         };
     }
 
     fn ownerForStoreTarget(self: *VM, operand: module.SlotOperand, ptr: runtime.SlotPointer) VmError!ValueOwner {
+        _ = self;
         return switch (operand.kind) {
             .local => ValueOwner.Runtime,
             .module_global, .imported_module => ValueOwner{ .Module = operand.module_id orelse return error.MissingModule },
-            .alias => self.ownerForPointer(ptr),
+            .alias => ptr.owner,
             .builtin => ValueOwner.Runtime,
         };
     }
@@ -1066,10 +1071,8 @@ pub const VM = struct {
                 var i: u32 = 0;
                 while (i < arr_len) : (i += 1) {
                     const element = &arr.elements[i];
-                    const predicate_ptr = try self.runtimeAllocator().create(HIRValue);
-                    predicate_ptr.* = predicate;
-                    defer self.runtimeAllocator().destroy(predicate_ptr);
-                    const predicate_value = try self.evaluatePredicate(predicate_ptr, element);
+                    var predicate_copy = predicate;
+                    const predicate_value = try self.evaluatePredicate(&predicate_copy, element);
                     const truthy = try self.isTruthy(predicate_value);
                     if (is_exists) {
                         if (truthy) {
@@ -1107,11 +1110,8 @@ pub const VM = struct {
             },
             .storage_id_ref => |id| {
                 const ptr = try self.slotRefFromId(id);
-                const loaded_predicate = ptr.load();
-                const temp_storage = try self.runtimeAllocator().create(HIRValue);
-                temp_storage.* = loaded_predicate;
-                defer self.runtimeAllocator().destroy(temp_storage);
-                return self.evaluatePredicate(temp_storage, argument);
+                var loaded_predicate = ptr.load();
+                return self.evaluatePredicate(&loaded_predicate, argument);
             },
             else => {
                 self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unsupported predicate type for quantifier", .{});
@@ -1238,277 +1238,260 @@ pub const VM = struct {
         };
     }
 
-    fn execBuiltin(self: *VM, name: []const u8, arg_count_raw: u32) VmError!void {
+    fn execBuiltin(self: *VM, id: ?module.BuiltinId, name: []const u8, arg_count_raw: u32) VmError!void {
         const arg_count: usize = @intCast(arg_count_raw);
 
-        if (std.mem.eql(u8, name, "length")) {
-            const value = try self.stack.pop();
-            switch (value.value) {
-                .array => |arr| {
-                    try self.stack.push(HIRFrame.initInt(@intCast(arr.length)));
-                },
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "length: argument must be array", .{}),
-            }
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "push")) {
-            const element = try self.stack.pop();
-            const array_frame = try self.stack.pop();
-
-            switch (array_frame.value) {
-                .array => |arr| {
-                    var mutable_arr = arr;
-                    const length = mutable_arr.length;
-
-                    if (length >= mutable_arr.capacity) {
-                        const new_capacity = @max(mutable_arr.capacity * 2, mutable_arr.capacity + 1);
-                        var new_elements = try self.scopeAllocator().alloc(HIRValue, new_capacity);
-                        @memcpy(new_elements[0..mutable_arr.elements.len], mutable_arr.elements);
-                        // Don't free old elements - they're in scope arena
-                        mutable_arr.elements = new_elements;
-                        mutable_arr.capacity = @intCast(new_capacity);
+        if (id) |builtin_id| {
+            switch (builtin_id) {
+                .length => {
+                    const value = try self.stack.pop();
+                    switch (value.value) {
+                        .array => |arr| {
+                            try self.stack.push(HIRFrame.initInt(@intCast(arr.length)));
+                        },
+                        else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "length: argument must be array", .{}),
                     }
-
-                    mutable_arr.elements[length] = element.value;
-                    mutable_arr.length += 1;
-                    if (length + 1 < mutable_arr.elements.len) {
-                        mutable_arr.elements[length + 1] = HIRValue.nothing;
-                    }
-
-                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
+                    return;
                 },
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "push: target must be array", .{}),
-            }
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "power") or std.mem.eql(u8, name, "powi")) {
-            const exponent = try self.stack.pop();
-            const base = try self.stack.pop();
-
-            if (std.mem.eql(u8, name, "powi")) {
-                const base_int = switch (base.value) {
-                    .int => |i| i,
-                    .byte => |b| @as(i64, b),
-                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: base must be integer", .{}),
-                };
-                const exp_int = switch (exponent.value) {
-                    .int => |i| i,
-                    .byte => |b| @as(i64, b),
-                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: exponent must be integer", .{}),
-                };
-                const result = std.math.pow(i64, base_int, @intCast(exp_int));
-                try self.stack.push(HIRFrame.initInt(result));
-                return;
-            }
-
-            const base_float = switch (base.value) {
-                .int => |i| @as(f64, @floatFromInt(i)),
-                .float => |f| f,
-                .byte => |b| @as(f64, @floatFromInt(b)),
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "power: base must be numeric", .{}),
-            };
-
-            const exponent_float = switch (exponent.value) {
-                .int => |i| @as(f64, @floatFromInt(i)),
-                .float => |f| f,
-                .byte => |b| @as(f64, @floatFromInt(b)),
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "power: exponent must be numeric", .{}),
-            };
-
-            const result = std.math.pow(f64, base_float, exponent_float);
-            try self.stack.push(HIRFrame.initFloat(result));
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "exists_quantifier_gt") or std.mem.eql(u8, name, "exists_quantifier_eq")) {
-            const comparison_value = try self.stack.pop();
-            const array_frame = try self.stack.pop();
-            const is_equality = std.mem.eql(u8, name, "exists_quantifier_eq");
-
-            switch (array_frame.value) {
-                .array => |arr| {
-                    var found = false;
-                    const arr_len = arr.length;
-                    var j: u32 = 0;
-                    while (j < arr_len) : (j += 1) {
-                        const elem = arr.elements[j];
-                        const satisfies = switch (elem) {
-                            .int => |elem_int| switch (comparison_value.value) {
-                                .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
-                                else => false,
-                            },
-                            .float => |elem_float| switch (comparison_value.value) {
-                                .float => |comp_float| if (is_equality) elem_float == comp_float else elem_float > comp_float,
-                                .int => |comp_int| blk: {
-                                    const comp_float = @as(f64, @floatFromInt(comp_int));
-                                    break :blk if (is_equality) elem_float == comp_float else elem_float > comp_float;
-                                },
-                                else => false,
-                            },
-                            .string => |elem_str| switch (comparison_value.value) {
-                                .string => |comp_str| if (is_equality) std.mem.eql(u8, elem_str, comp_str) else false,
-                                else => false,
-                            },
-                            else => false,
+                .push => {
+                    const element = try self.stack.pop();
+                    const array_frame = try self.stack.pop();
+                    switch (array_frame.value) {
+                        .array => |arr| {
+                            var mutable_arr = arr;
+                            const length = mutable_arr.length;
+                            if (length >= mutable_arr.capacity) {
+                                const new_capacity = @max(mutable_arr.capacity * 2, mutable_arr.capacity + 1);
+                                var new_elements = try self.scopeAllocator().alloc(HIRValue, new_capacity);
+                                @memcpy(new_elements[0..mutable_arr.elements.len], mutable_arr.elements);
+                                mutable_arr.elements = new_elements;
+                                mutable_arr.capacity = @intCast(new_capacity);
+                            }
+                            mutable_arr.elements[length] = element.value;
+                            mutable_arr.length += 1;
+                            if (length + 1 < mutable_arr.elements.len) {
+                                mutable_arr.elements[length + 1] = HIRValue.nothing;
+                            }
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
+                        },
+                        else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "push: target must be array", .{}),
+                    }
+                    return;
+                },
+                .power, .powi => {
+                    const is_powi = builtin_id == .powi;
+                    const exponent = try self.stack.pop();
+                    const base = try self.stack.pop();
+                    if (is_powi) {
+                        const base_int = switch (base.value) {
+                            .int => |i| i,
+                            .byte => |b| @as(i64, b),
+                            else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: base must be integer", .{}),
                         };
-                        if (satisfies) {
-                            found = true;
-                            break;
-                        }
-                    }
-                    try self.stack.push(HIRFrame.initTetra(if (found) 1 else 0));
-                },
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "exists_quantifier: argument must be array", .{}),
-            }
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "forall_quantifier_gt") or std.mem.eql(u8, name, "forall_quantifier_eq")) {
-            const comparison_value = try self.stack.pop();
-            const array_frame = try self.stack.pop();
-            const is_equality = std.mem.eql(u8, name, "forall_quantifier_eq");
-
-            switch (array_frame.value) {
-                .array => |arr| {
-                    var all_satisfy = true;
-                    var has_elements = arr.length > 0;
-                    const arr_len = arr.length;
-                    var k: u32 = 0;
-                    while (k < arr_len) : (k += 1) {
-                        const elem = arr.elements[k];
-                        const satisfies = switch (elem) {
-                            .int => |elem_int| switch (comparison_value.value) {
-                                .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
-                                else => false,
-                            },
-                            .float => |elem_float| switch (comparison_value.value) {
-                                .float => |comp_float| if (is_equality) elem_float == comp_float else elem_float > comp_float,
-                                .int => |comp_int| blk: {
-                                    const comp_float = @as(f64, @floatFromInt(comp_int));
-                                    break :blk if (is_equality) elem_float == comp_float else elem_float > comp_float;
-                                },
-                                else => false,
-                            },
-                            .string => |elem_str| switch (comparison_value.value) {
-                                .string => |comp_str| if (is_equality) std.mem.eql(u8, elem_str, comp_str) else false,
-                                else => false,
-                            },
-                            else => false,
+                        const exp_int = switch (exponent.value) {
+                            .int => |i| i,
+                            .byte => |b| @as(i64, b),
+                            else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "powi: exponent must be integer", .{}),
                         };
-                        if (!satisfies) {
-                            all_satisfy = false;
-                            break;
-                        }
-                    }
-                    try self.stack.push(HIRFrame.initTetra(if (!has_elements or all_satisfy) 1 else 0));
-                },
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "forall_quantifier: argument must be array", .{}),
-            }
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "exit")) {
-            if (arg_count > 1) return error.UnimplementedInstruction;
-            var exit_code: i64 = 0;
-            if (arg_count == 1) {
-                const value = try self.stack.pop();
-                exit_code = switch (value.value) {
-                    .int => |i| i,
-                    .byte => |b| @as(i64, b),
-                    else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@exit: argument must be an integer", .{}),
-                };
-            }
-            self.running = false;
-            self.skip_increment = true;
-            try self.stack.push(HIRFrame.initInt(exit_code));
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "byte")) {
-            if (arg_count != 1) return error.UnimplementedInstruction;
-            const value = try self.stack.pop();
-
-            const byte_val: u8 = switch (value.value) {
-                .string => |s| if (s.len > 0) s[0] else 0,
-                .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
-                .byte => |byte_val| byte_val,
-                .float => |f| if (f >= 0 and f <= 255) @intFromFloat(f) else 0,
-                else => 0,
-            };
-
-            try self.stack.push(HIRFrame.initByte(byte_val));
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "clear")) {
-            if (arg_count != 1) return error.UnimplementedInstruction;
-            const coll = try self.stack.pop();
-            switch (coll.value) {
-                .array => |arr| {
-                    const mutable_arr = arr;
-                    for (mutable_arr.elements) |*elem| {
-                        elem.* = HIRValue.nothing;
-                    }
-                    var updated = mutable_arr;
-                    updated.length = 0;
-                    try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = updated }));
-                },
-                .string => |_| {
-                    const empty = "";
-                    try self.stack.push(HIRFrame.initString(empty));
-                },
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARRAY_TYPE, "clear: target must be array or string, got {s}", .{@tagName(coll.value)}),
-            }
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "find")) {
-            if (arg_count != 2) return error.UnimplementedInstruction;
-            const value = try self.stack.pop();
-            const coll = try self.stack.pop();
-
-            switch (coll.value) {
-                .array => |arr| {
-                    var idx: i64 = 0;
-                    const arr_len: u32 = arr.length;
-                    while (idx < arr_len) : (idx += 1) {
-                        if (valuesEqual(arr.elements[@intCast(idx)], value.value)) {
-                            try self.stack.push(HIRFrame.initInt(idx));
-                            return;
-                        }
-                    }
-                    try self.stack.push(HIRFrame.initInt(-1));
-                },
-                .string => |s_val| {
-                    const needle = switch (value.value) {
-                        .string => |s| s,
-                        else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@find on string requires string value, got {s}", .{@tagName(value.value)}),
-                    };
-
-                    if (needle.len == 0) {
-                        try self.stack.push(HIRFrame.initInt(0));
+                        const result = std.math.pow(i64, base_int, @intCast(exp_int));
+                        try self.stack.push(HIRFrame.initInt(result));
                         return;
                     }
-
-                    const maybe_idx = std.mem.indexOf(u8, s_val, needle);
-                    if (maybe_idx) |found| {
-                        try self.stack.push(HIRFrame.initInt(@intCast(found)));
-                    } else {
-                        try self.stack.push(HIRFrame.initInt(-1));
-                    }
+                    const base_float = switch (base.value) {
+                        .int => |i| @as(f64, @floatFromInt(i)),
+                        .float => |f| f,
+                        .byte => |b| @as(f64, @floatFromInt(b)),
+                        else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "power: base must be numeric", .{}),
+                    };
+                    const exponent_float = switch (exponent.value) {
+                        .int => |i| @as(f64, @floatFromInt(i)),
+                        .float => |f| f,
+                        .byte => |b| @as(f64, @floatFromInt(b)),
+                        else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "power: exponent must be numeric", .{}),
+                    };
+                    const result = std.math.pow(f64, base_float, exponent_float);
+                    try self.stack.push(HIRFrame.initFloat(result));
+                    return;
                 },
-                else => return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARRAY_TYPE, "@find requires array or string, got {s}", .{@tagName(coll.value)}),
+                .exists_quantifier_gt, .exists_quantifier_eq => {
+                    const is_equality = builtin_id == .exists_quantifier_eq;
+                    const comparison_value = try self.stack.pop();
+                    const array_frame = try self.stack.pop();
+                    switch (array_frame.value) {
+                        .array => |arr| {
+                            var found = false;
+                            const arr_len = arr.length;
+                            var j: u32 = 0;
+                            while (j < arr_len) : (j += 1) {
+                                const elem = arr.elements[j];
+                                const satisfies = switch (elem) {
+                                    .int => |elem_int| switch (comparison_value.value) {
+                                        .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
+                                        else => false,
+                                    },
+                                    .float => |elem_float| switch (comparison_value.value) {
+                                        .float => |comp_float| if (is_equality) elem_float == comp_float else elem_float > comp_float,
+                                        .int => |comp_int| blk: {
+                                            const comp_float = @as(f64, @floatFromInt(comp_int));
+                                            break :blk if (is_equality) elem_float == comp_float else elem_float > comp_float;
+                                        },
+                                        else => false,
+                                    },
+                                    .string => |elem_str| switch (comparison_value.value) {
+                                        .string => |comp_str| if (is_equality) std.mem.eql(u8, elem_str, comp_str) else false,
+                                        else => false,
+                                    },
+                                    else => false,
+                                };
+                                if (satisfies) {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            try self.stack.push(HIRFrame.initTetra(if (found) 1 else 0));
+                        },
+                        else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "exists_quantifier: argument must be array", .{}),
+                    }
+                    return;
+                },
+                .forall_quantifier_gt, .forall_quantifier_eq => {
+                    const is_equality = builtin_id == .forall_quantifier_eq;
+                    const comparison_value = try self.stack.pop();
+                    const array_frame = try self.stack.pop();
+                    switch (array_frame.value) {
+                        .array => |arr| {
+                            var all_satisfy = true;
+                            const has_elements = arr.length > 0;
+                            const arr_len = arr.length;
+                            var k: u32 = 0;
+                            while (k < arr_len) : (k += 1) {
+                                const elem = arr.elements[k];
+                                const satisfies = switch (elem) {
+                                    .int => |elem_int| switch (comparison_value.value) {
+                                        .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
+                                        else => false,
+                                    },
+                                    .float => |elem_float| switch (comparison_value.value) {
+                                        .float => |comp_float| if (is_equality) elem_float == comp_float else elem_float > comp_float,
+                                        .int => |comp_int| blk: {
+                                            const comp_float = @as(f64, @floatFromInt(comp_int));
+                                            break :blk if (is_equality) elem_float == comp_float else elem_float > comp_float;
+                                        },
+                                        else => false,
+                                    },
+                                    .string => |elem_str| switch (comparison_value.value) {
+                                        .string => |comp_str| if (is_equality) std.mem.eql(u8, elem_str, comp_str) else false,
+                                        else => false,
+                                    },
+                                    else => false,
+                                };
+                                if (!satisfies) {
+                                    all_satisfy = false;
+                                    break;
+                                }
+                            }
+                            try self.stack.push(HIRFrame.initTetra(if (!has_elements or all_satisfy) 1 else 0));
+                        },
+                        else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "forall_quantifier: argument must be array", .{}),
+                    }
+                    return;
+                },
+                .exit => {
+                    if (arg_count > 1) return error.UnimplementedInstruction;
+                    var exit_code: i64 = 0;
+                    if (arg_count == 1) {
+                        const value = try self.stack.pop();
+                        exit_code = switch (value.value) {
+                            .int => |i| i,
+                            .byte => |b| @as(i64, b),
+                            else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "@exit: argument must be an integer", .{}),
+                        };
+                    }
+                    self.running = false;
+                    self.skip_increment = true;
+                    try self.stack.push(HIRFrame.initInt(exit_code));
+                    return;
+                },
+                .byte => {
+                    if (arg_count != 1) return error.UnimplementedInstruction;
+                    const value = try self.stack.pop();
+                    const byte_val: u8 = switch (value.value) {
+                        .string => |s| if (s.len > 0) s[0] else 0,
+                        .int => |i| if (i >= 0 and i <= 255) @as(u8, @intCast(i)) else 0,
+                        .byte => |byte_val| byte_val,
+                        .float => |f| if (f >= 0 and f <= 255) @intFromFloat(f) else 0,
+                        else => 0,
+                    };
+                    try self.stack.push(HIRFrame.initByte(byte_val));
+                    return;
+                },
+                .clear => {
+                    if (arg_count != 1) return error.UnimplementedInstruction;
+                    const coll = try self.stack.pop();
+                    switch (coll.value) {
+                        .array => |arr| {
+                            const mutable_arr = arr;
+                            for (mutable_arr.elements) |*elem| {
+                                elem.* = HIRValue.nothing;
+                            }
+                            var updated = mutable_arr;
+                            updated.length = 0;
+                            try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = updated }));
+                        },
+                        .string => |_| {
+                            const empty = "";
+                            try self.stack.push(HIRFrame.initString(empty));
+                        },
+                        else => return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARRAY_TYPE, "clear: target must be array or string, got {s}", .{@tagName(coll.value)}),
+                    }
+                    return;
+                },
+                .find => {
+                    if (arg_count != 2) return error.UnimplementedInstruction;
+                    const value = try self.stack.pop();
+                    const coll = try self.stack.pop();
+                    switch (coll.value) {
+                        .array => |arr| {
+                            var idx: i64 = 0;
+                            const arr_len: u32 = arr.length;
+                            while (idx < arr_len) : (idx += 1) {
+                                if (valuesEqual(arr.elements[@intCast(idx)], value.value)) {
+                                    try self.stack.push(HIRFrame.initInt(idx));
+                                    return;
+                                }
+                            }
+                            try self.stack.push(HIRFrame.initInt(-1));
+                        },
+                        .string => |s_val| {
+                            const needle = switch (value.value) {
+                                .string => |s| s,
+                                else => return self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@find on string requires string value, got {s}", .{@tagName(value.value)}),
+                            };
+                            if (needle.len == 0) {
+                                try self.stack.push(HIRFrame.initInt(0));
+                                return;
+                            }
+                            const maybe_idx = std.mem.indexOf(u8, s_val, needle);
+                            if (maybe_idx) |found| {
+                                try self.stack.push(HIRFrame.initInt(@intCast(found)));
+                            } else {
+                                try self.stack.push(HIRFrame.initInt(-1));
+                            }
+                        },
+                        else => return self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARRAY_TYPE, "@find requires array or string, got {s}", .{@tagName(coll.value)}),
+                    }
+                    return;
+                },
+                .assert => {
+                    _ = try self.stack.pop();
+                    try self.stack.push(HIRFrame.initNothing());
+                    return;
+                },
+                .pop, .insert, .remove, .slice, .string, .int, .float, .type_, .print, .println, .panic, .std, .dice_roll => {
+                    self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Builtin '{s}' should not arrive as a VM call (handled at bytecode level)", .{name});
+                    return ErrorList.TypeError;
+                },
             }
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "assert")) {
-            // Assert is handled at compile time, but if it reaches here, just pop the condition
-            _ = try self.stack.pop();
-            try self.stack.push(HIRFrame.initNothing());
-            return;
         }
 
         self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown built-in function: {s}", .{name});
@@ -1967,7 +1950,7 @@ pub const VM = struct {
                 // Otherwise, attempt inline zig dynlib call.
                 try self.execInlineZigModuleFunction(payload.target.qualified_name, payload.arg_count);
             },
-            .BuiltinFunction => try self.execBuiltin(payload.target.qualified_name, payload.arg_count),
+            .BuiltinFunction => try self.execBuiltin(payload.target.builtin_id, payload.target.qualified_name, payload.arg_count),
         }
     }
 
@@ -2506,8 +2489,8 @@ pub const VM = struct {
                 defer result.deinit();
                 try result.append('[');
                 var first = true;
-                for (arr.elements) |*elem| {
-                    if (elem.* == .nothing) break;
+                const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
+                for (arr.elements[0..visible_len]) |*elem| {
                     if (!first) try result.appendSlice(", ");
                     const elem_str = try self.valueToString(allocator, elem);
                     defer allocator.free(elem_str);
@@ -2645,8 +2628,12 @@ pub const VM = struct {
             },
             .array => |a| blk: {
                 const elems = try allocator.alloc(HIRValue, a.elements.len);
-                for (a.elements, 0..) |_, i| {
+                const visible_len = @min(a.elements.len, @as(usize, @intCast(a.length)));
+                for (a.elements[0..visible_len], 0..) |_, i| {
                     elems[i] = try self.deepCopyValueToAllocator(allocator, &a.elements[i], owner);
+                }
+                for (elems[visible_len..]) |*elem| {
+                    elem.* = hir_values.nothing_value;
                 }
                 break :blk HIRValue{ .array = .{ .elements = elems, .element_type = a.element_type, .capacity = a.capacity, .length = a.length, .path = null, .nested_element_type = a.nested_element_type, .owner = owner } };
             },

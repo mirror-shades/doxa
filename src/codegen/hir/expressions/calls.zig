@@ -22,6 +22,34 @@ pub const CallsHandler = struct {
         return .{ .generator = generator };
     }
 
+    fn storeVariableOrAlias(self: *CallsHandler, var_name: []const u8, expected_type: HIRType) !void {
+        if (self.generator.symbol_table.isAliasParameter(var_name)) {
+            if (self.generator.slot_manager.getAliasSlot(var_name)) |alias_slot| {
+                try self.generator.instructions.append(.{
+                    .StoreAlias = .{
+                        .slot_index = alias_slot,
+                        .var_name = var_name,
+                        .expected_type = expected_type,
+                    },
+                });
+                return;
+            }
+            return ErrorList.InvalidAliasArgument;
+        }
+
+        const var_idx = try self.generator.getOrCreateVariable(var_name);
+        const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
+        try self.generator.instructions.append(.{
+            .StoreVar = .{
+                .var_index = var_idx,
+                .var_name = var_name,
+                .scope_kind = scope_kind,
+                .module_context = null,
+                .expected_type = expected_type,
+            },
+        });
+    }
+
     pub fn generateFunctionCall(self: *CallsHandler, function_call: ast.Expr.Data, should_pop_after_use: bool) !void {
         const call_data = function_call.FunctionCall;
 
@@ -492,12 +520,8 @@ pub const CallsHandler = struct {
             }
             if (builtin_data.arguments[0].data == .Variable) {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
-                const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-
-                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
-
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                try self.storeVariableOrAlias(var_name, expected_type);
             }
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
@@ -516,17 +540,14 @@ pub const CallsHandler = struct {
             }
             if (builtin_data.arguments[0].data == .Variable) {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
-                const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-
-                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
 
                 if (target_type == .String) {
                     try self.generator.instructions.append(.Swap);
-                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                    try self.storeVariableOrAlias(var_name, expected_type);
                 } else {
                     try self.generator.instructions.append(.Swap);
-                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                    try self.storeVariableOrAlias(var_name, expected_type);
                 }
             }
         } else if (std.mem.eql(u8, name, "insert")) {
@@ -537,12 +558,8 @@ pub const CallsHandler = struct {
             try self.generator.instructions.append(.ArrayInsert);
             if (builtin_data.arguments[0].data == .Variable) {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
-                const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-
-                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
-
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                try self.storeVariableOrAlias(var_name, expected_type);
             } else {
                 try self.generator.instructions.append(.Pop);
             }
@@ -556,13 +573,10 @@ pub const CallsHandler = struct {
             try self.generator.instructions.append(.ArrayRemove);
             if (builtin_data.arguments[0].data == .Variable) {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
-                const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
 
-                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
-
                 try self.generator.instructions.append(.Swap);
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                try self.storeVariableOrAlias(var_name, expected_type);
             } else {
                 try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.Pop);
@@ -581,17 +595,13 @@ pub const CallsHandler = struct {
                 // Strings are immutable - replace with empty string
                 if (builtin_data.arguments[0].data == .Variable) {
                     const var_name = builtin_data.arguments[0].data.Variable.lexeme;
-                    const var_idx = try self.generator.getOrCreateVariable(var_name);
                     const expected_type = self.generator.getTrackedVariableType(var_name) orelse .String;
-                    const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
                     const empty_str_value = HIRValue{ .string = "" };
                     const empty_str_idx = try self.generator.addConstant(empty_str_value);
                     try self.generator.instructions.append(.{ .Const = .{ .value = empty_str_value, .constant_id = empty_str_idx } });
-                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                    try self.storeVariableOrAlias(var_name, expected_type);
                 }
             } else {
-                // Arrays: doxa_clear modifies the ArrayHeader in-place (sets len=0).
-                // No StoreVar needed since the pointer doesn't change.
                 try self.generator.generateExpression(builtin_data.arguments[0], true, false);
                 try self.generator.instructions.append(.{
                     .Call = .{
@@ -603,6 +613,13 @@ pub const CallsHandler = struct {
                         .return_type = .Nothing,
                     },
                 });
+                if (builtin_data.arguments[0].data == .Variable) {
+                    const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+                    const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+                    try self.storeVariableOrAlias(var_name, expected_type);
+                } else {
+                    try self.generator.instructions.append(.Pop);
+                }
             }
             // @clear returns nothing
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
@@ -697,10 +714,8 @@ pub const CallsHandler = struct {
             }
             if (internal_data.receiver.data == .Variable) {
                 const var_name = internal_data.receiver.data.Variable.lexeme;
-                const var_idx = try self.generator.getOrCreateVariable(var_name);
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
-                try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = var_idx, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .expected_type = expected_type } });
+                try self.storeVariableOrAlias(var_name, expected_type);
             }
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });

@@ -470,43 +470,11 @@ pub const FormatPart = union(enum) {
 };
 
 pub const PrintExpr = struct {
-    expr: ?*Expr,
-
-    format_template: ?*FormatTemplate,
-
-    format_parts: ?[]const []const u8,
-    arguments: ?[]const *Expr,
-    placeholder_indices: ?[]const u32,
+    expr: *Expr,
 
     pub fn deinit(self: *PrintExpr, allocator: std.mem.Allocator) void {
-        if (self.expr) |expr| {
-            expr.deinit(allocator);
-            allocator.destroy(expr);
-        }
-
-        if (self.format_template) |template| {
-            template.deinit(allocator);
-            allocator.destroy(template);
-        }
-
-        if (self.format_parts) |parts| {
-            for (parts) |part| {
-                allocator.free(part);
-            }
-            allocator.free(parts);
-        }
-
-        if (self.arguments) |args| {
-            for (args) |arg| {
-                arg.deinit(allocator);
-                allocator.destroy(arg);
-            }
-            allocator.free(args);
-        }
-
-        if (self.placeholder_indices) |indices| {
-            allocator.free(indices);
-        }
+        self.expr.deinit(allocator);
+        allocator.destroy(self.expr);
     }
 };
 
@@ -531,6 +499,7 @@ pub const Expr = struct {
 
     pub const Data = union(enum) {
         Literal: TokenLiteral,
+        InterpolatedString: *FormatTemplate,
         Binary: Binary,
         Unary: Unary,
         Peek: PeekExpr,
@@ -758,6 +727,10 @@ pub const Expr = struct {
                     .byte => {},
                     else => {},
                 }
+            },
+            .InterpolatedString => |template| {
+                template.deinit(allocator);
+                allocator.destroy(template);
             },
             .Logical => |*l| {
                 l.left.deinit(allocator);
@@ -1298,6 +1271,18 @@ fn dumpExpr(writer: anytype, expr: *const Expr, depth: u32) @TypeOf(writer).Erro
         .Literal => |lit| {
             try writer.print("Expr.Literal {s}\n", .{@tagName(std.meta.activeTag(lit))});
         },
+        .InterpolatedString => |template| {
+            try writer.print("Expr.InterpolatedString\n", .{});
+            for (template.parts) |part| {
+                switch (part) {
+                    .String => |text| {
+                        try dumpIndent(writer, depth + 1);
+                        try writer.print("StringPart len={}\n", .{text.len});
+                    },
+                    .Expression => |part_expr| try dumpExpr(writer, part_expr, depth + 1),
+                }
+            }
+        },
         .Binary => |b| {
             try writer.print("Expr.Binary op={s}\n", .{b.operator.lexeme});
             if (b.left) |left| try dumpExpr(writer, left, depth + 1);
@@ -1385,7 +1370,7 @@ fn dumpExpr(writer: anytype, expr: *const Expr, depth: u32) @TypeOf(writer).Erro
         },
         .Print => |p| {
             try writer.print("Expr.Print\n", .{});
-            if (p.expr) |e| try dumpExpr(writer, e, depth + 1);
+            try dumpExpr(writer, p.expr, depth + 1);
         },
         .PeekStruct => |p| {
             try writer.print("Expr.PeekStruct\n", .{});

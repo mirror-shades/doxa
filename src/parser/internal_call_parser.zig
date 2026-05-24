@@ -1,9 +1,7 @@
 const std = @import("std");
-const token = @import("../types/token.zig");
 const ast = @import("../ast/ast.zig");
 const Precedence = @import("./precedence.zig").Precedence;
 const expression_parser = @import("expression_parser.zig");
-const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -109,26 +107,6 @@ pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
     }
     self.advance();
 
-    const interp_info = try parseStringInterpolation(self, format_expr);
-
-    var arguments = std.array_list.Managed(*ast.Expr).init(self.allocator);
-    errdefer {
-        for (arguments.items) |arg| {
-            arg.deinit(self.allocator);
-            self.allocator.destroy(arg);
-        }
-        arguments.deinit();
-    }
-
-    for (interp_info.placeholder_expressions) |placeholder_expr| {
-        try arguments.append(placeholder_expr);
-    }
-
-    const placeholder_indices = try self.allocator.alloc(u32, interp_info.placeholder_expressions.len);
-    for (0..interp_info.placeholder_expressions.len) |idx| {
-        placeholder_indices[idx] = @intCast(idx);
-    }
-
     const print_expr = try self.allocator.create(ast.Expr);
     print_expr.* = .{
         .base = .{
@@ -137,147 +115,12 @@ pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
         },
         .data = .{
             .Print = .{
-                .expr = null,
-                .format_template = interp_info.format_template,
-                .format_parts = interp_info.format_parts,
-                .arguments = try arguments.toOwnedSlice(),
-                .placeholder_indices = placeholder_indices,
+                .expr = format_expr,
             },
         },
     };
 
     return print_expr;
-}
-
-const InterpolationInfo = struct {
-    format_template: *ast.FormatTemplate,
-    format_parts: []const []const u8,
-    placeholder_expressions: []*ast.Expr,
-};
-
-fn parseStringInterpolation(self: *Parser, format_expr: *ast.Expr) ErrorList!InterpolationInfo {
-    const format_string = switch (format_expr.data) {
-        .Literal => |lit| switch (lit) {
-            .string => |s| s,
-            else => return error.ExpectedStringLiteral,
-        },
-        else => return error.ExpectedStringLiteral,
-    };
-
-    var template_parts = std.array_list.Managed(ast.FormatPart).init(self.allocator);
-    var legacy_format_parts = std.array_list.Managed([]const u8).init(self.allocator);
-    var placeholder_expressions = std.array_list.Managed(*ast.Expr).init(self.allocator);
-
-    errdefer {
-        for (template_parts.items) |*part| {
-            part.deinit(self.allocator);
-        }
-        template_parts.deinit();
-
-        for (legacy_format_parts.items) |part| {
-            self.allocator.free(part);
-        }
-        legacy_format_parts.deinit();
-
-        for (placeholder_expressions.items) |expr| {
-            expr.deinit(self.allocator);
-            self.allocator.destroy(expr);
-        }
-        placeholder_expressions.deinit();
-    }
-
-    var i: usize = 0;
-    var current_part_start: usize = 0;
-
-    while (i < format_string.len) {
-        if (format_string[i] == '\\' and i + 1 < format_string.len) {
-            if (format_string[i + 1] == '{' or format_string[i + 1] == '}') {
-                i += 2;
-                continue;
-            }
-        } else if (format_string[i] == '{') {
-            const part = format_string[current_part_start..i];
-            const string_part = try ast.createStringPart(self.allocator, part);
-            try template_parts.append(string_part);
-
-            try legacy_format_parts.append(try self.allocator.dupe(u8, part));
-
-            var j = i + 1;
-            while (j < format_string.len and format_string[j] != '}') {
-                j += 1;
-            }
-
-            if (j >= format_string.len) {
-                return error.UnmatchedOpenBrace;
-            }
-
-            const placeholder_content = format_string[i + 1 .. j];
-
-            const placeholder_expr = try parsePlaceholderExpression(self, placeholder_content);
-
-            const expr_part = ast.createExpressionPart(placeholder_expr);
-            try template_parts.append(expr_part);
-
-            try placeholder_expressions.append(placeholder_expr);
-
-            i = j + 1;
-            current_part_start = i;
-        } else {
-            i += 1;
-        }
-    }
-
-    const final_part = format_string[current_part_start..];
-    const final_string_part = try ast.createStringPart(self.allocator, final_part);
-    try template_parts.append(final_string_part);
-
-    try legacy_format_parts.append(try self.allocator.dupe(u8, final_part));
-
-    const format_template = try ast.createFormatTemplate(self.allocator, try template_parts.toOwnedSlice());
-
-    return InterpolationInfo{
-        .format_template = format_template,
-        .format_parts = try legacy_format_parts.toOwnedSlice(),
-        .placeholder_expressions = try placeholder_expressions.toOwnedSlice(),
-    };
-}
-
-fn parsePlaceholderExpression(self: *Parser, content: []const u8) ErrorList!*ast.Expr {
-    var temp_lexer = try LexicalAnalyzer.init(self.allocator, content, self.current_file, self.reporter);
-    defer temp_lexer.deinit();
-
-    try temp_lexer.initKeywords();
-    const tokens = try temp_lexer.lexTokens();
-    defer tokens.deinit();
-
-    var temp_parser = Parser.init(self.allocator, tokens.items, self.current_file, self.current_file_uri, self.reporter);
-    defer temp_parser.deinit();
-
-    const expr = try expression_parser.parseExpression(&temp_parser) orelse {
-        const var_token = token.Token{
-            .type = .IDENTIFIER,
-            .lexeme = content,
-            .literal = .{ .nothing = {} },
-            .line = 0,
-            .column = 0,
-            .file = self.current_file,
-            .file_uri = self.current_file_uri,
-        };
-
-        const var_expr = try self.allocator.create(ast.Expr);
-        var_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(var_token),
-            },
-            .data = .{
-                .Variable = var_token,
-            },
-        };
-        return var_expr;
-    };
-
-    return expr;
 }
 
 pub fn parseExitMethod(self: *Parser) ErrorList!?*ast.Expr {
