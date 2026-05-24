@@ -37,6 +37,7 @@ pub const TypeSystem = struct {
         pub const CustomTypeKind = enum {
             Struct,
             Enum,
+            Set,
         };
 
         pub const EnumVariant = struct {
@@ -104,9 +105,32 @@ pub const TypeSystem = struct {
             };
         }
 
-        // Best-effort fallback when the custom type registry isn't populated.
-        if (self.enum_table) |table| {
-            if (table.getIdByName(name)) |_| return self.enumTypeForName(name);
+        // Qualified AST names (`error.IO`) vs per-module registration keys (`IO`).
+        if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| {
+            const short = name[dot + 1 ..];
+            if (short.len > 0) {
+                if (self.custom_types.get(short)) |custom_type| {
+                    return switch (custom_type.kind) {
+                        .Struct => self.structTypeForName(short),
+                        .Enum => self.enumTypeForName(short),
+                    };
+                }
+            }
+        }
+
+        if (self.enum_table) |etable| {
+            if (etable.getIdByName(name) != null) return self.enumTypeForName(name);
+            if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| {
+                const short = name[dot + 1 ..];
+                if (short.len > 0 and etable.getIdByName(short) != null) return self.enumTypeForName(short);
+            }
+        }
+        if (self.struct_table) |stable| {
+            if (stable.getIdByName(name) != null) return self.structTypeForName(name);
+            if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| {
+                const short = name[dot + 1 ..];
+                if (short.len > 0 and stable.getIdByName(short) != null) return self.structTypeForName(short);
+            }
         }
         return self.structTypeForName(name);
     }
@@ -115,7 +139,7 @@ pub const TypeSystem = struct {
         if (maybe_name) |name| {
             return self.customTypeForName(name);
         }
-        return HIRType{ .Struct = 0 };
+        return .Unknown;
     }
 
     pub fn init(allocator: std.mem.Allocator, reporter: *Reporting.Reporter, semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer) TypeSystem {

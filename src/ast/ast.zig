@@ -216,6 +216,19 @@ pub const EnumDecl = struct {
     is_public: bool = false,
 };
 
+pub const SetSource = struct {
+    path: []const Token,
+    qualifier: []const u8,
+    is_set: bool = false,
+};
+
+pub const SetDecl = struct {
+    name: Token,
+    sources: []const SetSource,
+    local_variants: []const Token,
+    is_public: bool = false,
+};
+
 pub const Stmt = struct {
     base: Base,
     data: Data,
@@ -255,6 +268,7 @@ pub const Stmt = struct {
             type_info: TypeInfo,
         },
         EnumDecl: EnumDecl,
+        SetDecl: SetDecl,
         MapLiteral: struct {
             entries: []*MapEntry,
             key_type: ?TypeInfo = null,
@@ -328,6 +342,14 @@ pub const Stmt = struct {
             },
             .EnumDecl => |decl| {
                 allocator.free(decl.variants);
+            },
+            .SetDecl => |decl| {
+                for (decl.sources) |source| {
+                    allocator.free(source.path);
+                    allocator.free(source.qualifier);
+                }
+                allocator.free(decl.sources);
+                allocator.free(decl.local_variants);
             },
             .MapDecl => |*m| {
                 for (m.fields) |field| {
@@ -563,6 +585,12 @@ pub const Expr = struct {
         EnumDecl: struct {
             name: Token,
             variants: []Token,
+            is_public: bool = false,
+        },
+        SetDecl: struct {
+            name: Token,
+            sources: []SetSource,
+            local_variants: []Token,
             is_public: bool = false,
         },
         EnumMember: Token,
@@ -816,6 +844,14 @@ pub const Expr = struct {
             },
             .EnumDecl => |*e| {
                 allocator.free(e.variants);
+            },
+            .SetDecl => |*s| {
+                for (s.sources) |source| {
+                    allocator.free(source.path);
+                    allocator.free(source.qualifier);
+                }
+                allocator.free(s.sources);
+                allocator.free(s.local_variants);
             },
             .EnumMember => {},
             .DefaultArgPlaceholder => {},
@@ -1238,6 +1274,7 @@ fn dumpStmt(writer: anytype, stmt: *const Stmt, depth: u32) @TypeOf(writer).Erro
             if (r.value) |value| try dumpExpr(writer, value, depth + 1);
         },
         .EnumDecl => |e| try writer.print("Stmt.EnumDecl name={s}\n", .{e.name.lexeme}),
+        .SetDecl => |s| try writer.print("Stmt.SetDecl name={s}\n", .{s.name.lexeme}),
         .MapLiteral => |*ml| {
             try writer.print("Stmt.MapLiteral\n", .{});
             for (ml.entries) |entry| {
@@ -1419,6 +1456,7 @@ fn dumpExpr(writer: anytype, expr: *const Expr, depth: u32) @TypeOf(writer).Erro
             }
         },
         .EnumDecl => |e| try writer.print("Expr.EnumDecl name={s}\n", .{e.name.lexeme}),
+        .SetDecl => |s| try writer.print("Expr.SetDecl name={s}\n", .{s.name.lexeme}),
         .EnumMember => |t| try writer.print("Expr.EnumMember {s}\n", .{t.lexeme}),
         .DefaultArgPlaceholder => try writer.print("Expr.DefaultArgPlaceholder\n", .{}),
         .BuiltinCall => |b| {

@@ -114,6 +114,40 @@ pub const SemanticAnalyzer = struct {
         try self.memory.type_registry.put(enum_name, mem_custom_type);
     }
 
+    fn registerSetType(self: *SemanticAnalyzer, set_name: []const u8, sources: []const ast.SetSource, local_variants: []const []const u8) !void {
+        var set_variants = try self.allocator.alloc(types.CustomTypeInfo.EnumVariant, local_variants.len);
+        for (local_variants, 0..) |variant_name, index| {
+            set_variants[index] = types.CustomTypeInfo.EnumVariant{
+                .name = try self.allocator.dupe(u8, variant_name),
+                .index = @intCast(index),
+            };
+        }
+
+        const custom_type = types.CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, set_name),
+            .kind = .Set,
+            .enum_variants = set_variants,
+        };
+        try self.custom_types.put(set_name, custom_type);
+
+        var mem_set_variants = try self.allocator.alloc(Memory.CustomTypeInfo.EnumVariant, local_variants.len);
+        for (local_variants, 0..) |variant_name, i| {
+            mem_set_variants[i] = Memory.CustomTypeInfo.EnumVariant{
+                .name = try self.allocator.dupe(u8, variant_name),
+                .index = @intCast(i),
+            };
+        }
+
+        const mem_custom_type = Memory.CustomTypeInfo{
+            .name = try self.allocator.dupe(u8, set_name),
+            .kind = .Set,
+            .enum_variants = mem_set_variants,
+        };
+        try self.memory.type_registry.put(set_name, mem_custom_type);
+
+        _ = sources;
+    }
+
     // NEW: Register struct with fields
     fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fields: []const ast.StructFieldType) !void {
         var struct_fields = try self.allocator.alloc(types.CustomTypeInfo.StructField, fields.len);

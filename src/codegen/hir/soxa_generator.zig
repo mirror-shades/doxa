@@ -40,6 +40,106 @@ const StructsHandler = @import("expressions/structs.zig").StructsHandler;
 const AssignmentsHandler = @import("expressions/assignments.zig").AssignmentsHandler;
 const IOHandler = @import("expressions/io.zig").IOHandler;
 const ModuleCall = @import("module_call.zig");
+const union_handling = @import("../../analysis/semantic/union_handling.zig");
+
+/// Whether `return` with no value appears anywhere in the statement list (including inside expr trees).
+fn functionStmtsHaveBareReturn(stmts: []ast.Stmt) bool {
+    for (stmts) |stmt| {
+        if (stmtHasBareReturn(stmt)) return true;
+    }
+    return false;
+}
+
+fn stmtHasBareReturn(stmt: ast.Stmt) bool {
+    switch (stmt.data) {
+        .Return => |r| return r.value == null,
+        .Block => |ss| return functionStmtsHaveBareReturn(ss),
+        .Expression => |opt| {
+            if (opt) |e| return exprHasBareReturn(e);
+            return false;
+        },
+        .FunctionDecl => |f| return functionStmtsHaveBareReturn(f.body),
+        .VarDecl => |v| {
+            if (v.initializer) |init| return exprHasBareReturn(init);
+            return false;
+        },
+        else => return false,
+    }
+}
+
+fn exprHasBareReturn(expr: *ast.Expr) bool {
+    switch (expr.data) {
+        .If => |i| {
+            if (i.condition) |c| if (exprHasBareReturn(c)) return true;
+            if (i.then_branch) |t| if (exprHasBareReturn(t)) return true;
+            if (i.else_branch) |e| if (exprHasBareReturn(e)) return true;
+            return false;
+        },
+        .Block => |b| {
+            if (functionStmtsHaveBareReturn(b.statements)) return true;
+            if (b.value) |v| if (exprHasBareReturn(v)) return true;
+            return false;
+        },
+        .Grouping => |g| return if (g) |inner| exprHasBareReturn(inner) else false,
+        .Loop => |l| return exprHasBareReturn(l.body),
+        .Match => |m| {
+            if (exprHasBareReturn(m.value)) return true;
+            for (m.cases) |case| {
+                if (exprHasBareReturn(case.body)) return true;
+            }
+            return false;
+        },
+        .Binary => |bin| {
+            if (bin.left) |l| if (exprHasBareReturn(l)) return true;
+            if (bin.right) |r| if (exprHasBareReturn(r)) return true;
+            return false;
+        },
+        .Unary => |u| {
+            if (u.right) |r| if (exprHasBareReturn(r)) return true;
+            return false;
+        },
+        .Assignment => |a| {
+            if (a.value) |v| if (exprHasBareReturn(v)) return true;
+            return false;
+        },
+        .Array => |items| {
+            for (items) |item| {
+                if (exprHasBareReturn(item)) return true;
+            }
+            return false;
+        },
+        .FunctionCall => |c| {
+            if (exprHasBareReturn(c.callee)) return true;
+            for (c.arguments) |arg| {
+                if (exprHasBareReturn(arg.expr)) return true;
+            }
+            return false;
+        },
+        else => return false,
+    }
+}
+
+/// Declared `returns A | B` with a bare `return` in the body is lowered as `nothing | A | B`.
+fn effectiveReturnTypeForSignature(allocator: std.mem.Allocator, declared: ast.TypeInfo, body: []ast.Stmt) !ast.TypeInfo {
+    if (declared.base != .Union or declared.union_type == null) return declared;
+    if (!functionStmtsHaveBareReturn(body)) return declared;
+
+    const flattened = try union_handling.flattenUnionType(allocator, declared.union_type.?);
+    for (flattened.types) |m| {
+        if (m.base == .Nothing) {
+            return ast.TypeInfo{ .base = .Union, .union_type = flattened, .is_mutable = declared.is_mutable };
+        }
+    }
+
+    const nothing_ptr = try allocator.create(ast.TypeInfo);
+    nothing_ptr.* = .{ .base = .Nothing, .is_mutable = false };
+    const new_types = try allocator.alloc(*ast.TypeInfo, flattened.types.len + 1);
+    new_types[0] = nothing_ptr;
+    @memcpy(new_types[1..], flattened.types);
+    const new_ut = try allocator.create(ast.UnionType);
+    new_ut.* = .{ .types = new_types, .current_type_index = flattened.current_type_index };
+    return ast.TypeInfo{ .base = .Union, .union_type = new_ut, .is_mutable = declared.is_mutable };
+}
 
 pub const TETRA_FALSE: u8 = 0;
 pub const TETRA_TRUE: u8 = 1;
@@ -66,7 +166,7 @@ pub const HIRGenerator = struct {
 
     function_signatures: std.StringHashMap(FunctionInfo),
     function_bodies: std.array_list.Managed(FunctionBody),
-    semantic_function_return_types: ?std.AutoHashMap(u32, *ast.TypeInfo) = null,
+    semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo) = null,
     semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
     current_function: ?[]const u8,
     current_function_return_type: HIRType,
@@ -140,7 +240,7 @@ pub const HIRGenerator = struct {
         field_types: []HIRType,
     };
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol), semantic_function_return_types: ?std.AutoHashMap(u32, *ast.TypeInfo), semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer) HIRGenerator {
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol), semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo), semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer) HIRGenerator {
         return HIRGenerator{
             .allocator = allocator,
             .instructions = std.array_list.Managed(HIRInstruction).init(allocator),
@@ -261,7 +361,8 @@ pub const HIRGenerator = struct {
         for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => |func| {
-                    var return_type = self.convertTypeInfo(func.return_type_info);
+                    const eff_rti = try effectiveReturnTypeForSignature(self.allocator, func.return_type_info, func.body);
+                    var return_type = self.convertTypeInfo(eff_rti);
 
                     if (self.semantic_function_return_types) |semantic_types| {
                         if (semantic_types.get(stmt.base.id)) |semantic_return_type| {
@@ -308,7 +409,7 @@ pub const HIRGenerator = struct {
                         .start_instruction_index = 0,
                         .function_name = func.name.lexeme,
                         .function_params = func.params,
-                        .return_type_info = func.return_type_info,
+                        .return_type_info = eff_rti,
                         .param_is_alias = param_is_alias,
                         .param_types = param_types,
                     });
@@ -319,12 +420,13 @@ pub const HIRGenerator = struct {
                             const s = expr.data.StructDecl;
                             for (s.methods) |method| {
                                 const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name.lexeme, method.name.lexeme });
-                                var return_type = self.convertTypeInfo(method.return_type_info);
+                                var eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method.return_type_info, method.body);
+                                var return_type = self.convertTypeInfo(eff_method_rti);
 
                                 if (self.struct_methods.get(s.name.lexeme)) |method_table| {
                                     if (method_table.get(method.name.lexeme)) |method_info| {
-                                        const semantic_return_type = self.convertTypeInfo(method_info.return_type.*);
-                                        return_type = semantic_return_type;
+                                        eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method_info.return_type.*, method.body);
+                                        return_type = self.convertTypeInfo(eff_method_rti);
                                     }
                                 }
 
@@ -380,7 +482,7 @@ pub const HIRGenerator = struct {
                                         .start_instruction_index = 0,
                                         .function_name = qualified,
                                         .function_params = method.params,
-                                        .return_type_info = method.return_type_info,
+                                        .return_type_info = eff_method_rti,
                                         .param_is_alias = param_is_alias,
                                         .param_types = param_types,
                                     });
@@ -405,7 +507,8 @@ pub const HIRGenerator = struct {
                         switch (mod_stmt.data) {
                             .FunctionDecl => |func| {
                                 const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ alias, func.name.lexeme });
-                                const return_type = self.convertTypeInfo(func.return_type_info);
+                                const eff_rti = try effectiveReturnTypeForSignature(self.allocator, func.return_type_info, func.body);
+                                const return_type = self.convertTypeInfo(eff_rti);
                                 const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified_name}));
 
                                 var param_is_alias_imported = try self.allocator.alloc(bool, func.params.len);
@@ -445,7 +548,7 @@ pub const HIRGenerator = struct {
                                     .start_instruction_index = 0,
                                     .function_name = qualified_name,
                                     .function_params = func.params,
-                                    .return_type_info = func.return_type_info,
+                                    .return_type_info = eff_rti,
                                     .param_is_alias = param_is_alias_imported,
                                     .param_types = param_types_imported,
                                 });
@@ -473,12 +576,22 @@ pub const HIRGenerator = struct {
                         var func_return_type: HIRType = .Nothing;
                         var func_body: []ast.Stmt = &[_]ast.Stmt{};
                         var func_params: []ast.FunctionParam = &[_]ast.FunctionParam{};
+                        var eff_sym_rti: ast.TypeInfo = .{ .base = .Nothing };
+                        const mod_alias = m_entry.key_ptr.*;
                         for (mod_statements2) |mod_stmt2| {
                             switch (mod_stmt2.data) {
                                 .FunctionDecl => |func2| {
-                                    if (!std.mem.eql(u8, func2.name.lexeme, sym_name)) continue;
+                                    const qualified_guess = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ mod_alias, func2.name.lexeme });
+                                    defer self.allocator.free(qualified_guess);
+                                    const sym_is_qualified = std.mem.indexOfScalar(u8, sym_name, '.') != null;
+                                    const matches = if (sym_is_qualified)
+                                        std.mem.eql(u8, qualified_guess, sym_name)
+                                    else
+                                        std.mem.eql(u8, func2.name.lexeme, sym_name);
+                                    if (!matches) continue;
                                     found = true;
-                                    func_return_type = self.convertTypeInfo(func2.return_type_info);
+                                    eff_sym_rti = try effectiveReturnTypeForSignature(self.allocator, func2.return_type_info, func2.body);
+                                    func_return_type = self.convertTypeInfo(eff_sym_rti);
                                     func_body = func2.body;
                                     func_params = func2.params;
                                 },
@@ -489,7 +602,7 @@ pub const HIRGenerator = struct {
 
                         if (found) {
                             const start_label2 = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{sym_name}));
-                            const function_info2 = FunctionInfo{
+                            var function_info2 = FunctionInfo{
                                 .name = sym_name,
                                 .arity = if (sym.param_count) |pc| pc else @intCast(func_params.len),
                                 .return_type = func_return_type,
@@ -522,7 +635,7 @@ pub const HIRGenerator = struct {
                                     .start_instruction_index = 0,
                                     .function_name = sym_name,
                                     .function_params = func_params,
-                                    .return_type_info = (try ast.typeInfoFromHIRType(self.allocator, func_return_type)).*,
+                                    .return_type_info = eff_sym_rti,
                                     .param_is_alias = function_info2.param_is_alias,
                                     .param_types = function_info2.param_types,
                                 });
@@ -1528,16 +1641,28 @@ pub const HIRGenerator = struct {
                 if (self.type_system.struct_table) |table| {
                     if (table.getName(sid)) |name| break :blk name;
                 }
-                break :blk "struct";
+                break :blk try std.fmt.allocPrint(self.allocator, "(struct#{})", .{sid});
             },
             .Enum => |eid| blk: {
                 if (self.type_system.enum_table) |table| {
                     if (table.getName(eid)) |name| break :blk name;
                 }
-                break :blk "enum";
+                break :blk try std.fmt.allocPrint(self.allocator, "(enum#{})", .{eid});
             },
             .Function => "function",
-            .Union => "union",
+            .Union => |u| blk: {
+                if (u.members.len == 0) {
+                    break :blk try std.fmt.allocPrint(self.allocator, "(union#{})", .{u.id});
+                }
+                var list = std.array_list.Managed(u8).init(self.allocator);
+                errdefer list.deinit();
+                for (u.members, 0..) |m, idx| {
+                    if (idx > 0) try list.appendSlice(" | ");
+                    const frag = try self.hirTypeToDisplayName(m.*);
+                    try list.appendSlice(frag);
+                }
+                return try list.toOwnedSlice();
+            },
             .Unknown => "unknown",
             .Poison => "poison",
         };

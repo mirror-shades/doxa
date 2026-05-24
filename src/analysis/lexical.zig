@@ -69,7 +69,6 @@ pub const LexicalAnalyzer = struct {
     }
 
     pub fn initKeywords(self: *LexicalAnalyzer) !void {
-        try self.keywords.put("pub", .PUBLIC);
         try self.keywords.put("public", .PUBLIC);
         try self.keywords.put("zig", .ZIG);
         try self.keywords.put("true", .LOGIC);
@@ -117,6 +116,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("array", .ARRAY_TYPE);
         try self.keywords.put("struct", .STRUCT_TYPE);
         try self.keywords.put("enum", .ENUM_TYPE);
+        try self.keywords.put("set", .SET_TYPE);
         try self.keywords.put("map", .MAP_TYPE);
         try self.keywords.put("xor", .XOR);
         try self.keywords.put("exists", .EXISTS);

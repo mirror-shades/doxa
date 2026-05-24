@@ -17,6 +17,19 @@ string - []const u8
 tetra - i2
 nothing - void
 
+
+### Molecular
+
+Molecular types are constructed out of atomic types. They are
+
+array - must be homogenous
+struct - no classes, no inheretance, only composition
+enum
+union - can be handled with switch statements and type narrowing, see page on unions for more info
+
+````
+
+
 ### Strings
 
 Double-quoted strings interpolate expressions in `{...}` anywhere a string expression is accepted:
@@ -34,18 +47,6 @@ var shape is '{ y: 2, x: 5 }'
 ```
 
 The `tetra` type represents a four cornered value with the possible states: `true`, `false`, `both`, and `neither`. For additional information see the tetra page.
-
-
-### Molecular
-
-Molecular types are constructed out of atomic types. They are
-
-array - must be homogenous
-struct - no classes, no inheretance, only composition
-enum
-union - can be handled with switch statements and type narrowing, see page on unions for more info
-
-````
 
 ### Arrays
 
@@ -140,6 +141,8 @@ Use the `unreachable` keyword when a control-flow path should be impossible. It 
 ## Special Operators
 
 ### Peek operator (`?`)
+
+Evaluates the operand for its side effect only: it prints a debug line (file/line/column when available, variable name, static type, and runtime value) and leaves the value on the stack unchanged. Output goes through Zig’s `std.debug.print` (typically **stderr**), so it stays separate from normal **stdout** (`@print`, `std.io.print`, and so on) and does not use the same fallible stdout path.
 
 ```doxa
 var x is computeValue()
