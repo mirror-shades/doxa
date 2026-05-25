@@ -584,6 +584,32 @@ pub const SemanticAnalyzer = struct {
                                 }
                             }
                         },
+                        .Set => {
+                            var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
+                            if (p.module_cache.get(sym.original_module)) |mi| {
+                                mod_info = mi;
+                            } else {
+                                continue;
+                            }
+                            if (mod_info) |mi| {
+                                if (mi.ast) |module_ast| {
+                                    if (module_ast.data == .Block) {
+                                        for (module_ast.data.Block.statements) |stmt| {
+                                            switch (stmt.data) {
+                                                .SetDecl => |sd| {
+                                                    if (std.mem.eql(u8, sd.name.lexeme, sym.name)) {
+                                                        const variant_names = try self.allocator.alloc([]const u8, sd.local_variants.len);
+                                                        for (sd.local_variants, variant_names) |v, *name| name.* = v.lexeme;
+                                                        try helpers.registerSetType(self, sd.name.lexeme, sd.sources, variant_names);
+                                                    }
+                                                },
+                                                else => {},
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
                         else => {},
                     }
                 }

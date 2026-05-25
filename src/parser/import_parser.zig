@@ -12,7 +12,7 @@ const ErrorCode = Errors.ErrorCode;
 pub const ImportedSymbol = struct {
     pub const EnumRole = enum { Type, Variant };
 
-    kind: enum { Function, Enum, Struct, Variable, Type, Import },
+    kind: enum { Function, Enum, Struct, Variable, Type, Import, Set },
     name: []const u8,
     original_module: []const u8,
     namespace_alias: ?[]const u8 = null,

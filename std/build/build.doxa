@@ -147,7 +147,7 @@ zig Build {
     }
 }
 
-function mapBuildError(code :: int) returns error.IO | error.Common {
+function mapBuildError(code :: int) returns error.StdError {
     return match code {
         1 then error.Common.InvalidArgument,
         2 then error.Common.OutOfMemory,
@@ -176,14 +176,14 @@ function mapBuildError(code :: int) returns error.IO | error.Common {
     }
 }
 
-public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.IO | error.Common {
+public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.StdError {
     const code is Build.compileDoxa(src, out, arch, os, abi, @string(debug));
     const err is Build.takeLastErrorCode()
     if err == 0 then return code
     return mapBuildError(err)
 }
 
-public function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.IO | error.Common {
+public function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.StdError {
     const code is Build.compileHost(src, out, @string(debug));
     const err is Build.takeLastErrorCode()
     if err == 0 then return code

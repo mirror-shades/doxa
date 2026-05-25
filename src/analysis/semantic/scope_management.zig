@@ -329,6 +329,9 @@ fn createImportedSymbolVariable(
             // Assume imported types are custom types for now
             type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false };
         },
+        .Set => {
+            type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false };
+        },
         .Import => {
             // Assume imported modules are custom types for now
             type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false };

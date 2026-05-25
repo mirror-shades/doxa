@@ -175,6 +175,11 @@ fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
                     for (ed.variants, variants) |v, *name| name.* = v.lexeme;
                     try helpers.registerEnumType(semantic_analyzer, ed.name.lexeme, variants);
                 },
+                .SetDecl => |sd| {
+                    const local_variant_names = try parser.allocator.alloc([]const u8, sd.local_variants.len);
+                    for (sd.local_variants, local_variant_names) |v, *name| name.* = v.lexeme;
+                    try helpers.registerSetType(semantic_analyzer, sd.name.lexeme, sd.sources, local_variant_names);
+                },
                 .Expression => |maybe_expr| {
                     if (maybe_expr) |expr| {
                         if (expr.data == .EnumDecl) {
@@ -182,6 +187,11 @@ fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
                             const variants = try parser.allocator.alloc([]const u8, ed.variants.len);
                             for (ed.variants, variants) |v, *name| name.* = v.lexeme;
                             try helpers.registerEnumType(semantic_analyzer, ed.name.lexeme, variants);
+                        } else if (expr.data == .SetDecl) {
+                            const sd = expr.data.SetDecl;
+                            const local_variant_names = try parser.allocator.alloc([]const u8, sd.local_variants.len);
+                            for (sd.local_variants, local_variant_names) |v, *name| name.* = v.lexeme;
+                            try helpers.registerSetType(semantic_analyzer, sd.name.lexeme, sd.sources, local_variant_names);
                         }
                     }
                 },

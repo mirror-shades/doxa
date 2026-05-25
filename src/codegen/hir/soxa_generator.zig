@@ -120,7 +120,37 @@ fn exprHasBareReturn(expr: *ast.Expr) bool {
 }
 
 /// Declared `returns A | B` with a bare `return` in the body is lowered as `nothing | A | B`.
-fn effectiveReturnTypeForSignature(allocator: std.mem.Allocator, declared: ast.TypeInfo, body: []ast.Stmt) !ast.TypeInfo {
+/// Handles both explicit `.Union` declared types and `.Custom` types that resolve to sets.
+fn effectiveReturnTypeForSignature(allocator: std.mem.Allocator, declared: ast.TypeInfo, body: []ast.Stmt, type_system: ?*TypeSystem) !ast.TypeInfo {
+    if (declared.base == .Custom and declared.custom_type != null) {
+        if (type_system) |ts| {
+            if (functionStmtsHaveBareReturn(body)) {
+                const ct = ts.isCustomType(declared.custom_type.?) orelse blk: {
+                    if (std.mem.lastIndexOfScalar(u8, declared.custom_type.?, '.')) |dot| {
+                        break :blk ts.isCustomType(declared.custom_type.?[dot + 1 ..]);
+                    }
+                    break :blk null;
+                };
+                if (ct != null and ct.?.kind == .Set) {
+                    if (ct.?.set_sources) |sources| {
+                        const nothing_ptr = try allocator.create(ast.TypeInfo);
+                        nothing_ptr.* = .{ .base = .Nothing, .is_mutable = false };
+                        const new_types = try allocator.alloc(*ast.TypeInfo, sources.len + 1);
+                        new_types[0] = nothing_ptr;
+                        for (sources, 0..) |src, i| {
+                            const enum_type = try allocator.create(ast.TypeInfo);
+                            enum_type.* = .{ .base = .Custom, .custom_type = src.source_name, .is_mutable = false };
+                            new_types[i + 1] = enum_type;
+                        }
+                        const new_ut = try allocator.create(ast.UnionType);
+                        new_ut.* = .{ .types = new_types, .current_type_index = 0 };
+                        return ast.TypeInfo{ .base = .Union, .union_type = new_ut, .is_mutable = declared.is_mutable };
+                    }
+                }
+            }
+        }
+        return declared;
+    }
     if (declared.base != .Union or declared.union_type == null) return declared;
     if (!functionStmtsHaveBareReturn(body)) return declared;
 
@@ -361,7 +391,7 @@ pub const HIRGenerator = struct {
         for (statements) |stmt| {
             switch (stmt.data) {
                 .FunctionDecl => |func| {
-                    const eff_rti = try effectiveReturnTypeForSignature(self.allocator, func.return_type_info, func.body);
+                    const eff_rti = try effectiveReturnTypeForSignature(self.allocator, func.return_type_info, func.body, &self.type_system);
                     var return_type = self.convertTypeInfo(eff_rti);
 
                     if (self.semantic_function_return_types) |semantic_types| {
@@ -420,12 +450,12 @@ pub const HIRGenerator = struct {
                             const s = expr.data.StructDecl;
                             for (s.methods) |method| {
                                 const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name.lexeme, method.name.lexeme });
-                                var eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method.return_type_info, method.body);
+                                var eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method.return_type_info, method.body, &self.type_system);
                                 var return_type = self.convertTypeInfo(eff_method_rti);
 
                                 if (self.struct_methods.get(s.name.lexeme)) |method_table| {
                                     if (method_table.get(method.name.lexeme)) |method_info| {
-                                        eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method_info.return_type.*, method.body);
+                                        eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method_info.return_type.*, method.body, &self.type_system);
                                         return_type = self.convertTypeInfo(eff_method_rti);
                                     }
                                 }
@@ -507,7 +537,7 @@ pub const HIRGenerator = struct {
                         switch (mod_stmt.data) {
                             .FunctionDecl => |func| {
                                 const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ alias, func.name.lexeme });
-                                const eff_rti = try effectiveReturnTypeForSignature(self.allocator, func.return_type_info, func.body);
+                                const eff_rti = try effectiveReturnTypeForSignature(self.allocator, func.return_type_info, func.body, &self.type_system);
                                 const return_type = self.convertTypeInfo(eff_rti);
                                 const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified_name}));
 
@@ -590,7 +620,7 @@ pub const HIRGenerator = struct {
                                         std.mem.eql(u8, func2.name.lexeme, sym_name);
                                     if (!matches) continue;
                                     found = true;
-                                    eff_sym_rti = try effectiveReturnTypeForSignature(self.allocator, func2.return_type_info, func2.body);
+                                    eff_sym_rti = try effectiveReturnTypeForSignature(self.allocator, func2.return_type_info, func2.body, &self.type_system);
                                     func_return_type = self.convertTypeInfo(eff_sym_rti);
                                     func_body = func2.body;
                                     func_params = func2.params;
@@ -958,7 +988,7 @@ pub const HIRGenerator = struct {
         try self.instructions.append(.Halt);
     }
 
-    /// Pass 1.5: Process imported enum symbols and register them in type system
+    /// Pass 1.5: Process imported enum/set symbols and register them in type system
     fn processImportedEnumSymbols(self: *HIRGenerator) !void {
         if (self.imported_symbols) |imported_symbols| {
             var seen_enum_bindings = std.StringHashMap(void).init(self.allocator);
@@ -967,12 +997,28 @@ pub const HIRGenerator = struct {
             var it = imported_symbols.iterator();
             while (it.next()) |entry| {
                 const symbol = entry.value_ptr.*;
-                if (symbol.kind != .Enum) continue;
+                if (symbol.kind != .Enum and symbol.kind != .Set) continue;
                 if (symbol.enum_role == null or symbol.enum_role.? != .Type) continue;
                 const binding_name = symbol.name;
                 if (binding_name.len == 0) continue;
                 if (seen_enum_bindings.contains(binding_name)) continue;
                 try seen_enum_bindings.put(binding_name, {});
+
+                if (symbol.kind == .Set) {
+                    const var_idx = try self.getOrCreateVariable(binding_name);
+                    try self.trackVariableType(binding_name, HIRType{ .Set = 0 });
+
+                    const set_type_value = HIRValue{ .string = binding_name };
+                    const const_idx = try self.addConstant(set_type_value);
+                    try self.instructions.append(.{ .Const = .{ .value = set_type_value, .constant_id = const_idx } });
+                    try self.instructions.append(.{ .StoreConst = .{
+                        .var_index = var_idx,
+                        .var_name = binding_name,
+                        .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
+                        .module_context = null,
+                    } });
+                    continue;
+                }
 
                 var has_enum_type = false;
                 if (self.type_system.custom_types.get(binding_name)) |existing| {

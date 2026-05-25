@@ -608,7 +608,7 @@ zig File {
     }
 }
 
-function mapFileError(code :: int) returns error.IO | error.Common {
+function mapFileError(code :: int) returns error.StdError {
     return match code {
         1 then error.Common.InvalidArgument,
         2 then error.Common.OutOfMemory,
@@ -637,42 +637,42 @@ function mapFileError(code :: int) returns error.IO | error.Common {
     }
 }
 
-public function makeDir(path :: string) returns error.IO | error.Common {
+public function makeDir(path :: string) returns error.StdError {
     File.makeDir(path)
     const err is File.takeLastErrorCode()
     if err == 0 then return
     return mapFileError(err)
 }
 
-public function makePath(path :: string) returns error.IO | error.Common {
+public function makePath(path :: string) returns error.StdError {
     File.makePath(path)
     const err is File.takeLastErrorCode()
     if err == 0 then return
     return mapFileError(err)
 }
 
-public function copyFile(source :: string, destination :: string) returns error.IO | error.Common {
+public function copyFile(source :: string, destination :: string) returns error.StdError {
     File.copyFile(source, destination)
     const err is File.takeLastErrorCode()
     if err == 0 then return
     return mapFileError(err)
 }
 
-public function delete(path :: string, recursive :: tetra) returns error.IO | error.Common {
+public function delete(path :: string, recursive :: tetra) returns error.StdError {
     File.delete(path, recursive)
     const err is File.takeLastErrorCode()
     if err == 0 then return
     return mapFileError(err)
 }
 
-public function copyDir(source :: string, destination :: string) returns error.IO | error.Common {
+public function copyDir(source :: string, destination :: string) returns error.StdError {
     File.copyDir(source, destination)
     const err is File.takeLastErrorCode()
     if err == 0 then return
     return mapFileError(err)
 }
 
-public function unzipFile(zip_path :: string, unzip_path :: string) returns error.IO | error.Common {
+public function unzipFile(zip_path :: string, unzip_path :: string) returns error.StdError {
     File.unzipFile(zip_path, unzip_path)
     const err is File.takeLastErrorCode()
     if err == 0 then return
@@ -683,35 +683,35 @@ public function IsDir(path :: string) returns tetra {
     return File.IsDir(path)
 }
 
-public function renameDir(old_folder :: string, new_folder :: string) returns error.IO | error.Common {
+public function renameDir(old_folder :: string, new_folder :: string) returns error.StdError {
     File.renameDir(old_folder, new_folder)
     const err is File.takeLastErrorCode()
     if err == 0 then return
     return mapFileError(err)
 }
 
-public function rename(old_path :: string, new_path :: string) returns error.IO | error.Common {
+public function rename(old_path :: string, new_path :: string) returns error.StdError {
     File.rename(old_path, new_path)
     const err is File.takeLastErrorCode()
     if err == 0 then return
     return mapFileError(err)
 }
 
-public function read(path :: string) returns string | error.IO | error.Common {
+public function read(path :: string) returns string | error.StdError {
     const value is File.read(path)
     const err is File.takeLastErrorCode()
     if err == 0 then return value
     return mapFileError(err)
 }
 
-public function write(path :: string, content :: string) returns error.IO | error.Common {
+public function write(path :: string, content :: string) returns error.StdError {
     File.write(path, content)
     const err is File.takeLastErrorCode()
     if err == 0 then return
     return mapFileError(err)
 }
 
-public function append(path :: string, content :: string) returns error.IO | error.Common {
+public function append(path :: string, content :: string) returns error.StdError {
     File.append(path, content)
     const err is File.takeLastErrorCode()
     if err == 0 then return
@@ -726,14 +726,14 @@ public function isFile(path :: string) returns tetra {
     return File.isFile(path)
 }
 
-public function cwd() returns string | error.IO | error.Common {
+public function cwd() returns string | error.StdError {
     const value is File.cwd()
     const err is File.takeLastErrorCode()
     if err == 0 then return value
     return mapFileError(err)
 }
 
-public function touch(path :: string) returns error.IO | error.Common {
+public function touch(path :: string) returns error.StdError {
     File.touch(path)
     const err is File.takeLastErrorCode()
     if err == 0 then return

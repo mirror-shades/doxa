@@ -509,6 +509,31 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                     }
                                 }
                             }
+                        } else if (expr.data == .SetDecl) {
+                            const set_decl = expr.data.SetDecl;
+                            const is_public = set_decl.is_public;
+                            const symbol_name = set_decl.name.lexeme;
+
+                            try module_symbols.put(symbol_name, .{
+                                .name = symbol_name,
+                                .kind = .Set,
+                                .is_public = is_public,
+                                .stmt_index = i,
+                            });
+
+                            if (is_public) {
+                                const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
+
+                                if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
+                                    try self.imported_symbols.?.put(full_name, .{
+                                        .kind = .Set,
+                                        .name = set_decl.name.lexeme,
+                                        .original_module = module_path,
+                                        .enum_role = .Type,
+                                        .enum_type_name = set_decl.name.lexeme,
+                                    });
+                                }
+                            }
                         }
                     }
                 },
@@ -757,6 +782,31 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                                     .enum_type_name = enum_decl.name.lexeme,
                                 });
                             }
+                        }
+                    }
+                },
+                .SetDecl => |set_decl| {
+                    const is_public = set_decl.is_public;
+                    const symbol_name = set_decl.name.lexeme;
+
+                    try module_symbols.put(symbol_name, .{
+                        .name = symbol_name,
+                        .kind = .Set,
+                        .is_public = is_public,
+                        .stmt_index = i,
+                    });
+
+                    if (is_public) {
+                        const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
+
+                        if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
+                            try self.imported_symbols.?.put(full_name, .{
+                                .kind = .Set,
+                                .name = set_decl.name.lexeme,
+                                .original_module = module_path,
+                                .enum_role = .Type,
+                                .enum_type_name = set_decl.name.lexeme,
+                            });
                         }
                     }
                 },

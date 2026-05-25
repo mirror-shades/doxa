@@ -220,6 +220,24 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         try self.symbol_table.trackVariableUnionMembersByIndex(var_index, member_names);
                     }
 
+                    if (var_type == .Set) {
+                        const var_index = try self.getOrCreateVariable(decl.name.lexeme);
+                        var set_name: ?[]const u8 = null;
+                        if (self.symbol_table.getVariableCustomType(decl.name.lexeme)) |custom_name| {
+                            set_name = custom_name;
+                        } else if (var_type.Set != 0) {
+                            if (self.type_system.enum_table) |table| {
+                                set_name = table.getName(var_type.Set);
+                            }
+                        }
+                        if (set_name) |sn| {
+                            const member_names = try self.type_system.getSetSourceMemberNames(sn);
+                            if (member_names.len > 0) {
+                                try self.symbol_table.trackVariableUnionMembersByIndex(var_index, member_names);
+                            }
+                        }
+                    }
+
                     if (var_type == .Struct and init_expr.data == .StructLiteral) {
                         const struct_lit = init_expr.data.StructLiteral;
                         try self.trackVariableCustomType(decl.name.lexeme, struct_lit.name.lexeme);
