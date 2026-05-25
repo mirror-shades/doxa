@@ -1743,11 +1743,12 @@ pub const Parser = struct {
                     .Variable => .Variable,
                     .Struct => .Struct,
                     .Enum => .Enum,
+                    .Set => .Set,
                 },
                 .name = symbol_name,
                 .original_module = module_path,
-                .enum_role = if (symbol.kind == .Enum) .Type else null,
-                .enum_type_name = if (symbol.kind == .Enum) symbol_name else null,
+                .enum_role = if (symbol.kind == .Enum or symbol.kind == .Set) .Type else null,
+                .enum_type_name = if (symbol.kind == .Enum or symbol.kind == .Set) symbol_name else null,
             });
         }
     }

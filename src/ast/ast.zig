@@ -1193,7 +1193,7 @@ pub const ImportInfo = struct {
 
 pub const ModuleSymbol = struct {
     name: []const u8,
-    kind: enum { Function, Variable, Struct, Enum },
+    kind: enum { Function, Variable, Struct, Enum, Set },
     is_public: bool,
     stmt_index: usize,
 };

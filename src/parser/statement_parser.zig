@@ -169,6 +169,7 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
         if (next_type == .NEWLINE) {
             self.advance();
         } else if (next_type == .EOF or next_type == .RIGHT_BRACE) {} else {
+            std.debug.print("DEBUG parseExpressionStmt ExpectedNewline next_type={s} lexeme={s} file={s}\n", .{ @tagName(next_type), self.peek().lexeme, self.current_file });
             if (expr) |e| {
                 e.deinit(self.allocator);
                 self.allocator.destroy(e);

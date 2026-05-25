@@ -136,7 +136,7 @@ zig HTTP {
     }
 }
 
-function mapIOError(code :: int) returns error.IO | error.Common {
+function mapIOError(code :: int) returns error.StdError {
     return match code {
         1 then error.Common.InvalidArgument,
         2 then error.Common.OutOfMemory,
@@ -165,21 +165,21 @@ function mapIOError(code :: int) returns error.IO | error.Common {
     }
 }
 
-public function downloadUrl(url :: string, destination :: string) returns error.IO | error.Common {
+public function downloadUrl(url :: string, destination :: string) returns error.StdError {
     HTTP.downloadUrl(url, destination)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function download(url :: string) returns error.IO | error.Common {
+public function download(url :: string) returns error.StdError {
     HTTP.download(url)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function getText(url :: string) returns string | error.IO | error.Common {
+public function getText(url :: string) returns string | error.StdError {
     const value is HTTP.getText(url)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return value

@@ -136,7 +136,7 @@ zig IO {
     }
 }
 
-function mapIOError(code :: int) returns error.IO | error.Common {
+function mapIOError(code :: int) returns error.StdError {
     return match code {
         1 then error.Common.InvalidArgument,
         2 then error.Common.OutOfMemory,
@@ -165,42 +165,42 @@ function mapIOError(code :: int) returns error.IO | error.Common {
     }
 }
 
-public function print(input :: string) returns error.IO | error.Common {
+public function print(input :: string) returns error.StdError {
     IO.print(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function println(input :: string) returns error.IO | error.Common {
+public function println(input :: string) returns error.StdError {
     IO.printlnStdout(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function eprint(input :: string) returns error.IO | error.Common {
+public function eprint(input :: string) returns error.StdError {
     IO.eprint(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function eprintln(input :: string) returns error.IO | error.Common {
+public function eprintln(input :: string) returns error.StdError {
     IO.eprintlnStderr(input);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function input() returns string | error.IO | error.Common {
+public function input() returns string | error.StdError {
     const value is IO.input();
     const err is IO.takeLastErrorCode()
     if err == 0 then return value
     return mapIOError(err)
 }
 
-public function inputPrompt(prompt :: string) returns string | error.IO | error.Common {
+public function inputPrompt(prompt :: string) returns string | error.StdError {
     const value is IO.inputPrompt(prompt);
     const err is IO.takeLastErrorCode()
     if err == 0 then return value

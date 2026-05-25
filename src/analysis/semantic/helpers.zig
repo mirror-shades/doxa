@@ -874,6 +874,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                     },
                     .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false },
                     .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+                    .Set => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
                     .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
                     .Import => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
                 }
@@ -977,6 +978,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
         .Variable => ast.TypeInfo{ .base = .Nothing, .is_mutable = false },
         .Struct => ast.TypeInfo{ .base = .Struct, .is_mutable = false },
         .Enum => ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+        .Set => ast.TypeInfo{ .base = .Enum, .is_mutable = false },
         .Type => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
         .Import => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
     };

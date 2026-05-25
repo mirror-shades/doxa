@@ -45,7 +45,7 @@ Hello World
 
 ## Standard Library
 
-All intrinsic methods are inherently unsafe however. For the best safety the standard library functions should be used.
+All intrinsic methods are inherently unsafe however. For the best safety the standard library functions should be used. Here we will use println, which handles new lines in a cross platform friendly way.
 
 ```
 module std from @std()
@@ -56,14 +56,13 @@ std.io.println("Hello World")
 Hello World
 Hello World
 ```
-The `println` function appends the native line terminator for your OS (like C++ `std::endl`’s newline part) and flushes stdout. Since I/O can fail, `println` returns a union of error enums (see `std/io/io.doxa`).
-
-If you assign that result and peek it, the debugger lists each union arm using the **registered enum names** from the standard library (for example `IO` and `Common`, matching `enum IO` / `enum Common` in `std/error/error.doxa`):
-
+We can check the values returned to see that `@print()` returns `nothing`, while `std.io.println` returns a union of `nothing | StdError`. This lets us unwrap the error safely, we will see more about this when we look at unions.
 ```
 module std from @std()
-var result is std.io.println("Hello World")
-result?
+var std_result is std.io.println("Hello World")
+var intrinsic_result is @print("Hello World\n")
+std_result?
+intrinsic_result?
 ```
 ```
 Hello World

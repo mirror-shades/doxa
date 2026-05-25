@@ -23,8 +23,8 @@ pub const IOHandler = struct {
         return .{ .generator = generator };
     }
 
-    /// Generate HIR for print expressions
-    pub fn generatePrint(self: *IOHandler, print: ast.PrintExpr, preserve_result: bool) !void {
+    /// Generate HIR for print expressions (always leaves `nothing` on the stack, like a void-returning call).
+    pub fn generatePrint(self: *IOHandler, print: ast.PrintExpr, _: bool) !void {
         try self.generator.instructions.append(.PrintBegin);
 
         if (print.expr.data == .InterpolatedString) {
@@ -48,7 +48,9 @@ pub const IOHandler = struct {
         }
 
         try self.generator.instructions.append(.PrintEnd);
-        _ = preserve_result;
+
+        const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
+        try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
     }
 
     /// Generate HIR for peek expressions
@@ -133,6 +135,22 @@ pub const IOHandler = struct {
 
         if (union_members == null and inferred_type == .Union) {
             union_members = try self.generator.collectUnionMemberNamesFromHIRType(inferred_type);
+        }
+
+        if (union_members == null and inferred_type == .Set) {
+            if (peek.expr.data == .Variable) {
+                const var_name = peek.expr.data.Variable.lexeme;
+                if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_name| {
+                    union_members = try self.generator.type_system.getSetSourceMemberNames(custom_name);
+                }
+            }
+            if (union_members == null) {
+                if (self.generator.type_system.enum_table) |table| {
+                    if (table.getName(inferred_type.Set)) |set_name| {
+                        union_members = try self.generator.type_system.getSetSourceMemberNames(set_name);
+                    }
+                }
+            }
         }
 
         // Generate peek instruction with full path and correct type

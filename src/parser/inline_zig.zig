@@ -233,6 +233,7 @@ fn parseAllowedType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.Ty
 
 fn isFnQualifier(tok: Token) bool {
     return tok.kind == .ident and (std.mem.eql(u8, tok.lexeme, "pub") or
+        std.mem.eql(u8, tok.lexeme, "public") or
         std.mem.eql(u8, tok.lexeme, "export") or
         std.mem.eql(u8, tok.lexeme, "inline") or
         std.mem.eql(u8, tok.lexeme, "noinline") or

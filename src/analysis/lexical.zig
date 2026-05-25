@@ -69,6 +69,7 @@ pub const LexicalAnalyzer = struct {
     }
 
     pub fn initKeywords(self: *LexicalAnalyzer) !void {
+        try self.keywords.put("pub", .PUBLIC);
         try self.keywords.put("public", .PUBLIC);
         try self.keywords.put("zig", .ZIG);
         try self.keywords.put("true", .LOGIC);

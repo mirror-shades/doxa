@@ -299,7 +299,7 @@ zig Process {
     }
 }
 
-function mapProcessError(code :: int) returns error.Process | error.Common {
+function mapProcessError(code :: int) returns error.StdError {
     return match code {
         1 then error.Common.InvalidArgument,
         2 then error.Common.OutOfMemory,
@@ -319,7 +319,7 @@ function mapProcessError(code :: int) returns error.Process | error.Common {
     }
 }
 
-pub function exec(input :: string) returns int | error.Process | error.Common {
+public function exec(input :: string) returns int | error.StdError {
     var input_string :: string
     if Process.osName() == "windows" then {
         each c in input {
@@ -339,7 +339,7 @@ pub function exec(input :: string) returns int | error.Process | error.Common {
     return mapProcessError(err)
 }
 
-pub function execCapture(input :: string) returns string | error.Process | error.Common {
+public function execCapture(input :: string) returns string | error.StdError {
     var input_string :: string
     if Process.osName() == "windows" then {
         each c in input {
@@ -359,7 +359,7 @@ pub function execCapture(input :: string) returns string | error.Process | error
     return mapProcessError(err)
 }
 
-pub function execOk(input :: string) returns tetra {
+public function execOk(input :: string) returns tetra {
     const result is exec(input)
     result as int then {
         return true
@@ -369,32 +369,32 @@ pub function execOk(input :: string) returns tetra {
     }
 }
 
-pub function argc() returns int | error.Process | error.Common {
+public function argc() returns int | error.StdError {
     const count is Process.argCount();
     const err is Process.takeLastErrorCode()
     if err == 0 then return count
     return mapProcessError(err)
 }
 
-pub function argv(index :: int) returns string | error.Process | error.Common {
+public function argv(index :: int) returns string | error.StdError {
     const value is Process.argAt(@string(index));
     const err is Process.takeLastErrorCode()
     if err == 0 then return value
     return mapProcessError(err)
 }
 
-pub function exit(code :: int) {
+public function exit(code :: int) {
     Process.exitCode(@string(code));
 }
 
-pub function cwd() returns string | error.Process | error.Common {
+public function cwd() returns string | error.StdError {
     const value is Process.cwd();
     const err is Process.takeLastErrorCode()
     if err == 0 then return value
     return mapProcessError(err)
 }
 
-pub function getenv(name :: string) returns string | error.Process | error.Common {
+public function getenv(name :: string) returns string | error.StdError {
     const value is Process.getEnv(name);
     const err is Process.takeLastErrorCode()
     if err == 0 then return value

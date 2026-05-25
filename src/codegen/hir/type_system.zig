@@ -263,6 +263,17 @@ pub const TypeSystem = struct {
         return self.custom_types.get(name);
     }
 
+    pub fn getSetSourceMemberNames(self: *TypeSystem, set_name: []const u8) ![][]const u8 {
+        const name_to_lookup = if (std.mem.lastIndexOfScalar(u8, set_name, '.')) |dot| set_name[dot + 1 ..] else set_name;
+        const ct = self.custom_types.get(name_to_lookup) orelse self.custom_types.get(set_name);
+        if (ct == null or ct.?.kind != .Set) return &[_][]const u8{};
+
+        var names = try self.allocator.alloc([]const u8, 2);
+        names[0] = "nothing";
+        names[1] = name_to_lookup;
+        return names;
+    }
+
     pub fn getCustomTypeHIRType(self: *TypeSystem, name: []const u8) HIRType {
         if (self.custom_types.get(name)) |custom_type| {
             return switch (custom_type.kind) {

@@ -46,3 +46,11 @@ public enum Method {
     Overflow,
     Unexpected,
 }
+
+public set StdError {
+    error.Common,
+    error.IO,
+    error.Process,
+    error.Method
+}
+
