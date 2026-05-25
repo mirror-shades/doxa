@@ -84,7 +84,9 @@
     
       
 
-<header class="md-header" data-md-component="header">
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href=".." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
       
@@ -196,302 +198,6 @@
       
         
           
-            
-<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
-  <div class="md-grid">
-    <ul class="md-tabs__list">
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href=".." class="md-tabs__link">
-        
-  
-  
-    
-  
-  Home
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../syntax/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Syntax
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../alias/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Alias
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../arrays/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Arrays
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../control/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Control
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../loops/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Loops
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../maps/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Maps
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../memory/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Memory
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../methods/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Methods
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-    
-  
-  
-    <li class="md-tabs__item md-tabs__item--active">
-      <a href="./" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Sets
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../stdlib/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Standard Library
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../struct/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Structs
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../tetras/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Tetras
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../unions/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Unions
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../zig/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Zig
-
-      </a>
-    </li>
-  
-
-      
-    </ul>
-  </div>
-</nav>
-          
         
       
       <main class="md-main" data-md-component="main">
@@ -505,12 +211,10 @@
                     
 
 
-  
-
 
   
 
-<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
     <a href=".." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
       
@@ -1319,7 +1023,7 @@
 <h2 id="2-syntax">2. Syntax</h2>
 <h3 id="21-set-declaration">2.1 Set declaration</h3>
 <p>A set is declared with the <code>set</code> keyword. The body lists source enums whose variants are included. Each source contributes its variants under a <strong>qualifier</strong> (the unqualified name of the source type).</p>
-<div class="highlight"><pre><span></span><code>pub set Std {
+<div class="highlight"><pre><span></span><code>public set Std {
     error.Common,
     error.IO,
     error.Process,
@@ -1335,7 +1039,7 @@
 <p>The qualifier defaults to the <strong>unqualified</strong> name of the source enum: <code>Common</code>, <code>IO</code>, <code>Process</code>, <code>Method</code>. If two members would yield the same qualifier, the program is <strong>ill-formed</strong>.</p>
 <h3 id="22-local-variants">2.2 Local variants</h3>
 <p>The declaring set may add its own variants alongside source members. Recommended style: source members first, then local variants.</p>
-<div class="highlight"><pre><span></span><code>pub set AppErr {
+<div class="highlight"><pre><span></span><code>public set AppErr {
     std.error.Std,
     UserCancelled,
     ConfigInvalid,
@@ -1344,12 +1048,12 @@
 <p>Local variants are <strong>unqualified</strong> under the declaring set: <code>AppErr.UserCancelled</code>.</p>
 <h3 id="23-transitive-sets">2.3 Transitive sets</h3>
 <p>A set may include another set as a source member. All variants flow through transitively with the same variant identities.</p>
-<div class="highlight"><pre><span></span><code>pub set Std {
+<div class="highlight"><pre><span></span><code>public set Std {
     error.IO,
     error.Common,
 }
 
-pub set AppErr {
+public set AppErr {
     Std,             # includes all error.IO + error.Common variants
     UserCancelled,
 }
@@ -1582,7 +1286,7 @@ x @istype AppErr         → false  (unless AppErr includes Std → then true)
 <h3 id="91-module-layout">9.1 Module layout</h3>
 <ul>
 <li>Keep domain enums in <code>std/error/error.doxa</code> or split into <code>std/error/common.doxa</code>, <code>io.doxa</code>, etc.</li>
-<li>Declare <strong><code>pub set Std { … }</code></strong> in <code>std/error/std.doxa</code> (or same file as enums if small).</li>
+<li>Declare <strong><code>public set Std { … }</code></strong> in <code>std/error/std.doxa</code> (or same file as enums if small).</li>
 </ul>
 <h3 id="92-public-api-return-types">9.2 Public API return types</h3>
 <ul>
@@ -1593,7 +1297,7 @@ x @istype AppErr         → false  (unless AppErr includes Std → then true)
 <h3 id="93-migration">9.3 Migration</h3>
 <ol>
 <li>Introduce <code>Std</code> as a set including existing error enums.</li>
-<li>Widen return types of <code>pub function</code> from <code>error.IO | error.Common</code> to <code>Std</code>.</li>
+<li>Widen return types of <code>public function</code> from <code>error.IO | error.Common</code> to <code>Std</code>.</li>
 <li>Keep <code>map*Error</code> returning <code>Std</code> or individual types then widen at return site.</li>
 <li>Update docs and examples.</li>
 </ol>
@@ -1628,7 +1332,7 @@ VariantDecl     := IDENT ( &#39;,&#39; )?   # existing enum variant syntax
 <tbody>
 <tr>
 <td>Syntax</td>
-<td><code>pub set Name { SourceType, … }</code></td>
+<td><code>public set Name { SourceType, … }</code></td>
 </tr>
 <tr>
 <td>Qualified names</td>
@@ -1734,7 +1438,7 @@ VariantDecl     := IDENT ( &#39;,&#39; )?   # existing enum variant syntax
     
     
       
-      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.sections", "toc.integrate", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.sections", "navigation.path", "navigation.instant", "toc.integrate", "toc.follow", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
       <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>

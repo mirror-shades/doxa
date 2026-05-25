@@ -80,7 +80,9 @@
     
       
 
-<header class="md-header" data-md-component="header">
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href="../.." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
       
@@ -192,300 +194,6 @@
       
         
           
-            
-<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
-  <div class="md-grid">
-    <ul class="md-tabs__list">
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../.." class="md-tabs__link">
-        
-  
-  
-    
-  
-  Home
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../syntax/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Syntax
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../alias/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Alias
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../arrays/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Arrays
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../control/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Control
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../loops/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Loops
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../maps/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Maps
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../memory/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Memory
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../methods/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Methods
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../sets/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Sets
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../stdlib/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Standard Library
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../struct/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Structs
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../tetras/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Tetras
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../unions/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Unions
-
-      </a>
-    </li>
-  
-
-      
-        
-  
-  
-  
-  
-    <li class="md-tabs__item">
-      <a href="../../zig/" class="md-tabs__link">
-        
-  
-  
-    
-  
-  Zig
-
-      </a>
-    </li>
-  
-
-      
-    </ul>
-  </div>
-</nav>
-          
         
       
       <main class="md-main" data-md-component="main">
@@ -499,12 +207,10 @@
                     
 
 
-  
-
 
   
 
-<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
     <a href="../.." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
       
@@ -892,7 +598,7 @@ Note that line breaks must be input directly with @print.</p>
 Hello World
 </code></pre></div></p>
 <h2 id="standard-library">Standard Library</h2>
-<p>All intrinsic methods are inherently unsafe however. For the best safety the standard library functions should be used.</p>
+<p>All intrinsic methods are inherently unsafe however. For the best safety the standard library functions should be used. Here we will use println, which handles new lines in a cross platform friendly way.</p>
 <p><div class="highlight"><pre><span></span><code>module std from @std()
 std.io.println(&quot;Hello World&quot;)
 std.io.println(&quot;Hello World&quot;)
@@ -900,11 +606,12 @@ std.io.println(&quot;Hello World&quot;)
 <div class="highlight"><pre><span></span><code>Hello World
 Hello World
 </code></pre></div>
-The <code>println</code> function appends the native line terminator for your OS (like C++ <code>std::endl</code>’s newline part) and flushes stdout. Since I/O can fail, <code>println</code> returns a union of error enums (see <code>std/io/io.doxa</code>).</p>
-<p>If you assign that result and peek it, the debugger lists each union arm using the <strong>registered enum names</strong> from the standard library (for example <code>IO</code> and <code>Common</code>, matching <code>enum IO</code> / <code>enum Common</code> in <code>std/error/error.doxa</code>):</p>
-<p><div class="highlight"><pre><span></span><code>module std from @std()
-var result is std.io.println(&quot;Hello World&quot;)
-result?
+We can check the values returned to see that <code>@print()</code> returns <code>nothing</code>, while <code>std.io.println</code> returns a union of <code>nothing | StdError</code>. This lets us unwrap the error safely, we will see more about this when we look at unions.
+<div class="highlight"><pre><span></span><code>module std from @std()
+var std_result is std.io.println(&quot;Hello World&quot;)
+var intrinsic_result is @print(&quot;Hello World\n&quot;)
+std_result?
+intrinsic_result?
 </code></pre></div>
 <div class="highlight"><pre><span></span><code>Hello World
 [example.doxa:3:12] result :: nothing | IO | Common is nothing
@@ -975,7 +682,7 @@ result?
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.sections", "toc.integrate", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.sections", "navigation.path", "navigation.instant", "toc.integrate", "toc.follow", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
       <script src="../../assets/javascripts/bundle.13a4f30d.min.js"></script>
