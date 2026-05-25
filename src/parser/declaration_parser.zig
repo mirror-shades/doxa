@@ -210,8 +210,19 @@ pub fn parseSetDecl(self: *Parser) ErrorList!ast.Stmt {
                 .qualifier = qualifier_owned,
                 .is_set = false,
             });
+        } else if (self.declared_types.contains(first_token.lexeme)) {
+            // Bare identifier matching a declared type: source member
+            const path_owned = try self.allocator.alloc(token.Token, 1);
+            path_owned[0] = first_token;
+            const qualifier_owned = try self.allocator.dupe(u8, first_token.lexeme);
+
+            try sources.append(.{
+                .path = path_owned,
+                .qualifier = qualifier_owned,
+                .is_set = false,
+            });
         } else {
-            // Plain identifier: a local variant
+            // Plain identifier not declared: a local variant
             try local_variants.append(first_token);
             try self.declared_types.put(first_token.lexeme, {});
         }

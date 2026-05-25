@@ -1192,6 +1192,14 @@ pub fn registerSetType(self: *SemanticAnalyzer, set_name: []const u8, sources: [
         .struct_fields = null,
     };
     try self.memory.registerCustomType(mem_set);
+
+    if (@hasField(@TypeOf(self.*), "enum_table")) {
+        var all_variant_names = try self.allocator.alloc([]const u8, local_variants.len);
+        for (local_variants, 0..) |vn, i| {
+            all_variant_names[i] = vn;
+        }
+        _ = self.enum_table.registerEnum(set_name, all_variant_names) catch {};
+    }
 }
 
 fn buildQualifiedName(allocator: std.mem.Allocator, path: []const Token) ![]const u8 {
