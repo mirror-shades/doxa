@@ -125,6 +125,10 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 } else if (custom_type.kind == .Struct) {
                                     try self.trackVariableCustomType(decl.name.lexeme, type_name);
                                     break :blk HIRType{ .Struct = 0 };
+                                } else if (custom_type.kind == .Set) {
+                                    custom_type_name = type_name;
+                                    try self.trackVariableCustomType(decl.name.lexeme, type_name);
+                                    break :blk HIRType{ .Set = 0 };
                                 }
                             }
                             try self.trackVariableCustomType(decl.name.lexeme, type_name);

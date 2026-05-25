@@ -48,9 +48,9 @@ public enum Method {
 }
 
 public set StdError {
-    error.Common,
-    error.IO,
-    error.Process,
-    error.Method
+    Common,
+    IO,
+    Process,
+    Method
 }
 

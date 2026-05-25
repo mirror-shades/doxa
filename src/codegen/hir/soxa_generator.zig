@@ -132,20 +132,16 @@ fn effectiveReturnTypeForSignature(allocator: std.mem.Allocator, declared: ast.T
                     break :blk null;
                 };
                 if (ct != null and ct.?.kind == .Set) {
-                    if (ct.?.set_sources) |sources| {
-                        const nothing_ptr = try allocator.create(ast.TypeInfo);
-                        nothing_ptr.* = .{ .base = .Nothing, .is_mutable = false };
-                        const new_types = try allocator.alloc(*ast.TypeInfo, sources.len + 1);
-                        new_types[0] = nothing_ptr;
-                        for (sources, 0..) |src, i| {
-                            const enum_type = try allocator.create(ast.TypeInfo);
-                            enum_type.* = .{ .base = .Custom, .custom_type = src.source_name, .is_mutable = false };
-                            new_types[i + 1] = enum_type;
-                        }
-                        const new_ut = try allocator.create(ast.UnionType);
-                        new_ut.* = .{ .types = new_types, .current_type_index = 0 };
-                        return ast.TypeInfo{ .base = .Union, .union_type = new_ut, .is_mutable = declared.is_mutable };
-                    }
+                    const nothing_ptr = try allocator.create(ast.TypeInfo);
+                    nothing_ptr.* = .{ .base = .Nothing, .is_mutable = false };
+                    const new_types = try allocator.alloc(*ast.TypeInfo, 2);
+                    new_types[0] = nothing_ptr;
+                    const set_type = try allocator.create(ast.TypeInfo);
+                    set_type.* = .{ .base = .Custom, .custom_type = declared.custom_type.?, .is_mutable = false };
+                    new_types[1] = set_type;
+                    const new_ut = try allocator.create(ast.UnionType);
+                    new_ut.* = .{ .types = new_types, .current_type_index = 0 };
+                    return ast.TypeInfo{ .base = .Union, .union_type = new_ut, .is_mutable = declared.is_mutable };
                 }
             }
         }
