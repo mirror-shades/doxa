@@ -19,6 +19,7 @@ const ErrorCode = Errors.ErrorCode;
 
 const StructTable = @import("../../common/struct_table.zig").StructTable;
 const EnumTable = @import("../../common/enum_table.zig").EnumTable;
+const GroupTable = @import("../../common/group_table.zig").GroupTable;
 const StructId = @import("../../codegen/hir/soxa_types.zig").StructId;
 
 const Types = @import("../../types/types.zig");
@@ -63,6 +64,7 @@ pub const SemanticAnalyzer = struct {
     parser: ?*const Parser = null,
     struct_table: StructTable,
     enum_table: EnumTable,
+    group_table: GroupTable,
     // Union type registry: assigns a stable id per canonical ast.UnionType
     union_ids: std.AutoHashMap(*ast.UnionType, u32),
     next_union_id: u32,
@@ -84,6 +86,7 @@ pub const SemanticAnalyzer = struct {
             .parser = parser,
             .struct_table = StructTable.init(allocator),
             .enum_table = EnumTable.init(allocator),
+            .group_table = GroupTable.init(allocator),
             .union_ids = std.AutoHashMap(*ast.UnionType, u32).init(allocator),
             .next_union_id = 1,
         };
@@ -107,6 +110,7 @@ pub const SemanticAnalyzer = struct {
         self.current_function_returns.deinit();
         self.struct_table.deinit();
         self.enum_table.deinit();
+        self.group_table.deinit();
         self.union_ids.deinit();
     }
 
@@ -131,6 +135,10 @@ pub const SemanticAnalyzer = struct {
 
     pub fn getEnumTable(self: *const SemanticAnalyzer) *const EnumTable {
         return &self.enum_table;
+    }
+
+    pub fn getGroupTable(self: *const SemanticAnalyzer) *const GroupTable {
+        return &self.group_table;
     }
 
     pub fn getStructId(self: *SemanticAnalyzer, name: []const u8) ?StructId {
@@ -248,11 +256,11 @@ pub const SemanticAnalyzer = struct {
             .kind = switch (semantic_type.kind) {
                 .Struct => .Struct,
                 .Enum => .Enum,
-                .Set => .Set,
+                .Group => .Group,
             },
             .enum_variants = null,
             .struct_fields = null,
-            .set_sources = null,
+            .group_members = null,
         };
 
         // Convert enum variants if present
@@ -355,15 +363,15 @@ pub const SemanticAnalyzer = struct {
             hir_type.struct_fields = converted_fields;
         }
 
-        if (semantic_type.set_sources) |sources| {
-            const converted_sources = try allocator.alloc(HIRTypeSystem.TypeSystem.CustomTypeInfo.SetSource, sources.len);
-            for (sources, 0..) |source, i| {
-                converted_sources[i] = .{
-                    .qualifier = source.qualifier,
-                    .source_name = source.source_name,
+        if (semantic_type.group_members) |members| {
+            const converted_members = try allocator.alloc(HIRTypeSystem.TypeSystem.CustomTypeInfo.GroupMemberSource, members.len);
+            for (members, 0..) |member, i| {
+                converted_members[i] = .{
+                    .qualifier = member.qualifier,
+                    .source_name = member.source_name,
                 };
             }
-            hir_type.set_sources = converted_sources;
+            hir_type.group_members = converted_members;
         }
 
         return hir_type;
@@ -584,7 +592,7 @@ pub const SemanticAnalyzer = struct {
                                 }
                             }
                         },
-                        .Set => {
+                        .Group => {
                             var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
                             if (p.module_cache.get(sym.original_module)) |mi| {
                                 mod_info = mi;
@@ -596,11 +604,9 @@ pub const SemanticAnalyzer = struct {
                                     if (module_ast.data == .Block) {
                                         for (module_ast.data.Block.statements) |stmt| {
                                             switch (stmt.data) {
-                                                .SetDecl => |sd| {
-                                                    if (std.mem.eql(u8, sd.name.lexeme, sym.name)) {
-                                                        const variant_names = try self.allocator.alloc([]const u8, sd.local_variants.len);
-                                                        for (sd.local_variants, variant_names) |v, *name| name.* = v.lexeme;
-                                                        try helpers.registerSetType(self, sd.name.lexeme, sd.sources, variant_names);
+                                                .GroupDecl => |gd| {
+                                                    if (std.mem.eql(u8, gd.name.lexeme, sym.name)) {
+                                                        try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
                                                     }
                                                 },
                                                 else => {},
@@ -648,13 +654,9 @@ pub const SemanticAnalyzer = struct {
                                 }
                                 try helpers.registerEnumType(self, enum_decl.name.lexeme, variants);
                             },
-                            .SetDecl => {
-                                const set_decl = expr.data.SetDecl;
-                                const local_variant_names = try self.allocator.alloc([]const u8, set_decl.local_variants.len);
-                                for (set_decl.local_variants, local_variant_names) |variant, *name| {
-                                    name.* = variant.lexeme;
-                                }
-                                try helpers.registerSetType(self, set_decl.name.lexeme, set_decl.sources, local_variant_names);
+                            .GroupDecl => {
+                                const group_decl = expr.data.GroupDecl;
+                                try helpers.registerGroupType(self, group_decl.name.lexeme, group_decl.members);
                             },
                             else => {},
                         }
@@ -667,12 +669,8 @@ pub const SemanticAnalyzer = struct {
                     }
                     try helpers.registerEnumType(self, enum_decl.name.lexeme, variants);
                 },
-                .SetDecl => |set_decl| {
-                    const local_variant_names = try self.allocator.alloc([]const u8, set_decl.local_variants.len);
-                    for (set_decl.local_variants, local_variant_names) |variant, *name| {
-                        name.* = variant.lexeme;
-                    }
-                    try helpers.registerSetType(self, set_decl.name.lexeme, set_decl.sources, local_variant_names);
+                .GroupDecl => |group_decl| {
+                    try helpers.registerGroupType(self, group_decl.name.lexeme, group_decl.members);
                 },
                 else => {},
             }
@@ -1372,7 +1370,54 @@ pub const SemanticAnalyzer = struct {
 
         if (matched_var_name) |name| {
             // Build a narrowed TypeInfo from the patterns (use first pattern for type narrowing)
-            if (case.patterns.len > 0) {
+            // Check path patterns first (group-qualified patterns)
+            if (case.path_patterns.len > 0) {
+                const path = case.path_patterns[0];
+                if (path.tokens.len >= 1) {
+                    const narrow_info = try ast.TypeInfo.createDefault(self.allocator);
+                    // Member type is second-to-last token (before variant or wildcard)
+                    const member_idx: usize = if (path.tokens.len >= 2) path.tokens.len - 2 else 0;
+                    const member_token = path.tokens[member_idx];
+                    narrow_info.* = .{
+                        .base = .Custom,
+                        .custom_type = member_token.lexeme,
+                        .is_mutable = false,
+                    };
+                    const token_type: TokenType = helpers.convertTypeToTokenType(self, narrow_info.base);
+                    _ = case_scope.createValueBinding(
+                        name,
+                        TokenLiteral{ .nothing = {} },
+                        token_type,
+                        narrow_info,
+                        false,
+                    ) catch {};
+
+                    // Struct destructuring: bind each field name as a local variable
+                    if (path.field_names.len > 0) {
+                        const resolved_name = self.resolveTypeAlias(member_token.lexeme);
+                        if (self.struct_table.getIdByName(resolved_name)) |sid| {
+                            if (self.struct_table.fields(sid)) |fields| {
+                                for (path.field_names) |field_token| {
+                                    for (fields) |fld| {
+                                        if (std.mem.eql(u8, fld.name, field_token.lexeme)) {
+                                            const field_info = try ast.TypeInfo.createDefault(self.allocator);
+                                            field_info.* = fld.type_info.*;
+                                            _ = case_scope.createValueBinding(
+                                                field_token.lexeme,
+                                                TokenLiteral{ .nothing = {} },
+                                                helpers.convertTypeToTokenType(self, field_info.base),
+                                                field_info,
+                                                false,
+                                            ) catch {};
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (case.patterns.len > 0) {
                 const narrow_info = try ast.TypeInfo.createDefault(self.allocator);
                 const first_pattern = case.patterns[0]; // Use first pattern for type narrowing
                 narrow_info.* = switch (first_pattern.type) {

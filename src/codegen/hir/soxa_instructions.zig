@@ -192,6 +192,16 @@ pub const HIRInstruction = union(enum) {
         target_type: []const u8, // The type name to check against
     },
 
+    /// Group member index check for group match patterns
+    /// VM: Compare top-of-stack group_instance.member_index against target
+    GroupCheck: struct {
+        member_index: u32,
+    },
+
+    /// Extract payload from a group_instance, replacing it with the member value.
+    /// VM: group_instance -> payload (enum_variant or struct_instance)
+    GroupExtractPayload: struct {},
+
     /// Construct a union value from the current top-of-stack value.
     /// VM: Currently a no-op (union semantics are handled structurally).
     /// LLVM: Build a canonical %DoxaValue with union_id + active member index

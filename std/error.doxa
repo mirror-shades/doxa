@@ -47,7 +47,7 @@ public enum Method {
     Unexpected,
 }
 
-public set StdError {
+public group StdError {
     Common,
     IO,
     Process,

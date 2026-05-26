@@ -92,6 +92,11 @@ pub const Parser = struct {
     module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
     import_stack: std.array_list.Managed(ImportStackEntry),
 
+    // Match path pattern tracking
+    current_path_pattern_tokens: ?[]const token.Token = null,
+    current_path_pattern_is_wildcard: bool = false,
+    current_path_pattern_field_names: ?[]const token.Token = null,
+
     pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter) Parser {
         const parser = Parser{
             .allocator = allocator,
@@ -418,13 +423,13 @@ pub const Parser = struct {
                     }
                     try statements.append(enum_decl);
                 },
-                .SET_TYPE => {
-                    var set_decl = try declaration_parser.parseSetDecl(self);
-                    set_decl.data.SetDecl.is_public = is_public;
+                .GROUP_TYPE => {
+                    var group_decl = try declaration_parser.parseGroupDecl(self);
+                    group_decl.data.GroupDecl.is_public = is_public;
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
-                    try statements.append(set_decl);
+                    try statements.append(group_decl);
                 },
                 .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH => {
                     if (is_entry) {
@@ -885,11 +890,11 @@ pub const Parser = struct {
         if (left != null and left.?.data == .Variable) {
             const var_name = left.?.data.Variable;
             if (self.declared_types.contains(var_name.lexeme)) {
-                // Check if this is actually an enum or set type by looking for declarations
+                // Check if this is actually an enum or group type by looking for declarations
                 var is_enum_type = false;
                 var i: usize = 0;
                 while (i < self.tokens.len) : (i += 1) {
-                    if (self.tokens[i].type == .ENUM_TYPE or self.tokens[i].type == .SET_TYPE) {
+                    if (self.tokens[i].type == .ENUM_TYPE or self.tokens[i].type == .GROUP_TYPE) {
                         i += 1;
                         if (i < self.tokens.len and std.mem.eql(u8, self.tokens[i].lexeme, var_name.lexeme)) {
                             is_enum_type = true;
@@ -899,13 +904,13 @@ pub const Parser = struct {
                 }
 
                 if (is_enum_type) {
-                    // This is an enum/set member access
+                    // This is an enum/group member access
                     self.advance();
 
                     var found_valid_variant = false;
                     var j: usize = 0;
                     while (j < self.tokens.len) : (j += 1) {
-                        if (self.tokens[j].type == .ENUM_TYPE or self.tokens[j].type == .SET_TYPE) {
+                        if (self.tokens[j].type == .ENUM_TYPE or self.tokens[j].type == .GROUP_TYPE) {
                             j += 2;
 
                             if (self.tokens[j].type != .LEFT_BRACE) continue;
@@ -1743,12 +1748,12 @@ pub const Parser = struct {
                     .Variable => .Variable,
                     .Struct => .Struct,
                     .Enum => .Enum,
-                    .Set => .Set,
+                    .Group => .Group,
                 },
                 .name = symbol_name,
                 .original_module = module_path,
-                .enum_role = if (symbol.kind == .Enum or symbol.kind == .Set) .Type else null,
-                .enum_type_name = if (symbol.kind == .Enum or symbol.kind == .Set) symbol_name else null,
+                .enum_role = if (symbol.kind == .Enum or symbol.kind == .Group) .Type else null,
+                .enum_type_name = if (symbol.kind == .Enum or symbol.kind == .Group) symbol_name else null,
             });
         }
     }
@@ -1863,15 +1868,15 @@ pub const Parser = struct {
                                 return;
                             }
                         },
-                        .SetDecl => |set_decl| {
-                            const is_public = set_decl.is_public;
-                            if (is_public and std.mem.eql(u8, set_decl.name.lexeme, symbol_name)) {
+                        .GroupDecl => |group_decl| {
+                            const is_public = group_decl.is_public;
+                            if (is_public and std.mem.eql(u8, group_decl.name.lexeme, symbol_name)) {
                                 try self.imported_symbols.?.put(symbol_name, .{
-                                    .kind = .Enum,
-                                    .name = set_decl.name.lexeme,
+                                    .kind = .Group,
+                                    .name = group_decl.name.lexeme,
                                     .original_module = module_path,
                                     .enum_role = .Type,
-                                    .enum_type_name = set_decl.name.lexeme,
+                                    .enum_type_name = group_decl.name.lexeme,
                                 });
                                 return;
                             }

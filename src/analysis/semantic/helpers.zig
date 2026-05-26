@@ -10,6 +10,7 @@ const TokenType = @import("../../types/token.zig").TokenType;
 const Token = @import("../../types/token.zig").Token;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
 const EnumTable = @import("../../common/enum_table.zig").EnumTable;
+const GroupTable = @import("../../common/group_table.zig").GroupTable;
 const Types = @import("../../types/types.zig");
 const CustomTypeInfo = Types.CustomTypeInfo;
 const StructField = Types.StructField;
@@ -110,6 +111,40 @@ fn typeLabel(type_info: *const ast.TypeInfo) []const u8 {
         return name;
     }
     return @tagName(type_info.base);
+}
+
+fn typeMatchesUnionMember(self: *const SemanticAnalyzer, exp_member: *const ast.TypeInfo, actual_member: *const ast.TypeInfo) bool {
+    if (typesEqual(self, exp_member, actual_member)) return true;
+    // Allow group member widening: if exp_member is a group, check membership
+    if (exp_member.base == .Custom and exp_member.custom_type != null) {
+        if (self.custom_types.get(exp_member.custom_type.?)) |ct| {
+            if (ct.kind == .Group) {
+                return typeIsGroupMember(self, exp_member.custom_type.?, actual_member);
+            }
+        }
+    }
+    return false;
+}
+
+fn typeIsGroupMember(self: *const SemanticAnalyzer, group_name: []const u8, actual: *const ast.TypeInfo) bool {
+    const group_id = self.group_table.getIdByName(group_name) orelse return false;
+    const members = self.group_table.members(group_id) orelse return false;
+
+    const actual_name = if (actual.custom_type) |n| self.resolveTypeAlias(n) else return false;
+
+    for (members) |member| {
+        const member_type_name = switch (member.kind) {
+            .Enum => if (self.enum_table.getName(member.id)) |n| n else continue,
+            .Struct => if (self.struct_table.getName(member.id)) |n| n else continue,
+            .Group => if (self.group_table.getName(member.id)) |n| n else continue,
+        };
+        if (std.mem.eql(u8, member_type_name, actual_name)) return true;
+        if (std.mem.lastIndexOfScalar(u8, member_type_name, '.')) |dot| {
+            if (std.mem.eql(u8, member_type_name[dot + 1 ..], actual_name)) return true;
+        }
+        if (std.mem.eql(u8, member.qualifier, actual_name)) return true;
+    }
+    return false;
 }
 
 /// Helper: canonicalize a slice of *TypeInfo (dedup + stable order)
@@ -249,7 +284,7 @@ fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType 
                             break :blk HIRType{ .Struct = 0 };
                         },
                         .Enum => break :blk HIRType{ .Enum = 0 },
-                        .Set => break :blk HIRType{ .Set = 0 },
+                        .Group => break :blk HIRType{ .Group = self.group_table.getIdByName(resolved) orelse 0 },
                     }
                 }
             }
@@ -399,6 +434,28 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
         }
     }
 
+    // GROUP WIDENING: If expected is a group, any member type is assignable
+    if (expected.base == .Custom and expected.custom_type != null) {
+        if (self.custom_types.get(expected.custom_type.?)) |ct| {
+            if (ct.kind == .Group) {
+                if (typeIsGroupMember(self, expected.custom_type.?, actual)) return;
+                // Also allow if actual is a union where every member is a group member
+                if (actual.base == .Union) {
+                    if (actual.union_type) |act_u| {
+                        var all_allowed = true;
+                        for (act_u.types) |act_m| {
+                            if (!typeIsGroupMember(self, expected.custom_type.?, act_m)) {
+                                all_allowed = false;
+                                break;
+                            }
+                        }
+                        if (all_allowed) return;
+                    }
+                }
+            }
+        }
+    }
+
     // If expected is union, actual must be a member (or a subset if it's a union)
     if (expected.base == .Union) {
         if (expected.union_type) |exp_u| {
@@ -408,7 +465,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
                     for (act_u.types) |act_m| {
                         var allowed = false;
                         for (exp_u.types) |exp_m| {
-                            if (typesEqual(self, exp_m, act_m)) {
+                            if (typeMatchesUnionMember(self, exp_m, act_m)) {
                                 allowed = true;
                                 break;
                             }
@@ -437,7 +494,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
             } else {
                 // Non-union actual must match one member structurally
                 for (exp_u.types) |m| {
-                    if (typesEqual(self, m, actual)) return;
+                    if (typeMatchesUnionMember(self, m, actual)) return;
                 }
                 var list = std.ArrayListUnmanaged(u8){};
                 defer list.deinit(self.allocator);
@@ -874,7 +931,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                     },
                     .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false },
                     .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
-                    .Set => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+                    .Group => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
                     .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
                     .Import => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
                 }
@@ -978,7 +1035,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
         .Variable => ast.TypeInfo{ .base = .Nothing, .is_mutable = false },
         .Struct => ast.TypeInfo{ .base = .Struct, .is_mutable = false },
         .Enum => ast.TypeInfo{ .base = .Enum, .is_mutable = false },
-        .Set => ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+        .Group => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
         .Type => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
         .Import => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
     };
@@ -1145,60 +1202,213 @@ pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants
     }
 }
 
-pub fn registerSetType(self: *SemanticAnalyzer, set_name: []const u8, sources: []const ast.SetSource, local_variants: []const []const u8) !void {
-    var set_source_infos = try self.allocator.alloc(CustomTypeInfo.SetSource, sources.len);
-    errdefer self.allocator.free(set_source_infos);
+pub fn registerGroupType(self: *SemanticAnalyzer, group_name: []const u8, members: []const ast.GroupMember) !void {
+    if (members.len == 0) {
+        self.reporter.reportCompileError(
+            .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
+            ErrorCode.EXPECTED_EXPRESSION,
+            "Group '{s}' must have at least one member",
+            .{group_name},
+        );
+        self.fatal_error = true;
+        return;
+    }
 
-    for (sources, 0..) |source, si| {
-        const qualified_name = try buildQualifiedName(self.allocator, source.path);
+    var member_infos = try self.allocator.alloc(CustomTypeInfo.GroupMemberSource, members.len);
+    errdefer self.allocator.free(member_infos);
+
+    for (members, 0..) |member, mi| {
+        const qualified_name = try buildQualifiedName(self.allocator, member.path);
         defer self.allocator.free(qualified_name);
 
-        set_source_infos[si] = .{
-            .qualifier = try self.allocator.dupe(u8, source.qualifier),
+        member_infos[mi] = .{
+            .qualifier = try self.allocator.dupe(u8, member.qualifier),
             .source_name = try self.allocator.dupe(u8, qualified_name),
         };
     }
 
-    var set_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, local_variants.len);
-    errdefer self.allocator.free(set_variants);
-
-    for (local_variants, 0..) |variant_name, index| {
-        set_variants[index] = CustomTypeInfo.EnumVariant{
-            .name = try self.allocator.dupe(u8, variant_name),
-            .index = @intCast(index),
-        };
-    }
-
     const custom_type = CustomTypeInfo{
-        .name = try self.allocator.dupe(u8, set_name),
-        .kind = .Set,
-        .enum_variants = set_variants,
-        .set_sources = set_source_infos,
+        .name = try self.allocator.dupe(u8, group_name),
+        .kind = .Group,
+        .group_members = member_infos,
     };
-    try self.custom_types.put(set_name, custom_type);
+    try self.custom_types.put(group_name, custom_type);
 
-    var mem_set_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, local_variants.len);
-    for (local_variants, 0..) |variant_name, i| {
-        mem_set_variants[i] = CustomTypeInfo.EnumVariant{
-            .name = try self.allocator.dupe(u8, variant_name),
-            .index = @intCast(i),
-        };
-    }
-    const mem_set = CustomTypeInfo{
-        .name = try self.allocator.dupe(u8, set_name),
-        .kind = .Set,
-        .enum_variants = mem_set_variants,
-        .set_sources = set_source_infos,
-        .struct_fields = null,
+    const mem_group = CustomTypeInfo{
+        .name = try self.allocator.dupe(u8, group_name),
+        .kind = .Group,
+        .group_members = member_infos,
     };
-    try self.memory.registerCustomType(mem_set);
+    try self.memory.registerCustomType(mem_group);
 
-    if (@hasField(@TypeOf(self.*), "enum_table")) {
-        var all_variant_names = try self.allocator.alloc([]const u8, local_variants.len);
-        for (local_variants, 0..) |vn, i| {
-            all_variant_names[i] = vn;
+    // Flatten and register in GroupTable
+    var flat_members = std.ArrayListUnmanaged(GroupTable.Member){};
+    defer flat_members.deinit(self.allocator);
+
+    var visited = std.StringHashMapUnmanaged(void){};
+    defer visited.deinit(self.allocator);
+
+    var seen = std.AutoHashMapUnmanaged(MemberKey, void){};
+    defer seen.deinit(self.allocator);
+
+    try flattenGroupMembers(self, members, &flat_members, &visited, &seen);
+
+    // Check for duplicate qualifiers after flattening
+    var qualifiers = std.StringHashMapUnmanaged(void){};
+    defer qualifiers.deinit(self.allocator);
+    for (flat_members.items) |fm| {
+        if (qualifiers.contains(fm.qualifier)) {
+            self.reporter.reportCompileError(
+                .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
+                ErrorCode.TYPE_MISMATCH,
+                "Group '{s}' has duplicate qualifier '{s}'",
+                .{ group_name, fm.qualifier },
+            );
+            self.fatal_error = true;
         }
-        _ = self.enum_table.registerEnum(set_name, all_variant_names) catch {};
+        try qualifiers.put(self.allocator, fm.qualifier, {});
+    }
+
+    _ = try self.group_table.registerGroup(group_name, flat_members.items);
+}
+
+const MemberKey = struct {
+    kind: GroupTable.MemberKind,
+    id: u32,
+};
+
+fn flattenGroupMembers(
+    self: *SemanticAnalyzer,
+    members: []const ast.GroupMember,
+    flat: *std.ArrayListUnmanaged(GroupTable.Member),
+    visited: *std.StringHashMapUnmanaged(void),
+    seen: *std.AutoHashMapUnmanaged(MemberKey, void),
+) !void {
+    for (members) |member| {
+        const qualified_name = try buildQualifiedName(self.allocator, member.path);
+        defer self.allocator.free(qualified_name);
+
+        // Resolve the member type
+        const ct = self.custom_types.get(qualified_name) orelse self.custom_types.get(member.qualifier);
+        if (ct == null) {
+            self.reporter.reportCompileError(
+                .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
+                ErrorCode.UNKNOWN_TYPE,
+                "Group member '{s}' is not a declared type",
+                .{qualified_name},
+            );
+            self.fatal_error = true;
+            continue;
+        }
+
+        switch (ct.?.kind) {
+            .Enum => {
+                const id = self.enum_table.getIdByName(qualified_name) orelse self.enum_table.getIdByName(member.qualifier) orelse 0;
+                const key = MemberKey{ .kind = .Enum, .id = id };
+                if (seen.contains(key)) continue;
+                try seen.put(self.allocator, key, {});
+                try flat.append(self.allocator, .{
+                    .qualifier = try self.allocator.dupe(u8, member.qualifier),
+                    .kind = .Enum,
+                    .id = id,
+                });
+            },
+            .Struct => {
+                const id = self.struct_table.getIdByName(qualified_name) orelse self.struct_table.getIdByName(member.qualifier) orelse 0;
+                const key = MemberKey{ .kind = .Struct, .id = id };
+                if (seen.contains(key)) continue;
+                try seen.put(self.allocator, key, {});
+                try flat.append(self.allocator, .{
+                    .qualifier = try self.allocator.dupe(u8, member.qualifier),
+                    .kind = .Struct,
+                    .id = id,
+                });
+            },
+            .Group => {
+                // Cycle detection
+                if (visited.contains(qualified_name)) {
+                    self.reporter.reportCompileError(
+                        .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
+                        ErrorCode.TYPE_MISMATCH,
+                        "Cycle detected in group: '{s}' includes itself transitively",
+                        .{qualified_name},
+                    );
+                    self.fatal_error = true;
+                    continue;
+                }
+                try visited.put(self.allocator, qualified_name, {});
+
+                if (ct.?.group_members) |nested_members| {
+                    try flattenGroupMemberSources(self, nested_members, flat, visited, seen);
+                }
+            },
+        }
+    }
+}
+
+fn flattenGroupMemberSources(
+    self: *SemanticAnalyzer,
+    members: []const CustomTypeInfo.GroupMemberSource,
+    flat: *std.ArrayListUnmanaged(GroupTable.Member),
+    visited: *std.StringHashMapUnmanaged(void),
+    seen: *std.AutoHashMapUnmanaged(MemberKey, void),
+) !void {
+    for (members) |member| {
+        const qualified_name = member.source_name;
+
+        const ct = self.custom_types.get(qualified_name) orelse self.custom_types.get(member.qualifier);
+        if (ct == null) {
+            self.reporter.reportCompileError(
+                .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
+                ErrorCode.UNKNOWN_TYPE,
+                "Group member '{s}' is not a declared type",
+                .{qualified_name},
+            );
+            self.fatal_error = true;
+            continue;
+        }
+
+        switch (ct.?.kind) {
+            .Enum => {
+                const id = self.enum_table.getIdByName(qualified_name) orelse self.enum_table.getIdByName(member.qualifier) orelse 0;
+                const key = MemberKey{ .kind = .Enum, .id = id };
+                if (seen.contains(key)) continue;
+                try seen.put(self.allocator, key, {});
+                try flat.append(self.allocator, .{
+                    .qualifier = try self.allocator.dupe(u8, member.qualifier),
+                    .kind = .Enum,
+                    .id = id,
+                });
+            },
+            .Struct => {
+                const id = self.struct_table.getIdByName(qualified_name) orelse self.struct_table.getIdByName(member.qualifier) orelse 0;
+                const key = MemberKey{ .kind = .Struct, .id = id };
+                if (seen.contains(key)) continue;
+                try seen.put(self.allocator, key, {});
+                try flat.append(self.allocator, .{
+                    .qualifier = try self.allocator.dupe(u8, member.qualifier),
+                    .kind = .Struct,
+                    .id = id,
+                });
+            },
+            .Group => {
+                if (visited.contains(qualified_name)) {
+                    self.reporter.reportCompileError(
+                        .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
+                        ErrorCode.TYPE_MISMATCH,
+                        "Cycle detected in group: '{s}' includes itself transitively",
+                        .{qualified_name},
+                    );
+                    self.fatal_error = true;
+                    continue;
+                }
+                try visited.put(self.allocator, qualified_name, {});
+
+                if (ct.?.group_members) |nested_members| {
+                    try flattenGroupMemberSources(self, nested_members, flat, visited, seen);
+                }
+            },
+        }
     }
 }
 

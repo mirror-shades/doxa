@@ -10,10 +10,6 @@ const debug_print = @import("../../runtime/print.zig");
 pub const TypeOps = struct {
     pub fn execTypeCheck(vm: anytype, tc: anytype) !void {
         const value = try vm.stack.pop();
-        // The HIR `as` lowering uses broad runtime categories (like "struct"/"enum")
-        // for custom types so the native backend can type-check without full RTTI.
-        // The VM, however, may provide a more specific type name (e.g. "Employee").
-        // Accept both forms here to keep semantics consistent across backends.
         const type_match = switch (value.value) {
             .struct_instance => std.mem.eql(u8, tc.target_type, "struct") or
                 std.mem.eql(u8, debug_print.getTypeString(vm, value.value), tc.target_type),
@@ -22,6 +18,27 @@ pub const TypeOps = struct {
             else => std.mem.eql(u8, debug_print.getTypeString(vm, value.value), tc.target_type),
         };
         try vm.stack.push(HIRFrame.initTetra(if (type_match) 1 else 0));
+    }
+
+    pub fn execGroupCheck(vm: anytype, gc: anytype) !void {
+        const value = try vm.stack.pop();
+        const match = switch (value.value) {
+            .group_instance => |g| g.member_index == gc.member_index,
+            else => false,
+        };
+        try vm.stack.push(HIRFrame.initTetra(if (match) 1 else 0));
+    }
+
+    pub fn execGroupExtractPayload(vm: anytype, _: anytype) !void {
+        const value = try vm.stack.pop();
+        const extracted = switch (value.value) {
+            .group_instance => |g| switch (g.payload) {
+                .enum_variant => |e| HIRValue{ .enum_variant = e },
+                .struct_instance => |s| HIRValue{ .struct_instance = s },
+            },
+            else => value.value,
+        };
+        try vm.stack.push(HIRFrame.initFromHIRValue(extracted));
     }
 
     pub fn execConvert(vm: anytype, c: anytype) !void {

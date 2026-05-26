@@ -216,16 +216,14 @@ pub const EnumDecl = struct {
     is_public: bool = false,
 };
 
-pub const SetSource = struct {
+pub const GroupMember = struct {
     path: []const Token,
     qualifier: []const u8,
-    is_set: bool = false,
 };
 
-pub const SetDecl = struct {
+pub const GroupDecl = struct {
     name: Token,
-    sources: []const SetSource,
-    local_variants: []const Token,
+    members: []const GroupMember,
     is_public: bool = false,
 };
 
@@ -268,7 +266,7 @@ pub const Stmt = struct {
             type_info: TypeInfo,
         },
         EnumDecl: EnumDecl,
-        SetDecl: SetDecl,
+        GroupDecl: GroupDecl,
         MapLiteral: struct {
             entries: []*MapEntry,
             key_type: ?TypeInfo = null,
@@ -343,13 +341,12 @@ pub const Stmt = struct {
             .EnumDecl => |decl| {
                 allocator.free(decl.variants);
             },
-            .SetDecl => |decl| {
-                for (decl.sources) |source| {
-                    allocator.free(source.path);
-                    allocator.free(source.qualifier);
+            .GroupDecl => |decl| {
+                for (decl.members) |member| {
+                    allocator.free(member.path);
+                    allocator.free(member.qualifier);
                 }
-                allocator.free(decl.sources);
-                allocator.free(decl.local_variants);
+                allocator.free(decl.members);
             },
             .MapDecl => |*m| {
                 for (m.fields) |field| {
@@ -512,7 +509,14 @@ pub const MatchExpr = struct {
 
 pub const MatchCase = struct {
     patterns: []Token,
+    path_patterns: []PathPattern = &[_]PathPattern{},
     body: *Expr,
+
+    pub const PathPattern = struct {
+        tokens: []const Token,
+        is_wildcard: bool = false,
+        field_names: []const Token = &[_]Token{},
+    };
 };
 
 pub const Expr = struct {
@@ -587,10 +591,9 @@ pub const Expr = struct {
             variants: []Token,
             is_public: bool = false,
         },
-        SetDecl: struct {
+        GroupDecl: struct {
             name: Token,
-            sources: []SetSource,
-            local_variants: []Token,
+            members: []GroupMember,
             is_public: bool = false,
         },
         EnumMember: Token,
@@ -836,7 +839,12 @@ pub const Expr = struct {
                 m.value.deinit(allocator);
                 allocator.destroy(m.value);
                 for (m.cases) |*c| {
-                    allocator.free(c.patterns); // Free the patterns array
+                    allocator.free(c.patterns);
+                    for (c.path_patterns) |pp| {
+                        allocator.free(pp.tokens);
+                        allocator.free(pp.field_names);
+                    }
+                    allocator.free(c.path_patterns);
                     c.body.deinit(allocator);
                     allocator.destroy(c.body);
                 }
@@ -845,13 +853,12 @@ pub const Expr = struct {
             .EnumDecl => |*e| {
                 allocator.free(e.variants);
             },
-            .SetDecl => |*s| {
-                for (s.sources) |source| {
-                    allocator.free(source.path);
-                    allocator.free(source.qualifier);
+            .GroupDecl => |*g| {
+                for (g.members) |member| {
+                    allocator.free(member.path);
+                    allocator.free(member.qualifier);
                 }
-                allocator.free(s.sources);
-                allocator.free(s.local_variants);
+                allocator.free(g.members);
             },
             .EnumMember => {},
             .DefaultArgPlaceholder => {},
@@ -1193,7 +1200,7 @@ pub const ImportInfo = struct {
 
 pub const ModuleSymbol = struct {
     name: []const u8,
-    kind: enum { Function, Variable, Struct, Enum, Set },
+    kind: enum { Function, Variable, Struct, Enum, Group },
     is_public: bool,
     stmt_index: usize,
 };
@@ -1274,7 +1281,7 @@ fn dumpStmt(writer: anytype, stmt: *const Stmt, depth: u32) @TypeOf(writer).Erro
             if (r.value) |value| try dumpExpr(writer, value, depth + 1);
         },
         .EnumDecl => |e| try writer.print("Stmt.EnumDecl name={s}\n", .{e.name.lexeme}),
-        .SetDecl => |s| try writer.print("Stmt.SetDecl name={s}\n", .{s.name.lexeme}),
+        .GroupDecl => |g| try writer.print("Stmt.GroupDecl name={s}\n", .{g.name.lexeme}),
         .MapLiteral => |*ml| {
             try writer.print("Stmt.MapLiteral\n", .{});
             for (ml.entries) |entry| {
@@ -1456,7 +1463,7 @@ fn dumpExpr(writer: anytype, expr: *const Expr, depth: u32) @TypeOf(writer).Erro
             }
         },
         .EnumDecl => |e| try writer.print("Expr.EnumDecl name={s}\n", .{e.name.lexeme}),
-        .SetDecl => |s| try writer.print("Expr.SetDecl name={s}\n", .{s.name.lexeme}),
+        .GroupDecl => |g| try writer.print("Expr.GroupDecl name={s}\n", .{g.name.lexeme}),
         .EnumMember => |t| try writer.print("Expr.EnumMember {s}\n", .{t.lexeme}),
         .DefaultArgPlaceholder => try writer.print("Expr.DefaultArgPlaceholder\n", .{}),
         .BuiltinCall => |b| {

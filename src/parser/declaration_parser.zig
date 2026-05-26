@@ -140,14 +140,14 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
     };
 }
 
-pub fn parseSetDecl(self: *Parser) ErrorList!ast.Stmt {
+pub fn parseGroupDecl(self: *Parser) ErrorList!ast.Stmt {
     var is_public = false;
     if (self.peek().type == .PUBLIC) {
         is_public = true;
         self.advance();
     }
 
-    self.advance(); // consume `set`
+    self.advance(); // consume `group`
 
     if (self.peek().type != .IDENTIFIER) {
         return error.ExpectedIdentifier;
@@ -162,17 +162,14 @@ pub fn parseSetDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance();
 
-    var sources = std.array_list.Managed(ast.SetSource).init(self.allocator);
+    var members = std.array_list.Managed(ast.GroupMember).init(self.allocator);
     errdefer {
-        for (sources.items) |s| {
-            self.allocator.free(s.path);
-            self.allocator.free(s.qualifier);
+        for (members.items) |m| {
+            self.allocator.free(m.path);
+            self.allocator.free(m.qualifier);
         }
-        sources.deinit();
+        members.deinit();
     }
-
-    var local_variants = std.array_list.Managed(token.Token).init(self.allocator);
-    errdefer local_variants.deinit();
 
     while (self.peek().type != .RIGHT_BRACE) {
         if (self.peek().type == .NEWLINE) {
@@ -186,46 +183,28 @@ pub fn parseSetDecl(self: *Parser) ErrorList!ast.Stmt {
         const first_token = self.peek();
         self.advance();
 
-        if (self.peek().type == .DOT) {
-            // Dotted path: a source member like `error.IO`
-            var path = std.array_list.Managed(token.Token).init(self.allocator);
-            errdefer path.deinit();
-            try path.append(first_token);
+        // Every member is a type reference — dotted path or bare name
+        var path = std.array_list.Managed(token.Token).init(self.allocator);
+        errdefer path.deinit();
+        try path.append(first_token);
 
-            while (self.peek().type == .DOT) {
-                self.advance();
-                if (self.peek().type != .IDENTIFIER) {
-                    return error.ExpectedIdentifier;
-                }
-                try path.append(self.peek());
-                self.advance();
+        while (self.peek().type == .DOT) {
+            self.advance();
+            if (self.peek().type != .IDENTIFIER) {
+                return error.ExpectedIdentifier;
             }
-
-            const path_owned = try path.toOwnedSlice();
-            const qualifier = path_owned[path_owned.len - 1].lexeme;
-            const qualifier_owned = try self.allocator.dupe(u8, qualifier);
-
-            try sources.append(.{
-                .path = path_owned,
-                .qualifier = qualifier_owned,
-                .is_set = false,
-            });
-        } else if (self.declared_types.contains(first_token.lexeme)) {
-            // Bare identifier matching a declared type: source member
-            const path_owned = try self.allocator.alloc(token.Token, 1);
-            path_owned[0] = first_token;
-            const qualifier_owned = try self.allocator.dupe(u8, first_token.lexeme);
-
-            try sources.append(.{
-                .path = path_owned,
-                .qualifier = qualifier_owned,
-                .is_set = false,
-            });
-        } else {
-            // Plain identifier not declared: a local variant
-            try local_variants.append(first_token);
-            try self.declared_types.put(first_token.lexeme, {});
+            try path.append(self.peek());
+            self.advance();
         }
+
+        const path_owned = try path.toOwnedSlice();
+        const qualifier = path_owned[path_owned.len - 1].lexeme;
+        const qualifier_owned = try self.allocator.dupe(u8, qualifier);
+
+        try members.append(.{
+            .path = path_owned,
+            .qualifier = qualifier_owned,
+        });
 
         if (self.peek().type == .COMMA) {
             self.advance();
@@ -254,10 +233,9 @@ pub fn parseSetDecl(self: *Parser) ErrorList!ast.Stmt {
             .span = span,
         },
         .data = .{
-            .SetDecl = .{
+            .GroupDecl = .{
                 .name = name,
-                .sources = try sources.toOwnedSlice(),
-                .local_variants = try local_variants.toOwnedSlice(),
+                .members = try members.toOwnedSlice(),
                 .is_public = is_public,
             },
         },

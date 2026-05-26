@@ -125,10 +125,11 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 } else if (custom_type.kind == .Struct) {
                                     try self.trackVariableCustomType(decl.name.lexeme, type_name);
                                     break :blk HIRType{ .Struct = 0 };
-                                } else if (custom_type.kind == .Set) {
+                                } else if (custom_type.kind == .Group) {
                                     custom_type_name = type_name;
                                     try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                                    break :blk HIRType{ .Set = 0 };
+                                    const gid = if (self.type_system.group_table) |gt| gt.getIdByName(type_name) orelse 0 else 0;
+                                    break :blk HIRType{ .Group = gid };
                                 }
                             }
                             try self.trackVariableCustomType(decl.name.lexeme, type_name);
@@ -224,18 +225,18 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         try self.symbol_table.trackVariableUnionMembersByIndex(var_index, member_names);
                     }
 
-                    if (var_type == .Set) {
+                    if (var_type == .Group) {
                         const var_index = try self.getOrCreateVariable(decl.name.lexeme);
-                        var set_name: ?[]const u8 = null;
+                        var group_name: ?[]const u8 = null;
                         if (self.symbol_table.getVariableCustomType(decl.name.lexeme)) |custom_name| {
-                            set_name = custom_name;
-                        } else if (var_type.Set != 0) {
-                            if (self.type_system.enum_table) |table| {
-                                set_name = table.getName(var_type.Set);
+                            group_name = custom_name;
+                        } else if (var_type.Group != 0) {
+                            if (self.type_system.group_table) |table| {
+                                group_name = table.getName(var_type.Group);
                             }
                         }
-                        if (set_name) |sn| {
-                            const member_names = try self.type_system.getSetSourceMemberNames(sn);
+                        if (group_name) |gn| {
+                            const member_names = try self.type_system.getGroupMemberNames(gn);
                             if (member_names.len > 0) {
                                 try self.symbol_table.trackVariableUnionMembersByIndex(var_index, member_names);
                             }
@@ -477,18 +478,19 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 .module_context = null,
             } });
         },
-        .SetDecl => |set_decl| {
-            try self.registerSetType(set_decl.name.lexeme, set_decl.sources, set_decl.local_variants);
+        .GroupDecl => |group_decl| {
+            try self.registerGroupType(group_decl.name.lexeme, group_decl.members);
 
-            const var_idx = try self.getOrCreateVariable(set_decl.name.lexeme);
-            try self.trackVariableType(set_decl.name.lexeme, HIRType{ .Set = 0 });
+            const var_idx = try self.getOrCreateVariable(group_decl.name.lexeme);
+            const gid = if (self.type_system.group_table) |gt| gt.getIdByName(group_decl.name.lexeme) orelse 0 else 0;
+            try self.trackVariableType(group_decl.name.lexeme, HIRType{ .Group = gid });
 
-            const set_type_value = HIRValue{ .string = set_decl.name.lexeme };
-            const const_idx = try self.addConstant(set_type_value);
-            try self.instructions.append(.{ .Const = .{ .value = set_type_value, .constant_id = const_idx } });
+            const group_type_value = HIRValue{ .string = group_decl.name.lexeme };
+            const const_idx = try self.addConstant(group_type_value);
+            try self.instructions.append(.{ .Const = .{ .value = group_type_value, .constant_id = const_idx } });
             try self.instructions.append(.{ .StoreConst = .{
                 .var_index = var_idx,
-                .var_name = set_decl.name.lexeme,
+                .var_name = group_decl.name.lexeme,
                 .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
                 .module_context = null,
             } });

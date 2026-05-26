@@ -117,7 +117,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("array", .ARRAY_TYPE);
         try self.keywords.put("struct", .STRUCT_TYPE);
         try self.keywords.put("enum", .ENUM_TYPE);
-        try self.keywords.put("set", .SET_TYPE);
+        try self.keywords.put("group", .GROUP_TYPE);
         try self.keywords.put("map", .MAP_TYPE);
         try self.keywords.put("xor", .XOR);
         try self.keywords.put("exists", .EXISTS);

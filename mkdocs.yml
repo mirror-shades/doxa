@@ -2,7 +2,6 @@ site_name: Doxa Docs
 theme:
   name: material
   features:
-    # Sidebar-first nav (no horizontal tab bar from navigation.tabs)
     - navigation.sections
     - navigation.path
     - navigation.instant

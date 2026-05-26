@@ -83,7 +83,7 @@ pub fn typeFromHIR(hir_type: hir_types.HIRType) !BytecodeType {
         .Struct => .Struct,
         .Map => .Map,
         .Enum => .Enum,
-        .Set => .Enum,
+        .Group => .Enum,
         .Function => .Function,
         .Union => .Union,
         .Unknown => {
@@ -135,6 +135,8 @@ pub const Instruction = union(enum) {
     Return: struct { has_value: bool, return_type: BytecodeType },
     TypeOf: struct { value_type: BytecodeType },
     TypeCheck: struct { type_name: []const u8 },
+    GroupCheck: struct { member_index: u32 },
+    GroupExtractPayload: struct {},
     ArrayNew: struct {
         element_type: BytecodeType,
         static_size: u32,

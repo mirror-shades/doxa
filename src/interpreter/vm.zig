@@ -12,6 +12,8 @@ const HIRStructField = hir_values.HIRStructField;
 const HIRMapEntry = hir_values.HIRMapEntry;
 const HIRMap = hir_values.HIRMap;
 const HIRStruct = hir_values.HIRStruct;
+const HIREnum = hir_values.HIREnum;
+const HIRGroup = hir_values.HIRGroup;
 const ValueOwner = hir_values.ValueOwner;
 const core = @import("core.zig");
 const HIRFrame = core.HIRFrame;
@@ -331,6 +333,12 @@ pub const VM = struct {
             },
             .TypeCheck => |payload| {
                 try ops_type.TypeOps.execTypeCheck(self, .{ .target_type = payload.type_name });
+            },
+            .GroupCheck => |payload| {
+                try ops_type.TypeOps.execGroupCheck(self, .{ .member_index = payload.member_index });
+            },
+            .GroupExtractPayload => {
+                try ops_type.TypeOps.execGroupExtractPayload(self, {});
             },
             .TypeOf => |payload| {
                 try ops_type.TypeOps.execTypeOf(self, .{ .value_type = toHIRType(payload.value_type) });
@@ -2529,6 +2537,7 @@ pub const VM = struct {
             },
             .map => try allocator.dupe(u8, "{map}"),
             .enum_variant => |e| try std.fmt.allocPrint(allocator, ".{s}", .{e.variant_name}),
+            .group_instance => |g| try std.fmt.allocPrint(allocator, "{s}.#{}", .{ g.type_name, g.member_index }),
             .storage_id_ref => |storage_id| try std.fmt.allocPrint(allocator, "storage_id_ref({})", .{storage_id}),
         };
     }
@@ -2575,6 +2584,24 @@ pub const VM = struct {
             .enum_variant => |e| {
                 if (e.type_name.len > 0) allocator.free(e.type_name);
                 if (e.variant_name.len > 0) allocator.free(e.variant_name);
+            },
+            .group_instance => |g| {
+                if (g.type_name.len > 0) allocator.free(g.type_name);
+                switch (g.payload) {
+                    .enum_variant => |e| {
+                        if (e.type_name.len > 0) allocator.free(e.type_name);
+                        if (e.variant_name.len > 0) allocator.free(e.variant_name);
+                    },
+                    .struct_instance => |s| {
+                        if (s.type_name.len > 0) allocator.free(s.type_name);
+                        for (s.fields) |field| {
+                            allocator.free(field.name);
+                            self.freeValueFromAllocator(allocator, field.value);
+                            allocator.destroy(field.value);
+                        }
+                        allocator.free(s.fields);
+                    },
+                }
             },
         }
         value.* = hir_values.nothing_value;
@@ -2641,6 +2668,45 @@ pub const VM = struct {
                 const type_name = try allocator.dupe(u8, e.type_name);
                 const variant_name = try allocator.dupe(u8, e.variant_name);
                 break :blk HIRValue{ .enum_variant = .{ .type_name = type_name, .variant_name = variant_name, .variant_index = e.variant_index, .path = null } };
+            },
+            .group_instance => |g| blk: {
+                const type_name = try allocator.dupe(u8, g.type_name);
+                const payload: HIRGroup.Payload = switch (g.payload) {
+                    .enum_variant => |e| .{ .enum_variant = .{
+                        .type_name = try allocator.dupe(u8, e.type_name),
+                        .variant_name = try allocator.dupe(u8, e.variant_name),
+                        .variant_index = e.variant_index,
+                        .path = null,
+                    }},
+                    .struct_instance => |s| blk_struct: {
+                        const stype_name = try allocator.dupe(u8, s.type_name);
+                        const fields = try allocator.alloc(HIRStructField, s.fields.len);
+                        for (s.fields, 0..) |f, i| {
+                            const value_copy = try self.deepCopyValueToAllocator(allocator, f.value, owner);
+                            const value_ptr = try allocator.create(HIRValue);
+                            value_ptr.* = value_copy;
+                            fields[i] = .{
+                                .name = try allocator.dupe(u8, f.name),
+                                .value = value_ptr,
+                                .field_type = f.field_type,
+                                .path = null,
+                            };
+                        }
+                        break :blk_struct .{ .struct_instance = .{
+                            .type_name = stype_name,
+                            .fields = fields,
+                            .field_name = null,
+                            .path = null,
+                            .owner = owner,
+                        }};
+                    },
+                };
+                break :blk HIRValue{ .group_instance = .{
+                    .type_name = type_name,
+                    .member_index = g.member_index,
+                    .payload = payload,
+                    .path = null,
+                }};
             },
         };
     }

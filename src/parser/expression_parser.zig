@@ -247,15 +247,38 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
         var patterns = std.array_list.Managed(token.Token).init(self.allocator);
         errdefer patterns.deinit();
 
+        var path_patterns = std.array_list.Managed(ast.MatchCase.PathPattern).init(self.allocator);
+        errdefer path_patterns.deinit();
+
         // Parse the first pattern
         const first_pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
         try patterns.append(first_pattern);
+        if (self.current_path_pattern_tokens) |path_tokens| {
+            try path_patterns.append(.{
+                .tokens = path_tokens,
+                .is_wildcard = self.current_path_pattern_is_wildcard,
+                .field_names = self.current_path_pattern_field_names orelse &[_]token.Token{},
+            });
+            self.current_path_pattern_tokens = null;
+            self.current_path_pattern_is_wildcard = false;
+            self.current_path_pattern_field_names = null;
+        }
 
         // Parse additional patterns separated by commas
         while (self.peek().type == .COMMA) {
             self.advance();
             const next_pattern = try parseMatchPattern(self) orelse return error.ExpectedPattern;
             try patterns.append(next_pattern);
+            if (self.current_path_pattern_tokens) |path_tokens| {
+                try path_patterns.append(.{
+                    .tokens = path_tokens,
+                    .is_wildcard = self.current_path_pattern_is_wildcard,
+                    .field_names = self.current_path_pattern_field_names orelse &[_]token.Token{},
+                });
+                self.current_path_pattern_tokens = null;
+                self.current_path_pattern_is_wildcard = false;
+                self.current_path_pattern_field_names = null;
+            }
         }
 
         if (self.peek().type != .THEN) {
@@ -278,7 +301,11 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             }
         }
 
-        try cases.append(.{ .patterns = try patterns.toOwnedSlice(), .body = body });
+        try cases.append(.{
+            .patterns = try patterns.toOwnedSlice(),
+            .path_patterns = try path_patterns.toOwnedSlice(),
+            .body = body,
+        });
     }
     self.advance();
 
@@ -1839,13 +1866,84 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
                 self.advance();
                 return current;
             }
-            if (self.peekAhead(1).type == .DOT and self.peekAhead(2).type == .IDENTIFIER) {
+            // Collect the full dotted path: Error.IOError.NotFound -> [Error, IOError, NotFound]
+            var is_path = false;
+            if (self.peekAhead(1).type == .DOT) {
+                var path_tokens = std.ArrayListUnmanaged(token.Token){};
+                errdefer path_tokens.deinit(self.allocator);
+                try path_tokens.append(self.allocator, current);
                 self.advance();
-                self.advance();
-                const variant_ident = self.peek();
-                self.advance();
-                return variant_ident;
+
+                while (self.peek().type == .DOT) {
+                    self.advance(); // consume '.'
+                    if (self.peek().type == .ASTERISK) {
+                        // Domain wildcard: Error.IOError.*
+                        try path_tokens.append(self.allocator, self.peek());
+                        self.advance();
+                        if (path_tokens.items.len > 1) {
+                            self.current_path_pattern_tokens = try path_tokens.toOwnedSlice(self.allocator);
+                            self.current_path_pattern_is_wildcard = true;
+                        }
+                        path_tokens.deinit(self.allocator);
+                        if (self.current_path_pattern_tokens) |tp| {
+                            return tp[tp.len - 1];
+                        }
+                        return self.previous();
+                    }
+                    if (self.peek().type != .IDENTIFIER) {
+                        return error.ExpectedIdentifier;
+                    }
+                    try path_tokens.append(self.allocator, self.peek());
+                    self.advance();
+                }
+
+                // Store path tokens for later retrieval
+                if (path_tokens.items.len > 1) {
+                    self.current_path_pattern_tokens = try path_tokens.toOwnedSlice(self.allocator);
+                    is_path = true;
+                }
+                path_tokens.deinit(self.allocator);
             }
+
+            // Check for struct destructuring: { field1, field2 }
+            if (self.peek().type == .LEFT_BRACE) {
+                self.advance();
+                var fields = std.ArrayListUnmanaged(token.Token){};
+                errdefer fields.deinit(self.allocator);
+
+                while (self.peek().type != .RIGHT_BRACE) {
+                    while (self.peek().type == .NEWLINE or self.peek().type == .COMMA) self.advance();
+                    if (self.peek().type == .RIGHT_BRACE) break;
+                    if (self.peek().type != .IDENTIFIER) {
+                        return error.ExpectedIdentifier;
+                    }
+                    try fields.append(self.allocator, self.peek());
+                    self.advance();
+                    if (self.peek().type == .COMMA) self.advance();
+                }
+                self.advance(); // consume '}'
+
+                self.current_path_pattern_field_names = try fields.toOwnedSlice(self.allocator);
+
+                // If no path was already stored (bare identifier), create one
+                if (!is_path and self.current_path_pattern_tokens == null) {
+                    self.current_path_pattern_tokens = try self.allocator.dupe(token.Token, &[_]token.Token{current});
+                }
+
+                // Return the last path token (or the ident) for backward compat
+                if (self.current_path_pattern_tokens) |tp| {
+                    return tp[tp.len - 1];
+                }
+                return current;
+            }
+
+            // If a path was stored but no destructuring, return last token
+            if (is_path) {
+                if (self.current_path_pattern_tokens) |tp| {
+                    return tp[tp.len - 1];
+                }
+            }
+
             const ident_tok = self.peek();
             self.advance();
             return ident_tok;

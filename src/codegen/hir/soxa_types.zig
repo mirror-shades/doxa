@@ -5,6 +5,7 @@ const HIRValue = @import("soxa_values.zig").HIRValue;
 pub const StructId = u32;
 pub const EnumId = u32;
 pub const UnionId = u32;
+pub const GroupId = u32;
 
 pub const ArrayStorageKind = enum {
     dynamic,
@@ -25,7 +26,7 @@ pub const HIRType = union(enum) {
 
     Struct: StructId,
     Enum: EnumId,
-    Set: EnumId,
+    Group: GroupId,
 
     Function: struct {
         params: []const *const HIRType,
