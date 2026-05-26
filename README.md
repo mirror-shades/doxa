@@ -68,6 +68,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - float (64-bit float)
 - byte (8-bit uint hex literal)
 - string
+- enum
 - tetra (four-value logic unit)
 - nothing (void type)
 
@@ -75,8 +76,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 
 - array (homogeneous)
 - struct
-- enum
-- map
+- group
 - union
 
 ![Pipeline](./pipeline.png)
