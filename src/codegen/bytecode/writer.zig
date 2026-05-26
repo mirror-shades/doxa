@@ -86,6 +86,7 @@ fn writeConstant(idx: usize, value: module.ConstantValue, writer: anytype) !void
         .struct_instance => |s| try writer.print("const[{d}]: struct {s} fields:{}\n", .{ idx, s.type_name, s.fields.len }),
         .map => |m| try writer.print("const[{d}]: map entries:{}\n", .{ idx, m.entries.len }),
         .enum_variant => |ev| try writer.print("const[{d}]: enum {s}.{s} (idx {})\n", .{ idx, ev.type_name, ev.variant_name, ev.variant_index }),
+        .group_instance => |g| try writer.print("const[{d}]: group {s} member#{}\n", .{ idx, g.type_name, g.member_index }),
     }
 }
 

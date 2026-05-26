@@ -756,7 +756,7 @@ pub fn getDefaultValue(hir_type: HIRType) HIRValue {
             .variant_name = "",
             .variant_index = 0,
         } },
-        .Set => HIRValue{ .enum_variant = .{
+        .Group => HIRValue{ .enum_variant = .{
             .type_name = "",
             .variant_name = "",
             .variant_index = 0,

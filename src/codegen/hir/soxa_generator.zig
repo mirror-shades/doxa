@@ -131,14 +131,14 @@ fn effectiveReturnTypeForSignature(allocator: std.mem.Allocator, declared: ast.T
                     }
                     break :blk null;
                 };
-                if (ct != null and ct.?.kind == .Set) {
+                if (ct != null and ct.?.kind == .Group) {
                     const nothing_ptr = try allocator.create(ast.TypeInfo);
                     nothing_ptr.* = .{ .base = .Nothing, .is_mutable = false };
                     const new_types = try allocator.alloc(*ast.TypeInfo, 2);
                     new_types[0] = nothing_ptr;
-                    const set_type = try allocator.create(ast.TypeInfo);
-                    set_type.* = .{ .base = .Custom, .custom_type = declared.custom_type.?, .is_mutable = false };
-                    new_types[1] = set_type;
+                    const group_type = try allocator.create(ast.TypeInfo);
+                    group_type.* = .{ .base = .Custom, .custom_type = declared.custom_type.?, .is_mutable = false };
+                    new_types[1] = group_type;
                     const new_ut = try allocator.create(ast.UnionType);
                     new_ut.* = .{ .types = new_types, .current_type_index = 0 };
                     return ast.TypeInfo{ .base = .Union, .union_type = new_ut, .is_mutable = declared.is_mutable };
@@ -782,9 +782,10 @@ pub const HIRGenerator = struct {
                                             try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
                                             try self.trackVariableType(param.name.lexeme, HIRType{ .Enum = 0 });
                                         },
-                                        .Set => {
+                                        .Group => {
                                             try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
-                                            try self.trackVariableType(param.name.lexeme, HIRType{ .Set = 0 });
+                                            const gid_param = if (self.type_system.group_table) |gt| gt.getIdByName(custom_type_name_for_param) orelse 0 else 0;
+                                            try self.trackVariableType(param.name.lexeme, HIRType{ .Group = gid_param });
                                         },
                                     }
                                 }
@@ -993,20 +994,21 @@ pub const HIRGenerator = struct {
             var it = imported_symbols.iterator();
             while (it.next()) |entry| {
                 const symbol = entry.value_ptr.*;
-                if (symbol.kind != .Enum and symbol.kind != .Set) continue;
+                if (symbol.kind != .Enum and symbol.kind != .Group) continue;
                 if (symbol.enum_role == null or symbol.enum_role.? != .Type) continue;
                 const binding_name = symbol.name;
                 if (binding_name.len == 0) continue;
                 if (seen_enum_bindings.contains(binding_name)) continue;
                 try seen_enum_bindings.put(binding_name, {});
 
-                if (symbol.kind == .Set) {
+                if (symbol.kind == .Group) {
                     const var_idx = try self.getOrCreateVariable(binding_name);
-                    try self.trackVariableType(binding_name, HIRType{ .Set = 0 });
+                    const gid_import = if (self.type_system.group_table) |gt| gt.getIdByName(binding_name) orelse 0 else 0;
+                    try self.trackVariableType(binding_name, HIRType{ .Group = gid_import });
 
-                    const set_type_value = HIRValue{ .string = binding_name };
-                    const const_idx = try self.addConstant(set_type_value);
-                    try self.instructions.append(.{ .Const = .{ .value = set_type_value, .constant_id = const_idx } });
+                    const group_type_value = HIRValue{ .string = binding_name };
+                    const const_idx = try self.addConstant(group_type_value);
+                    try self.instructions.append(.{ .Const = .{ .value = group_type_value, .constant_id = const_idx } });
                     try self.instructions.append(.{ .StoreConst = .{
                         .var_index = var_idx,
                         .var_name = binding_name,
@@ -1695,11 +1697,11 @@ pub const HIRGenerator = struct {
                 }
                 break :blk try std.fmt.allocPrint(self.allocator, "(enum#{})", .{eid});
             },
-            .Set => |sid| blk: {
-                if (self.type_system.enum_table) |table| {
-                    if (table.getName(sid)) |name| break :blk name;
+            .Group => |gid| blk: {
+                if (self.type_system.group_table) |table| {
+                    if (table.getName(gid)) |name| break :blk name;
                 }
-                break :blk try std.fmt.allocPrint(self.allocator, "(set#{})", .{sid});
+                break :blk try std.fmt.allocPrint(self.allocator, "(group#{})", .{gid});
             },
             .Function => "function",
             .Union => |u| blk: {
@@ -1765,12 +1767,8 @@ pub const HIRGenerator = struct {
         try self.type_system.registerEnumType(enum_name, variants);
     }
 
-    pub fn registerSetType(self: *HIRGenerator, set_name: []const u8, sources: []const ast.SetSource, local_variants: []const Token) !void {
-        var variant_names = try self.allocator.alloc([]const u8, local_variants.len);
-        for (local_variants, 0..) |variant_token, i| {
-            variant_names[i] = variant_token.lexeme;
-        }
-        try self.type_system.registerSetType(set_name, variant_names, sources);
+    pub fn registerGroupType(self: *HIRGenerator, group_name: []const u8, members: []const ast.GroupMember) !void {
+        try self.type_system.registerGroupType(group_name, members);
     }
 
     pub fn registerStructType(self: *HIRGenerator, struct_name: []const u8, fields: []const []const u8) !void {

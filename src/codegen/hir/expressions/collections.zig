@@ -204,7 +204,7 @@ pub const CollectionsHandler = struct {
                 const key_type: HIRType = switch (raw_key_type) {
                     .String => .String,
                     .Enum => .Int,
-                    .Set => .Int,
+                    .Group => .Int,
                     .Int, .Byte, .Tetra, .Float, .Nothing, .Unknown, .Array, .Map, .Struct, .Function, .Union, .Poison => .Int,
                 };
                 try self.generator.instructions.append(.{ .MapGet = .{
@@ -341,7 +341,7 @@ pub const CollectionsHandler = struct {
                 const key_type: HIRType = switch (idx_type) {
                     .String => .String,
                     .Enum => .Int,
-                    .Set => .Int,
+                    .Group => .Int,
                     .Int, .Byte, .Tetra, .Float, .Nothing, .Unknown, .Array, .Map, .Struct, .Function, .Union, .Poison => .Int,
                 };
                 try self.generator.instructions.append(.{ .MapSet = .{ .key_type = key_type } });

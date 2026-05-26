@@ -286,6 +286,7 @@ pub const PrintOps = struct {
             },
             .map => try printFormatted(sink, "{{map}}", .{}),
             .enum_variant => |e| try printFormatted(sink, ".{s}", .{e.variant_name}),
+            .group_instance => |g| try printFormatted(sink, "{s}#{}", .{ g.type_name, g.member_index }),
             .storage_id_ref => |storage_id| {
                 if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
                     try PrintOps.formatTokenLiteral(vm, storage.value, sink);
@@ -410,6 +411,7 @@ pub const PrintOps = struct {
             },
             .map => "map",
             .enum_variant => |e| e.type_name,
+            .group_instance => |g| g.type_name,
             .storage_id_ref => "storage_id_ref",
         };
     }

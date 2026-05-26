@@ -412,7 +412,7 @@ pub const CallsHandler = struct {
                                                         .Struct => "struct",
                                                         .Map => "map",
                                                         .Enum => "enum",
-                                                        .Set => "enum",
+                                                        .Group => "group",
                                                         .Function => "function",
                                                         .Unknown => "unknown",
                                                     };
@@ -462,13 +462,13 @@ pub const CallsHandler = struct {
                 },
                 .Function => "function",
                 .Unknown => "unknown",
-                .Set => blk: {
+                .Group => blk: {
                     if (custom_type_name) |ctn| break :blk ctn;
                     if (arg.data == .Variable) {
                         const var_name = arg.data.Variable.lexeme;
                         if (self.generator.symbol_table.getVariableCustomType(var_name)) |var_custom_type_name| break :blk var_custom_type_name;
                     }
-                    break :blk "set";
+                    break :blk "group";
                 },
             };
             const type_value = HIRValue{ .string = type_name };

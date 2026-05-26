@@ -10,12 +10,13 @@ Doxa has two general catagory of types, atomic and molecular:
 
 Atomic types are the most basic units of data. Currently Doxa has 3 default number types. Types listed reflect their Zig equivilent. Bigint may be added in the future for increased flexibility.
 
-int - i64
-float - f64
-byte - u8 hex
-string - []const u8
-tetra - i2
-nothing - void
+int (64 bit integer)
+float (64 bit floating point)
+byte (8 bit hex literal)
+string
+tetra (2 bit integer)
+enum
+nothing (void)
 
 
 ### Molecular
@@ -24,7 +25,7 @@ Molecular types are constructed out of atomic types. They are
 
 array - must be homogenous
 struct - no classes, no inheretance, only composition
-enum
+group -  can be used as an umbrella type for enums and structs
 union - can be handled with switch statements and type narrowing, see page on unions for more info
 
 ````

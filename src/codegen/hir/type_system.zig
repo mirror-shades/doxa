@@ -16,6 +16,7 @@ const Reporting = @import("../../utils/reporting.zig");
 const Location = Reporting.Location;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
 const EnumTable = @import("../../common/enum_table.zig").EnumTable;
+const GroupTable = @import("../../common/group_table.zig").GroupTable;
 
 pub const TypeSystem = struct {
     custom_types: std.StringHashMap(CustomTypeInfo),
@@ -24,24 +25,26 @@ pub const TypeSystem = struct {
     semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
     struct_table: ?*const StructTable = null,
     enum_table: ?*const EnumTable = null,
+    group_table: ?*const GroupTable = null,
     union_id_map: std.StringHashMap(u32),
     next_union_id: u32,
     function_signatures: ?*const std.StringHashMap(FunctionInfo) = null,
 
     pub const CustomTypeInfo = struct {
+        // KEEP IN SYNC with types/types.zig CustomTypeInfo
         name: []const u8,
         kind: CustomTypeKind,
         enum_variants: ?[]EnumVariant = null,
         struct_fields: ?[]StructField = null,
-        set_sources: ?[]SetSource = null,
+        group_members: ?[]GroupMemberSource = null,
 
         pub const CustomTypeKind = enum {
             Struct,
             Enum,
-            Set,
+            Group,
         };
 
-        pub const SetSource = struct {
+        pub const GroupMemberSource = struct {
             qualifier: []const u8,
             source_name: []const u8,
         };
@@ -59,7 +62,7 @@ pub const TypeSystem = struct {
         };
 
         pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
-            if ((self.kind != .Enum and self.kind != .Set) or self.enum_variants == null) {
+            if ((self.kind != .Enum and self.kind != .Group) or self.enum_variants == null) {
                 return null;
             }
 
@@ -108,11 +111,11 @@ pub const TypeSystem = struct {
             return switch (custom_type.kind) {
                 .Struct => self.structTypeForName(name),
                 .Enum => self.enumTypeForName(name),
-                .Set => blk: {
-                    if (self.enum_table) |table| {
-                        if (table.getIdByName(name)) |id| break :blk HIRType{ .Set = id };
+                .Group => blk: {
+                    if (self.group_table) |table| {
+                        if (table.getIdByName(name)) |id| break :blk HIRType{ .Group = id };
                     }
-                    break :blk HIRType{ .Set = 0 };
+                    break :blk HIRType{ .Group = 0 };
                 },
             };
         }
@@ -125,11 +128,11 @@ pub const TypeSystem = struct {
                     return switch (custom_type.kind) {
                         .Struct => self.structTypeForName(short),
                         .Enum => self.enumTypeForName(short),
-                        .Set => blk: {
-                            if (self.enum_table) |table| {
-                                if (table.getIdByName(short)) |id| break :blk HIRType{ .Set = id };
+                        .Group => blk: {
+                            if (self.group_table) |table| {
+                                if (table.getIdByName(short)) |id| break :blk HIRType{ .Group = id };
                             }
-                            break :blk HIRType{ .Set = 0 };
+                            break :blk HIRType{ .Group = 0 };
                         },
                     };
                 }
@@ -168,6 +171,7 @@ pub const TypeSystem = struct {
             .semantic_analyzer = semantic_analyzer,
             .struct_table = if (semantic_analyzer) |sa| sa.getStructTable() else null,
             .enum_table = if (semantic_analyzer) |sa| sa.getEnumTable() else null,
+            .group_table = if (semantic_analyzer) |sa| sa.getGroupTable() else null,
             .union_id_map = std.StringHashMap(u32).init(allocator),
             .next_union_id = 1,
         };
@@ -207,35 +211,60 @@ pub const TypeSystem = struct {
         try self.custom_types.put(enum_name, custom_type);
     }
 
-    pub fn registerSetType(self: *TypeSystem, set_name: []const u8, variants: []const []const u8, sources: []const ast.SetSource) !void {
-        var set_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, variants.len);
-        for (variants, 0..) |variant_name, index| {
-            set_variants[index] = CustomTypeInfo.EnumVariant{
-                .name = try self.allocator.dupe(u8, variant_name),
-                .index = @intCast(index),
-            };
-        }
-
-        var set_source_infos = try self.allocator.alloc(CustomTypeInfo.SetSource, sources.len);
-        for (sources, 0..) |source, i| {
+    pub fn registerGroupType(self: *TypeSystem, group_name: []const u8, members: []const ast.GroupMember) !void {
+        var group_member_sources = try self.allocator.alloc(CustomTypeInfo.GroupMemberSource, members.len);
+        for (members, 0..) |member, i| {
             var qualified: std.ArrayListUnmanaged(u8) = .{};
-            for (source.path, 0..) |token, j| {
+            for (member.path, 0..) |token, j| {
                 if (j > 0) try qualified.appendSlice(self.allocator, ".");
                 try qualified.appendSlice(self.allocator, token.lexeme);
             }
-            set_source_infos[i] = .{
-                .qualifier = try self.allocator.dupe(u8, source.qualifier),
+            group_member_sources[i] = .{
+                .qualifier = try self.allocator.dupe(u8, member.qualifier),
                 .source_name = try qualified.toOwnedSlice(self.allocator),
             };
         }
 
         const custom_type = CustomTypeInfo{
-            .name = try self.allocator.dupe(u8, set_name),
-            .kind = .Set,
-            .enum_variants = set_variants,
-            .set_sources = set_source_infos,
+            .name = try self.allocator.dupe(u8, group_name),
+            .kind = .Group,
+            .group_members = group_member_sources,
         };
-        try self.custom_types.put(set_name, custom_type);
+        try self.custom_types.put(group_name, custom_type);
+
+        // Also populate the GroupTable so GroupCheck instructions can resolve members
+        if (self.group_table) |gtable| {
+            if (gtable.getIdByName(group_name) != null) return;
+            var flat_members = std.ArrayListUnmanaged(GroupTable.Member){};
+            defer flat_members.deinit(self.allocator);
+            for (members) |member| {
+                var q: std.ArrayListUnmanaged(u8) = .{};
+                for (member.path, 0..) |tok, j| {
+                    if (j > 0) try q.appendSlice(self.allocator, ".");
+                    try q.appendSlice(self.allocator, tok.lexeme);
+                }
+                const qname = try q.toOwnedSlice(self.allocator);
+                defer self.allocator.free(qname);
+
+                if (self.enum_table) |etable| {
+                    if (etable.getIdByName(qname)) |eid| {
+                        try flat_members.append(self.allocator, .{ .qualifier = try self.allocator.dupe(u8, member.qualifier), .kind = .Enum, .id = eid });
+                        continue;
+                    }
+                }
+                if (self.struct_table) |stable| {
+                    if (stable.getIdByName(qname)) |sid| {
+                        try flat_members.append(self.allocator, .{ .qualifier = try self.allocator.dupe(u8, member.qualifier), .kind = .Struct, .id = sid });
+                        continue;
+                    }
+                }
+                if (gtable.getIdByName(qname)) |gid| {
+                    try flat_members.append(self.allocator, .{ .qualifier = try self.allocator.dupe(u8, member.qualifier), .kind = .Group, .id = gid });
+                    continue;
+                }
+            }
+            _ = (@constCast(gtable)).registerGroup(group_name, flat_members.items) catch {};
+        }
     }
 
     pub fn registerStructType(self: *TypeSystem, struct_name: []const u8, fields: []const []const u8) !void {
@@ -263,10 +292,19 @@ pub const TypeSystem = struct {
         return self.custom_types.get(name);
     }
 
-    pub fn getSetSourceMemberNames(self: *TypeSystem, set_name: []const u8) ![][]const u8 {
-        const name_to_lookup = if (std.mem.lastIndexOfScalar(u8, set_name, '.')) |dot| set_name[dot + 1 ..] else set_name;
-        const ct = self.custom_types.get(name_to_lookup) orelse self.custom_types.get(set_name);
-        if (ct == null or ct.?.kind != .Set) return &[_][]const u8{};
+    pub fn getGroupMemberNames(self: *TypeSystem, group_name: []const u8) ![][]const u8 {
+        const name_to_lookup = if (std.mem.lastIndexOfScalar(u8, group_name, '.')) |dot| group_name[dot + 1 ..] else group_name;
+        const ct = self.custom_types.get(name_to_lookup) orelse self.custom_types.get(group_name);
+        if (ct == null or ct.?.kind != .Group) return &[_][]const u8{};
+
+        if (ct.?.group_members) |members| {
+            var names = try self.allocator.alloc([]const u8, members.len + 1);
+            names[0] = "nothing";
+            for (members, 0..) |member, i| {
+                names[i + 1] = member.qualifier;
+            }
+            return names;
+        }
 
         var names = try self.allocator.alloc([]const u8, 2);
         names[0] = "nothing";
@@ -279,7 +317,7 @@ pub const TypeSystem = struct {
             return switch (custom_type.kind) {
                 .Struct => .Struct,
                 .Enum => .Enum,
-                .Set => .Set,
+                .Group => .Group,
             };
         }
         return .Unknown;
@@ -478,9 +516,9 @@ pub const TypeSystem = struct {
                     switch (ct.kind) {
                         .Struct => break :blk FieldResolveResult{ .t = self.structTypeForName(var_token.lexeme), .custom_type_name = var_token.lexeme },
                         .Enum => break :blk FieldResolveResult{ .t = self.enumTypeForName(var_token.lexeme), .custom_type_name = var_token.lexeme },
-                        .Set => {
-                            const id = if (self.enum_table) |table| table.getIdByName(var_token.lexeme) orelse @as(u32, 0) else 0;
-                            break :blk FieldResolveResult{ .t = HIRType{ .Set = id }, .custom_type_name = var_token.lexeme };
+                        .Group => {
+                            const id = if (self.group_table) |table| table.getIdByName(var_token.lexeme) orelse @as(u32, 0) else 0;
+                            break :blk FieldResolveResult{ .t = HIRType{ .Group = id }, .custom_type_name = var_token.lexeme };
                         },
                     }
                 }
@@ -653,7 +691,7 @@ pub const TypeSystem = struct {
                     return switch (custom_type.kind) {
                         .Struct => self.structTypeForName(var_token.lexeme),
                         .Enum => HIRType{ .Enum = 0 },
-                        .Set => HIRType{ .Set = 0 },
+                        .Group => HIRType{ .Group = if (self.group_table) |gt| gt.getIdByName(var_token.lexeme) orelse 0 else 0 },
                     };
                 }
 

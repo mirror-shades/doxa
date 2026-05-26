@@ -1,2 +1,2 @@
 enum E { Red, Green, Blue }
-set S { E }
+group G { E }

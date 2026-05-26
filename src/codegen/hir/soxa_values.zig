@@ -12,8 +12,9 @@ pub const HIRValue = union(enum) {
     struct_instance: HIRStruct,
     map: HIRMap,
     enum_variant: HIREnum,
+    group_instance: HIRGroup,
     nothing: struct {},
-    storage_id_ref: u32, // NEW: Represents a storage ID for aliases
+    storage_id_ref: u32, // Represents a storage ID for aliases
 };
 
 pub const nothing_value = HIRValue{ .nothing = .{} };
@@ -70,4 +71,16 @@ pub const HIREnum = struct {
     variant_name: []const u8,
     variant_index: u32,
     path: ?[]const u8 = @as(?[]const u8, null),
+};
+
+pub const HIRGroup = struct {
+    type_name: []const u8,
+    member_index: u32,
+    payload: Payload,
+    path: ?[]const u8 = @as(?[]const u8, null),
+
+    pub const Payload = union(enum) {
+        enum_variant: HIREnum,
+        struct_instance: HIRStruct,
+    };
 };

@@ -949,6 +949,7 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .struct_instance => try writer.print("struct", .{}),
         .map => try writer.print("map", .{}),
         .enum_variant => |variant| try writer.print("enum {s}.{s} (idx {})", .{ variant.type_name, variant.variant_name, variant.variant_index }),
+        .group_instance => |group| try writer.print("group {s} member#{}", .{ group.type_name, group.member_index }),
         .storage_id_ref => |storage_id| try writer.print("storage_id_ref {}", .{storage_id}),
     }
 }
@@ -1147,6 +1148,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         },
 
         .TypeCheck => |tc| try writer.print("    TypeCheck \"{s}\"              ; Type check\n", .{tc.target_type}),
+        .GroupCheck => |gc| try writer.print("    GroupCheck member_index:{}   ; Group member check\n", .{gc.member_index}),
+        .GroupExtractPayload => try writer.print("    GroupExtractPayload          ; Extract payload from group\n", .{}),
         .UnionConstruct => |uc| try writer.print("    UnionConstruct member:{d}   ; union value construct\n", .{uc.member_index}),
 
         .Range => |r| try writer.print("    Range {s}                    ; Create array from range\n", .{@tagName(r.element_type)}),

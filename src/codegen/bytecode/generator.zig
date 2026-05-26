@@ -490,6 +490,8 @@ pub const BytecodeGenerator = struct {
                 .Convert => |payload| try self.instructions.append(self.allocator, .{ .Convert = .{ .from = try module.typeFromHIR(payload.from_type), .to = try module.typeFromHIR(payload.to_type) } }),
                 .Compare => |payload| try self.instructions.append(self.allocator, .{ .Compare = .{ .op = payload.op, .type_tag = try module.typeFromHIR(payload.operand_type) } }),
                 .TypeCheck => |payload| try self.instructions.append(self.allocator, .{ .TypeCheck = .{ .type_name = payload.target_type } }),
+                .GroupCheck => |payload| try self.instructions.append(self.allocator, .{ .GroupCheck = .{ .member_index = payload.member_index } }),
+                .GroupExtractPayload => try self.instructions.append(self.allocator, .{ .GroupExtractPayload = .{} }),
                 .LogicalOp => |payload| try self.instructions.append(self.allocator, .{ .LogicalOp = .{ .op = payload.op } }),
                 .StringOp => |payload| try self.instructions.append(self.allocator, .{ .StringOp = .{ .op = payload.op } }),
                 .Jump => |payload| {

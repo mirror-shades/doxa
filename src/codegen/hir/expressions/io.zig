@@ -137,17 +137,17 @@ pub const IOHandler = struct {
             union_members = try self.generator.collectUnionMemberNamesFromHIRType(inferred_type);
         }
 
-        if (union_members == null and inferred_type == .Set) {
+        if (union_members == null and inferred_type == .Group) {
             if (peek.expr.data == .Variable) {
                 const var_name = peek.expr.data.Variable.lexeme;
                 if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_name| {
-                    union_members = try self.generator.type_system.getSetSourceMemberNames(custom_name);
+                    union_members = try self.generator.type_system.getGroupMemberNames(custom_name);
                 }
             }
             if (union_members == null) {
-                if (self.generator.type_system.enum_table) |table| {
-                    if (table.getName(inferred_type.Set)) |set_name| {
-                        union_members = try self.generator.type_system.getSetSourceMemberNames(set_name);
+                if (self.generator.type_system.group_table) |table| {
+                    if (table.getName(inferred_type.Group)) |group_name| {
+                        union_members = try self.generator.type_system.getGroupMemberNames(group_name);
                     }
                 }
             }

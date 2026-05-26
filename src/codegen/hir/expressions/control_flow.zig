@@ -275,6 +275,41 @@ pub const ControlFlowHandler = struct {
             // Handle multiple patterns for this case
             var pattern_matched = false;
 
+            // Handle group path patterns using GroupCheck
+            if (case.path_patterns.len > 0) {
+                for (case.path_patterns, 0..) |path_pattern, pp_idx| {
+                    try self.generator.instructions.append(.Dup);
+
+                    if (path_pattern.tokens.len >= 2) {
+                        const group_name = path_pattern.tokens[0].lexeme;
+                        // Find member index by qualifier in the GroupTable
+                        if (self.generator.type_system.group_table) |gtable| {
+                            if (gtable.getIdByName(group_name)) |gid| {
+                                if (gtable.members(gid)) |members| {
+                                    for (members, 0..) |member, member_idx| {
+                                        if (std.mem.eql(u8, member.qualifier, path_pattern.tokens[1].lexeme)) {
+                                            try self.generator.instructions.append(.{ .GroupCheck = .{ .member_index = @intCast(member_idx) } });
+
+                                            if (pp_idx == case.path_patterns.len - 1) {
+                                                const false_label = if (i < match_expr.cases.len - 1) check_labels.items[i] else if (fail_label) |fl| fl else end_label;
+                                                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .vm_offset = 0, .condition_type = .Tetra } });
+                                            } else {
+                                                const next_label = try self.generator.generateLabel("next_group_pattern");
+                                                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = next_label, .vm_offset = 0, .condition_type = .Tetra } });
+                                                try self.generator.instructions.append(.{ .Label = .{ .name = next_label, .vm_address = 0 } });
+                                            }
+                                            pattern_matched = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (pattern_matched) break;
+                }
+            }
+
             for (case.patterns, 0..) |pattern, pattern_idx| {
                 // Duplicate the match value for comparison (each pattern needs its own copy)
                 try self.generator.instructions.append(.Dup);
@@ -364,6 +399,43 @@ pub const ControlFlowHandler = struct {
         // Generate case bodies with enum context
         for (match_expr.cases, 0..) |case, i| {
             try self.generator.instructions.append(.{ .Label = .{ .name = case_labels.items[i], .vm_address = 0 } });
+
+            // Struct destructuring: extract fields from matched value
+            if (case.path_patterns.len > 0 and case.path_patterns[0].field_names.len > 0) {
+                // Dup the match value so we still have it after field extraction
+                try self.generator.instructions.append(.Dup);
+                // If the value is a group, extract the payload first
+                if (case.path_patterns[0].tokens.len >= 2) {
+                    try self.generator.instructions.append(.{ .GroupExtractPayload = .{} });
+                }
+                // The value is now a struct_instance — dup it so GetField doesn't consume it
+                try self.generator.instructions.append(.Dup);
+                // GetField for each named field
+                for (case.path_patterns[0].field_names, 0..) |field_token, fi| {
+                    try self.generator.instructions.append(.Dup); // keep struct on stack
+                    try self.generator.instructions.append(.{ .GetField = .{
+                        .field_name = field_token.lexeme,
+                        .container_type = .Unknown,
+                        .struct_id = 0,
+                        .field_index = @intCast(fi),
+                        .field_type = .Unknown,
+                        .field_for_peek = false,
+                        .nested_struct_id = null,
+                    } });
+                    // Store the field value into a local variable
+                    const var_idx = try self.generator.getOrCreateVariable(field_token.lexeme);
+                    try self.generator.instructions.append(.{ .StoreVar = .{
+                        .var_index = var_idx,
+                        .var_name = field_token.lexeme,
+                        .scope_kind = .Local,
+                        .module_context = null,
+                        .expected_type = .Unknown,
+                    } });
+                }
+                // Pop the duplicated struct and the original value
+                try self.generator.instructions.append(.Pop);
+                try self.generator.instructions.append(.Pop);
+            }
 
             // Set enum context for case body generation if needed
             const old_enum_context = self.generator.current_enum_type;
@@ -557,7 +629,7 @@ pub const ControlFlowHandler = struct {
                         break :blk switch (ct.kind) {
                             .Struct => "struct",
                             .Enum => "enum",
-                            .Set => "enum",
+                            .Group => "group",
                         };
                     }
                     break :blk tok.lexeme;
