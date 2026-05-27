@@ -325,20 +325,62 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#atomic" class="md-nav__link">
+  <a href="#scalar" class="md-nav__link">
     <span class="md-ellipsis">
-      Atomic
+      Scalar
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#molecular" class="md-nav__link">
+  <a href="#composite" class="md-nav__link">
     <span class="md-ellipsis">
-      Molecular
+      Composite
     </span>
   </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arithmetic-operators" class="md-nav__link">
+    <span class="md-ellipsis">
+      Arithmetic Operators
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#strings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Strings
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arrays" class="md-nav__link">
+    <span class="md-ellipsis">
+      Arrays
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Arrays">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#array-storage-kinds" class="md-nav__link">
+    <span class="md-ellipsis">
+      Array Storage Kinds
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -478,15 +520,6 @@
   <a href="#first-order-logic" class="md-nav__link">
     <span class="md-ellipsis">
       First order logic
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#paradoxical-logic" class="md-nav__link">
-    <span class="md-ellipsis">
-      Paradoxical logic
     </span>
   </a>
   
@@ -666,7 +699,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../sets/" class="md-nav__link">
+      <a href="../sets.md" class="md-nav__link">
         
   
   
@@ -810,193 +843,217 @@
 <h1 id="doxa-language-reference">Doxa Language Reference</h1>
 <h2 id="core-language-features">Core Language Features</h2>
 <h3 id="primitive-types">Primitive Types</h3>
-<p>Doxa has two general catagory of types, atomic and molecular:</p>
-<h3 id="atomic">Atomic</h3>
-<p>Atomic types are the most basic units of data. Currently Doxa has 3 default number types. Types listed reflect their Zig equivilent. Bigint may be added in the future for increased flexibility.</p>
-<p>int - i64
-float - f64
-byte - u8 hex
-string - []const u8
-tetra - i2
-nothing - void</p>
-<h3 id="molecular">Molecular</h3>
-<p>Molecular types are constructed out of atomic types. They are</p>
+<p>Doxa has two general categories of types, scalar and composite:</p>
+<h3 id="scalar">Scalar</h3>
+<p>Scalar types are the most basic units of data. Currently Doxa has 3 default number types. Types listed reflect their Zig equivilent. Bigint may be added in the future for increased flexibility.</p>
+<p>int (64 bit integer)
+float (64 bit floating point)
+byte (8 bit hex literal)
+string
+tetra (2 bit integer)
+enum
+nothing (void)</p>
+<h3 id="composite">Composite</h3>
+<p>Composite types are constructed out of scalar types. They are</p>
 <p>array - must be homogenous
 struct - no classes, no inheretance, only composition
-enum
+group -  can be used as an umbrella type for enums and structs
 union - can be handled with switch statements and type narrowing, see page on unions for more info</p>
-<div class="highlight"><pre><span></span><code>### Strings
-
-Double-quoted strings interpolate expressions in `{...}` anywhere a string expression is accepted:
-
-```doxa
-var name is &quot;Doxa&quot;
+<h3 id="arithmetic-operators">Arithmetic Operators</h3>
+<p>Arithmetic follows Python-like semantics. See the <a href="../math/">Arithmetic</a> page for full details on type promotion, division, and modulo.</p>
+<table>
+<thead>
+<tr>
+<th>Operator</th>
+<th>Name</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>+</code></td>
+<td>Addition</td>
+<td><code>1 + 2</code> → <code>3</code></td>
+</tr>
+<tr>
+<td><code>-</code></td>
+<td>Subtraction</td>
+<td><code>3 - 1</code> → <code>2</code></td>
+</tr>
+<tr>
+<td><code>*</code></td>
+<td>Multiplication</td>
+<td><code>2 * 3</code> → <code>6</code></td>
+</tr>
+<tr>
+<td><code>**</code></td>
+<td>Exponentiation</td>
+<td><code>2 ** 3</code> → <code>8</code></td>
+</tr>
+<tr>
+<td><code>/</code></td>
+<td>Float division</td>
+<td><code>10 / 4</code> → <code>2.5</code></td>
+</tr>
+<tr>
+<td><code>//</code></td>
+<td>Integer division (floored)</td>
+<td><code>-7 // 2</code> → <code>-4</code></td>
+</tr>
+<tr>
+<td><code>%</code></td>
+<td>Modulo (floored)</td>
+<td><code>-7 % 2</code> → <code>1</code></td>
+</tr>
+</tbody>
+</table>
+<p>Compound assignment (<code>+=</code>, <code>-=</code>, <code>*=</code>, <code>/=</code>, <code>//=</code>, <code>%=</code>, <code>**=</code>) is supported for all arithmetic operators.</p>
+<h3 id="strings">Strings</h3>
+<p>Double-quoted strings interpolate expressions in <code>{...}</code> anywhere a string expression is accepted:</p>
+<div class="highlight"><pre><span></span><code>var name is &quot;Doxa&quot;
 var greeting is &quot;Hello {name}&quot;
 @print(&quot;{greeting}\n&quot;)
-```
-
-Single-quoted strings are literal strings. Use them when braces should be preserved as text:
-
-```doxa
-var shape is &#39;{ y: 2, x: 5 }&#39;
-```
-
-The `tetra` type represents a four cornered value with the possible states: `true`, `false`, `both`, and `neither`. For additional information see the tetra page.
-
-### Arrays
-
-Arrays are homogeneous collections with type inference:
-
-```doxa
-var nums :: int[] is [1, 2, 3]    # Explicit typing
+</code></pre></div>
+<p>Single-quoted strings are literal strings. Use them when braces should be preserved as text:</p>
+<div class="highlight"><pre><span></span><code>var shape is &#39;{ y: 2, x: 5 }&#39;
+</code></pre></div>
+<p>The <code>tetra</code> type represents a four cornered value with the possible states: <code>true</code>, <code>false</code>, <code>both</code>, and <code>neither</code>. For additional information see the tetra page.</p>
+<h3 id="arrays">Arrays</h3>
+<p>Arrays are homogeneous collections with type inference:</p>
+<div class="highlight"><pre><span></span><code>var nums :: int[] is [1, 2, 3]    # Explicit typing
 var strs is [&quot;a&quot;, &quot;b&quot;]            # Inferred as string[]
 
 # Invalid operations
 var mixed is [1, &quot;two&quot;, true]     # Error: mixed types
 @push(nums, &quot;four&quot;)                # Error: type mismatch
-```
-
-#### Array Storage Kinds
-
-Doxa tracks how every array is stored, and that storage kind determines which builtins can mutate it.
-
-- `dynamic` — default for `var` arrays and anything returned from runtime helpers. These can grow and shrink freely.
-- `fixed` — any type annotation that names a literal size (for example, `int[4]`) produces a fixed array. Type aliases preserve this metadata, so wrapping `int[4]` in an alias and then declaring `var data :: MyAlias` still behaves as fixed storage with an immutable length/capacity.
-- `const literal` — a `const` binding that receives a compile-time literal (including nested literals) is tagged immutable. Any other `const` that aliases that value inherits the same storage kind.
-
-Mutating methods like `@push`, `@insert`, `@remove`, or `@clear` require dynamic storage. Coerce a fixed/const literal array into dynamic form by copying it into a mutable declaration:
-
-```doxa
-const literal = [1, 2]
-var copy :: int[] is literal  # copy becomes dynamic and @push-friendly
-```
 </code></pre></div>
+<h4 id="array-storage-kinds">Array Storage Kinds</h4>
+<p>Doxa tracks how every array is stored, and that storage kind determines which builtins can mutate it.</p>
+<ul>
+<li><code>dynamic</code> — default for <code>var</code> arrays and anything returned from runtime helpers. These can grow and shrink freely.</li>
+<li><code>fixed</code> — any type annotation that names a literal size (for example, <code>int[4]</code>) produces a fixed array. Type aliases preserve this metadata, so wrapping <code>int[4]</code> in an alias and then declaring <code>var data :: MyAlias</code> still behaves as fixed storage with an immutable length/capacity.</li>
+<li><code>const literal</code> — a <code>const</code> binding that receives a compile-time literal (including nested literals) is tagged immutable. Any other <code>const</code> that aliases that value inherits the same storage kind.</li>
+</ul>
+<p>Mutating methods like <code>@push</code>, <code>@insert</code>, <code>@remove</code>, or <code>@clear</code> require dynamic storage. Coerce a fixed/const literal array into dynamic form by copying it into a mutable declaration:</p>
+<p><div class="highlight"><pre><span></span><code>const literal = [1, 2]
+var copy :: int[] is literal  # copy becomes dynamic and @push-friendly
+</code></pre></div>
+````</p>
 <h3 id="maps">Maps</h3>
 <p>String-keyed dictionaries:</p>
-<div class="highlight"><pre><span></span><code>map scores {
-    &quot;alice&quot; is 100,
-    &quot;bob&quot; is 85
+<p><code>doxa
+map scores {
+    "alice" is 100,
+    "bob" is 85
 }
-scores[&quot;alice&quot;]                  # Access value
-</code></pre></div>
+scores["alice"]                  # Access value</code></p>
 <h2 id="control-flow">Control Flow</h2>
 <h3 id="pattern-matching">Pattern Matching</h3>
-<div class="highlight"><pre><span></span><code>enum Status { Success, Error, Pending }
-
-var result is match status {
-    .Success =&gt; &quot;all good&quot;,
-    .Error =&gt; &quot;failed&quot;,
-    else =&gt; &quot;waiting&quot;
+<p>```doxa
+enum Status { Success, Error, Pending }</p>
+<p>var result is match status {
+    .Success =&gt; "all good",
+    .Error =&gt; "failed",
+    else =&gt; "waiting"
 }
-</code></pre></div>
+```</p>
 <p>Match expressions must be exhaustive or include an <code>else</code> clause.</p>
 <h3 id="error-handling">Error Handling</h3>
 <p>Errors are best handled with custom enum and type unions.</p>
-<div class="highlight"><pre><span></span><code>enum Error {
+<p>```doxa
+enum Error {
     TOO_BIG,
     TOO_SMALL,
-}
-
-const res is intOrError()
+}</p>
+<p>const res is intOrError()
 res as int then {
     intsOnly(res) # narrowed to int
 } else {
     match res { # else blocks do not narrow
         Error.TOO_BIG then {
-            @print(&quot;result was too big&quot;)
+            @print("result was too big")
         }
         Error.TOO_SMALL then {
-            @print(&quot;result was too small&quot;)
+            @print("result was too small")
         }
         else { # we know this will never be reached
             unreachable
         }
     }
-}
-</code></pre></div>
+}</p>
+<p>```</p>
 <h3 id="unreachable"><code>unreachable</code></h3>
 <p>Use the <code>unreachable</code> keyword when a control-flow path should be impossible. It behaves like Zig's <code>unreachable</code>: the compiler treats it as a no-return expression for type checking and it traps at runtime with a helpful location if execution ever arrives there.</p>
 <h2 id="special-operators">Special Operators</h2>
 <h3 id="peek-operator">Peek operator (<code>?</code>)</h3>
 <p>Evaluates the operand for its side effect only: it prints a debug line (file/line/column when available, variable name, static type, and runtime value) and leaves the value on the stack unchanged. Output goes through Zig’s <code>std.debug.print</code> (typically <strong>stderr</strong>), so it stays separate from normal <strong>stdout</strong> (<code>@print</code>, <code>std.io.print</code>, and so on) and does not use the same fallible stdout path.</p>
-<p><div class="highlight"><pre><span></span><code>var x is computeValue()
-x?                              # Prints value with location, name, and type
-</code></pre></div>
-<div class="highlight"><pre><span></span><code>[./test.doxa:2:2] x :: int is 62
-</code></pre></div></p>
+<p><code>doxa
+var x is computeValue()
+x?                              # Prints value with location, name, and type</code>
+<code>[./test.doxa:2:2] x :: int is 62</code></p>
 <h3 id="range-to">Range (<code>to</code>)</h3>
 <p>Ranges are arrays which can be declared between two ints or bytes</p>
-<div class="highlight"><pre><span></span><code>const range is 10 to 15
-@print(&quot;{range}&quot;) # [10, 11, 12, 13, 14, 15]
-</code></pre></div>
+<p><code>const range is 10 to 15
+@print("{range}") # [10, 11, 12, 13, 14, 15]</code></p>
 <h3 id="collection-quantifiers">Collection Quantifiers</h3>
 <p>As with all formal logic operations, both symbolic notation and keyword notations are supported.</p>
-<div class="highlight"><pre><span></span><code>(∃x ∈ numbers : x &gt; 10) # Logical notation
+<p><code>doxa
+(∃x ∈ numbers : x &gt; 10) # Logical notation
 (exists x in numbers where x &gt; 10) # English prose
 (∀x ∈ numbers : x &gt; 0) # Logical notation
-(forall x in numbers where x &gt; 0) # English prose
-</code></pre></div>
+(forall x in numbers where x &gt; 0) # English prose</code></p>
 <h2 id="conditional-expressions">Conditional Expressions</h2>
 <p>All conditionals can be used as expressions to assign values:</p>
-<div class="highlight"><pre><span></span><code>var result is if condition then {
+<p><code>doxa
+var result is if condition then {
     value1
 } else {
     value2
-}
-</code></pre></div>
+}</code></p>
 <p>Be aware assigning an expression without a value will assign <code>nothing</code>:
-<div class="highlight"><pre><span></span><code>    var x is if (false) { y is 1 }  # x becomes nothing
-</code></pre></div></p>
+<code>doxa
+    var x is if (false) { y is 1 }  # x becomes nothing</code></p>
 <h3 id="function-return-types">Function Return Types</h3>
-<p>Functions can specify return types using the <code>returns</code> syntax. Any type can be returned, including molecular types, but only one type at a time. This is one of the places where type unions can come in handy.</p>
-<div class="highlight"><pre><span></span><code>fn add(a: int, b: int) returns int {
+<p>Functions can specify return types using the <code>returns</code> syntax. Any type can be returned, including composite types, but only one type at a time. This is one of the places where type unions can come in handy.</p>
+<p><code>doxa
+fn add(a: int, b: int) returns int {
     return a + b
-}
-</code></pre></div>
+}</code></p>
 <p>Return types are optional and inferred by default:</p>
-<div class="highlight"><pre><span></span><code>fn add(a :: int, b :: int) {
+<p><code>doxa
+fn add(a :: int, b :: int) {
     return a + b # inferred as returning an int
-}
-</code></pre></div>
+}</code></p>
 <p>Explicit typing is encouraged as unions will be inferred if more than one type is returned.</p>
 <h2 id="logic">Logic</h2>
 <h3 id="first-order-logic">First order logic</h3>
 <p>First order logic always produces a true or false value. For more information on tetras see the tetra page.</p>
 <p>Doxa has extensive for traditional first order logics that work as expected with true and false values. These can be represented in formal unicode notation:</p>
-<div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5]
-
-# existential quantifier ∃, element of ∈
-∃x ∈ arr : x &gt; 3 # true
-
-# universal quantifier ∀, where :
-∀x ∈ arr : x &gt; 3 # false
-
-# NOT ¬
-¬false # true
-
-# biconditional ↔
-false ↔ false # true
-
-# XOR ⊕
-true ⊕ true # false
-
-# AND ∧
-true ∧ false # false
-
-# OR ∨
-true ∨ false # true
-
-# NAND ↑
-true ↑ false # true
-
-# NOR ↓
-true ↓ false # false
-
-# implication →
-true → false # false
-</code></pre></div>
+<p>```
+const arr :: int[] = [1, 2, 3, 4, 5]</p>
+<h1 id="existential-quantifier-element-of">existential quantifier ∃, element of ∈</h1>
+<p>∃x ∈ arr : x &gt; 3 # true</p>
+<h1 id="universal-quantifier-where">universal quantifier ∀, where :</h1>
+<p>∀x ∈ arr : x &gt; 3 # false</p>
+<h1 id="not">NOT ¬</h1>
+<p>¬false # true</p>
+<h1 id="biconditional">biconditional ↔</h1>
+<p>false ↔ false # true</p>
+<h1 id="xor">XOR ⊕</h1>
+<p>true ⊕ true # false</p>
+<h1 id="and">AND ∧</h1>
+<p>true ∧ false # false</p>
+<h1 id="or">OR ∨</h1>
+<p>true ∨ false # true</p>
+<h1 id="nand">NAND ↑</h1>
+<p>true ↑ false # true</p>
+<h1 id="nor">NOR ↓</h1>
+<p>true ↓ false # false</p>
+<h1 id="implication">implication →</h1>
+<p>true → false # false
+```</p>
 <p>This unicode support is paired with plaintext keywords which act in an identical fashion:</p>
-<div class="highlight"><pre><span></span><code>∃ - exists
+<p><code>∃ - exists
 ∀ - forall
 ∈ - in
 : - where
@@ -1007,14 +1064,13 @@ true → false # false
 ∨ - or
 ↑ - nand
 ↓ - nor
-→ - implies
-</code></pre></div>
+→ - implies</code></p>
 <p>This means formal logical representation can be written in either way:</p>
-<div class="highlight"><pre><span></span><code>const arr :: int[] = [1, 2, 3, 4, 5]
-
-¬(∀x ∈ arr : x &gt; 3) # true
+<p>```
+const arr :: int[] = [1, 2, 3, 4, 5]</p>
+<p>¬(∀x ∈ arr : x &gt; 3) # true
 not (forall x in arr where x &gt; 3) # true
-</code></pre></div>
+```</p>
 <h3 id="paradoxical-logic">Paradoxical logic</h3>
 <p>There are currently two paradoxical operators, <code>and</code> and <code>not</code>. These can be represented by the following truth tables:</p>
 <table>

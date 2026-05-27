@@ -9,10 +9,6 @@
       
       
       
-        <link rel="prev" href="../tetras/">
-      
-      
-        <link rel="next" href="../zig/">
       
       
       <link rel="icon" href="../assets/images/favicon.png">
@@ -20,7 +16,7 @@
     
     
       
-        <title>Unions - Doxa Docs</title>
+        <title>Groups - Doxa Docs</title>
       
     
     
@@ -72,7 +68,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#typed-unions" class="md-skip">
+        <a href="#groups" class="md-skip">
           Skip to content
         </a>
       
@@ -108,7 +104,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Unions
+              Groups
             
           </span>
         </div>
@@ -517,32 +513,10 @@
       
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Unions
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="./" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="../unions/" class="md-nav__link">
         
   
   
@@ -553,113 +527,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#what-are-unions" class="md-nav__link">
-    <span class="md-ellipsis">
-      What are unions
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#syntax" class="md-nav__link">
-    <span class="md-ellipsis">
-      Syntax
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#examples" class="md-nav__link">
-    <span class="md-ellipsis">
-      Examples
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#default-behavior" class="md-nav__link">
-    <span class="md-ellipsis">
-      Default Behavior
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#optional-values" class="md-nav__link">
-    <span class="md-ellipsis">
-      Optional Values
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#why-unions-are-useful" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why unions are useful
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#error-handling" class="md-nav__link">
-    <span class="md-ellipsis">
-      Error Handling
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#type-casting-with-as" class="md-nav__link">
-    <span class="md-ellipsis">
-      Type Casting with as
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Type Casting with as">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#common-patterns" class="md-nav__link">
-    <span class="md-ellipsis">
-      Common Patterns
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -702,164 +569,305 @@
 
 
 
-<h1 id="typed-unions">Typed Unions</h1>
-<h2 id="what-are-unions">What are unions</h2>
-<p>Unions are a special type which can represent one type or another. For instance, you can make a value that either returns a number, or a string. A union can only hold a single value, and therefore represent a single type when used.</p>
-<h2 id="syntax">Syntax</h2>
-<p>Unions are declared using pipes:</p>
-<div class="highlight"><pre><span></span><code>var x :: int | float
-var y :: string | int | float
+<h1 id="groups">Groups</h1>
+<p>This document specifies <strong>groups</strong>: a nominal type that merges existing enums, structs, and other groups into a single type, re-exporting their members under qualified names. A group is a <strong>named tagged union</strong> — it provides a single type arm for function signatures and APIs without creating new values.</p>
+<p><strong>Status:</strong> specification. Replaces the prior <code>set</code> design. When implemented, update <a href="../syntax/">syntax.md</a> and <a href="../unions/">unions.md</a> to reference this page.</p>
+<hr />
+<h2 id="1-design-invariants">1. Design invariants</h2>
+<table>
+<thead>
+<tr>
+<th>Rule</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Members are existing types or other groups</td>
+<td>A group contains <code>enums</code>, <code>structs</code>, and <code>groups</code> declared elsewhere</td>
+</tr>
+<tr>
+<td>Group membership is flattened</td>
+<td>Transitive group members are expanded into a flat member list at the declaration site</td>
+</tr>
+<tr>
+<td>Groups do not create new values</td>
+<td><code>Error.IO.NotFound</code> is the same value as <code>IO.NotFound</code></td>
+</tr>
+<tr>
+<td>A type appears at most once</td>
+<td>Deduplication during flattening; reaching the same type through multiple paths is harmless</td>
+</tr>
+<tr>
+<td>Cycles are illegal</td>
+<td>A group may not include itself directly or transitively</td>
+</tr>
+<tr>
+<td>Nominal type</td>
+<td>Each <code>group</code> declaration introduces a distinct type; two groups with identical members are different types</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="2-syntax">2. Syntax</h2>
+<h3 id="21-group-declaration">2.1 Group declaration</h3>
+<p>A group is declared with the <code>group</code> keyword. The body lists member types.</p>
+<div class="highlight"><pre><span></span><code>public group Error {
+    CommonError,
+    IOError,
+    CompilerError,
+    FileError,
+}
 </code></pre></div>
-<p>The pipe's only usage in Doxa is to specify a typed union.</p>
-<h2 id="examples">Examples</h2>
-<div class="highlight"><pre><span></span><code># A union that can be either an integer or a float
-var number :: int | float
-number is 42     # Valid - integer
-number is 3.14   # Valid - float
-
-# A union that can be a string, integer, or float
-var value :: string | int | float
-value is &quot;hello&quot; # Valid - string
-value is 100     # Valid - integer
-value is 2.718   # Valid - float
-
-# Unions default to the first type when not initialized
-var defaulted :: int | float
-defaulted?       # Prints 0 (default int value)
-
-var float_first :: float | int
-float_first?     # Prints 0.0 (default float value)
+<p>Members are referenced by their unqualified or module-qualified name. Each member contributes its variants/fields under a <strong>qualifier</strong> — its unqualified type name.</p>
+<div class="highlight"><pre><span></span><code>public group Error {
+    error.CommonError,
+    error.IOError,
+    error.CompilerError,
+    structs.FileError,
+}
 </code></pre></div>
-<h2 id="default-behavior">Default Behavior</h2>
-<p>When a union is declared without initialization, it defaults to the <strong>first type</strong> in the union with its default value:</p>
+<h3 id="22-transitive-groups">2.2 Transitive groups</h3>
+<p>A group may include another group. All members of the included group are <strong>flattened</strong> into the declaring group.</p>
+<div class="highlight"><pre><span></span><code>public group CoreError {
+    IOError,
+    CommonError,
+}
+
+public group AppError {
+    CoreError,      // flattened → IOError, CommonError
+    UserCancelled,
+    ConfigInvalid,
+}
+</code></pre></div>
+<p><code>AppError</code> expands to <code>{ IOError, CommonError, UserCancelled, ConfigInvalid }</code>. There is no nesting in the expanded member list.</p>
+<h3 id="23-qualified-access">2.3 Qualified access</h3>
+<p>Members are accessed through the group name with the qualifier:</p>
+<div class="highlight"><pre><span></span><code>Error.IOError.NotFound
+AppError.UserCancelled           // local variant — unqualified under the group
+</code></pre></div>
+<p>When a variant name is unique across all group members, it may be accessed directly:</p>
+<div class="highlight"><pre><span></span><code>Error.NotFound                   // OK if NotFound exists in exactly one member
+</code></pre></div>
+<p>When ambiguous, qualified access is required:</p>
+<div class="highlight"><pre><span></span><code>group G {
+    A,    // enum with variant X
+    B,    // enum with variant X
+}
+G.X                              // ERROR: ambiguous — X exists in both A and B
+G.A.X                            // OK
+</code></pre></div>
+<hr />
+<h2 id="3-type-system">3. Type system</h2>
+<h3 id="31-nominal-identity">3.1 Nominal identity</h3>
+<p>Each <code>group</code> declaration introduces a distinct nominal type. <code>AppError</code> is not the same type as <code>CoreError</code>, <code>IOError</code>, or <code>UserCancelled</code>. Two groups with identical member lists are distinct types.</p>
+<h3 id="32-member-identity-preserved">3.2 Member identity preserved</h3>
+<p>A value's identity is determined by its source type — not by the group that wraps it. <code>Error.IOError.NotFound</code> and <code>IOError.NotFound</code> are the same value.</p>
+<table>
+<thead>
+<tr>
+<th>Expression</th>
+<th>Type</th>
+<th>Identity</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>IOError.NotFound</code></td>
+<td><code>IOError</code></td>
+<td><code>IOError::NotFound</code></td>
+</tr>
+<tr>
+<td><code>Error.IOError.NotFound</code></td>
+<td><code>Error</code></td>
+<td><code>IOError::NotFound</code> (same)</td>
+</tr>
+<tr>
+<td><code>AppError.IOError.NotFound</code></td>
+<td><code>AppError</code></td>
+<td><code>IOError::NotFound</code> (same)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="33-widening-and-narrowing">3.3 Widening and narrowing</h3>
+<p><strong>Widening (implicit):</strong> A value of a member type is assignable where the group type is expected. The compiler inserts a tag to track which member the value belongs to at runtime.</p>
+<div class="highlight"><pre><span></span><code>function open(path: string) -&gt; string | Error {
+    if path is &quot;&quot; then return IOError.NotFound  // widens to Error
+    if path is &quot;/&quot; then return FileError { path } // widens to Error
+    return &quot;ok&quot;
+}
+</code></pre></div>
+<p><strong>Narrowing (explicit):</strong> From a group type to a member type via <code>match</code> or <code>as</code>:</p>
+<div class="highlight"><pre><span></span><code>x as IOError          // succeeds if x is an IOError member; else the `else` branch runs
+</code></pre></div>
+<p>No implicit narrowing from a group type to a member type.</p>
+<h3 id="34-equality">3.4 Equality</h3>
+<p>Values compare equal when they carry the same source type and same payload.</p>
+<div class="highlight"><pre><span></span><code>Error.IOError.NotFound == IOError.NotFound     → true
+IOError.NotFound == FileError { path: &quot;x&quot; }    → type error (different members)
+</code></pre></div>
+<p>Cross-member equality is a compile error, not <code>false</code>.</p>
+<h3 id="35-unions">3.5 Unions</h3>
+<p>A single group member replaces multiple individual arms in return types:</p>
+<div class="highlight"><pre><span></span><code>// Before
+function read() -&gt; string | IOError | CommonError | CompilerError
+
+// After
+function read() -&gt; string | Error
+</code></pre></div>
+<p>A function declared <code>returns string | Error</code> accepts <code>string</code>, any <code>Error</code> value, or any value of a member type (widened to <code>Error</code>).</p>
+<hr />
+<h2 id="4-pattern-matching">4. Pattern matching</h2>
+<h3 id="41-exhaustiveness">4.1 Exhaustiveness</h3>
+<p>Matching on a group must cover every member. This is a <strong>flat</strong> check over the expanded member list.</p>
+<div class="highlight"><pre><span></span><code>group Error { IOError, CommonError, FileError }
+
+match err {
+    IOError.NotFound =&gt; ...
+    IOError.PermissionDenied =&gt; ...
+    // IOError.EOF missing → not exhaustive
+    CommonError.* =&gt; ...         // wildcard covers all CommonError variants
+    FileError { path } =&gt; ...
+}
+</code></pre></div>
+<p>An exhaustive match requires either:
+- a pattern for every variant in every enum member, plus every struct member, or
+- a <code>*</code> wildcard for any remaining enum members, or
+- an <code>else</code> arm</p>
+<h3 id="42-enum-patterns">4.2 Enum patterns</h3>
+<div class="highlight"><pre><span></span><code>match err {
+    Error.IOError.NotFound =&gt; ...          // single variant
+    Error.IOError.* =&gt; handle_io(err),     // all IOError variants (narrows to IOError)
+    else =&gt; ...
+}
+</code></pre></div>
+<p>Inside <code>Error.IOError.*</code>, the bound value is narrowed to <code>IOError</code>.</p>
+<h3 id="43-struct-patterns">4.3 Struct patterns</h3>
+<p>Struct members are matched with destructuring syntax:</p>
+<div class="highlight"><pre><span></span><code>match err {
+    Error.FileError { path } =&gt; print(path),
+    Error.ConfigError { key, value } =&gt; ...
+}
+</code></pre></div>
+<p>The struct is narrowed to its member type, and fields are available directly.</p>
+<h3 id="44-matching-on-unions-containing-groups">4.4 Matching on unions containing groups</h3>
+<div class="highlight"><pre><span></span><code>match result {
+    string =&gt; use(result),
+    Error =&gt; handle(result),        // catch-all for the group
+    Error.IOError.* =&gt; ...
+}
+</code></pre></div>
+<hr />
+<h2 id="5-collisions-and-ill-formed-programs">5. Collisions and ill-formed programs</h2>
+<table>
+<thead>
+<tr>
+<th>Situation</th>
+<th>Verdict</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Two members with the same qualifier after flattening</td>
+<td><strong>Error</strong></td>
+</tr>
+<tr>
+<td>Unqualified name exists in more than one member</td>
+<td><strong>Error</strong> (ambiguous access)</td>
+</tr>
+<tr>
+<td>Cycle in group membership</td>
+<td><strong>Error</strong></td>
+</tr>
+<tr>
+<td>Empty group (no members)</td>
+<td><strong>Error</strong></td>
+</tr>
+<tr>
+<td>Group member is not a declared type</td>
+<td><strong>Error</strong></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-runtime-representation">6. Runtime representation</h2>
+<p>A group value has a hidden tag to identify which member it belongs to, followed by the member's payload.</p>
+<div class="highlight"><pre><span></span><code>Group value = [member_index: u32] [payload: union { enum_variant, struct_instance }]
+</code></pre></div>
+<p>This is identical in shape to how tagged unions already work. The difference is that group members are named and traceable, whereas union arms are anonymous.</p>
+<p>The member index is stable for the lifetime of the group declaration. Reordering members changes the index and is an ABI break.</p>
+<hr />
+<h2 id="7-grammar-sketch">7. Grammar sketch</h2>
+<div class="highlight"><pre><span></span><code>GroupDecl       := &#39;group&#39; IDENT &#39;{&#39; GroupBody &#39;}&#39;
+GroupBody       := ( GroupMember )*
+GroupMember     := TypePath  (&#39;,&#39; | NEWLINE)*
+TypePath        := IDENT ( &#39;.&#39; IDENT )*
+</code></pre></div>
+<hr />
+<h2 id="8-differences-from-the-prior-set-design">8. Differences from the prior <code>set</code> design</h2>
+<table>
+<thead>
+<tr>
+<th>Aspect</th>
+<th><code>set</code> (old)</th>
+<th><code>group</code> (new)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Members</td>
+<td>Enums only</td>
+<td>Enums, structs, other groups</td>
+</tr>
+<tr>
+<td>Local variants</td>
+<td>Supported</td>
+<td>Not supported — everything is a member type</td>
+</tr>
+<tr>
+<td>Transitivity</td>
+<td>Nested qualifier chains (<code>AppErr.Std.IO.NotFound</code>)</td>
+<td>Flattened (<code>AppError.IOError.NotFound</code>)</td>
+</tr>
+<tr>
+<td>Duplicate types</td>
+<td>Error</td>
+<td>Deduplicated silently</td>
+</tr>
+<tr>
+<td>Runtime shape</td>
+<td>Enum discriminant only (zero-cost widen)</td>
+<td>Tag + payload (tagged union)</td>
+</tr>
+<tr>
+<td><code>is_set</code> flag</td>
+<td>Unused</td>
+<td>Not needed — flattened at parse/semantic time</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9-implementation-checklist">9. Implementation checklist</h2>
 <ul>
-<li><code>int</code> defaults to <code>0</code></li>
-<li><code>float</code> defaults to <code>0.0</code></li>
-<li><code>byte</code> defaults to <code>0x00</code></li>
-<li><code>string</code> defaults to <code>""</code></li>
-<li><code>tetra</code> defaults to <code>false</code></li>
-<li><code>nothing</code> defaults to <code>nothing</code></li>
+<li>[x] Rename <code>SET_TYPE</code> token to <code>GROUP_TYPE</code> and register the <code>group</code> keyword in the lexer.</li>
+<li>[x] Rename <code>SetDecl</code>, <code>SetSource</code>, <code>SetMember</code> AST nodes to <code>GroupDecl</code>, <code>GroupMember</code> throughout <code>ast.zig</code>, parser, semantic, and HIR layers.</li>
+<li>[x] Update <code>parseSetDecl</code> to <code>parseGroupDecl</code> and remove local variant parsing from the group body.</li>
+<li>[x] Create a <code>GroupTable</code> global registry with <code>GroupId</code> and flat <code>Member</code> entries (<code>qualifier</code>, <code>kind</code>, <code>id</code>).</li>
+<li>[x] Add <code>HIRType.Group(GroupId)</code> and remove <code>HIRType.Set(EnumId)</code> from <code>soxa_types.zig</code>.</li>
+<li>[ ] Unify the duplicated <code>CustomTypeInfo</code> definition across <code>types/types.zig</code> and <code>type_system.zig</code> into a single source of truth.</li>
+<li>[x] Implement flattening: when a group member is another group, expand its members into the declaring group's member list with deduplication by type identity.</li>
+<li>[x] Implement cycle detection by tracking visited group IDs during expansion.</li>
+<li>[ ] Implement ambiguous-name detection by collecting all variant/field names across expanded members and flagging duplicates.</li>
+<li>[x] Add <code>group_instance: HIRGroup { member_index, payload }</code> to <code>HIRValue</code> for runtime group representation.</li>
+<li>[x] Implement implicit widening from member types to their enclosing group in the type checker (<code>typeIsGroupMember</code>, <code>typeMatchesUnionMember</code> in <code>unifyTypes</code>).</li>
+<li>[x] Implement <code>match</code> exhaustiveness checking across the flat expanded member list for both enum variants and struct members.</li>
+<li>[x] Implement domain wildcard patterns (<code>Group.Member.*</code>) that narrow the matched value to the member type.</li>
+<li>[x] Implement struct destructuring patterns (<code>Group.Member { field }</code>) inside <code>match</code> arms.</li>
+<li>[ ] Implement cross-member equality as a compile error.</li>
+<li>[x] Add group type handling to bytecode (<code>module.zig</code>) and the VM interpreter.</li>
+<li>[x] Validate that <code>registerSpecificSymbol</code> uses the correct <code>.Group</code> kind instead of <code>.Enum</code> for imported group symbols.</li>
+<li>[x] Fix the fixed-2 allocation in <code>getSetSourceMemberNames</code> (or its replacement) to iterate actual expanded members.</li>
 </ul>
-<p>This ensures that unions always have a well-defined state and the compiler knows which type is currently active.</p>
-<h2 id="optional-values">Optional Values</h2>
-<p>A common use case for unions is representing optional values using <code>nothing</code>:</p>
-<div class="highlight"><pre><span></span><code># Optional integer
-var maybe_name :: string | nothing
-maybe_name is &quot;Alice&quot;     # Has a value
-maybe_name is nothing # No value
-
-# Function that might not return a value
-function findValue(arr :: MyObject[], target :: string) returns(int | nothing) {
-    each x in arr {
-        if (x.name equals target) then {
-            return x
-        }
-    }
-    return nothing # Not found
-}
-</code></pre></div>
-<h2 id="why-unions-are-useful">Why unions are useful</h2>
-<p>Unions are particularly useful when:</p>
-<ul>
-<li>A function can return different types depending on the input</li>
-<li>A variable needs to hold different types at different times</li>
-<li>You want to represent optional values (like <code>T | nothing</code>)</li>
-<li>You're working with data that can have multiple valid representations</li>
-</ul>
-<h2 id="error-handling">Error Handling</h2>
-<p>Here is a robust example of how error handling can be done using Doxa. Note that none of this handling is specific to <em>errors</em>, it is a general return pattern which relies on normal values making semanitcs extremely clear and flexible. This relies on the <code>as</code> keyword which attempts to narrow a value into another type.</p>
-<div class="highlight"><pre><span></span><code>enum ErrorList {
-    Overflow,
-    Underflow,
-}
-
-# Match function to process errors
-function handleError(err :: ErrorList) {
-    match err {
-        .Overflow then doSomething(),
-        .Underflow then doSomethingElse(),
-    }
-}
-
-# Function returns a union - we won&#39;t know if the value is a number or one of our errors until we check
-function addLimit(a :: int, b :: int) returns( int | ErrorList ) {
-    const result is a + b
-    if result &gt; 255 then return ErrorList.Overflow
-    if result &lt; 0 then return ErrorList.Underflow
-    return result
-}
-
-# All of these return unions
-const unknownBigResult is addLimit(1000, 1000)   # ErrorList.Overflow
-const unknownSmallResult is addLimit(100, -1000) # ErrorList.Underflow
-const unknownRightResult is addLimit(100, -10)   # 90
-
-# Handle errors - several approaches:
-
-# Approach 1: Pattern matching (cleanest)
-match unknownRightResult {
-    int then onlyUsesInts(unknownRightResult),  # unknownRightResult is typed as int here
-    ErrorList then handleError(unknownRightResult),  # unknownRightResult is typed as ErrorList here
-}
-
-# Approach 2: Explicit fallback with error handling
-const myInt is unknownRightResult as int else {
-    @panic(&quot;This should never happen in production!&quot;)
-}
-onlyUsesInts(myInt)
-
-# Note type checking in control flow doesn&#39;t implicitly cast unlike match case which is exhaustive
-# this can be done by narrowing within the branch but it is not as ergonomic as match case
-if unknownRightResult @istype int then {
-    onlyUsesInts(unknownRightResult) as int else{}
-} else if unknownRightResult @istype ErrorList then {
-    handleError(unknownRightResult) as ErrorList else{}
-}
-</code></pre></div>
-<h2 id="type-casting-with-as">Type Casting with <code>as</code></h2>
-<p>The <code>as</code> keyword attempts to cast a union to a specific type. If the cast fails, the <code>else</code> block is executed:</p>
-<div class="highlight"><pre><span></span><code>var value :: int | string
-value is &quot;hello&quot;
-
-# This will execute the else block since value is currently a string
-const number is value as int else {
-    return error.ExpectedInteger
-}
-
-# This will succeed since value is now an int
-value is 42
-const doubled is value as int else {
-    return error.ExpectedInteger
-} # doubled is 84
-</code></pre></div>
-<p><code>as</code> can be used for control flow as well, using then blocks:</p>
-<div class="highlight"><pre><span></span><code># using as like an &#39;istype&#39; style conditional
-asThenUnion as int then {
-    var result is 20 + 30
-    result?
-} else {
-    var result is 30 + 40
-    result?
-} # 50
-</code></pre></div>
-<h3 id="common-patterns">Common Patterns</h3>
-<p><strong>Safe extraction with default:</strong></p>
-<div class="highlight"><pre><span></span><code>const result is someUnion as int else {
-    return 0 # Default value if not an int
-}
-</code></pre></div>
-<p><strong>Error handling:</strong></p>
-<div class="highlight"><pre><span></span><code>const number is value as int else {
-    @panic(&quot;This should never happen in production!&quot;)
-}
-</code></pre></div>
-<p><strong>Conditional processing:</strong></p>
-<div class="highlight"><pre><span></span><code>const processed is value as string else {
-    # Handle non-string case
-    return &quot;default&quot;
-}
-</code></pre></div>
-<p>The <code>as</code> keyword is essential for safely working with unions when you need to extract a specific type.</p>
 
 
 
