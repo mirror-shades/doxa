@@ -4,11 +4,11 @@
 
 ### Primitive Types
 
-Doxa has two general catagory of types, atomic and molecular:
+Doxa has two general categories of types, scalar and composite:
 
-### Atomic
+### Scalar
 
-Atomic types are the most basic units of data. Currently Doxa has 3 default number types. Types listed reflect their Zig equivilent. Bigint may be added in the future for increased flexibility.
+Scalar types are the most basic units of data. Currently Doxa has 3 default number types. Types listed reflect their Zig equivilent. Bigint may be added in the future for increased flexibility.
 
 int (64 bit integer)
 float (64 bit floating point)
@@ -19,17 +19,30 @@ enum
 nothing (void)
 
 
-### Molecular
+### Composite
 
-Molecular types are constructed out of atomic types. They are
+Composite types are constructed out of scalar types. They are
 
 array - must be homogenous
 struct - no classes, no inheretance, only composition
 group -  can be used as an umbrella type for enums and structs
 union - can be handled with switch statements and type narrowing, see page on unions for more info
 
-````
+### Arithmetic Operators
 
+Arithmetic follows Python-like semantics. See the [Arithmetic](math.md) page for full details on type promotion, division, and modulo.
+
+| Operator | Name | Example |
+|----------|------|---------|
+| `+` | Addition | `1 + 2` → `3` |
+| `-` | Subtraction | `3 - 1` → `2` |
+| `*` | Multiplication | `2 * 3` → `6` |
+| `**` | Exponentiation | `2 ** 3` → `8` |
+| `/` | Float division | `10 / 4` → `2.5` |
+| `//` | Integer division (floored) | `-7 // 2` → `-4` |
+| `%` | Modulo (floored) | `-7 % 2` → `1` |
+
+Compound assignment (`+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `**=`) is supported for all arithmetic operators.
 
 ### Strings
 
@@ -191,7 +204,7 @@ Be aware assigning an expression without a value will assign `nothing`:
 
 ### Function Return Types
 
-Functions can specify return types using the `returns` syntax. Any type can be returned, including molecular types, but only one type at a time. This is one of the places where type unions can come in handy.
+Functions can specify return types using the `returns` syntax. Any type can be returned, including composite types, but only one type at a time. This is one of the places where type unions can come in handy.
 
 ```doxa
 fn add(a: int, b: int) returns int {

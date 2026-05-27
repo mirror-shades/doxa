@@ -15,6 +15,7 @@ Doxa is a simple to write, highly readible language based on four corned logical
 ## Documentation
 
 - [Language syntax](syntax.md) — primitives, operators, and core language rules
+- [Arithmetic](math.md) — operators, type promotion, division semantics
 - [Alias parameters](alias.md) — `^` parameters for explicit, stack-bound caller mutation
 - [Arrays](arrays.md) — dynamic and fixed-size arrays
 - [Control flow](control.md) — `if`, `match`, `as`, and related branching

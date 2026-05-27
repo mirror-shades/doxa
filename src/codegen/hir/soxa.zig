@@ -1129,6 +1129,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
                 .ToByte => "ToByte",
                 .ToString => "ToString",
                 .Pop => "Pop",
+                .Pack => "Pack",
+                .Unpack => "Unpack",
             };
             try writer.print("    StringOp {s}                 ; String operation\n", .{op_name});
         },

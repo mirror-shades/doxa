@@ -628,6 +628,8 @@ pub const Parser = struct {
         if (std.mem.eql(u8, name, "int")) return .TOINT;
         if (std.mem.eql(u8, name, "float")) return .TOFLOAT;
         if (std.mem.eql(u8, name, "byte")) return .TOBYTE;
+        if (std.mem.eql(u8, name, "pack")) return .PACK;
+        if (std.mem.eql(u8, name, "unpack")) return .UNPACK;
 
         // Control flow
         if (std.mem.eql(u8, name, "panic")) return .PANIC;

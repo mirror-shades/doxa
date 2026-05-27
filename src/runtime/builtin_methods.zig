@@ -39,6 +39,8 @@ pub fn getMethodInfo(method_type: token.TokenType) ?*const BuiltinMethodInfo {
         .PANIC => &METHODS[15],
         .EXIT => &METHODS[16],
         .STD => &METHODS[17],
+        .PACK => &METHODS[18],
+        .UNPACK => &METHODS[19],
         else => null,
     };
 }
@@ -267,6 +269,22 @@ const METHODS = [_]BuiltinMethodInfo{
         .arg_count_max = 0,
         .input_types = &[_]InputTypeSpec{},
         .return_type = T.String,
+        .can_panic = false,
+    },
+    .{
+        .name = "pack",
+        .arg_count_min = 1,
+        .arg_count_max = 1,
+        .input_types = &[_]InputTypeSpec{Input{ .Single = T.Array }},
+        .return_type = T.String,
+        .can_panic = true,
+    },
+    .{
+        .name = "unpack",
+        .arg_count_min = 1,
+        .arg_count_max = 1,
+        .input_types = &[_]InputTypeSpec{Input{ .Single = T.String }},
+        .return_type = T.Array,
         .can_panic = false,
     },
 };

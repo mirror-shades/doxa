@@ -916,6 +916,10 @@ pub const LexicalAnalyzer = struct {
             try self.addToken(.TOFLOAT, .nothing);
         } else if (std.mem.eql(u8, method_name, "byte")) {
             try self.addToken(.TOBYTE, .nothing);
+        } else if (std.mem.eql(u8, method_name, "pack")) {
+            try self.addToken(.PACK, .nothing);
+        } else if (std.mem.eql(u8, method_name, "unpack")) {
+            try self.addToken(.UNPACK, .nothing);
         } else if (std.mem.eql(u8, method_name, "print")) {
             try self.addToken(.PRINT, .nothing);
         } else if (std.mem.eql(u8, method_name, "assert")) {

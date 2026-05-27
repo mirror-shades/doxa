@@ -39,6 +39,8 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare ptr @doxa_enum_to_string(ptr, i64)\n");
             try w.writeAll("declare ptr @doxa_struct_to_string(ptr)\n");
             try w.writeAll("declare ptr @doxa_array_to_string(ptr)\n");
+            try w.writeAll("declare ptr @doxa_pack_bytes(ptr)\n");
+            try w.writeAll("declare ptr @doxa_unpack_bytes(ptr)\n");
             try w.writeAll("declare void @doxa_debug_peek(ptr)\ndeclare void @doxa_peek_string(ptr)\n");
             try w.writeAll("declare void @doxa_print_array_hdr(ptr)\n");
             try w.writeAll("declare i1 @doxa_str_eq(ptr, ptr)\n");
@@ -573,14 +575,79 @@ pub fn Methods(comptime Ctx: type) type {
                                             try w.writeAll(line);
                                         },
                                         .IntDiv => {
-                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                            defer self.allocator.free(line);
-                                            try w.writeAll(line);
+                                            const q = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const r = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const r_nz = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const xor_v = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const sign_diff = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const adj_i1 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const adj = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const l0 = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ q, lhs.name, rhs.name });
+                                            const l1 = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ r, lhs.name, rhs.name });
+                                            const l2 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ r_nz, r });
+                                            const l3 = try std.fmt.allocPrint(self.allocator, "  {s} = xor i64 {s}, {s}\n", .{ xor_v, lhs.name, rhs.name });
+                                            const l4 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, 0\n", .{ sign_diff, xor_v });
+                                            const l5 = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ adj_i1, r_nz, sign_diff });
+                                            const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = sext i1 {s} to i64\n", .{ adj, adj_i1 });
+                                            const l7 = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ name, q, adj });
+                                            defer self.allocator.free(l7);
+                                            defer self.allocator.free(l6);
+                                            defer self.allocator.free(l5);
+                                            defer self.allocator.free(l4);
+                                            defer self.allocator.free(l3);
+                                            defer self.allocator.free(l2);
+                                            defer self.allocator.free(l1);
+                                            defer self.allocator.free(l0);
+                                            try w.writeAll(l0);
+                                            try w.writeAll(l1);
+                                            try w.writeAll(l2);
+                                            try w.writeAll(l3);
+                                            try w.writeAll(l4);
+                                            try w.writeAll(l5);
+                                            try w.writeAll(l6);
+                                            try w.writeAll(l7);
                                         },
                                         .Mod => {
-                                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                            defer self.allocator.free(line);
-                                            try w.writeAll(line);
+                                            const r = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const r_nz = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const xor_v = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const sign_diff = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const adj_i1 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const corr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
+                                            const l0 = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ r, lhs.name, rhs.name });
+                                            const l1 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ r_nz, r });
+                                            const l2 = try std.fmt.allocPrint(self.allocator, "  {s} = xor i64 {s}, {s}\n", .{ xor_v, lhs.name, rhs.name });
+                                            const l3 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, 0\n", .{ sign_diff, xor_v });
+                                            const l4 = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ adj_i1, r_nz, sign_diff });
+                                            const l5 = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 0\n", .{ corr, adj_i1, rhs.name });
+                                            const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, r, corr });
+                                            defer self.allocator.free(l6);
+                                            defer self.allocator.free(l5);
+                                            defer self.allocator.free(l4);
+                                            defer self.allocator.free(l3);
+                                            defer self.allocator.free(l2);
+                                            defer self.allocator.free(l1);
+                                            defer self.allocator.free(l0);
+                                            try w.writeAll(l0);
+                                            try w.writeAll(l1);
+                                            try w.writeAll(l2);
+                                            try w.writeAll(l3);
+                                            try w.writeAll(l4);
+                                            try w.writeAll(l5);
+                                            try w.writeAll(l6);
                                         },
                                         else => unreachable,
                                     }
@@ -1952,6 +2019,24 @@ pub fn Methods(comptime Ctx: type) type {
                                         try stack.append(.{ .name = result_name, .ty = .I64 });
                                     },
                                 }
+                            },
+                            .Pack => {
+                                const arr_ptr = if (arg.ty == .PTR) arg else try self.ensurePointer(w, arg, &id);
+                                const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_pack_bytes(ptr {s})\n", .{ result_name, arr_ptr.name });
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                                try stack.append(.{ .name = result_name, .ty = .PTR });
+                            },
+                            .Unpack => {
+                                const str_ptr = if (arg.ty == .PTR) arg else try self.ensurePointer(w, arg, &id);
+                                const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_unpack_bytes(ptr {s})\n", .{ result_name, str_ptr.name });
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                                try stack.append(.{ .name = result_name, .ty = .PTR, .array_type = HIR.HIRType{ .Byte = {} } });
                             },
                             .Pop => {
                                 const ptr_val = if (arg.ty == .PTR) arg else try self.ensurePointer(w, arg, &id);

@@ -285,7 +285,7 @@ pub fn intDiv(_: anytype, a: i64, b: i64) !i64 {
     if (b == 0) {
         return ErrorList.DivisionByZero;
     }
-    return @divTrunc(a, b);
+    return @divFloor(a, b);
 }
 
 pub fn fastIntMod(_: anytype, a: i64, b: i64) !i64 {

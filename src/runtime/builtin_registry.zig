@@ -30,6 +30,8 @@ pub const BUILTINS = [_]BuiltinInfo{
     .{ .name = "float", .return_type = .Float, .param_count = 1 },
     .{ .name = "byte", .return_type = .Byte, .param_count = 1 },
     .{ .name = "type", .return_type = .String, .param_count = 1 },
+    .{ .name = "pack", .return_type = .String, .param_count = 1 },
+    .{ .name = "unpack", .return_type = .Unknown, .param_count = 1 },
 
     // ── Math ────────────────────────────────────────────────────────────
     .{ .name = "power", .return_type = .Float, .param_count = 2 },

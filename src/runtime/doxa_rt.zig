@@ -186,6 +186,26 @@ pub export fn doxa_array_to_string(hdr: ?*ArrayHeader) callconv(.c) ?[*:0]u8 {
     return allocSentinelString(list.items);
 }
 
+pub export fn doxa_pack_bytes(hdr: ?*ArrayHeader) callconv(.c) ?[*:0]u8 {
+    if (hdr == null) return null;
+    const arr = hdr.?;
+    const buf = std.heap.page_allocator.alloc(u8, arr.len + 1) catch return null;
+    for (0..arr.len) |i| {
+        buf[i] = @intCast(doxa_array_get_i64(arr, i));
+    }
+    buf[arr.len] = 0;
+    return buf[0..arr.len :0].ptr;
+}
+
+pub export fn doxa_unpack_bytes(str: ?[*:0]const u8) callconv(.c) ?*ArrayHeader {
+    const s = if (str) |p| std.mem.span(p) else "";
+    const result = doxa_array_new(1, 1, s.len);
+    for (s, 0..) |ch, i| {
+        doxa_array_set_i64(result, i, ch);
+    }
+    return result;
+}
+
 pub export fn doxa_str_concat(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) ?[*:0]u8 {
     const as = if (a) |p| std.mem.span(p) else "";
     const bs = if (b) |p| std.mem.span(p) else "";
