@@ -221,6 +221,8 @@ pub const rules = blk: {
     r.set(.TOINT, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.TOFLOAT, .{ .prefix = internalCallExpr, .precedence = .CALL });
     r.set(.TOBYTE, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.PACK, .{ .prefix = internalCallExpr, .precedence = .CALL });
+    r.set(.UNPACK, .{ .prefix = internalCallExpr, .precedence = .CALL });
 
     // I/O
     r.set(.PRINT, .{ .prefix = internalCallExpr, .precedence = .CALL });

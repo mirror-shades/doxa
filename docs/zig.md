@@ -6,7 +6,7 @@
 - `const X = @import("...");`
 - `fn ... { ... }`
 
-2. Function signatures are restricted to Doxa-compatible atomic types:
+2. Function signatures are restricted to Doxa-compatible scalar types:
 - Doxa `int` <-> Zig `i64`
 - Doxa `float` <-> Zig `f64`
 - Doxa `byte` <-> Zig `u8`

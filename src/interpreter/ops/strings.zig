@@ -194,6 +194,39 @@ pub fn exec(vm: anytype, s: anytype) !void {
         try vm.stack.push(HIRFrame.initByte(result));
         return;
     }
+    if (s.op == .Pack) {
+        const arr = switch (val.value) {
+            .array => |a| a,
+            else => return vm.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@pack: expected byte array", .{}),
+        };
+        const bytes = try vm.runtimeAllocator().alloc(u8, arr.length);
+        for (0..arr.length) |i| {
+            bytes[i] = switch (arr.elements[i]) {
+                .byte => |b| b,
+                else => return vm.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@pack: array element is not a byte", .{}),
+            };
+        }
+        try vm.stack.push(HIRFrame.initString(bytes));
+        return;
+    }
+    if (s.op == .Unpack) {
+        const str = switch (val.value) {
+            .string => |s_val| s_val,
+            else => return vm.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@unpack: expected string", .{}),
+        };
+        const elements = try vm.runtimeAllocator().alloc(HIRValue, str.len);
+        for (str, 0..) |byte, i| {
+            elements[i] = HIRValue{ .byte = byte };
+        }
+        const array = HIRValue{ .array = HIRArray{
+            .elements = elements,
+            .element_type = .Byte,
+            .capacity = @intCast(str.len),
+            .length = @intCast(str.len),
+        } };
+        try vm.stack.push(HIRFrame.initFromHIRValue(array));
+        return;
+    }
 
     switch (val.value) {
         .string => |s_val| {

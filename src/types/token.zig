@@ -91,6 +91,8 @@ pub const TokenType = enum {
     TOINT, // @int         - convert to int (panics on failure)
     TOFLOAT, // @float       - convert to float (panics on failure)
     TOBYTE, // @byte       - convert to byte (panics on failure)
+    PACK, // @pack       - pack byte[] → string
+    UNPACK, // @unpack     - unpack string → byte[]
     INSERT, // @insert      - insert into string/array at index
     REMOVE, // @remove      - remove from string/array at index
     SLICE, // @slice       - get substring/subarray

@@ -507,6 +507,14 @@ pub const CallsHandler = struct {
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString } });
+        } else if (std.mem.eql(u8, name, "pack")) {
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.generator.instructions.append(.{ .StringOp = .{ .op = .Pack } });
+        } else if (std.mem.eql(u8, name, "unpack")) {
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.generator.instructions.append(.{ .StringOp = .{ .op = .Unpack } });
         } else if (std.mem.eql(u8, name, "byte")) {
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
