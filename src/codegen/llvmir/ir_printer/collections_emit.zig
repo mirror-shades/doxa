@@ -567,7 +567,7 @@ pub fn Methods(comptime Ctx: type) type {
                             const l3 = try std.fmt.allocPrint(self.allocator, "  {s} = xor i64 {s}, {s}\n", .{ xor_v, current_bits.name, value_bits.name });
                             const l4 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, 0\n", .{ sign_diff, xor_v });
                             const l5 = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ adj_i1, r_nz, sign_diff });
-                            const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = sext i1 {s} to i64\n", .{ adj, adj_i1 });
+                            const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i64\n", .{ adj, adj_i1 });
                             defer self.allocator.free(l6);
                             defer self.allocator.free(l5);
                             defer self.allocator.free(l4);

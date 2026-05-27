@@ -551,13 +551,13 @@ pub fn compileInlineZigModules(
     parser: *Parser,
     reporter: *Reporter,
     zig_exe_path: []const u8,
-    output_dir: []const u8,
+    cache_dir: []const u8,
 ) !?std.StringHashMap(VM.ZigRuntimeModule) {
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
     if (zig_decls.len == 0) return null;
 
-    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{output_dir});
+    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{cache_dir});
     defer memoryManager.getAllocator().free(zig_cache_path);
     try std.fs.cwd().makePath(zig_cache_path);
 
@@ -584,14 +584,14 @@ pub fn compileInlineZigObjects(
     parser: *Parser,
     reporter: *Reporter,
     zig_exe_path: []const u8,
-    output_dir: []const u8,
+    cache_dir: []const u8,
 ) ![]const []const u8 {
     const Sha256 = std.crypto.hash.sha2.Sha256;
 
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
 
-    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{output_dir});
+    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{cache_dir});
     defer memoryManager.getAllocator().free(zig_cache_path);
     try std.fs.cwd().makePath(zig_cache_path);
 
