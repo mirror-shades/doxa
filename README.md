@@ -86,7 +86,6 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - finish standard lib
 - sandbox zig execution
 - add better bounding to lsp mode
-- string optimizations (some kind of immutable view type?)
 
 ## Example
 
