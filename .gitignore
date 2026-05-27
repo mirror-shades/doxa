@@ -1,7 +1,5 @@
 *
-
 !*/
-
 !docs/**
 !external/**
 !scripts/**
@@ -11,6 +9,8 @@
 test/out/
 !.github/**
 
+.doxa-cache/
+bin/
 !.gitignore
 !build.zig
 !build.zig.zon

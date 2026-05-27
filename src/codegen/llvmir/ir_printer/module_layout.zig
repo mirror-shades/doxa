@@ -553,6 +553,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 } else {
                                     const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                                     id += 1;
+                                    var pushed_name: ?[]const u8 = null;
                                     switch (a.op) {
                                         .Add => {
                                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
@@ -589,14 +590,16 @@ pub fn Methods(comptime Ctx: type) type {
                                             id += 1;
                                             const adj = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                                             id += 1;
+                                            const result_reg = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
                                             const l0 = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ q, lhs.name, rhs.name });
                                             const l1 = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ r, lhs.name, rhs.name });
                                             const l2 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ r_nz, r });
                                             const l3 = try std.fmt.allocPrint(self.allocator, "  {s} = xor i64 {s}, {s}\n", .{ xor_v, lhs.name, rhs.name });
                                             const l4 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, 0\n", .{ sign_diff, xor_v });
                                             const l5 = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ adj_i1, r_nz, sign_diff });
-                                            const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = sext i1 {s} to i64\n", .{ adj, adj_i1 });
-                                            const l7 = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ name, q, adj });
+                                            const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i64\n", .{ adj, adj_i1 });
+                                            const l7 = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ result_reg, q, adj });
                                             defer self.allocator.free(l7);
                                             defer self.allocator.free(l6);
                                             defer self.allocator.free(l5);
@@ -613,6 +616,7 @@ pub fn Methods(comptime Ctx: type) type {
                                             try w.writeAll(l5);
                                             try w.writeAll(l6);
                                             try w.writeAll(l7);
+                                            pushed_name = result_reg;
                                         },
                                         .Mod => {
                                             const r = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -627,13 +631,15 @@ pub fn Methods(comptime Ctx: type) type {
                                             id += 1;
                                             const corr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                                             id += 1;
+                                            const result_reg = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                            id += 1;
                                             const l0 = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ r, lhs.name, rhs.name });
                                             const l1 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ r_nz, r });
                                             const l2 = try std.fmt.allocPrint(self.allocator, "  {s} = xor i64 {s}, {s}\n", .{ xor_v, lhs.name, rhs.name });
                                             const l3 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, 0\n", .{ sign_diff, xor_v });
                                             const l4 = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ adj_i1, r_nz, sign_diff });
                                             const l5 = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 0\n", .{ corr, adj_i1, rhs.name });
-                                            const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, r, corr });
+                                            const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ result_reg, r, corr });
                                             defer self.allocator.free(l6);
                                             defer self.allocator.free(l5);
                                             defer self.allocator.free(l4);
@@ -648,10 +654,15 @@ pub fn Methods(comptime Ctx: type) type {
                                             try w.writeAll(l4);
                                             try w.writeAll(l5);
                                             try w.writeAll(l6);
+                                            pushed_name = result_reg;
                                         },
                                         else => unreachable,
                                     }
-                                    try stack.append(.{ .name = name, .ty = .I64 });
+                                    if (pushed_name) |pn| {
+                                        try stack.append(.{ .name = pn, .ty = .I64 });
+                                    } else {
+                                        try stack.append(.{ .name = name, .ty = .I64 });
+                                    }
                                 }
                             },
                             .Float => {
