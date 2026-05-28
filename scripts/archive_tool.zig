@@ -59,16 +59,18 @@ fn unpackZigDependency(
     defer destination_dir.close();
 
     if (destination_dir.access("zig", .{})) |_| {
-        try destination_dir.deleteTree("zig");
+        return;
     } else |err| switch (err) {
         error.FileNotFound => {},
-        else => return err,
+        else => return,
     }
+
     if (destination_dir.access(extracted_folder_name, .{})) |_| {
-        try destination_dir.deleteTree(extracted_folder_name);
+        destination_dir.rename(extracted_folder_name, "zig") catch return;
+        return;
     } else |err| switch (err) {
         error.FileNotFound => {},
-        else => return err,
+        else => return,
     }
 
     if (std.mem.endsWith(u8, archive_path, ".zip")) {

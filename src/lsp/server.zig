@@ -345,7 +345,7 @@ const Server = struct {
 
         try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
         try writeJsonValue(&writer, id);
-        try writer.writeAll(",\"result\":{\"capabilities\":{\"textDocumentSync\":{\"openClose\":true,\"change\":1}},\"serverInfo\":{\"name\":\"Doxa\"}}}");
+        try writer.writeAll(",\"result\":{\"capabilities\":{\"textDocumentSync\":{\"openClose\":true,\"change\":1},\"completionProvider\":{\"triggerCharacters\":[\"@\"]},\"hoverProvider\":true},\"serverInfo\":{\"name\":\"Doxa\"}}}");
 
         const payload = try buffer.toOwnedSlice();
         defer self.allocator.free(payload);

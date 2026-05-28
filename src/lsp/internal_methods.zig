@@ -88,6 +88,21 @@ const METHODS = &[_]Method{
         .documentation = "**Input**: string\n**Output**: never\nAlways halts the program with the given message.",
     },
     .{
+        .label = "@exit",
+        .detail = "Terminate program execution",
+        .documentation = "**Input**: int\n**Output**: never\nExit the program with the given status code.",
+    },
+    .{
+        .label = "@pack",
+        .detail = "Pack data into a binary format",
+        .documentation = "**Input**: any\n**Output**: string\nSerialize a value into a compact binary representation.",
+    },
+    .{
+        .label = "@unpack",
+        .detail = "Unpack binary data back into a value",
+        .documentation = "**Input**: string\n**Output**: any\nDeserialize a binary string back into its original value.",
+    },
+    .{
         .label = "@std",
         .detail = "Return the path to the standard library root module",
         .documentation = "**Input**: none\n**Output**: string\nReturns the filesystem path to std.doxa. Useful for module imports.",
