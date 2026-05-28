@@ -45,6 +45,22 @@ function sliceOutOfBounds(start :: int, length :: int, total :: int) returns tet
     return false
 }
 
+
+public function push(^collection :: string | int, value :: string | int) returns nothing | StdError {
+    match collection {
+        string then {
+            value as string then {
+                pushString(^collection, value)
+            } else return StdError.Common.Unexpected
+        }
+        int then {
+            value as int then {
+                pushInt(^collection, value)
+            } else return StdError.Common.Unexpected
+        }
+    }
+}
+
 public function pushString(^collection :: string, value :: string) {
     @push(collection, value)
 }
