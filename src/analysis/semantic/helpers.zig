@@ -1435,43 +1435,4 @@ pub fn getLocationFromBase(base: ast.Base) Reporting.Location {
     return base.location();
 }
 
-pub fn hirTypeToAstType(hir_type: HIRType) ast.Type {
-    return switch (hir_type) {
-        .Int => .Int,
-        .Byte => .Byte,
-        .Float => .Float,
-        .String => .String,
-        .Tetra => .Tetra,
-        .Nothing => .Nothing,
-        .Array => .Array,
-        .Struct => .Struct,
-        .Map => .Map,
-        .Enum => .Enum,
-        .Function => .Function,
-        .Union => .Union,
-        .Unknown => .Nothing,
-    };
-}
 
-pub fn astTypeToHirType(ast_type: ast.Type) HIRType {
-    return switch (ast_type) {
-        .Int => .Int,
-        .Byte => .Byte,
-        .Float => .Float,
-        .String => .String,
-        .Tetra => .Tetra,
-        .Nothing => .Nothing,
-        .Array => .Array,
-        .Struct => .Struct,
-        .Map => .Map,
-        .Enum => .Enum,
-        .Function => .Function,
-        .Union => .Union,
-        .Custom => .Unknown, // Custom types map to Unknown in HIR
-    };
-}
-
-fn convertTypeInfoToHirType(type_info: *ast.TypeInfo, allocator: std.mem.Allocator) !HIRType {
-    _ = allocator; // May be needed for complex type conversions in the future
-    return astTypeToHirType(type_info.base);
-}

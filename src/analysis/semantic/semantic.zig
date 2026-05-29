@@ -182,72 +182,7 @@ pub const SemanticAnalyzer = struct {
         return current;
     }
 
-    // remove this
-    // pub const CustomTypeInfo = struct {
-    //     name: []const u8,
-    //     kind: CustomTypeKind,
-    //     enum_variants: ?[]EnumVariant = null,
-    //     struct_fields: ?[]StructField = null,
-    //     is_internal: bool = false,
 
-    //     pub const CustomTypeKind = enum {
-    //         Struct,
-    //         Enum,
-    //     };
-
-    //     pub const EnumVariant = struct {
-    //         name: []const u8,
-    //         index: u32,
-    //     };
-
-    //     pub const StructField = struct {
-    //         name: []const u8,
-    //         field_type_info: *ast.TypeInfo,
-    //         custom_type_name: ?[]const u8 = null, // For custom types like Person
-    //         index: u32,
-    //         is_public: bool = false,
-    //     };
-    // };
-
-    // Helper function to convert HIRType to ast.Type
-    fn hirTypeToAstType(self: *SemanticAnalyzer, hir_type: HIRType) ast.Type {
-        _ = self;
-        return switch (hir_type) {
-            .Int => .Int,
-            .Byte => .Byte,
-            .Float => .Float,
-            .String => .String,
-            .Tetra => .Tetra,
-            .Nothing => .Nothing,
-            .Array => .Array,
-            .Struct => .Struct,
-            .Map => .Map,
-            .Enum => .Enum,
-            .Function => .Function,
-            .Union => .Union,
-            .Unknown => .Nothing,
-        };
-    }
-
-    // Helper function to convert ast.Type to HIRType
-    fn astTypeToHirType(self: *SemanticAnalyzer, ast_type: ast.Type) HIRType {
-        _ = self;
-        return switch (ast_type) {
-            .Int => .Int,
-            .Byte => .Byte,
-            .Float => .Float,
-            .String => .String,
-            .Tetra => .Tetra,
-            .Nothing => .Nothing,
-            .Array => .Array,
-            .Struct => .Struct,
-            .Map => .Map,
-            .Enum => .Enum,
-            .Function => .Function,
-            .Custom => .Struct, // Custom types are typically structs
-            .Union => .Unknown, // Unions need special handling - not supported in ast.Type
-        };
-    }
 
     // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo
     pub fn convertCustomTypeInfo(semantic_type: CustomTypeInfo, allocator: std.mem.Allocator) !HIRTypeSystem.TypeSystem.CustomTypeInfo {
