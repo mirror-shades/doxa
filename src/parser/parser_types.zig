@@ -1190,13 +1190,6 @@ pub const Parser = struct {
         return self.peek().type == token_type;
     }
 
-    fn isAlternateToken(token_type: token.TokenType) bool {
-        return switch (token_type) {
-            .ASSIGN_SYMBOL, .ASSIGN_KEYWORD, .EQUALITY_SYMBOL, .EQUALITY_KEYWORD, .AND_SYMBOL, .AND_KEYWORD, .OR_SYMBOL, .OR_KEYWORD, .WHERE_SYMBOL, .WHERE_KEYWORD, .FN_KEYWORD, .FUNCTION_KEYWORD => true,
-            else => false,
-        };
-    }
-
     pub fn reportCircularImport(self: *Parser, current_module: []const u8) ErrorList!ast.ModuleInfo {
         return module_resolver.reportCircularImport(self, current_module);
     }

@@ -115,13 +115,6 @@ pub const Parser = struct {
         return self.peek().type == token_type;
     }
 
-    fn isAlternateToken(token_type: token.TokenType) bool {
-        return switch (token_type) {
-            .ASSIGN_SYMBOL, .ASSIGN_KEYWORD, .EQUALITY_SYMBOL, .EQUALITY_KEYWORD, .AND_SYMBOL, .AND_KEYWORD, .OR_SYMBOL, .OR_KEYWORD, .WHERE_SYMBOL, .WHERE_KEYWORD, .FN_KEYWORD, .FUNCTION_KEYWORD => true,
-            else => false,
-        };
-    }
-
     fn reportWarning(self: *Parser, message: []const u8) void {
         _ = self;
         var reporting = Reporting.init();
