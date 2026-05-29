@@ -24,13 +24,23 @@ fn getLocationFromBase(base: ast.Base) Location {
     if (base.span) |span| {
         return span.location;
     } else {
-        // Synthetic node - return default location
         return .{
             .file = "",
             .file_uri = null,
-            .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
+            .range = .{
+                .start_line = 0,
+                .start_col = 0,
+                .end_line = 0,
+                .end_col = 0,
+            },
         };
     }
+}
+
+fn promoteNumericTypes(left_base: ast.Type, right_base: ast.Type) ast.Type {
+    if (left_base == .Float or right_base == .Float) return .Float;
+    if (left_base == .Int or right_base == .Int) return .Int;
+    return .Byte;
 }
 
 /// Context for type analysis operations
@@ -183,15 +193,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                 } else if (left_type.base == .Int or left_type.base == .Float or left_type.base == .Byte or
                     right_type.base == .Int or right_type.base == .Float or right_type.base == .Byte)
                 {
-                    // Numeric addition with type promotion
-                    // Type promotion rules: Float > Int > Byte
-                    if (left_type.base == .Float or right_type.base == .Float) {
-                        type_info.* = .{ .base = .Float };
-                    } else if (left_type.base == .Int or right_type.base == .Int) {
-                        type_info.* = .{ .base = .Int };
-                    } else {
-                        type_info.* = .{ .base = .Byte };
-                    }
+                    type_info.* = .{ .base = promoteNumericTypes(left_type.base, right_type.base) };
                 } else {
                     ctx.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
@@ -208,14 +210,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                 if (left_type.base == .Int or left_type.base == .Float or left_type.base == .Byte or
                     right_type.base == .Int or right_type.base == .Float or right_type.base == .Byte)
                 {
-                    // Type promotion rules: Float > Int > Byte
-                    if (left_type.base == .Float or right_type.base == .Float) {
-                        type_info.* = .{ .base = .Float };
-                    } else if (left_type.base == .Int or right_type.base == .Int) {
-                        type_info.* = .{ .base = .Int };
-                    } else {
-                        type_info.* = .{ .base = .Byte };
-                    }
+                    type_info.* = .{ .base = promoteNumericTypes(left_type.base, right_type.base) };
                 } else {
                     ctx.reporter.reportCompileError(
                         getLocationFromBase(expr.base),

@@ -155,7 +155,7 @@ const CachedMethod = struct {
 
 const CachedType = struct {
     name: []const u8,
-    kind: CustomTypeInfo.CustomTypeKind,
+    kind: Types.CustomTypeKind,
     fields: []CachedField,
     methods: []CachedMethod,
     enum_variants: [][]const u8,

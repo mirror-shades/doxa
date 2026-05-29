@@ -206,6 +206,36 @@ pub const CustomTypeInstanceData = union {
     enum_instance: *HIREnum,
 };
 
+pub const CustomTypeKind = enum {
+    Struct,
+    Enum,
+    Group,
+};
+
+pub const GroupMemberSource = struct {
+    qualifier: []const u8,
+    source_name: []const u8,
+};
+
+pub const EnumVariant = struct {
+    name: []const u8,
+    index: u32,
+};
+
+pub fn enumVariantIndex(variants: []const EnumVariant, variant_name: []const u8) ?u32 {
+    for (variants) |variant| {
+        if (std.mem.eql(u8, variant.name, variant_name)) return variant.index;
+    }
+    return null;
+}
+
+pub fn structFieldIndex(fields: anytype, field_name: []const u8) ?u32 {
+    for (fields) |field| {
+        if (std.mem.eql(u8, field.name, field_name)) return field.index;
+    }
+    return null;
+}
+
 pub const CustomTypeInfo = struct {
     name: []const u8,
     kind: CustomTypeKind,
@@ -213,42 +243,13 @@ pub const CustomTypeInfo = struct {
     struct_fields: ?[]StructField = null,
     group_members: ?[]GroupMemberSource = null,
 
-    // KEEP IN SYNC with codegen/hir/type_system.zig CustomTypeInfo
-    pub const CustomTypeKind = enum {
-        Struct,
-        Enum,
-        Group,
-    };
-
-    pub const GroupMemberSource = struct {
-        qualifier: []const u8,
-        source_name: []const u8,
-    };
-
-    pub const EnumVariant = struct {
-        name: []const u8,
-        index: u32,
-    };
-
     pub fn getEnumVariantIndex(self: *const CustomTypeInfo, variant_name: []const u8) ?u32 {
         if ((self.kind != .Enum and self.kind != .Group) or self.enum_variants == null) return null;
-
-        for (self.enum_variants.?) |variant| {
-            if (std.mem.eql(u8, variant.name, variant_name)) {
-                return variant.index;
-            }
-        }
-        return null;
+        return enumVariantIndex(self.enum_variants.?, variant_name);
     }
 
     pub fn getStructFieldIndex(self: *const CustomTypeInfo, field_name: []const u8) ?u32 {
         if (self.kind != .Struct or self.struct_fields == null) return null;
-
-        for (self.struct_fields.?) |field| {
-            if (std.mem.eql(u8, field.name, field_name)) {
-                return field.index;
-            }
-        }
-        return null;
+        return structFieldIndex(self.struct_fields.?, field_name);
     }
 };

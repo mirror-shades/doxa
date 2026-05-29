@@ -110,57 +110,6 @@ pub fn exec(vm: anytype, a: anytype) !void {
         return;
     }
 
-    if (false) {
-        const left_float = switch (left.value) {
-            .int => |i| @as(f64, @floatFromInt(i)),
-            .byte => |u| @as(f64, @floatFromInt(u)),
-            .float => |f| f,
-            .string => |s| blk: {
-                const parsed = std.fmt.parseFloat(f64, s) catch {
-                    return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
-                };
-                break :blk parsed;
-            },
-            else => {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(left.value)});
-            },
-        };
-
-        const right_float = switch (right.value) {
-            .int => |i| @as(f64, @floatFromInt(i)),
-            .byte => |u| @as(f64, @floatFromInt(u)),
-            .float => |f| f,
-            .string => |s| blk: {
-                const parsed = std.fmt.parseFloat(f64, s) catch {
-                    return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert string '{s}' to float for arithmetic", .{s});
-                };
-                break :blk parsed;
-            },
-            else => {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot convert {s} to float for arithmetic", .{@tagName(right.value)});
-            },
-        };
-
-        var result: f64 = 0.0;
-        switch (a.op) {
-            .Add => result = left_float + right_float,
-            .Sub => result = left_float - right_float,
-            .Mul => result = left_float * right_float,
-            .Div => {
-                if (right_float == 0.0) {
-                    return ErrorList.DivisionByZero;
-                } else result = left_float / right_float;
-            },
-            .Mod => result = @mod(left_float, right_float),
-            .Pow => {
-                result = std.math.pow(f64, left_float, right_float);
-            },
-        }
-
-        try vm.stack.push(HIRFrame.initFloat(result));
-        return;
-    }
-
     if (target_rank == 1) {
         const left_byte = switch (left.value) {
             .byte => |u| u,
