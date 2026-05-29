@@ -72,7 +72,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     // NEW: Register a custom type during semantic analysis
-    fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: types.CustomTypeInfo.CustomTypeKind) !void {
+    fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: types.CustomTypeKind) !void {
         const custom_type = types.CustomTypeInfo{
             .name = try self.allocator.dupe(u8, type_name),
             .kind = kind,
@@ -82,9 +82,9 @@ pub const SemanticAnalyzer = struct {
 
     // NEW: Register enum with variants
     fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants: []const []const u8) !void {
-        var enum_variants = try self.allocator.alloc(types.CustomTypeInfo.EnumVariant, variants.len);
+        var enum_variants = try self.allocator.alloc(types.EnumVariant, variants.len);
         for (variants, 0..) |variant_name, index| {
-            enum_variants[index] = types.CustomTypeInfo.EnumVariant{
+            enum_variants[index] = types.EnumVariant{
                 .name = try self.allocator.dupe(u8, variant_name),
                 .index = @intCast(index),
             };

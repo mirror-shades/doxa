@@ -1152,7 +1152,7 @@ pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fiel
     try self.memory.registerCustomType(mem_struct);
 }
 
-pub fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: CustomTypeInfo.CustomTypeKind) !void {
+pub fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: Types.CustomTypeKind) !void {
     const custom_type = CustomTypeInfo{
         .name = try self.allocator.dupe(u8, type_name),
         .kind = kind,
@@ -1161,9 +1161,9 @@ pub fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: 
 }
 
 pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants: []const []const u8) !void {
-    var enum_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, variants.len);
+    var enum_variants = try self.allocator.alloc(Types.EnumVariant, variants.len);
     for (variants, 0..) |variant_name, index| {
-        enum_variants[index] = CustomTypeInfo.EnumVariant{
+        enum_variants[index] = Types.EnumVariant{
             .name = try self.allocator.dupe(u8, variant_name),
             .index = @intCast(index),
         };
@@ -1178,9 +1178,9 @@ pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants
     try self.custom_types.put(enum_name, custom_type);
 
     // Mirror to VM memory
-    var mem_enum_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, variants.len);
+    var mem_enum_variants = try self.allocator.alloc(Types.EnumVariant, variants.len);
     for (variants, 0..) |variant_name, i| {
-        mem_enum_variants[i] = CustomTypeInfo.EnumVariant{
+        mem_enum_variants[i] = Types.EnumVariant{
             .name = try self.allocator.dupe(u8, variant_name),
             .index = @intCast(i),
         };
@@ -1214,7 +1214,7 @@ pub fn registerGroupType(self: *SemanticAnalyzer, group_name: []const u8, member
         return;
     }
 
-    var member_infos = try self.allocator.alloc(CustomTypeInfo.GroupMemberSource, members.len);
+    var member_infos = try self.allocator.alloc(Types.GroupMemberSource, members.len);
     errdefer self.allocator.free(member_infos);
 
     for (members, 0..) |member, mi| {
@@ -1348,7 +1348,7 @@ fn flattenGroupMembers(
 
 fn flattenGroupMemberSources(
     self: *SemanticAnalyzer,
-    members: []const CustomTypeInfo.GroupMemberSource,
+    members: []const Types.GroupMemberSource,
     flat: *std.ArrayListUnmanaged(GroupTable.Member),
     visited: *std.StringHashMapUnmanaged(void),
     seen: *std.AutoHashMapUnmanaged(MemberKey, void),

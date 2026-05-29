@@ -3,6 +3,7 @@ const ast = @import("../../ast/ast.zig");
 const Token = @import("../../types/token.zig").Token;
 const TokenType = @import("../../types/token.zig").TokenType;
 const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
+const Types = @import("../../types/types.zig");
 const SoxaTypes = @import("soxa_types.zig");
 const HIRType = SoxaTypes.HIRType;
 const StructId = SoxaTypes.StructId;
@@ -31,28 +32,15 @@ pub const TypeSystem = struct {
     function_signatures: ?*const std.StringHashMap(FunctionInfo) = null,
 
     pub const CustomTypeInfo = struct {
-        // KEEP IN SYNC with types/types.zig CustomTypeInfo
         name: []const u8,
-        kind: CustomTypeKind,
-        enum_variants: ?[]EnumVariant = null,
+        kind: Types.CustomTypeKind,
+        enum_variants: ?[]Types.EnumVariant = null,
         struct_fields: ?[]StructField = null,
-        group_members: ?[]GroupMemberSource = null,
+        group_members: ?[]Types.GroupMemberSource = null,
 
-        pub const CustomTypeKind = enum {
-            Struct,
-            Enum,
-            Group,
-        };
-
-        pub const GroupMemberSource = struct {
-            qualifier: []const u8,
-            source_name: []const u8,
-        };
-
-        pub const EnumVariant = struct {
-            name: []const u8,
-            index: u32,
-        };
+        pub const CustomTypeKind = Types.CustomTypeKind;
+        pub const GroupMemberSource = Types.GroupMemberSource;
+        pub const EnumVariant = Types.EnumVariant;
 
         pub const StructField = struct {
             name: []const u8,
@@ -65,24 +53,12 @@ pub const TypeSystem = struct {
             if ((self.kind != .Enum and self.kind != .Group) or self.enum_variants == null) {
                 return null;
             }
-
-            for (self.enum_variants.?) |variant| {
-                if (std.mem.eql(u8, variant.name, variant_name)) {
-                    return variant.index;
-                }
-            }
-            return null;
+            return Types.enumVariantIndex(self.enum_variants.?, variant_name);
         }
 
         pub fn getStructFieldIndex(self: *const CustomTypeInfo, field_name: []const u8) ?u32 {
             if (self.kind != .Struct or self.struct_fields == null) return null;
-
-            for (self.struct_fields.?) |field| {
-                if (std.mem.eql(u8, field.name, field_name)) {
-                    return field.index;
-                }
-            }
-            return null;
+            return Types.structFieldIndex(self.struct_fields.?, field_name);
         }
     };
 
