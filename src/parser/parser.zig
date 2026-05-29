@@ -26,21 +26,7 @@ fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
         const first_element = try self.parsePrecedence(.NONE) orelse return error.ExpectedExpression;
         try elements.append(first_element);
 
-        const first_type = switch (first_element.*) {
-            .Literal => |lit| @as(token.TokenType, switch (lit) {
-                .int => .INT_TYPE,
-                .float => .FLOAT_TYPE,
-                .string => .STRING_TYPE,
-                .tetra => .TETRA_TYPE,
-                .nothing => .NOTHING,
-                .array => .ARRAY_TYPE,
-                .struct_value => .STRUCT_TYPE,
-                .function => .FUNCTION_KEYWORD,
-                .enum_variant => .ENUM_TYPE,
-                .map => .MAP_TYPE,
-            }),
-            else => .IDENTIFIER,
-        };
+        const first_type = literalTokenType(first_element.*);
 
         while (self.peek().type == .COMMA) {
             self.advance();
@@ -48,21 +34,7 @@ fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
 
             const element = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
 
-            const element_type = switch (element.*) {
-                .Literal => |lit| @as(token.TokenType, switch (lit) {
-                    .int => .INT_TYPE,
-                    .float => .FLOAT_TYPE,
-                    .string => .STRING_TYPE,
-                    .tetra => .TETRA_TYPE,
-                    .nothing => .NOTHING,
-                    .array => .ARRAY_TYPE,
-                    .struct_value => .STRUCT_TYPE,
-                    .function => .FUNCTION_KEYWORD,
-                    .enum_variant => .ENUM_TYPE,
-                    .map => .MAP_TYPE,
-                }),
-                else => .IDENTIFIER,
-            };
+            const element_type = literalTokenType(element.*);
 
             if (element_type != first_type) {
                 element.deinit(self.allocator);
@@ -82,6 +54,24 @@ fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const array_expr = try self.allocator.create(ast.Expr);
     array_expr.* = .{ .Array = try elements.toOwnedSlice() };
     return array_expr;
+}
+
+fn literalTokenType(expr: ast.Expr) token.TokenType {
+    return switch (expr) {
+        .Literal => |lit| switch (lit) {
+            .int => .INT_TYPE,
+            .float => .FLOAT_TYPE,
+            .string => .STRING_TYPE,
+            .tetra => .TETRA_TYPE,
+            .nothing => .NOTHING,
+            .array => .ARRAY_TYPE,
+            .struct_value => .STRUCT_TYPE,
+            .function => .FUNCTION_KEYWORD,
+            .enum_variant => .ENUM_TYPE,
+            .map => .MAP_TYPE,
+        },
+        else => .IDENTIFIER,
+    };
 }
 
 fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

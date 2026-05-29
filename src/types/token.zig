@@ -216,3 +216,28 @@ pub fn convertTokenTypeToTypeInfo(token_type: TokenType) ast.TypeInfo {
         .ARRAY => ast.TypeInfo{ .base = .Array, .is_mutable = true },
     };
 }
+
+pub fn methodNameToTokenType(name: []const u8) ?TokenType {
+    if (std.mem.eql(u8, name, "type")) return .TYPE;
+    if (std.mem.eql(u8, name, "length")) return .LENGTH;
+    if (std.mem.eql(u8, name, "slice")) return .SLICE;
+    if (std.mem.eql(u8, name, "push")) return .PUSH;
+    if (std.mem.eql(u8, name, "pop")) return .POP;
+    if (std.mem.eql(u8, name, "insert")) return .INSERT;
+    if (std.mem.eql(u8, name, "remove")) return .REMOVE;
+    if (std.mem.eql(u8, name, "clear")) return .CLEAR;
+    if (std.mem.eql(u8, name, "find")) return .FIND;
+    if (std.mem.eql(u8, name, "string")) return .TOSTRING;
+    if (std.mem.eql(u8, name, "int")) return .TOINT;
+    if (std.mem.eql(u8, name, "float")) return .TOFLOAT;
+    if (std.mem.eql(u8, name, "byte")) return .TOBYTE;
+    if (std.mem.eql(u8, name, "pack")) return .PACK;
+    if (std.mem.eql(u8, name, "unpack")) return .UNPACK;
+    if (std.mem.eql(u8, name, "print")) return .PRINT;
+    if (std.mem.eql(u8, name, "assert")) return .ASSERT;
+    if (std.mem.eql(u8, name, "panic")) return .PANIC;
+    if (std.mem.eql(u8, name, "exit")) return .EXIT;
+    if (std.mem.eql(u8, name, "std")) return .STD;
+
+    return null;
+}

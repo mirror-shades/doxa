@@ -488,10 +488,6 @@ pub const LexicalAnalyzer = struct {
         return c >= '0' and c <= '9';
     }
 
-    fn isOperator(c: u8) bool {
-        return c == '+' or c == '-' or c == '*' or c == '/' or c == '%' or c == '!' or c == '=' or c == '<' or c == '>';
-    }
-
     fn isWhitespace(c: u8) bool {
         return c == ' ' or c == '\r' or c == '\t' or c == '\n';
     }
@@ -581,14 +577,6 @@ pub const LexicalAnalyzer = struct {
         } else {
             try self.addToken(.IDENTIFIER, .{ .string = text });
         }
-    }
-
-    fn tetra(self: *LexicalAnalyzer) !void {
-        try self.addToken(.TETRA, .{ .tetra = self.source[self.start..self.current] });
-    }
-
-    fn parenthesis(self: *LexicalAnalyzer) !void {
-        try self.addMinimalToken(.LEFT_PAREN);
     }
 
     fn string(self: *LexicalAnalyzer) !void {
@@ -890,49 +878,8 @@ pub const LexicalAnalyzer = struct {
         const method_name = self.getMethodName();
         self.start = name_start;
 
-        if (std.mem.eql(u8, method_name, "type")) {
-            try self.addToken(.TYPE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "length")) {
-            try self.addToken(.LENGTH, .nothing);
-        } else if (std.mem.eql(u8, method_name, "slice")) {
-            try self.addToken(.SLICE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "push")) {
-            try self.addToken(.PUSH, .nothing);
-        } else if (std.mem.eql(u8, method_name, "pop")) {
-            try self.addToken(.POP, .nothing);
-        } else if (std.mem.eql(u8, method_name, "insert")) {
-            try self.addToken(.INSERT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "remove")) {
-            try self.addToken(.REMOVE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "clear")) {
-            try self.addToken(.CLEAR, .nothing);
-        } else if (std.mem.eql(u8, method_name, "find")) {
-            try self.addToken(.FIND, .nothing);
-        } else if (std.mem.eql(u8, method_name, "string")) {
-            try self.addToken(.TOSTRING, .nothing);
-        } else if (std.mem.eql(u8, method_name, "int")) {
-            try self.addToken(.TOINT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "float")) {
-            try self.addToken(.TOFLOAT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "byte")) {
-            try self.addToken(.TOBYTE, .nothing);
-        } else if (std.mem.eql(u8, method_name, "pack")) {
-            try self.addToken(.PACK, .nothing);
-        } else if (std.mem.eql(u8, method_name, "unpack")) {
-            try self.addToken(.UNPACK, .nothing);
-        } else if (std.mem.eql(u8, method_name, "print")) {
-            try self.addToken(.PRINT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "assert")) {
-            try self.addToken(.ASSERT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "panic")) {
-            try self.addToken(.PANIC, .nothing);
-        } else if (std.mem.eql(u8, method_name, "exit")) {
-            try self.addToken(.EXIT, .nothing);
-        } else if (std.mem.eql(u8, method_name, "std")) {
-            try self.addToken(.STD, .nothing);
-        } else {
-            return error.InvalidInternalMethod;
-        }
+        const tt = TokenImport.methodNameToTokenType(method_name) orelse return error.InvalidInternalMethod;
+        try self.addToken(tt, .nothing);
     }
 
     fn structInstance(self: *LexicalAnalyzer) !void {
@@ -1231,76 +1178,6 @@ pub const LexicalAnalyzer = struct {
         return result.toOwnedSlice();
     }
 
-    fn validateUnderscores(input: []const u8) !void {
-        var last_was_underscore = false;
-        var has_digit = false;
-
-        for (input, 0..) |c, i| {
-            if (c == '_') {
-                if (last_was_underscore) return error.InvalidNumber;
-                if (i == 0 or i == input.len - 1) return error.InvalidNumber;
-                last_was_underscore = true;
-            } else {
-                last_was_underscore = false;
-                if (std.ascii.isDigit(c)) has_digit = true;
-            }
-        }
-
-        if (!has_digit) return error.InvalidNumber;
-    }
-
-    fn handleExponent(self: *LexicalAnalyzer) !void {
-        self.advance();
-
-        var exp_is_negative = false;
-        if (self.peekAt(0) == '+' or self.peekAt(0) == '-') {
-            exp_is_negative = self.peekAt(0) == '-';
-            self.advance();
-        }
-
-        if (!isDigit(self.peekAt(0))) return error.InvalidExponent;
-
-        var exp_value: i32 = 0;
-        var has_digit = false;
-
-        while (isDigit(self.peekAt(0)) or self.peekAt(0) == '_') {
-            if (isDigit(self.peekAt(0))) {
-                exp_value = exp_value * 10 + (self.peekAt(0) - '0');
-                has_digit = true;
-
-                if (exp_value > 308) return error.Overflow;
-            }
-            self.advance();
-        }
-
-        if (!has_digit) return error.InvalidExponent;
-        if (exp_is_negative) exp_value = -exp_value;
-
-        return exp_value;
-    }
-
-    fn validateBasePrefix(self: *LexicalAnalyzer) !enum { Decimal, Hex, Binary, Octal } {
-        if (self.peekAt(0) != '0') return .Decimal;
-
-        const next_char = self.peekAt(1);
-        switch (next_char) {
-            'x', 'X' => {
-                if (!isHexDigit(self.peekAt(2))) return error.InvalidNumber;
-                return .Hex;
-            },
-            'b', 'B' => {
-                if (!isBinaryDigit(self.peekAt(2))) return error.InvalidNumber;
-                return .Binary;
-            },
-            'o', 'O' => {
-                if (!isOctalDigit(self.peekAt(2))) return error.InvalidNumber;
-                return .Octal;
-            },
-            '0'...'9' => return error.LeadingZeros,
-            else => return .Decimal,
-        }
-    }
-
     pub fn addString(self: *LexicalAnalyzer, str: []const u8) ![]const u8 {
         const owned = try self.allocator.dupe(u8, str);
         try self.allocated_strings.append(owned);
@@ -1311,28 +1188,5 @@ pub const LexicalAnalyzer = struct {
         const owned = try self.allocator.dupe(TokenLiteral, arr);
         try self.allocated_arrays.append(owned);
         return owned;
-    }
-
-    fn countLines(self: *LexicalAnalyzer, start: usize, end: usize) struct { line: i32, column: usize } {
-        var line: i32 = 1;
-        var last_newline: usize = 0;
-
-        var i: usize = 0;
-        while (i < end) : (i += 1) {
-            if (self.source[i] == '\n') {
-                line += 1;
-                last_newline = i + 1;
-            }
-            if (i == start) {
-                break;
-            }
-        }
-
-        const result = .{
-            .line = line,
-            .column = start - last_newline + 1,
-        };
-
-        return result;
     }
 };
