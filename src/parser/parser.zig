@@ -16,26 +16,6 @@ pub fn parse(self: *Parser) ErrorList![]ast.Stmt {
     return parser_types.execute(self);
 }
 
-fn isAlternateToken(token_type: token.TokenType) bool {
-    return switch (token_type) {
-        .ASSIGN_SYMBOL, .ASSIGN_KEYWORD, .EQUALITY_SYMBOL, .EQUALITY_KEYWORD, .AND_SYMBOL, .AND_KEYWORD, .OR_SYMBOL, .OR_KEYWORD, .WHERE_SYMBOL, .WHERE_KEYWORD, .FN_KEYWORD, .FUNCTION_KEYWORD => true,
-        else => false,
-    };
-}
-
-fn hasAllBlockBranches(e: *ast.Expr) bool {
-    if (e.* != .If) return false;
-    if (e.then_branch.?.* != .Block) return false;
-    if (e.else_branch.?.* == .If) return hasAllBlockBranches(e.else_branch.?);
-    if (e.else_branch.?.* != .Block) return false;
-    return true;
-}
-
-fn infix_call(self: *Parser, left: ?*ast.Expr, precedence: Precedence) ErrorList!?*ast.Expr {
-    self.advance();
-    return self.call(left, precedence);
-}
-
 fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance();
 
@@ -102,60 +82,6 @@ fn array(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const array_expr = try self.allocator.create(ast.Expr);
     array_expr.* = .{ .Array = try elements.toOwnedSlice() };
     return array_expr;
-}
-
-fn parseForEach(self: *Parser) ErrorList!*ast.Expr {
-    self.advance();
-
-    if (self.peek().type != .LEFT_PAREN) {
-        return error.ExpectedLeftParen;
-    }
-    self.advance();
-
-    if (self.peek().type != .IDENTIFIER) {
-        return error.ExpectedIdentifier;
-    }
-    _ = self.peek();
-    self.advance();
-
-    if (self.peek().type != .IN) {
-        return error.ExpectedInKeyword;
-    }
-    self.advance();
-
-    _ = try expression_parser.parseExpression(self);
-
-    if (self.peek().type != .RIGHT_PAREN) {
-        return error.ExpectedRightParen;
-    }
-    self.advance();
-
-    if (self.peek().type != .LEFT_BRACE) {
-        return error.ExpectedLeftBrace;
-    }
-    _ = try self.parseBlockStmt();
-
-    const foreach_expr = try self.allocator.create(ast.Expr);
-    foreach_expr.* = .{ .DefaultArgPlaceholder = {} };
-    return foreach_expr;
-}
-
-fn parseReturn(self: *Parser) ErrorList!ast.Stmt {
-    self.advance();
-
-    var value: ?*ast.Expr = null;
-    const type_info = ast.TypeInfo{ .base = .Nothing };
-
-    if (self.peek().type != .NEWLINE) {
-        value = try expression_parser.parseExpression(self);
-        return error.ExpectedNewline;
-    }
-    self.advance();
-
-    return ast.Stmt{ .Return = .{
-        .value = value,
-        .type_info = type_info,
-    } };
 }
 
 fn map(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {

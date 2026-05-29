@@ -697,64 +697,24 @@ pub const HIRGenerator = struct {
                 param_index -= 1;
                 const param = params[param_index];
 
+                const resolved = try self.resolveParameterType(param, function_body);
+                const param_type = resolved.param_type;
+                const declared_type_info = resolved.type_info;
+                defer if (declared_type_info) |info| self.allocator.destroy(info);
+
                 if (function_body.param_is_alias[param_index]) {
-                    var declared_type_info: ?*ast.TypeInfo = null;
-                    defer if (declared_type_info) |info| self.allocator.destroy(info);
-
-                    var param_type: HIRType = .Unknown;
-                    if (param.type_expr) |type_expr| {
-                        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-                        declared_type_info = type_info_ptr;
-                        param_type = self.convertTypeInfo(type_info_ptr.*);
-
-                        // Semantic validation for alias parameter types
-                        // Disallow complex types as alias types here
-                        // Arrays are allowed as they're perfect candidates for aliasing (avoid copying)
-                        switch (param_type) {
-                            .Map, .Function => return error.InvalidAliasType,
-                            else => {},
-                        }
-
-                        // For structs/enums, require a concrete custom type name rather than generic tokens
-                        switch (type_info_ptr.base) {
-                            .Struct, .Enum => {
-                                if (type_info_ptr.custom_type == null) {
-                                    return error.InvalidAliasType;
-                                }
-                            },
-                            else => {},
-                        }
-                    } else {
-                        param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
+                    switch (param_type) {
+                        .Map, .Function => return error.InvalidAliasType,
+                        else => {},
                     }
-
-                    try self.trackVariableType(param.name.lexeme, param_type);
-
-                    // Preserve concrete custom type name (e.g. enum/struct) for
-                    // non-alias parameters so later codegen (like enum match) can
-                    // construct correctly-typed constants.
                     if (declared_type_info) |info| {
-                        if (info.base == .Custom and info.custom_type != null) {
-                            const custom_type_name = info.custom_type.?;
-                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name);
-                        }
-                    }
-                    if (param.type_expr) |param_type_expr| {
-                        switch (param_type_expr.data) {
-                            .Custom => |custom_tok| {
-                                try self.trackVariableCustomType(param.name.lexeme, custom_tok.lexeme);
+                        switch (info.base) {
+                            .Struct, .Enum => {
+                                if (info.custom_type == null) return error.InvalidAliasType;
                             },
                             else => {},
                         }
                     }
-
-                    if (param_type == .Array) {
-                        try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
-                        const storage_kind = if (declared_type_info) |info| convertArrayStorageKind(info.array_storage) else SoxaTypes.ArrayStorageKind.dynamic;
-                        try self.trackArrayStorageKind(param.name.lexeme, storage_kind);
-                    }
-
-                    try self.symbol_table.trackAliasParameter(param.name.lexeme);
 
                     if (param.type_expr) |type_expr_for_custom| {
                         const type_info_for_custom = try ast.typeInfoFromExpr(self.allocator, type_expr_for_custom);
@@ -793,8 +753,8 @@ pub const HIRGenerator = struct {
                         }
                     }
 
+                    try self.symbol_table.trackAliasParameter(param.name.lexeme);
                     const alias_slot = try self.slot_manager.allocateAliasSlot(param.name.lexeme, param_type);
-
                     try self.instructions.append(.{
                         .StoreParamAlias = .{
                             .param_name = param.name.lexeme,
@@ -803,43 +763,6 @@ pub const HIRGenerator = struct {
                         },
                     });
                 } else {
-                    var declared_type_info: ?*ast.TypeInfo = null;
-                    defer if (declared_type_info) |info| self.allocator.destroy(info);
-
-                    var param_type: HIRType = .Unknown;
-                    if (param.type_expr) |type_expr| {
-                        const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-                        declared_type_info = type_info_ptr;
-                        param_type = self.convertTypeInfo(type_info_ptr.*);
-                    } else {
-                        param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
-                    }
-
-                    try self.trackVariableType(param.name.lexeme, param_type);
-                    if (declared_type_info) |info| {
-                        if (info.base == .Custom and info.custom_type != null) {
-                            try self.trackVariableCustomType(param.name.lexeme, info.custom_type.?);
-                        }
-                    }
-                    if (param.type_expr) |param_type_expr| {
-                        switch (param_type_expr.data) {
-                            .Custom => |custom_tok| try self.trackVariableCustomType(param.name.lexeme, custom_tok.lexeme),
-                            else => {},
-                        }
-                    }
-
-                    if (param_type == .Array) {
-                        try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
-                        const storage_kind = if (declared_type_info) |info| convertArrayStorageKind(info.array_storage) else SoxaTypes.ArrayStorageKind.dynamic;
-                        try self.trackArrayStorageKind(param.name.lexeme, storage_kind);
-                    }
-
-                    // Parameters must always be treated as local variables, even if a
-                    // global with the same name exists later in the script. Using
-                    // createVariable here ensures that parameters correctly shadow
-                    // any globals instead of aliasing them (which previously caused
-                    // recursive functions like `fber` to read/write a global `x`
-                    // instead of their own parameter).
                     const var_idx = try self.symbol_table.createVariable(param.name.lexeme);
                     try self.instructions.append(.{ .StoreVar = .{
                         .var_index = var_idx,
@@ -898,14 +821,6 @@ pub const HIRGenerator = struct {
                 try self.instructions.append(.{ .ExitScope = .{ .scope_id = function_scope_id } });
             }
             self.current_function_scope_id = null;
-
-            if (!has_returned) {
-                if (function_body.function_info.return_type != .Nothing) {
-                    try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
-                } else {
-                    try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
-                }
-            }
 
             var needs_implicit_return = true;
 
@@ -1748,6 +1663,43 @@ pub const HIRGenerator = struct {
             .fixed => .fixed,
             .const_literal => .const_literal,
         };
+    }
+
+    fn resolveParameterType(
+        self: *HIRGenerator,
+        param: ast.FunctionParam,
+        function_body: *const FunctionBody,
+    ) !struct { param_type: HIRType, type_info: ?*ast.TypeInfo } {
+        var declared_type_info: ?*ast.TypeInfo = null;
+        var param_type: HIRType = .Unknown;
+        if (param.type_expr) |type_expr| {
+            const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
+            declared_type_info = type_info_ptr;
+            param_type = self.convertTypeInfo(type_info_ptr.*);
+        } else {
+            param_type = self.inferParameterType(param.name.lexeme, function_body.statements, function_body.function_name) catch .Int;
+        }
+
+        try self.trackVariableType(param.name.lexeme, param_type);
+        if (declared_type_info) |info| {
+            if (info.base == .Custom and info.custom_type != null) {
+                try self.trackVariableCustomType(param.name.lexeme, info.custom_type.?);
+            }
+        }
+        if (param.type_expr) |param_type_expr| {
+            switch (param_type_expr.data) {
+                .Custom => |custom_tok| try self.trackVariableCustomType(param.name.lexeme, custom_tok.lexeme),
+                else => {},
+            }
+        }
+
+        if (param_type == .Array) {
+            try self.trackArrayElementType(param.name.lexeme, param_type.Array.*);
+            const storage_kind = if (declared_type_info) |info| convertArrayStorageKind(info.array_storage) else SoxaTypes.ArrayStorageKind.dynamic;
+            try self.trackArrayStorageKind(param.name.lexeme, storage_kind);
+        }
+
+        return .{ .param_type = param_type, .type_info = declared_type_info };
     }
 
     pub fn storageKindFromTypeInfo(self: *HIRGenerator, type_info: ast.TypeInfo) SoxaTypes.ArrayStorageKind {
