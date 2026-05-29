@@ -328,7 +328,7 @@ pub const ControlFlowHandler = struct {
                     // Check if this is a type pattern for union matching
                     const is_type_pattern = switch (pattern.type) {
                         .INT_TYPE, .FLOAT_TYPE, .STRING_TYPE, .BYTE_TYPE, .TETRA_TYPE, .NOTHING_TYPE => true,
-                        else => false,
+                        else => std.mem.indexOf(u8, pattern.lexeme, "[]") != null,
                     };
 
                     if (is_type_pattern) {

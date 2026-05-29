@@ -36,16 +36,6 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
     return try harness.runCommandCapture(allocator, &argv, repo_root, input);
 }
 
-fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
-    const result = try runDoxaCommandEx(allocator, path, null);
-    allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        allocator.free(result.stdout);
-        return error.CommandFailed;
-    }
-    return result.stdout;
-}
-
 //this function will pipe a char to a doxa command and return the output
 fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input: []const u8) ![]const u8 {
     const result = try runDoxaCommandEx(allocator, path, input);
@@ -135,12 +125,27 @@ fn validatePeekResults(output: []const u8, expected_results: []const peek_result
 }
 
 fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
-    var output: []const u8 = undefined;
-    if (tc.input) |inp| {
-        output = try runDoxaCommandWithInput(allocator, tc.path, inp);
-    } else {
-        output = try runDoxaCommand(allocator, tc.path);
-    }
+    const input: ?[]const u8 = tc.input;
+    const result = runDoxaCommandEx(allocator, tc.path, input) catch return error.CommandFailed;
+
+    const output = switch (tc.mode) {
+        .PRINT => blk: {
+            allocator.free(result.stderr);
+            if (result.exit_code != 0) {
+                allocator.free(result.stdout);
+                return error.CommandFailed;
+            }
+            break :blk result.stdout;
+        },
+        .PEEK => blk: {
+            allocator.free(result.stdout);
+            if (result.exit_code != 0) {
+                allocator.free(result.stderr);
+                return error.CommandFailed;
+            }
+            break :blk result.stderr;
+        },
+    };
     defer allocator.free(output);
 
     if (output.len == 0) return .{ .passed = 0, .untested = 0, .failed = 0 };

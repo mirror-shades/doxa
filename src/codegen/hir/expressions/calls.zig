@@ -171,8 +171,20 @@ pub const CallsHandler = struct {
                 if (arg.is_alias) {
                     if (arg.expr.data == .Variable) {
                         const var_token = arg.expr.data.Variable;
-                        const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
-                        if (maybe_idx) |var_idx| {
+                        if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
+                            if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
+                                try self.generator.instructions.append(.{
+                                    .PushStorageId = .{
+                                        .var_index = alias_slot,
+                                        .var_name = var_token.lexeme,
+                                        .scope_kind = .Local,
+                                    },
+                                });
+                                arg_emitted_count += 1;
+                            } else {
+                                return ErrorList.InvalidAliasArgument;
+                            }
+                        } else if (self.generator.symbol_table.getVariable(var_token.lexeme)) |var_idx| {
                             const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
                             try self.generator.instructions.append(.{
                                 .PushStorageId = .{

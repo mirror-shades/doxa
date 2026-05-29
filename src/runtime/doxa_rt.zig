@@ -2,6 +2,19 @@ const std = @import("std");
 const builtin = @import("builtin");
 const MapRuntime = @import("map_runtime.zig");
 
+var peek_output_active: bool = false;
+
+fn doxaWrite(slice: []const u8) void {
+    if (peek_output_active) {
+        writeStderr(slice);
+        if (std.mem.endsWith(u8, slice, "\n")) {
+            peek_output_active = false;
+        }
+    } else {
+        writeStdout(slice);
+    }
+}
+
 fn writeStdout(slice: []const u8) void {
     if (builtin.os.tag == .windows) {
         const win = std.os.windows;
@@ -37,26 +50,26 @@ fn writeStderr(slice: []const u8) void {
 pub export fn doxa_write_cstr(ptr: ?[*:0]const u8) callconv(.c) void {
     if (ptr) |p| {
         const slice = std.mem.span(p);
-        writeStdout(slice);
+        doxaWrite(slice);
     }
 }
 
 pub export fn doxa_write_quoted_string(ptr: ?[*:0]const u8) callconv(.c) void {
     if (ptr) |p| {
         const slice = std.mem.span(p);
-        writeStdout("\"");
-        writeStdout(slice);
-        writeStdout("\"");
+        doxaWrite("\"");
+        doxaWrite(slice);
+        doxaWrite("\"");
     }
 }
 
 pub export fn doxa_peek_string(ptr: ?[*:0]const u8) callconv(.c) void {
-    writeStdout("\"");
+    doxaWrite("\"");
     if (ptr) |p| {
         const slice = std.mem.span(p);
-        writeStdout(slice);
+        doxaWrite(slice);
     }
-    writeStdout("\"");
+    doxaWrite("\"");
 }
 
 pub export fn doxa_str_eq(a: ?[*:0]const u8, b: ?[*:0]const u8) callconv(.c) bool {
@@ -239,13 +252,13 @@ pub export fn doxa_char_to_string(ch: u8) callconv(.c) ?[*:0]u8 {
 pub export fn doxa_print_i64(value: i64) callconv(.c) void {
     var buf: [64]u8 = undefined;
     const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
-    writeStdout(rendered);
+    doxaWrite(rendered);
 }
 
 pub export fn doxa_print_u64(value: u64) callconv(.c) void {
     var buf: [64]u8 = undefined;
     const rendered = std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
-    writeStdout(rendered);
+    doxaWrite(rendered);
 }
 
 pub export fn doxa_print_f64(value: f64) callconv(.c) void {
@@ -255,14 +268,14 @@ pub export fn doxa_print_f64(value: f64) callconv(.c) void {
         std.fmt.bufPrint(&buf, "{d}.0", .{value}) catch return
     else
         std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
-    writeStdout(rendered);
+    doxaWrite(rendered);
 }
 
 pub export fn doxa_print_byte(value: i64) callconv(.c) void {
     var buf: [64]u8 = undefined;
     const byte_val: u8 = @intCast(value & 0xff);
     const rendered = std.fmt.bufPrint(&buf, "0x{X:0>2}", .{byte_val}) catch return;
-    writeStdout(rendered);
+    doxaWrite(rendered);
 }
 
 fn getEnumVariantName(type_name: []const u8, variant_index: i64) []const u8 {
@@ -374,13 +387,17 @@ pub const DoxaValueC = extern struct {
 
 pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void {
     const info = info_ptr orelse return;
+    peek_output_active = true;
 
     if (info.has_location != 0) {
         if (info.file) |file_ptr| {
             const file_slice = std.mem.span(file_ptr);
             var buf: [256]u8 = undefined;
-            const location = std.fmt.bufPrint(&buf, "[{s}:{d}:{d}] ", .{ file_slice, info.line, info.column }) catch return;
-            writeStdout(location);
+            const location = std.fmt.bufPrint(&buf, "[{s}:{d}:{d}] ", .{ file_slice, info.line, info.column }) catch {
+                peek_output_active = false;
+                return;
+            };
+            writeStderr(location);
         }
     }
 
@@ -408,35 +425,35 @@ pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void 
         if (union_members.len > 1) {
             var prefix_buf: [256]u8 = undefined;
             const prefix = std.fmt.bufPrint(&prefix_buf, "{s} :: ", .{name_slice}) catch return;
-            writeStdout(prefix);
+            writeStderr(prefix);
             for (union_members, 0..) |member_ptr, idx| {
-                if (idx != 0) writeStdout(" | ");
+                if (idx != 0) writeStderr(" | ");
                 if (active_index_usize) |active_idx| {
-                    if (active_idx == idx) writeStdout(">");
+                    if (active_idx == idx) writeStderr(">");
                 }
-                writeStdout(std.mem.span(member_ptr));
+                writeStderr(std.mem.span(member_ptr));
             }
-            writeStdout(" is ");
+            writeStderr(" is ");
         } else {
             var prefix_buf: [256]u8 = undefined;
             const prefix = std.fmt.bufPrint(&prefix_buf, "{s} :: {s} is ", .{ name_slice, type_slice }) catch return;
-            writeStdout(prefix);
+            writeStderr(prefix);
         }
     } else {
         if (union_members.len > 1) {
-            writeStdout(":: ");
+            writeStderr(":: ");
             for (union_members, 0..) |member_ptr, idx| {
-                if (idx != 0) writeStdout(" | ");
+                if (idx != 0) writeStderr(" | ");
                 if (active_index_usize) |active_idx| {
-                    if (active_idx == idx) writeStdout(">");
+                    if (active_idx == idx) writeStderr(">");
                 }
-                writeStdout(std.mem.span(member_ptr));
+                writeStderr(std.mem.span(member_ptr));
             }
-            writeStdout(" is ");
+            writeStderr(" is ");
         } else {
             var prefix_buf: [256]u8 = undefined;
             const prefix = std.fmt.bufPrint(&prefix_buf, ":: {s} is ", .{type_slice}) catch return;
-            writeStdout(prefix);
+            writeStderr(prefix);
         }
     }
 }
@@ -957,11 +974,11 @@ fn asArrayHeader(ptr: ?*anyopaque) ?*ArrayHeader {
 }
 
 pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
-    var buf: [1024]u8 = undefined;
-    var bw = std.fs.File.stdout().writer(&buf);
-    const out = &bw.interface;
+    var buf: [4096]u8 = undefined;
+    var fbs = std.io.fixedBufferStream(&buf);
+    const out = fbs.writer();
     printArrayHdrImpl(out, hdr) catch return;
-    _ = out.flush() catch {};
+    doxaWrite(fbs.getWritten());
 }
 
 fn printTaggedBitsImpl(out: anytype, tag: u64, bits: i64) anyerror!void {
@@ -1317,7 +1334,7 @@ pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
         .Array => {
             const addr: u64 = @bitCast(val.payload_bits);
             if (addr == 0) {
-                writeStdout("[]");
+                doxaWrite("[]");
             } else {
                 const any_ptr: ?*anyopaque = @ptrFromInt(@as(usize, addr));
                 const hdr = @as(*ArrayHeader, @ptrCast(@alignCast(any_ptr.?)));
@@ -1326,15 +1343,15 @@ pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
         },
         .Struct => {
             var buf: [1024]u8 = undefined;
-            var bw = std.fs.File.stdout().writer(&buf);
-            const out = &bw.interface;
+            var fbs = std.io.fixedBufferStream(&buf);
+            const out = fbs.writer();
             const addr: u64 = @bitCast(val.payload_bits);
             printTaggedBitsImpl(out, 7, @as(i64, @bitCast(addr))) catch return;
-            _ = out.flush() catch {};
+            doxaWrite(fbs.getWritten());
         },
         .Enum => {
             // Enum printing is now handled natively by the IR printer
-            writeStdout("<enum>");
+            doxaWrite("<enum>");
         },
         .Tetra => {
             const t: u2 = asTetra(val.payload_bits);
@@ -1346,17 +1363,17 @@ pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
                 3 => "neither",
                 else => "invalid",
             };
-            writeStdout(name);
+            doxaWrite(name);
         },
         .Nothing => {
             // Nothing has no textual payload; render as "nothing" for now.
-            writeStdout("nothing");
+            doxaWrite("nothing");
         },
         .Function => {
-            writeStdout("<function>");
+            doxaWrite("<function>");
         },
         .Map => {
-            writeStdout("<map>");
+            doxaWrite("<map>");
         },
     }
 }

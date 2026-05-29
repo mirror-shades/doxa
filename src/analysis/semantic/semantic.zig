@@ -698,8 +698,9 @@ pub const SemanticAnalyzer = struct {
                                 const base = param_types[i].base;
                                 const loc = getLocationFromBase(stmt.base);
                                 const is_disallowed = switch (base) {
-                                    .Union, .Map, .Function, .Struct, .Enum => true,
+                                    .Map, .Function, .Struct, .Enum => true,
                                     // Arrays are allowed as they're perfect candidates for aliasing (avoid copying)
+                                    // Unions are allowed so alias parameters can accept type-narrowed values via match
                                     else => false,
                                 };
                                 if (is_disallowed) {
@@ -1420,22 +1421,28 @@ pub const SemanticAnalyzer = struct {
             } else if (case.patterns.len > 0) {
                 const narrow_info = try ast.TypeInfo.createDefault(self.allocator);
                 const first_pattern = case.patterns[0]; // Use first pattern for type narrowing
-                narrow_info.* = switch (first_pattern.type) {
-                    .INT_TYPE, .INT => .{ .base = .Int, .is_mutable = false },
-                    .FLOAT_TYPE, .FLOAT => .{ .base = .Float, .is_mutable = false },
-                    .STRING_TYPE, .STRING => .{ .base = .String, .is_mutable = false },
-                    .BYTE_TYPE, .BYTE => .{ .base = .Byte, .is_mutable = false },
-                    .TETRA_TYPE, .TETRA => .{ .base = .Tetra, .is_mutable = false },
-                    .NOTHING_TYPE, .NOTHING => .{ .base = .Nothing, .is_mutable = false },
-                    .DOT => .{ .base = .Enum, .is_mutable = false }, // enum member pattern implies enum
-                    else => blk: {
-                        if (first_pattern.type == .IDENTIFIER and !std.mem.eql(u8, first_pattern.lexeme, "else")) {
-                            break :blk .{ .base = .Custom, .custom_type = first_pattern.lexeme, .is_mutable = false };
-                        }
-                        // For else or unknown, skip narrowing
-                        break :blk .{ .base = .Nothing, .is_mutable = false };
-                    },
-                };
+
+                // Check for array suffix in pattern lexeme (e.g., "int[]", "string[][]")
+                if (std.mem.indexOf(u8, first_pattern.lexeme, "[]")) |_| {
+                    narrow_info.* = .{ .base = .Array, .is_mutable = false };
+                } else {
+                    narrow_info.* = switch (first_pattern.type) {
+                        .INT_TYPE, .INT => .{ .base = .Int, .is_mutable = false },
+                        .FLOAT_TYPE, .FLOAT => .{ .base = .Float, .is_mutable = false },
+                        .STRING_TYPE, .STRING => .{ .base = .String, .is_mutable = false },
+                        .BYTE_TYPE, .BYTE => .{ .base = .Byte, .is_mutable = false },
+                        .TETRA_TYPE, .TETRA => .{ .base = .Tetra, .is_mutable = false },
+                        .NOTHING_TYPE, .NOTHING => .{ .base = .Nothing, .is_mutable = false },
+                        .DOT => .{ .base = .Enum, .is_mutable = false }, // enum member pattern implies enum
+                        else => blk: {
+                            if (first_pattern.type == .IDENTIFIER and !std.mem.eql(u8, first_pattern.lexeme, "else")) {
+                                break :blk .{ .base = .Custom, .custom_type = first_pattern.lexeme, .is_mutable = false };
+                            }
+                            // For else or unknown, skip narrowing
+                            break :blk .{ .base = .Nothing, .is_mutable = false };
+                        },
+                    };
+                }
 
                 const token_type: TokenType = helpers.convertTypeToTokenType(self, narrow_info.base);
 

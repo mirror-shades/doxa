@@ -34,16 +34,6 @@ fn runCompiledBinaryEx(allocator: std.mem.Allocator, binary_path: []const u8, in
     return try harness.runCommandCapture(allocator, &argv, repo_root, input);
 }
 
-fn runCompiledBinary(allocator: std.mem.Allocator, binary_path: []const u8) ![]const u8 {
-    const result = try runCompiledBinaryEx(allocator, binary_path, null);
-    allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        allocator.free(result.stdout);
-        return error.CommandFailed;
-    }
-    return result.stdout;
-}
-
 fn runCompiledBinaryWithInput(allocator: std.mem.Allocator, binary_path: []const u8, input: []const u8) ![]const u8 {
     const result = try runCompiledBinaryEx(allocator, binary_path, input);
     allocator.free(result.stderr);
@@ -146,32 +136,21 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     if (tc.mode == .SKIP) {
         return .{ .passed = 0, .failed = 0, .untested = 1 };
     }
-    // Try to run the binary, but skip execution if cross-compiling
-    const run_result = if (tc.input) |inp|
-        runCompiledBinaryWithInput(allocator, tc.binary_path, inp)
-    else
-        runCompiledBinary(allocator, tc.binary_path);
 
-    const output = run_result catch |err| {
-        // If CommandFailed, try to get stderr to check for cross-compilation
-        // This will fail the same way if spawn fails, but we can catch it
-        const result = runCompiledBinaryEx(allocator, tc.binary_path, if (tc.input) |inp| inp else null) catch {
-            // If spawn fails completely, it's likely cross-compilation
-            // Compilation was successful, so mark tests as untested (not failed)
-            // Note: We can't distinguish spawn errors from other errors easily,
-            // but if compilation succeeded and execution fails immediately, it's likely cross-compilation
-            const expected_count = switch (tc.mode) {
-                .PRINT => tc.expected_print.?.len,
-                .PEEK => tc.expected_peek.?.len,
-                .SKIP => 1,
-            };
-            return .{ .passed = 0, .failed = 0, .untested = expected_count };
+    const exe_result = runCompiledBinaryEx(allocator, tc.binary_path, tc.input) catch {
+        const expected_count = switch (tc.mode) {
+            .PRINT => tc.expected_print.?.len,
+            .PEEK => tc.expected_peek.?.len,
+            .SKIP => 1,
         };
-        defer allocator.free(result.stdout);
-        defer allocator.free(result.stderr);
+        return .{ .passed = 0, .failed = 0, .untested = expected_count };
+    };
 
-        // Check stderr for cross-compilation error messages
-        const stderr_lower = try allocator.dupe(u8, result.stderr);
+    if (exe_result.exit_code != 0) {
+        defer allocator.free(exe_result.stdout);
+        defer allocator.free(exe_result.stderr);
+
+        const stderr_lower = try allocator.dupe(u8, exe_result.stderr);
         defer allocator.free(stderr_lower);
         for (stderr_lower) |*c| {
             c.* = std.ascii.toLower(c.*);
@@ -182,7 +161,6 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
             std.mem.indexOf(u8, stderr_lower, "exec format error") != null or
             std.mem.indexOf(u8, stderr_lower, "wrong architecture") != null)
         {
-            // Cross-compilation detected - skip execution
             const expected_count = switch (tc.mode) {
                 .PRINT => tc.expected_print.?.len,
                 .PEEK => tc.expected_peek.?.len,
@@ -191,8 +169,19 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
             return .{ .passed = 0, .failed = 0, .untested = expected_count };
         }
 
-        // Real execution error, propagate it
-        return err;
+        return error.CommandFailed;
+    }
+
+    const output = switch (tc.mode) {
+        .PRINT => blk: {
+            allocator.free(exe_result.stderr);
+            break :blk exe_result.stdout;
+        },
+        .PEEK => blk: {
+            allocator.free(exe_result.stdout);
+            break :blk exe_result.stderr;
+        },
+        .SKIP => unreachable,
     };
     defer allocator.free(output);
 
