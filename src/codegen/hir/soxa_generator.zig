@@ -711,7 +711,7 @@ pub const HIRGenerator = struct {
                         // Disallow complex types as alias types here
                         // Arrays are allowed as they're perfect candidates for aliasing (avoid copying)
                         switch (param_type) {
-                            .Union, .Map, .Function => return error.InvalidAliasType,
+                            .Map, .Function => return error.InvalidAliasType,
                             else => {},
                         }
 

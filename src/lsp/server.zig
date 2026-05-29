@@ -1,5 +1,4 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const reporting = @import("../utils/reporting.zig");
 const Reporter = reporting.Reporter;
 const ReporterOptions = reporting.ReporterOptions;
@@ -8,8 +7,12 @@ const MemoryManager = MemoryImport.MemoryManager;
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const Parser = @import("../parser/parser_types.zig").Parser;
 const SemanticAnalyzer = @import("../analysis/semantic/semantic.zig").SemanticAnalyzer;
+const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
 const Errors = @import("../utils/errors.zig");
 const InternalMethods = @import("internal_methods.zig");
+const Types = @import("../types/types.zig");
+const CustomTypeInfo = Types.CustomTypeInfo;
+const ast = @import("../ast/ast.zig");
 const HARNESS_MAX_FILE_BYTES: usize = @import("../common/constants.zig").MAX_LSP_FILE_BYTES;
 
 const JsonValue = std.json.Value;
@@ -138,10 +141,146 @@ const Document = struct {
     text: []u8,
 };
 
+const CachedField = struct {
+    name: []const u8,
+    type_name: []const u8,
+    is_public: bool,
+};
+
+const CachedMethod = struct {
+    name: []const u8,
+    is_public: bool,
+    is_static: bool,
+};
+
+const CachedType = struct {
+    name: []const u8,
+    kind: CustomTypeInfo.CustomTypeKind,
+    fields: []CachedField,
+    methods: []CachedMethod,
+    enum_variants: [][]const u8,
+};
+
+const SymbolEntry = struct {
+    name: []const u8,
+    kind: u32,
+    start_line: usize,
+    start_character: usize,
+    end_line: usize,
+    end_character: usize,
+};
+
+const SymbolIndex = struct {
+    types: std.StringHashMap(CachedType),
+    variables: std.StringHashMap([]const u8),
+    modules: std.StringHashMap(void),
+    symbols: std.array_list.Managed(SymbolEntry),
+    module_members: std.StringHashMap(std.array_list.Managed([]const u8)),
+    arena: std.heap.ArenaAllocator,
+
+    fn init(allocator: std.mem.Allocator) SymbolIndex {
+        return .{
+            .types = std.StringHashMap(CachedType).init(allocator),
+            .variables = std.StringHashMap([]const u8).init(allocator),
+            .modules = std.StringHashMap(void).init(allocator),
+            .symbols = std.array_list.Managed(SymbolEntry).init(allocator),
+            .module_members = std.StringHashMap(std.array_list.Managed([]const u8)).init(allocator),
+            .arena = std.heap.ArenaAllocator.init(allocator),
+        };
+    }
+
+    fn deinit(self: *SymbolIndex) void {
+        self.types.deinit();
+        self.variables.deinit();
+        self.modules.deinit();
+        {
+            var it = self.module_members.iterator();
+            while (it.next()) |entry| entry.value_ptr.deinit();
+        }
+        self.module_members.deinit();
+        self.symbols.deinit();
+        self.arena.deinit();
+    }
+
+    fn clear(self: *SymbolIndex) void {
+        self.types.clearRetainingCapacity();
+        self.variables.clearRetainingCapacity();
+        self.modules.clearRetainingCapacity();
+        {
+            var it = self.module_members.iterator();
+            while (it.next()) |entry| entry.value_ptr.clearRetainingCapacity();
+        }
+        self.module_members.clearRetainingCapacity();
+        self.symbols.clearRetainingCapacity();
+        _ = self.arena.reset(.retain_capacity);
+    }
+
+    fn addType(self: *SymbolIndex, cti: CustomTypeInfo, methods: ?std.StringHashMap(StructMethodInfo)) !void {
+        const alloc = self.arena.allocator();
+        const name = try alloc.dupe(u8, cti.name);
+
+        var cached_fields = std.array_list.Managed(CachedField).init(alloc);
+        if (cti.struct_fields) |fields| {
+            for (fields) |field| {
+                const type_str = packLspTypeString(field.field_type_info);
+                try cached_fields.append(.{
+                    .name = try alloc.dupe(u8, field.name),
+                    .type_name = try alloc.dupe(u8, type_str),
+                    .is_public = field.is_public,
+                });
+            }
+        }
+
+        var cached_enum_variants = std.array_list.Managed([]const u8).init(alloc);
+        if (cti.enum_variants) |variants| {
+            for (variants) |v| {
+                try cached_enum_variants.append(try alloc.dupe(u8, v.name));
+            }
+        }
+
+        var cached_methods = std.array_list.Managed(CachedMethod).init(alloc);
+        if (methods) |methods_map| {
+            var method_it = methods_map.iterator();
+            while (method_it.next()) |entry| {
+                try cached_methods.append(.{
+                    .name = try alloc.dupe(u8, entry.value_ptr.name),
+                    .is_public = entry.value_ptr.is_public,
+                    .is_static = entry.value_ptr.is_static,
+                });
+            }
+        }
+
+        try self.types.put(name, .{
+            .name = name,
+            .kind = cti.kind,
+            .fields = try cached_fields.toOwnedSlice(),
+            .methods = try cached_methods.toOwnedSlice(),
+            .enum_variants = try cached_enum_variants.toOwnedSlice(),
+        });
+    }
+
+    fn addVariable(self: *SymbolIndex, name: []const u8, type_str: []const u8) !void {
+        const alloc = self.arena.allocator();
+        try self.variables.put(try alloc.dupe(u8, name), try alloc.dupe(u8, type_str));
+    }
+
+    fn addModule(self: *SymbolIndex, name: []const u8) !void {
+        const alloc = self.arena.allocator();
+        try self.modules.put(try alloc.dupe(u8, name), {});
+    }
+};
+
+const CompletionContext = struct {
+    prefix: []const u8,
+    kind: enum { Intrinsic, Dot, None },
+    object_name: ?[]const u8,
+};
+
 const Server = struct {
     allocator: std.mem.Allocator,
     reporter: *Reporter,
     documents: std.StringHashMap(Document),
+    symbol_index: SymbolIndex,
     shutdown_requested: bool,
     should_exit: bool,
     sink: ResponseSink,
@@ -152,6 +291,7 @@ const Server = struct {
             .allocator = allocator,
             .reporter = reporter,
             .documents = std.StringHashMap(Document).init(allocator),
+            .symbol_index = SymbolIndex.init(allocator),
             .shutdown_requested = false,
             .should_exit = false,
             .sink = sink,
@@ -165,6 +305,7 @@ const Server = struct {
             self.freeDocument(entry.key_ptr.*, entry.value_ptr.*);
         }
         self.documents.deinit();
+        self.symbol_index.deinit();
     }
 
     fn loop(self: *Server) !void {
@@ -325,6 +466,12 @@ const Server = struct {
                     return;
                 }
                 try self.handleHover(id.?, params);
+            } else if (std.mem.eql(u8, method, "textDocument/documentSymbol")) {
+                if (id == null) {
+                    try self.sendErrorResponse(null, -32600, "Invalid request");
+                    return;
+                }
+                try self.handleDocumentSymbol(id.?, params);
             } else if (std.mem.eql(u8, method, "initialized")) {
                 // No-op
             } else if (std.mem.eql(u8, method, "exit")) {
@@ -345,7 +492,7 @@ const Server = struct {
 
         try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
         try writeJsonValue(&writer, id);
-        try writer.writeAll(",\"result\":{\"capabilities\":{\"textDocumentSync\":{\"openClose\":true,\"change\":1},\"completionProvider\":{\"triggerCharacters\":[\"@\"]},\"hoverProvider\":true},\"serverInfo\":{\"name\":\"Doxa\"}}}");
+        try writer.writeAll(",\"result\":{\"capabilities\":{\"textDocumentSync\":{\"openClose\":true,\"change\":1},\"completionProvider\":{\"triggerCharacters\":[\"@\",\".\"]},\"hoverProvider\":true,\"documentSymbolProvider\":true},\"serverInfo\":{\"name\":\"Doxa\"}}}");
 
         const payload = try buffer.toOwnedSlice();
         defer self.allocator.free(payload);
@@ -427,14 +574,20 @@ const Server = struct {
     }
 
     fn handleCompletion(self: *Server, id: JsonValue, params: ?JsonValue) !void {
-        const prefix = computeCompletionPrefix(self, params);
-        const payload = try buildCompletionPayload(self, id, prefix);
+        const ctx = computeCompletionContext(self, params);
+        const payload = try buildCompletionPayload(self, id, ctx);
         defer self.allocator.free(payload);
         try self.sendMessage(payload);
     }
 
     fn handleHover(self: *Server, id: JsonValue, params: ?JsonValue) !void {
         const payload = try buildHoverPayload(self, id, params);
+        defer self.allocator.free(payload);
+        try self.sendMessage(payload);
+    }
+
+    fn handleDocumentSymbol(self: *Server, id: JsonValue, _: ?JsonValue) !void {
+        const payload = try buildDocumentSymbolsPayload(self, id);
         defer self.allocator.free(payload);
         try self.sendMessage(payload);
     }
@@ -506,6 +659,179 @@ const Server = struct {
         var semantic = SemanticAnalyzer.init(memory_manager.getAnalysisAllocator(), self.reporter, &memory_manager, &parser);
         defer semantic.deinit();
         try semantic.analyze(statements);
+
+        self.populateSymbolIndex(&semantic, &parser, &memory_manager, statements);
+    }
+
+    fn populateSymbolIndex(self: *Server, semantic: *SemanticAnalyzer, parser: *Parser, memory_manager: *MemoryManager, statements: []ast.Stmt) void {
+        self.symbol_index.clear();
+
+        var type_it = semantic.custom_types.iterator();
+        while (type_it.next()) |entry| {
+            const type_name = entry.key_ptr.*;
+            const cti = entry.value_ptr.*;
+            const methods = semantic.struct_methods.get(type_name);
+            self.symbol_index.addType(cti, methods) catch continue;
+        }
+
+        if (semantic.current_scope) |_| {
+            populateSymbolIndexFromScope(&self.symbol_index, memory_manager) catch {};
+        }
+
+        var mod_it = parser.module_namespaces.iterator();
+        while (mod_it.next()) |entry| {
+            self.symbol_index.addModule(entry.key_ptr.*) catch continue;
+        }
+
+        for (statements) |stmt| {
+            populateSymbolEntry(&self.symbol_index, stmt) catch {};
+        }
+
+        if (parser.imported_symbols) |symbols| {
+            var sym_it = symbols.iterator();
+            while (sym_it.next()) |entry| {
+                const full_name = entry.key_ptr.*;
+                if (std.mem.indexOfScalar(u8, full_name, '.')) |dot_idx| {
+                    const module_name = full_name[0..dot_idx];
+                    const member_name = full_name[dot_idx + 1 ..];
+                    addModuleMember(&self.symbol_index, module_name, member_name) catch continue;
+                }
+            }
+        }
+    }
+
+    fn populateSymbolEntry(index: *SymbolIndex, stmt: ast.Stmt) !void {
+        const alloc = index.arena.allocator();
+        const base = &stmt.base;
+        const loc = base.location();
+        const entry = SymbolEntry{
+            .name = undefined,
+            .kind = 0,
+            .start_line = loc.range.start_line,
+            .start_character = loc.range.start_col,
+            .end_line = loc.range.end_line,
+            .end_character = loc.range.end_col,
+        };
+
+        switch (stmt.data) {
+            .FunctionDecl => |f| {
+                try index.symbols.append(.{
+                    .name = try alloc.dupe(u8, f.name.lexeme),
+                    .kind = 12,
+                    .start_line = entry.start_line,
+                    .start_character = entry.start_character,
+                    .end_line = entry.end_line,
+                    .end_character = entry.end_character,
+                });
+            },
+            .VarDecl => |v| {
+                try index.symbols.append(.{
+                    .name = try alloc.dupe(u8, v.name.lexeme),
+                    .kind = 13,
+                    .start_line = entry.start_line,
+                    .start_character = entry.start_character,
+                    .end_line = entry.end_line,
+                    .end_character = entry.end_character,
+                });
+            },
+            .EnumDecl => |e| {
+                try index.symbols.append(.{
+                    .name = try alloc.dupe(u8, e.name.lexeme),
+                    .kind = 10,
+                    .start_line = entry.start_line,
+                    .start_character = entry.start_character,
+                    .end_line = entry.end_line,
+                    .end_character = entry.end_character,
+                });
+            },
+            .GroupDecl => |g| {
+                try index.symbols.append(.{
+                    .name = try alloc.dupe(u8, g.name.lexeme),
+                    .kind = 23,
+                    .start_line = entry.start_line,
+                    .start_character = entry.start_character,
+                    .end_line = entry.end_line,
+                    .end_character = entry.end_character,
+                });
+            },
+            .MapDecl => |m| {
+                try index.symbols.append(.{
+                    .name = try alloc.dupe(u8, m.name.lexeme),
+                    .kind = 23,
+                    .start_line = entry.start_line,
+                    .start_character = entry.start_character,
+                    .end_line = entry.end_line,
+                    .end_character = entry.end_character,
+                });
+            },
+            .Module => |mod| {
+                try index.symbols.append(.{
+                    .name = try alloc.dupe(u8, mod.name.lexeme),
+                    .kind = 2,
+                    .start_line = entry.start_line,
+                    .start_character = entry.start_character,
+                    .end_line = entry.end_line,
+                    .end_character = entry.end_character,
+                });
+            },
+            .ZigDecl => |z| {
+                try index.symbols.append(.{
+                    .name = try alloc.dupe(u8, z.name.lexeme),
+                    .kind = 2,
+                    .start_line = entry.start_line,
+                    .start_character = entry.start_character,
+                    .end_line = entry.end_line,
+                    .end_character = entry.end_character,
+                });
+            },
+            .Expression => |maybe_expr| {
+                if (maybe_expr) |expr| {
+                    switch (expr.data) {
+                        .StructDecl => |s| {
+                            try index.symbols.append(.{
+                                .name = try alloc.dupe(u8, s.name.lexeme),
+                                .kind = 23,
+                                .start_line = entry.start_line,
+                                .start_character = entry.start_character,
+                                .end_line = entry.end_line,
+                                .end_character = entry.end_character,
+                            });
+                        },
+                        .EnumDecl => |e| {
+                            try index.symbols.append(.{
+                                .name = try alloc.dupe(u8, e.name.lexeme),
+                                .kind = 10,
+                                .start_line = entry.start_line,
+                                .start_character = entry.start_character,
+                                .end_line = entry.end_line,
+                                .end_character = entry.end_character,
+                            });
+                        },
+                        .GroupDecl => |g| {
+                            try index.symbols.append(.{
+                                .name = try alloc.dupe(u8, g.name.lexeme),
+                                .kind = 23,
+                                .start_line = entry.start_line,
+                                .start_character = entry.start_character,
+                                .end_line = entry.end_line,
+                                .end_character = entry.end_character,
+                            });
+                        },
+                        else => {},
+                    }
+                }
+            },
+            else => {},
+        }
+    }
+
+    fn addModuleMember(index: *SymbolIndex, module_name: []const u8, member_name: []const u8) !void {
+        const alloc = index.arena.allocator();
+        const gop = try index.module_members.getOrPut(try alloc.dupe(u8, module_name));
+        if (!gop.found_existing) {
+            gop.value_ptr.* = std.array_list.Managed([]const u8).init(alloc);
+        }
+        try gop.value_ptr.append(try alloc.dupe(u8, member_name));
     }
 
     fn publishDiagnostics(self: *Server, uri: []const u8) !void {
@@ -557,17 +883,66 @@ const MethodRange = struct {
     end: usize,
 };
 
-fn computeCompletionPrefix(self: *Server, params: ?JsonValue) ?[]const u8 {
-    if (params == null) return null;
+fn computeCompletionContext(self: *Server, params: ?JsonValue) CompletionContext {
+    if (params == null) return CompletionContext{ .prefix = "", .kind = .None, .object_name = null };
     if (extractDocumentContext(self, params)) |ctx| {
         if (ctx.offset <= ctx.text.len) {
-            return computeMethodPrefix(ctx.text, ctx.offset);
+            return computeCompletionAtOffset(ctx.text, ctx.offset);
         }
     }
-    return null;
+    return CompletionContext{ .prefix = "", .kind = .None, .object_name = null };
 }
 
-fn buildCompletionPayload(self: *Server, id: JsonValue, prefix: ?[]const u8) ![]u8 {
+fn extractUri(params: ?JsonValue) ?[]const u8 {
+    const params_value = params orelse return null;
+    if (params_value != .object) return null;
+    const doc_value = params_value.object.get("textDocument") orelse return null;
+    if (doc_value != .object) return null;
+    const uri_value = doc_value.object.get("uri") orelse return null;
+    if (uri_value != .string) return null;
+    return uri_value.string;
+}
+
+fn computeCompletionAtOffset(text: []const u8, offset: usize) CompletionContext {
+    if (offset == 0) return CompletionContext{ .prefix = "", .kind = .None, .object_name = null };
+
+    var pos: usize = offset;
+    if (pos > text.len) pos = text.len;
+
+    while (pos > 0) : (pos -= 1) {
+        const c = text[pos - 1];
+        if (c == '@') {
+            const end = if (offset > text.len) text.len else offset;
+            return CompletionContext{
+                .prefix = text[pos - 1 .. end],
+                .kind = .Intrinsic,
+                .object_name = null,
+            };
+        }
+        if (!isIdentChar(c)) break;
+    }
+
+    if (pos > 0 and text[pos - 1] == '.') {
+        const member_end = if (offset > text.len) text.len else offset;
+        const member_prefix = text[pos..member_end];
+
+        const obj_end: usize = pos - 1;
+        if (obj_end == 0) return CompletionContext{ .prefix = member_prefix, .kind = .Dot, .object_name = "" };
+
+        var obj_start = obj_end;
+        while (obj_start > 0 and isIdentChar(text[obj_start - 1])) : (obj_start -= 1) {}
+
+        return CompletionContext{
+            .prefix = member_prefix,
+            .kind = .Dot,
+            .object_name = text[obj_start..obj_end],
+        };
+    }
+
+    return CompletionContext{ .prefix = "", .kind = .None, .object_name = null };
+}
+
+fn buildCompletionPayload(self: *Server, id: JsonValue, ctx: CompletionContext) ![]u8 {
     var buffer = std.array_list.Managed(u8).init(self.allocator);
     defer buffer.deinit();
     var writer = buffer.writer();
@@ -576,25 +951,189 @@ fn buildCompletionPayload(self: *Server, id: JsonValue, prefix: ?[]const u8) ![]
     try writeJsonValue(&writer, id);
     try writer.writeAll(",\"result\":{\"isIncomplete\":false,\"items\":[");
 
-    if (prefix) |pref| {
-        var first = true;
-        for (InternalMethods.all()) |method| {
-            if (!std.mem.startsWith(u8, method.label, pref)) continue;
-            if (!first) try writer.writeAll(",");
-            first = false;
-
-            try writer.writeAll("{\"label\":");
-            try writeJsonValue(&writer, method.label);
-            try writer.writeAll(",\"kind\":3");
-            try writer.writeAll(",\"detail\":");
-            try writeJsonValue(&writer, method.detail);
-            try writer.writeAll(",\"documentation\":");
-            try writeJsonValue(&writer, method.documentation);
-            try writer.writeAll("}");
-        }
+    switch (ctx.kind) {
+        .Intrinsic => try writeIntrinsicCompletions(&writer, ctx.prefix),
+        .Dot => try writeMemberCompletions(&self.symbol_index, &writer, ctx),
+        .None => {},
     }
 
     try writer.writeAll("]}}");
+    return buffer.toOwnedSlice();
+}
+
+fn writeIntrinsicCompletions(writer: anytype, prefix: []const u8) !void {
+    var first = true;
+    for (InternalMethods.all()) |method| {
+        if (!std.mem.startsWith(u8, method.label, prefix)) continue;
+        if (!first) try writer.writeAll(",");
+        first = false;
+        try writer.writeAll("{\"label\":");
+        try writeJsonValue(writer, method.label);
+        try writer.writeAll(",\"kind\":3");
+        try writer.writeAll(",\"detail\":");
+        try writeJsonValue(writer, method.detail);
+        try writer.writeAll(",\"documentation\":");
+        try writeJsonValue(writer, method.documentation);
+        try writer.writeAll("}");
+    }
+}
+
+fn writeMemberCompletions(index: *const SymbolIndex, writer: anytype, ctx: CompletionContext) !void {
+    const obj_name = ctx.object_name orelse return;
+    if (obj_name.len == 0) return;
+
+    if (index.module_members.get(obj_name)) |members| {
+        var first = true;
+        for (members.items) |member| {
+            if (!isMemberMatch(member, ctx.prefix)) continue;
+            if (!first) try writer.writeAll(",");
+            first = false;
+            try writeModuleMemberCompletionItem(writer, member);
+        }
+        return;
+    }
+
+    const type_name = resolveObjectType(index, obj_name);
+    if (type_name) |tn| {
+        try writeTypeMembers(index, writer, tn, ctx.prefix);
+    }
+}
+
+fn resolveObjectType(index: *const SymbolIndex, name: []const u8) ?[]const u8 {
+    if (index.variables.get(name)) |type_str| {
+        return type_str;
+    }
+    if (index.types.contains(name)) {
+        return name;
+    }
+    if (index.modules.contains(name)) {
+        return name;
+    }
+    return null;
+}
+
+fn writeTypeMembers(index: *const SymbolIndex, writer: anytype, type_name: []const u8, prefix: []const u8) !void {
+    var first = true;
+
+    if (index.types.get(type_name)) |ct| {
+        switch (ct.kind) {
+            .Struct => {
+                for (ct.fields) |field| {
+                    if (!isMemberMatch(field.name, prefix)) continue;
+                    if (!first) try writer.writeAll(",");
+                    first = false;
+                    try writeFieldCompletionItem(writer, field);
+                }
+                for (ct.methods) |method| {
+                    if (!isMemberMatch(method.name, prefix)) continue;
+                    if (!first) try writer.writeAll(",");
+                    first = false;
+                    try writeMethodCompletionItem(writer, method);
+                }
+            },
+            .Enum => {
+                for (ct.enum_variants) |variant| {
+                    if (!isMemberMatch(variant, prefix)) continue;
+                    if (!first) try writer.writeAll(",");
+                    first = false;
+                    try writeEnumCompletionItem(writer, variant);
+                }
+            },
+            .Group => {
+                for (ct.fields) |field| {
+                    if (!isMemberMatch(field.name, prefix)) continue;
+                    if (!first) try writer.writeAll(",");
+                    first = false;
+                    try writeFieldCompletionItem(writer, field);
+                }
+            },
+        }
+    }
+}
+
+fn isMemberMatch(name: []const u8, prefix: []const u8) bool {
+    if (prefix.len == 0) return true;
+    return std.mem.startsWith(u8, name, prefix);
+}
+
+fn writeFieldCompletionItem(writer: anytype, field: CachedField) !void {
+    try writer.writeAll("{\"label\":");
+    try writeJsonValue(writer, field.name);
+    try writer.writeAll(",\"kind\":5");
+    try writer.writeAll(",\"detail\":");
+    var buf: [256]u8 = undefined;
+    const detail = std.fmt.bufPrint(&buf, "{s}", .{field.type_name}) catch field.type_name;
+    try writeJsonValue(writer, detail);
+    try writer.writeAll("}");
+}
+
+fn writeMethodCompletionItem(writer: anytype, method: CachedMethod) !void {
+    try writer.writeAll("{\"label\":");
+    try writeJsonValue(writer, method.name);
+    try writer.writeAll(",\"kind\":2");
+    try writer.writeAll(",\"detail\":");
+    const sig = if (method.is_static) "fn" else "fn(self)";
+    try writeJsonValue(writer, sig);
+    try writer.writeAll("}");
+}
+
+fn writeEnumCompletionItem(writer: anytype, variant: []const u8) !void {
+    try writer.writeAll("{\"label\":");
+    try writeJsonValue(writer, variant);
+    try writer.writeAll(",\"kind\":13");
+    try writer.writeAll(",\"detail\":");
+    try writeJsonValue(writer, "enum member");
+    try writer.writeAll("}");
+}
+
+fn writeModuleMemberCompletionItem(writer: anytype, name: []const u8) !void {
+    try writer.writeAll("{\"label\":");
+    try writeJsonValue(writer, name);
+    try writer.writeAll(",\"kind\":9");
+    try writer.writeAll(",\"detail\":");
+    try writeJsonValue(writer, "module export");
+    try writer.writeAll("}");
+}
+
+fn buildDocumentSymbolsPayload(self: *Server, id: JsonValue) ![]u8 {
+    var buffer = std.array_list.Managed(u8).init(self.allocator);
+    defer buffer.deinit();
+    var writer = buffer.writer();
+
+    try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
+    try writeJsonValue(&writer, id);
+    try writer.writeAll(",\"result\":[");
+
+    var first = true;
+    for (self.symbol_index.symbols.items) |sym| {
+            if (!first) try writer.writeAll(",");
+            first = false;
+
+            try writer.writeAll("{\"name\":");
+            try writeJsonValue(&writer, sym.name);
+            try writer.writeAll(",\"kind\":");
+            try writer.print("{d}", .{sym.kind});
+            try writer.writeAll(",\"range\":{\"start\":{\"line\":");
+            try writer.print("{d}", .{sym.start_line});
+            try writer.writeAll(",\"character\":");
+            try writer.print("{d}", .{sym.start_character});
+            try writer.writeAll("},\"end\":{\"line\":");
+            try writer.print("{d}", .{sym.end_line});
+            try writer.writeAll(",\"character\":");
+            try writer.print("{d}", .{sym.end_character});
+            try writer.writeAll("}}");
+            try writer.writeAll(",\"selectionRange\":{\"start\":{\"line\":");
+            try writer.print("{d}", .{sym.start_line});
+            try writer.writeAll(",\"character\":");
+            try writer.print("{d}", .{sym.start_character});
+            try writer.writeAll("},\"end\":{\"line\":");
+            try writer.print("{d}", .{sym.start_line});
+            try writer.writeAll(",\"character\":");
+            try writer.print("{d}", .{sym.start_character + sym.name.len});
+            try writer.writeAll("}}}");
+        }
+
+    try writer.writeAll("]}");
     return buffer.toOwnedSlice();
 }
 
@@ -630,12 +1169,62 @@ fn buildHoverPayload(self: *Server, id: JsonValue, params: ?JsonValue) ![]u8 {
                 return payload;
             }
         }
+
+        const dot_ctx = computeCompletionAtOffset(ctx.text, ctx.offset);
+        if (dot_ctx.kind == .Dot and dot_ctx.object_name != null and dot_ctx.object_name.?.len > 0) {
+            if (try buildDotHover(&self.symbol_index, &writer, dot_ctx)) {
+                const payload = try buffer.toOwnedSlice();
+                return payload;
+            }
+        }
     }
 
     try writer.writeAll("null");
     try writer.writeAll("}");
     return buffer.toOwnedSlice();
 }
+
+fn buildDotHover(index: *const SymbolIndex, writer: anytype, comp_ctx: CompletionContext) !bool {
+    const obj_name = comp_ctx.object_name.?;
+    const type_name = resolveObjectType(index, obj_name) orelse return false;
+    const ct = index.types.get(type_name) orelse return false;
+
+    const member_text = comp_ctx.prefix;
+    if (member_text.len == 0) return false;
+
+    for (ct.fields) |field| {
+        if (std.mem.eql(u8, field.name, member_text)) {
+            try writer.writeAll("{\"contents\":{\"kind\":\"markdown\",\"value\":\"`");
+            try writer.writeAll(field.name);
+            try writer.writeAll(" : ");
+            try writer.writeAll(field.type_name);
+            try writer.writeAll("`\"}}");
+            return true;
+        }
+    }
+    for (ct.methods) |method| {
+        if (std.mem.eql(u8, method.name, member_text)) {
+            try writer.writeAll("{\"contents\":{\"kind\":\"markdown\",\"value\":\"`");
+            if (method.is_static) try writer.writeAll("static ");
+            try writer.writeAll("fn ");
+            try writer.writeAll(method.name);
+            try writer.writeAll("(...)`\"}}");
+            return true;
+        }
+    }
+    for (ct.enum_variants) |variant| {
+        if (std.mem.eql(u8, variant, member_text)) {
+            try writer.writeAll("{\"contents\":{\"kind\":\"markdown\",\"value\":\"`enum `");
+            try writeJsonValue(writer, type_name);
+            try writer.writeAll(".");
+            try writeJsonValue(writer, variant);
+            try writer.writeAll("`\"}}");
+            return true;
+        }
+    }
+    return false;
+}
+
 
 fn extractDocumentContext(self: *Server, params: ?JsonValue) ?DocumentContext {
     const params_value = params orelse return null;
@@ -699,14 +1288,6 @@ fn computeOffsetFromPosition(text: []const u8, line: usize, character: usize) us
     return offset;
 }
 
-fn computeMethodPrefix(text: []const u8, offset: usize) ?[]const u8 {
-    if (findMethodStart(text, offset)) |start| {
-        const end = if (offset > text.len) text.len else offset;
-        return text[start..end];
-    }
-    return null;
-}
-
 fn findMethodRange(text: []const u8, offset: usize) ?MethodRange {
     if (findMethodStart(text, offset)) |start| {
         var end = start;
@@ -762,6 +1343,32 @@ fn findMethodStart(text: []const u8, offset: usize) ?usize {
     if (current < text.len and text[current] == '@') return current;
     return null;
 }
+fn isIdentChar(c: u8) bool {
+    return std.ascii.isAlphabetic(c) or std.ascii.isDigit(c) or c == '_';
+}
+
+fn packLspTypeString(type_info: *const ast.TypeInfo) []const u8 {
+    if (type_info.custom_type) |ct| {
+        return ct;
+    }
+    return @tagName(type_info.base);
+}
+
+fn populateSymbolIndexFromScope(index: *SymbolIndex, memory_manager: *MemoryManager) !void {
+    for (memory_manager.scope_pool.items) |scope| {
+        if (scope.is_deinited) continue;
+        var it = scope.name_map.iterator();
+        while (it.next()) |entry| {
+            const var_name = entry.key_ptr.*;
+            const var_ptr = entry.value_ptr.*;
+            if (scope.manager.value_storage.get(var_ptr.storage_id)) |storage| {
+                const type_str = packLspTypeString(storage.type_info);
+                try index.addVariable(var_name, type_str);
+            }
+        }
+    }
+}
+
 fn trimLine(line: []const u8) []const u8 {
     if (line.len > 0 and line[line.len - 1] == '\r') {
         return line[0 .. line.len - 1];

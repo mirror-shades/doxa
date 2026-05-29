@@ -1537,9 +1537,8 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         return null;
     }
 
-    if (self.peek().type == .LEFT_BRACKET) {
+    while (self.peek().type == .LEFT_BRACKET) {
         self.advance();
-        consumed_token = true;
 
         var array_size: ?*ast.Expr = null;
         if (self.peek().type != .RIGHT_BRACKET) {
@@ -1551,8 +1550,6 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         }
         self.advance();
 
-        const element_type = try parseNonUnionTypeExpr(self) orelse return error.ExpectedType;
-
         const array_type_expr = try self.allocator.create(ast.TypeExpr);
         array_type_expr.* = .{
             .base = .{
@@ -1561,7 +1558,7 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
             },
             .data = .{
                 .Array = ast.ArrayType{
-                    .element_type = element_type,
+                    .element_type = base_type_expr.?,
                     .size = array_size,
                 },
             },
@@ -1859,7 +1856,7 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
         .INT_TYPE, .FLOAT_TYPE, .STRING_TYPE, .BYTE_TYPE, .TETRA_TYPE, .NOTHING_TYPE, .NOTHING => {
             const type_token = self.peek();
             self.advance();
-            return type_token;
+            return try parseArraySuffixForMatchPattern(self, type_token);
         },
         .IDENTIFIER => {
             if (std.mem.eql(u8, current.lexeme, "else")) {
@@ -1946,7 +1943,7 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
 
             const ident_tok = self.peek();
             self.advance();
-            return ident_tok;
+            return try parseArraySuffixForMatchPattern(self, ident_tok);
         },
         else => {
             if (current.type == .THEN or current.type == .RIGHT_BRACE or current.type == .COMMA or current.type == .NEWLINE) {
@@ -1957,4 +1954,36 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
             return tok;
         },
     }
+}
+
+fn parseArraySuffixForMatchPattern(self: *Parser, base_token: token.Token) ErrorList!token.Token {
+    if (self.peek().type != .LEFT_BRACKET) {
+        return base_token;
+    }
+
+    var bracket_count: usize = 0;
+    while (self.peek().type == .LEFT_BRACKET) {
+        self.advance();
+        if (self.peek().type != .RIGHT_BRACKET) return error.ExpectedRightBracket;
+        self.advance();
+        bracket_count += 1;
+    }
+
+    const base_len = base_token.lexeme.len;
+    const total_len = base_len + (2 * bracket_count);
+    const composite_lexeme = try self.allocator.alloc(u8, total_len);
+    @memcpy(composite_lexeme[0..base_len], base_token.lexeme);
+    for (0..bracket_count) |i| {
+        composite_lexeme[base_len + (2 * i)] = '[';
+        composite_lexeme[base_len + (2 * i) + 1] = ']';
+    }
+    return .{
+        .type = base_token.type,
+        .lexeme = composite_lexeme,
+        .literal = .{ .nothing = {} },
+        .line = base_token.line,
+        .column = base_token.column,
+        .file = base_token.file,
+        .file_uri = base_token.file_uri,
+    };
 }
