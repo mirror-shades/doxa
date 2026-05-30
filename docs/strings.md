@@ -6,8 +6,6 @@ interop naturally with both Zig's `[:0]const u8` and C's `const char*`.
 
 ## Quote semantics
 
-### Double quotes — interpolation
-
 Double-quoted strings (`"..."`) interpret `{expression}` blocks anywhere in the string body.
 Any valid Doxa expression — a variable, an arithmetic operation, a function call — can appear
 between the braces and will be stringified in place at runtime:
@@ -22,19 +20,6 @@ var x is 10
 
 Interpolation works wherever a string literal is accepted: in `@print` / `@println` calls,
 variable initialisers, function arguments, map keys, and so on.
-
-### Single quotes — literal text
-
-Single-quoted strings (`'...'`) are **literal** — no interpolation is performed. Every
-character between the delimiters, including `{` and `}`, is preserved as written:
-
-```doxa
-var json is '{ "x": 1, "y": 2 }'        # braces stay as text
-var template is 'Hello {name}'           # literal "{name}", not a reference
-```
-
-Use single quotes when you need curly braces to remain part of the string value itself
-(JSON, code snippets, format templates, etc.).
 
 ## The `string` type
 

@@ -107,7 +107,7 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
 ### Diagnostics / Output
 
 - `@print("text")`
-  - Prints any expression. Double-quoted strings interpolate `{...}` expressions before printing, so `@print("value is {value}")` prints the current value. Use single-quoted strings for literal braces, such as `@print('{ y: 2 }')`.
+  - Prints any expression. Double-quoted strings interpolate `{...}` expressions before printing, so `@print("value is {value}")` prints the current value.
 - `@assert(condition, "message"?)`
   - False condition halts execution and reports assertion failure location/message.
 - `@panic(message)`

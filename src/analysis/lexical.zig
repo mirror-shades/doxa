@@ -361,7 +361,6 @@ pub const LexicalAnalyzer = struct {
             '0'...'9' => try self.number(),
 
             '"' => try self.string(),
-            '\'' => try self.singleQuotedString(),
             '[' => try self.addMinimalToken(.LEFT_BRACKET),
             ']' => try self.addMinimalToken(.RIGHT_BRACKET),
             ' ', '\r', '\t' => {},
@@ -599,12 +598,6 @@ pub const LexicalAnalyzer = struct {
                 continue;
             }
 
-            // In interpolation mode, ' starts an inner single-quoted string
-            if (brace_depth > 0 and c == '\'') {
-                try self.scanInnerSingleQuotedString(&result);
-                continue;
-            }
-
             // Enter or nest interpolation
             if (c == '{') {
                 if (brace_depth > 0) {
@@ -753,66 +746,6 @@ pub const LexicalAnalyzer = struct {
         }
 
         return error.UnterminatedString;
-    }
-
-    fn scanInnerSingleQuotedString(self: *LexicalAnalyzer, result: *std.array_list.Managed(u8)) !void {
-        self.advance(); // consume opening '
-        try result.append('\'');
-
-        while (!self.isAtEnd()) {
-            const c = self.peekAt(0);
-            self.advance();
-
-            if (c == '\\') {
-                try result.append('\\');
-                if (self.isAtEnd()) return error.UnterminatedString;
-                const next = self.peekAt(0);
-                try result.append(next);
-                self.advance();
-            } else if (c == '\'') {
-                try result.append('\'');
-                return;
-            } else {
-                try result.append(c);
-            }
-        }
-
-        return error.UnterminatedString;
-    }
-
-    fn singleQuotedString(self: *LexicalAnalyzer) !void {
-        var result = std.array_list.Managed(u8).init(self.allocator);
-        errdefer result.deinit();
-
-        while (!self.isAtEnd() and self.peekAt(0) != '\'') {
-            const c = self.peekAt(0);
-            self.advance();
-
-            if (c == '\\') {
-                if (self.isAtEnd()) {
-                    return error.UnterminatedString;
-                }
-
-                const escaped = self.peekAt(0);
-                self.advance();
-                switch (escaped) {
-                    '\'' => try result.append('\''),
-                    '\\' => try result.append('\\'),
-                    else => return error.InvalidEscapeSequence,
-                }
-            } else {
-                try result.append(c);
-            }
-        }
-
-        if (self.isAtEnd()) {
-            return error.UnterminatedString;
-        }
-
-        self.advance();
-        const lexeme = self.source[self.start..self.current];
-        const string_content = try result.toOwnedSlice();
-        try self.addLongToken(.SINGLE_STRING, .{ .string = string_content }, lexeme);
     }
 
     fn addZigBlock(self: *LexicalAnalyzer) !void {
