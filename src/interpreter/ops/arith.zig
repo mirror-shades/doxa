@@ -215,7 +215,8 @@ pub fn exec(vm: anytype, a: anytype) !void {
             return;
         },
         .IntDiv => {
-            int_result = try intDiv(vm, left_int, right_int);
+            if (right_int == 0) return ErrorList.DivisionByZero;
+            int_result = @divFloor(left_int, right_int);
         },
         .Mod => int_result = try fastIntMod(vm, left_int, right_int),
         .Pow => {
@@ -230,20 +231,13 @@ pub fn exec(vm: anytype, a: anytype) !void {
     }
 }
 
-pub fn intDiv(_: anytype, a: i64, b: i64) !i64 {
-    if (b == 0) {
-        return ErrorList.DivisionByZero;
-    }
-    return @divFloor(a, b);
-}
-
 pub fn fastIntMod(_: anytype, a: i64, b: i64) !i64 {
     if (b == 0) {
         return ErrorList.DivisionByZero;
     }
     return switch (b) {
         3 => fastMod3(a),
-        5 => fastMod5(a),
+        5 => @mod(a, 5),
         15 => fastMod15(a),
         else => @mod(a, b),
     };
@@ -259,12 +253,8 @@ inline fn fastMod3(n: i64) i64 {
     return if (n < 0 and x != 0) 3 - x else x;
 }
 
-inline fn fastMod5(n: i64) i64 {
-    return @mod(n, 5);
-}
-
 inline fn fastMod15(n: i64) i64 {
     const mod3 = fastMod3(n);
-    const mod5 = fastMod5(n);
+    const mod5 = @mod(n, 5);
     return @mod(mod3 + 3 * @mod(mod5 * 2, 5), 15);
 }

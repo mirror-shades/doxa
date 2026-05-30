@@ -257,59 +257,62 @@ public function sliceStringArray(collection :: string[], start :: int, length ::
 }
 
 public function toInt(value :: int | float | byte | string) returns int | error.Method {
-    value as int then {
-        return value
-    }
-    value as byte then {
-        return @int(value)
-    }
-    value as float then {
+    match value {
+        int then {
+            return value
+        } 
+        float then {
         if value != value then return error.Method.InvalidNumber
         if value > 9223372036854775807.0 then return error.Method.Overflow
         if value < -9223372036854775808.0 then return error.Method.Overflow
         return @int(value)
+        }
+        byte then {
+            if value < 0 or value > 255 then return error.Method.Overflow
+            return @int(value)
+        }
+        string then {
+            return Parse.parseIntSafe(value)
+        }
     }
-    value as string then {
-        if Parse.isInt(value) then return Parse.parseIntSafe(value)
-        return error.Method.InvalidNumber
-    }
-    return error.Method.Unexpected
 }
 
 public function toFloat(value :: int | float | byte | string) returns float | error.Method {
-    value as float then {
-        if value != value then return error.Method.InvalidNumber
-        return value
+    match value {
+        float then {
+            if value != value then return error.Method.InvalidNumber
+            return value
+        }
+        int then {
+            return @float(value)
+        }
+        byte then {
+            return @float(value)
+        }
+        string then {
+            if Parse.isFloat(value) then return Parse.parseFloatSafe(value)
+            return error.Method.InvalidNumber
+        }
     }
-    value as int then {
-        return @float(value)
-    }
-    value as byte then {
-        return @float(value)
-    }
-    value as string then {
-        if Parse.isFloat(value) then return Parse.parseFloatSafe(value)
-        return error.Method.InvalidNumber
-    }
-    return error.Method.Unexpected
 }
 
 public function toByte(value :: int | float | byte | string) returns byte | error.Method {
-    value as byte then {
-        return value
+    match value {
+        byte then {
+            return value
+        }
+        int then {
+            if value < 0 or value > 255 then return error.Method.Overflow
+            return @byte(value)
+        }
+        float then {
+            if value != value then return error.Method.InvalidNumber
+            if value < 0.0 or value > 255.0 then return error.Method.Overflow
+            return @byte(value)
+        }
+        string then {
+            if Parse.isByte(value) then return Parse.parseByteSafe(value)
+            return error.Method.InvalidNumber
+        }
     }
-    value as int then {
-        if value < 0 or value > 255 then return error.Method.Overflow
-        return @byte(value)
-    }
-    value as float then {
-        if value != value then return error.Method.InvalidNumber
-        if value < 0.0 or value > 255.0 then return error.Method.Overflow
-        return @byte(value)
-    }
-    value as string then {
-        if Parse.isByte(value) then return Parse.parseByteSafe(value)
-        return error.Method.InvalidNumber
-    }
-    return error.Method.Unexpected
 }

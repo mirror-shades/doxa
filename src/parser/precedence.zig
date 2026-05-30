@@ -524,42 +524,6 @@ fn peekValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
     return peek_expr;
 }
 
-fn printValue(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
-    if (left == null) return error.ExpectedLeftOperand;
-
-    var name_token: ?[]const u8 = null;
-    if (left.?.data == .Variable) {
-        name_token = left.?.data.Variable.lexeme;
-    }
-
-    const qm_token = self.previous();
-
-    const print_expr = try self.allocator.create(ast.Expr);
-    print_expr.* = .{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = .{
-                .location = .{
-                    .file = qm_token.file,
-                    .range = .{
-                        .start_line = @intCast(qm_token.line),
-                        .start_col = qm_token.column,
-                        .end_line = @intCast(qm_token.line),
-                        .end_col = qm_token.column + qm_token.lexeme.len,
-                    },
-                },
-            },
-        },
-        .data = .{
-            .Print = .{
-                .expr = left.?,
-            },
-        },
-    };
-
-    return print_expr;
-}
-
 fn rangeExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     if (left == null) return error.ExpectedLeftOperand;
 
