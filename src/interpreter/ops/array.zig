@@ -767,8 +767,131 @@ pub fn getDefaultValue(hir_type: HIRType) HIRValue {
     };
 }
 
-pub fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
-    _ = a;
+const CompoundOp = enum { add, sub, mul, div, mod, pow };
+
+fn extractCompoundIndex(index: HIRFrame, vm: anytype) !u32 {
+    return switch (index.value) {
+        .int => |i| if (i < 0) {
+            vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
+            return ErrorList.TypeError;
+        } else @as(u32, @intCast(i)),
+        .byte => |u| @as(u32, u),
+        .tetra => |t| @as(u32, t),
+        else => {
+            vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
+            return ErrorList.TypeError;
+        },
+    };
+}
+
+fn compoundResult(
+    vm: anytype,
+    current_element: HIRValue,
+    value: HIRValue,
+    comptime op: CompoundOp,
+) !HIRValue {
+    const op_name = comptime @tagName(op);
+    return switch (current_element) {
+        .int => |current| blk: {
+            const rhs: i64 = switch (value) {
+                .int => |v| v,
+                .byte => |v| @as(i64, v),
+                .float => |v| @as(i64, @intFromFloat(v)),
+                else => {
+                    vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot " ++ op_name ++ " {s} to int", .{@tagName(value)});
+                    return ErrorList.TypeError;
+                },
+            };
+            if (op == .div or op == .mod) {
+                if (rhs == 0) {
+                    vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero", .{});
+                    return ErrorList.TypeError;
+                }
+            }
+            break :blk switch (op) {
+                .add => HIRValue{ .int = std.math.add(i64, current, rhs) catch {
+                    vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer overflow", .{});
+                    return ErrorList.TypeError;
+                } },
+                .sub => HIRValue{ .int = std.math.sub(i64, current, rhs) catch {
+                    vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer overflow", .{});
+                    return ErrorList.TypeError;
+                } },
+                .mul => HIRValue{ .int = std.math.mul(i64, current, rhs) catch {
+                    vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Integer overflow", .{});
+                    return ErrorList.TypeError;
+                } },
+                .div => HIRValue{ .float = @as(f64, @floatFromInt(current)) / @as(f64, @floatFromInt(rhs)) },
+                .mod => HIRValue{ .int = @mod(current, rhs) },
+                .pow => blk2: {
+                    if (rhs > std.math.maxInt(u32)) {
+                        vm.reporter.reportRuntimeError(null, ErrorCode.ARITHMETIC_OVERFLOW, "Exponent too large", .{});
+                        return ErrorList.TypeError;
+                    }
+                    break :blk2 HIRValue{ .int = std.math.pow(i64, current, @intCast(rhs)) };
+                },
+            };
+        },
+        .byte => |current| blk: {
+            const rhs: u8 = switch (value) {
+                .int => |v| @as(u8, @intCast(if (v < 0) @as(i64, 0) else v)),
+                .byte => |v| v,
+                else => {
+                    vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot " ++ op_name ++ " {s} to byte", .{@tagName(value)});
+                    return ErrorList.TypeError;
+                },
+            };
+            if (op == .div or op == .mod) {
+                if (rhs == 0) {
+                    vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero", .{});
+                    return ErrorList.TypeError;
+                }
+            }
+            break :blk switch (op) {
+                .add => HIRValue{ .byte = @as(u8, @truncate(@as(u16, current) + @as(u16, rhs))) },
+                .sub => HIRValue{ .byte = @as(u8, @truncate(@as(u16, current) - @as(u16, rhs))) },
+                .mul => HIRValue{ .byte = @as(u8, @truncate(@as(u16, current) * @as(u16, rhs))) },
+                .div => HIRValue{ .byte = @as(u8, @intCast(current / rhs)) },
+                .mod => HIRValue{ .byte = @as(u8, @intCast(@mod(current, rhs))) },
+                .pow => blk2: {
+                    const p: u32 = std.math.pow(u32, @as(u32, current), @as(u32, rhs));
+                    break :blk2 HIRValue{ .byte = if (p > 255) 255 else @intCast(p) };
+                },
+            };
+        },
+        .float => |current| blk: {
+            const rhs: f64 = switch (value) {
+                .int => |v| @as(f64, @floatFromInt(v)),
+                .byte => |v| @as(f64, @floatFromInt(v)),
+                .float => |v| v,
+                else => {
+                    vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot " ++ op_name ++ " {s} to float", .{@tagName(value)});
+                    return ErrorList.TypeError;
+                },
+            };
+            if (op == .div or op == .mod) {
+                if (rhs == 0.0) {
+                    vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero", .{});
+                    return ErrorList.TypeError;
+                }
+            }
+            break :blk switch (op) {
+                .add => HIRValue{ .float = current + rhs },
+                .sub => HIRValue{ .float = current - rhs },
+                .mul => HIRValue{ .float = current * rhs },
+                .div => HIRValue{ .float = current / rhs },
+                .mod => HIRValue{ .float = @mod(current, rhs) },
+                .pow => HIRValue{ .float = std.math.pow(f64, current, rhs) },
+            };
+        },
+        else => {
+            vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)});
+            return ErrorList.TypeError;
+        },
+    };
+}
+
+fn execArrayGetAndCompound(vm: anytype, comptime op: CompoundOp) !void {
     if (vm.stack.sp < 3) {
         return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
     }
@@ -777,16 +900,7 @@ pub fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
     const index = try vm.stack.pop();
     const array_frame = try vm.stack.pop();
 
-    const index_val = switch (index.value) {
-        .int => |i| if (i < 0) {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
-        } else @as(u32, @intCast(i)),
-        .byte => |u| @as(u32, u),
-        .tetra => |t| @as(u32, t),
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
-        },
-    };
+    const index_val = try extractCompoundIndex(index, vm);
 
     switch (array_frame.value) {
         .array => |arr| {
@@ -797,27 +911,7 @@ pub fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
             }
 
             const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
-
-            const result = switch (current_element) {
-                .int => |current| switch (value.value) {
-                    .int => |val| HIRValue{ .int = current + val },
-                    .byte => |val| HIRValue{ .int = current + val },
-                    .float => |val| HIRValue{ .int = current + @as(i64, @intFromFloat(val)) },
-                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot add {s} to int", .{@tagName(value.value)}),
-                },
-                .byte => |current| switch (value.value) {
-                    .int => |val| HIRValue{ .byte = @as(u8, @intCast((current + @as(u8, @intCast(val)) & 0xFF))) },
-                    .byte => |val| HIRValue{ .byte = @as(u8, @intCast((current + val) & 0xFF)) },
-                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot add {s} to byte", .{@tagName(value.value)}),
-                },
-                .float => |current| switch (value.value) {
-                    .int => |val| HIRValue{ .float = current + @as(f64, @floatFromInt(val)) },
-                    .byte => |val| HIRValue{ .float = current + @as(f64, @floatFromInt(val)) },
-                    .float => |val| HIRValue{ .float = current + val },
-                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot add {s} to float", .{@tagName(value.value)}),
-                },
-                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
-            };
+            const result = try compoundResult(vm, current_element, value.value, op);
 
             const allocator = try vm.arrayAllocator(mutable_arr);
             if (index_val >= mutable_arr.elements.len) {
@@ -839,420 +933,34 @@ pub fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
             return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform compound assignment on non-array value: {s}", .{@tagName(array_frame.value)});
         },
     }
+}
+
+pub fn arrayGetAndAdd(vm: anytype, a: anytype) !void {
+    _ = a;
+    try execArrayGetAndCompound(vm, .add);
 }
 
 pub fn arrayGetAndSub(vm: anytype, a: anytype) !void {
     _ = a;
-    if (vm.stack.sp < 3) {
-        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
-    }
-
-    const value = try vm.stack.pop();
-    const index = try vm.stack.pop();
-    const array_frame = try vm.stack.pop();
-
-    const index_val = switch (index.value) {
-        .int => |i| if (i < 0) {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
-        } else @as(u32, @intCast(i)),
-        .byte => |u| @as(u32, u),
-        .tetra => |t| @as(u32, t),
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
-        },
-    };
-
-    switch (array_frame.value) {
-        .array => |arr| {
-            var mutable_arr = arr;
-            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
-            if (index_val >= mutable_arr.capacity) {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
-            }
-
-            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
-
-            const result = switch (current_element) {
-                .int => |current| switch (value.value) {
-                    .int => |val| HIRValue{ .int = current - val },
-                    .byte => |val| HIRValue{ .int = current - val },
-                    .float => |val| HIRValue{ .int = current - @as(i64, @intFromFloat(val)) },
-                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot subtract {s} from int", .{@tagName(value.value)}),
-                },
-                .byte => |current| switch (value.value) {
-                    .int => |val| HIRValue{ .byte = @as(u8, @intCast((current - @as(u8, @intCast(val))) & 0xFF)) },
-                    .byte => |val| HIRValue{ .byte = @as(u8, @intCast((current - val) & 0xFF)) },
-                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot subtract {s} from byte", .{@tagName(value.value)}),
-                },
-                .float => |current| switch (value.value) {
-                    .int => |val| HIRValue{ .float = current - @as(f64, @floatFromInt(val)) },
-                    .byte => |val| HIRValue{ .float = current - @as(f64, @floatFromInt(val)) },
-                    .float => |val| HIRValue{ .float = current - val },
-                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot subtract {s} from float", .{@tagName(value.value)}),
-                },
-                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
-            };
-
-            const allocator = try vm.arrayAllocator(mutable_arr);
-            if (index_val >= mutable_arr.elements.len) {
-                const prev_len = mutable_arr.elements.len;
-                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
-                mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
-                    element.* = nothing_value;
-                }
-            }
-            mutable_arr.elements[index_val] = result;
-            if (index_val >= mutable_arr.length) {
-                mutable_arr.length = index_val + 1;
-            }
-
-            try vm.stack.push(HIRFrame.initFromHIRValue(result));
-        },
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform compound assignment on non-array value: {s}", .{@tagName(array_frame.value)});
-        },
-    }
+    try execArrayGetAndCompound(vm, .sub);
 }
 
 pub fn arrayGetAndMul(vm: anytype, a: anytype) !void {
     _ = a;
-    if (vm.stack.sp < 3) {
-        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
-    }
-
-    const value = try vm.stack.pop();
-    const index = try vm.stack.pop();
-    const array_frame = try vm.stack.pop();
-
-    const index_val = switch (index.value) {
-        .int => |i| if (i < 0) {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
-        } else @as(u32, @intCast(i)),
-        .byte => |u| @as(u32, u),
-        .tetra => |t| @as(u32, t),
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
-        },
-    };
-
-    switch (array_frame.value) {
-        .array => |arr| {
-            var mutable_arr = arr;
-            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
-            if (index_val >= mutable_arr.capacity) {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
-            }
-
-            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
-
-            const result = switch (current_element) {
-                .int => |current| switch (value.value) {
-                    .int => |val| HIRValue{ .int = current * val },
-                    .byte => |val| HIRValue{ .int = current * val },
-                    .float => |val| HIRValue{ .int = current * @as(i64, @intFromFloat(val)) },
-                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot multiply int by {s}", .{@tagName(value.value)}),
-                },
-                .byte => |current| switch (value.value) {
-                    .int => |val| HIRValue{ .byte = @as(u8, @intCast((current * @as(u8, @intCast(val))) & 0xFF)) },
-                    .byte => |val| HIRValue{ .byte = @as(u8, @intCast((current * val) & 0xFF)) },
-                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot multiply byte by {s}", .{@tagName(value.value)}),
-                },
-                .float => |current| switch (value.value) {
-                    .int => |val| HIRValue{ .float = current * @as(f64, @floatFromInt(val)) },
-                    .byte => |val| HIRValue{ .float = current * @as(f64, @floatFromInt(val)) },
-                    .float => |val| HIRValue{ .float = current * val },
-                    else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot multiply float by {s}", .{@tagName(value.value)}),
-                },
-                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
-            };
-
-            const allocator = try vm.arrayAllocator(mutable_arr);
-            if (index_val >= mutable_arr.elements.len) {
-                const prev_len = mutable_arr.elements.len;
-                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
-                mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
-                    element.* = nothing_value;
-                }
-            }
-            mutable_arr.elements[index_val] = result;
-            if (index_val >= mutable_arr.length) {
-                mutable_arr.length = index_val + 1;
-            }
-
-            try vm.stack.push(HIRFrame.initFromHIRValue(result));
-        },
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform compound assignment on non-array value: {s}", .{@tagName(array_frame.value)});
-        },
-    }
+    try execArrayGetAndCompound(vm, .mul);
 }
 
 pub fn arrayGetAndDiv(vm: anytype, a: anytype) !void {
     _ = a;
-    if (vm.stack.sp < 3) {
-        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
-    }
-
-    const value = try vm.stack.pop();
-    const index = try vm.stack.pop();
-    const array_frame = try vm.stack.pop();
-
-    const index_val = switch (index.value) {
-        .int => |i| if (i < 0) {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
-        } else @as(u32, @intCast(i)),
-        .byte => |u| @as(u32, u),
-        .tetra => |t| @as(u32, t),
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
-        },
-    };
-
-    switch (array_frame.value) {
-        .array => |arr| {
-            var mutable_arr = arr;
-            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
-            if (index_val >= mutable_arr.capacity) {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
-            }
-
-            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
-
-            const result = switch (current_element) {
-                .int => |current| blk: {
-                    const denom = switch (value.value) {
-                        .int => |v| v,
-                        .byte => |v| @as(i64, v),
-                        .float => |v| @as(i64, @intFromFloat(v)),
-                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid divisor for int: {s}", .{@tagName(value.value)}),
-                    };
-                    if (denom == 0) {
-                        return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero", .{});
-                    }
-                    const res = @as(f64, @floatFromInt(current)) / @as(f64, @floatFromInt(denom));
-                    break :blk HIRValue{ .float = res };
-                },
-                .byte => |current| blk: {
-                    const denom: u8 = switch (value.value) {
-                        .int => |v| @as(u8, @intCast(if (v < 0) 0 else v)),
-                        .byte => |v| v,
-                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid divisor for byte: {s}", .{@tagName(value.value)}),
-                    };
-                    if (denom == 0) {
-                        return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero", .{});
-                    }
-                    const q = @as(u8, @intCast(current / denom));
-                    break :blk HIRValue{ .byte = q };
-                },
-                .float => |current| blk: {
-                    const denom = switch (value.value) {
-                        .int => |v| @as(f64, @floatFromInt(v)),
-                        .byte => |v| @as(f64, @floatFromInt(v)),
-                        .float => |v| v,
-                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid divisor for float: {s}", .{@tagName(value.value)}),
-                    };
-                    if (denom == 0.0) {
-                        return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Division by zero", .{});
-                    }
-                    break :blk HIRValue{ .float = current / denom };
-                },
-                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
-            };
-
-            const allocator = try vm.arrayAllocator(mutable_arr);
-            if (index_val >= mutable_arr.elements.len) {
-                const prev_len = mutable_arr.elements.len;
-                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
-                mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
-                    element.* = nothing_value;
-                }
-            }
-            mutable_arr.elements[index_val] = result;
-            if (index_val >= mutable_arr.length) {
-                mutable_arr.length = index_val + 1;
-            }
-
-            try vm.stack.push(HIRFrame.initFromHIRValue(result));
-        },
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform compound assignment on non-array value: {s}", .{@tagName(array_frame.value)});
-        },
-    }
+    try execArrayGetAndCompound(vm, .div);
 }
 
 pub fn arrayGetAndMod(vm: anytype, a: anytype) !void {
     _ = a;
-    if (vm.stack.sp < 3) {
-        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
-    }
-
-    const value = try vm.stack.pop();
-    const index = try vm.stack.pop();
-    const array_frame = try vm.stack.pop();
-
-    const index_val = switch (index.value) {
-        .int => |i| if (i < 0) {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
-        } else @as(u32, @intCast(i)),
-        .byte => |u| @as(u32, u),
-        .tetra => |t| @as(u32, t),
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
-        },
-    };
-
-    switch (array_frame.value) {
-        .array => |arr| {
-            var mutable_arr = arr;
-            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
-            if (index_val >= mutable_arr.capacity) {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
-            }
-
-            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
-
-            const result = switch (current_element) {
-                .int => |current| blk: {
-                    const rhs = switch (value.value) {
-                        .int => |v| v,
-                        .byte => |v| @as(i64, v),
-                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid modulo for int: {s}", .{@tagName(value.value)}),
-                    };
-                    if (rhs == 0) {
-                        return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Modulo by zero", .{});
-                    }
-                    break :blk HIRValue{ .int = @mod(current, rhs) };
-                },
-                .byte => |current| blk: {
-                    const rhs: u8 = switch (value.value) {
-                        .int => |v| @as(u8, @intCast(if (v < 0) 0 else v)),
-                        .byte => |v| v,
-                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid modulo for byte: {s}", .{@tagName(value.value)}),
-                    };
-                    if (rhs == 0) {
-                        return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Modulo by zero", .{});
-                    }
-                    break :blk HIRValue{ .byte = @as(u8, @intCast(@mod(current, rhs))) };
-                },
-                .float => |current| blk: {
-                    const rhs = switch (value.value) {
-                        .int => |v| @as(f64, @floatFromInt(v)),
-                        .byte => |v| @as(f64, @floatFromInt(v)),
-                        .float => |v| v,
-                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid modulo for float: {s}", .{@tagName(value.value)}),
-                    };
-                    if (rhs == 0.0) {
-                        return vm.reporter.reportRuntimeError(null, ErrorCode.DIVISION_BY_ZERO, "Modulo by zero", .{});
-                    }
-                    break :blk HIRValue{ .float = @mod(current, rhs) };
-                },
-                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
-            };
-
-            const allocator = try vm.arrayAllocator(mutable_arr);
-            if (index_val >= mutable_arr.elements.len) {
-                const prev_len = mutable_arr.elements.len;
-                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
-                mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
-                    element.* = nothing_value;
-                }
-            }
-            mutable_arr.elements[index_val] = result;
-            if (index_val >= mutable_arr.length) {
-                mutable_arr.length = index_val + 1;
-            }
-
-            try vm.stack.push(HIRFrame.initFromHIRValue(result));
-        },
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform compound assignment on non-array value: {s}", .{@tagName(array_frame.value)});
-        },
-    }
+    try execArrayGetAndCompound(vm, .mod);
 }
 
 pub fn arrayGetAndPow(vm: anytype, a: anytype) !void {
     _ = a;
-    if (vm.stack.sp < 3) {
-        return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Stack underflow", .{});
-    }
-
-    const value = try vm.stack.pop();
-    const index = try vm.stack.pop();
-    const array_frame = try vm.stack.pop();
-
-    const index_val = switch (index.value) {
-        .int => |i| if (i < 0) {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index cannot be negative: {}", .{i});
-        } else @as(u32, @intCast(i)),
-        .byte => |u| @as(u32, u),
-        .tetra => |t| @as(u32, t),
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid array index type: {s}", .{@tagName(index.value)});
-        },
-    };
-
-    switch (array_frame.value) {
-        .array => |arr| {
-            var mutable_arr = arr;
-            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
-            if (index_val >= mutable_arr.capacity) {
-                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
-            }
-
-            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
-
-            const result = switch (current_element) {
-                .int => |current| blk: {
-                    const exponent = switch (value.value) {
-                        .int => |v| v,
-                        .byte => |v| @as(i64, v),
-                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid exponent for int: {s}", .{@tagName(value.value)}),
-                    };
-                    break :blk HIRValue{ .int = std.math.pow(i64, current, @intCast(exponent)) };
-                },
-                .byte => |current| blk: {
-                    const exponent: u8 = switch (value.value) {
-                        .int => |v| @as(u8, @intCast(if (v < 0) 0 else v)),
-                        .byte => |v| v,
-                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid exponent for byte: {s}", .{@tagName(value.value)}),
-                    };
-                    const p: u32 = std.math.pow(u32, @as(u32, current), @as(u32, exponent));
-                    break :blk HIRValue{ .byte = if (p > 255) 255 else @intCast(p) };
-                },
-                .float => |current| blk: {
-                    const exponent = switch (value.value) {
-                        .int => |v| @as(f64, @floatFromInt(v)),
-                        .byte => |v| @as(f64, @floatFromInt(v)),
-                        .float => |v| v,
-                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Invalid exponent for float: {s}", .{@tagName(value.value)}),
-                    };
-                    break :blk HIRValue{ .float = std.math.pow(f64, current, exponent) };
-                },
-                else => return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform arithmetic on {s}", .{@tagName(current_element)}),
-            };
-
-            const allocator = try vm.arrayAllocator(mutable_arr);
-            if (index_val >= mutable_arr.elements.len) {
-                const prev_len = mutable_arr.elements.len;
-                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
-                mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
-                    element.* = nothing_value;
-                }
-            }
-            mutable_arr.elements[index_val] = result;
-            if (index_val >= mutable_arr.length) {
-                mutable_arr.length = index_val + 1;
-            }
-
-            try vm.stack.push(HIRFrame.initFromHIRValue(result));
-        },
-        else => {
-            return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot perform compound assignment on non-array value: {s}", .{@tagName(array_frame.value)});
-        },
-    }
+    try execArrayGetAndCompound(vm, .pow);
 }

@@ -7,13 +7,7 @@ const HIRType = @import("../soxa_types.zig").HIRType;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 
-/// Struct info for peek operations
-const StructPeekInfo = struct {
-    name: []const u8,
-    field_count: u32,
-    field_names: [][]const u8,
-    field_types: []HIRType,
-};
+const StructPeekInfo = HIRGenerator.StructPeekInfo;
 
 /// Handle I/O and debugging operations: print, peek, input
 pub const IOHandler = struct {

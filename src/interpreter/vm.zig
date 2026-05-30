@@ -289,10 +289,6 @@ pub const VM = struct {
         try self.stack.pushValue(value);
     }
 
-    fn popFrame(self: *VM) VmError!HIRFrame {
-        return try self.stack.pop();
-    }
-
     fn popValue(self: *VM) VmError!HIRValue {
         if (self.stack.sp == 0) {
             std.debug.print("StackUnderflow: Attempting to pop from empty stack at IP {d}\n", .{self.ip});
@@ -371,85 +367,8 @@ pub const VM = struct {
                 const value = ptr.load();
                 try self.stack.pushValue(value);
             },
-            .StoreSlot => |payload| {
-                var value = try self.popValue();
-                const ptr = try self.resolveSlot(payload.target);
-                const owner = try self.ownerForStoreTarget(payload.target, ptr);
-                var allocator: std.mem.Allocator = undefined;
-                var module_state_ptr: ?*runtime.ModuleState = null;
-                var old_module_value: HIRValue = undefined;
-                var module_slot_index: ?module.SlotIndex = null;
-                var had_old_value = false;
-
-                switch (owner) {
-                    .Runtime, .Scope => allocator = try self.allocatorForPointer(ptr),
-                    .Module => |module_id| {
-                        const state = try self.resolveModuleState(module_id);
-                        allocator = state.allocator;
-                        module_state_ptr = state;
-                        module_slot_index = self.moduleSlotIndexForStore(state, payload.target, ptr);
-                        if (module_slot_index) |slot_idx| {
-                            if (state.hasValue(slot_idx)) {
-                                old_module_value = ptr.load();
-                                had_old_value = true;
-                            }
-                        }
-                    },
-                }
-
-                const value_ptr = try self.runtimeAllocator().create(HIRValue);
-                value_ptr.* = value;
-                defer self.runtimeAllocator().destroy(value_ptr);
-                value = try self.deepCopyValueToAllocator(allocator, value_ptr, owner);
-                ptr.store(value);
-                if (module_state_ptr) |state| {
-                    if (module_slot_index) |slot_idx| {
-                        state.markInitialized(slot_idx);
-                    }
-                    if (had_old_value) {
-                        self.freeValueFromAllocator(state.allocator, &old_module_value);
-                    }
-                }
-            },
-            .StoreConstSlot => |operand| {
-                var value = try self.popValue();
-                const ptr = try self.resolveSlot(operand);
-                const owner = try self.ownerForStoreTarget(operand, ptr);
-                var allocator: std.mem.Allocator = undefined;
-                var module_state_ptr: ?*runtime.ModuleState = null;
-                var old_module_value: HIRValue = undefined;
-                var module_slot_index: ?module.SlotIndex = null;
-                var had_old_value = false;
-
-                switch (owner) {
-                    .Runtime, .Scope => allocator = try self.allocatorForPointer(ptr),
-                    .Module => |module_id| {
-                        const state = try self.resolveModuleState(module_id);
-                        allocator = state.allocator;
-                        module_state_ptr = state;
-                        module_slot_index = self.moduleSlotIndexForStore(state, operand, ptr);
-                        if (module_slot_index) |slot_idx| {
-                            if (state.hasValue(slot_idx)) {
-                                old_module_value = ptr.load();
-                                had_old_value = true;
-                            }
-                        }
-                    },
-                }
-                const value_ptr = try self.runtimeAllocator().create(HIRValue);
-                value_ptr.* = value;
-                defer self.runtimeAllocator().destroy(value_ptr);
-                value = try self.deepCopyValueToAllocator(allocator, value_ptr, owner);
-                ptr.store(value);
-                if (module_state_ptr) |state| {
-                    if (module_slot_index) |slot_idx| {
-                        state.markInitialized(slot_idx);
-                    }
-                    if (had_old_value) {
-                        self.freeValueFromAllocator(state.allocator, &old_module_value);
-                    }
-                }
-            },
+            .StoreSlot => |payload| try self.storeSlotImpl(payload.target),
+            .StoreConstSlot => |operand| try self.storeSlotImpl(operand),
             .PushStorageRef => |operand| {
                 const ptr = try self.resolveSlot(operand);
                 const ref_id = try self.cacheSlotPointer(ptr);
@@ -474,46 +393,11 @@ pub const VM = struct {
                 try self.stack.pushValue(value);
             },
             .StoreAlias => |payload| {
-                var value = try self.popValue();
+                const value = try self.popValue();
                 const frame = try self.currentFrame();
                 const ptr = frame.pointer(payload.slot_index);
                 const owner = self.ownerForPointer(ptr);
-                var allocator: std.mem.Allocator = undefined;
-                var module_state_ptr: ?*runtime.ModuleState = null;
-                var old_module_value: HIRValue = undefined;
-                var module_slot_index: ?module.SlotIndex = null;
-                var had_old_value = false;
-
-                switch (owner) {
-                    .Runtime, .Scope => allocator = try self.allocatorForPointer(ptr),
-                    .Module => |module_id| {
-                        const state = try self.resolveModuleState(module_id);
-                        allocator = state.allocator;
-                        module_state_ptr = state;
-                        module_slot_index = self.moduleSlotIndexForStore(state, null, ptr);
-                        if (module_slot_index) |slot_idx| {
-                            if (state.hasValue(slot_idx)) {
-                                old_module_value = ptr.load();
-                                had_old_value = true;
-                            }
-                        }
-                    },
-                }
-
-                const value_ptr = try self.runtimeAllocator().create(HIRValue);
-                value_ptr.* = value;
-                defer self.runtimeAllocator().destroy(value_ptr);
-                value = try self.deepCopyValueToAllocator(allocator, value_ptr, owner);
-
-                ptr.store(value);
-                if (module_state_ptr) |state| {
-                    if (module_slot_index) |slot_idx| {
-                        state.markInitialized(slot_idx);
-                    }
-                    if (had_old_value) {
-                        self.freeValueFromAllocator(state.allocator, &old_module_value);
-                    }
-                }
+                try self.storeValueAtPtr(value, ptr, owner, null);
             },
             .ResolveAlias => |payload| {
                 const frame = try self.currentFrame();
@@ -936,6 +820,51 @@ pub const VM = struct {
         return @intCast(index);
     }
 
+    fn storeSlotImpl(self: *VM, operand: module.SlotOperand) VmError!void {
+        const value = try self.popValue();
+        const ptr = try self.resolveSlot(operand);
+        const owner = try self.ownerForStoreTarget(operand, ptr);
+        try self.storeValueAtPtr(value, ptr, owner, operand);
+    }
+
+    fn storeValueAtPtr(self: *VM, value: HIRValue, ptr: runtime.SlotPointer, owner: ValueOwner, operand: ?module.SlotOperand) VmError!void {
+        var allocator: std.mem.Allocator = undefined;
+        var module_state_ptr: ?*runtime.ModuleState = null;
+        var old_module_value: HIRValue = undefined;
+        var module_slot_index: ?module.SlotIndex = null;
+        var had_old_value = false;
+
+        switch (owner) {
+            .Runtime, .Scope => allocator = try self.allocatorForPointer(ptr),
+            .Module => |module_id| {
+                const state = try self.resolveModuleState(module_id);
+                allocator = state.allocator;
+                module_state_ptr = state;
+                module_slot_index = self.moduleSlotIndexForStore(state, operand, ptr);
+                if (module_slot_index) |slot_idx| {
+                    if (state.hasValue(slot_idx)) {
+                        old_module_value = ptr.load();
+                        had_old_value = true;
+                    }
+                }
+            },
+        }
+
+        const value_ptr = try self.runtimeAllocator().create(HIRValue);
+        value_ptr.* = value;
+        defer self.runtimeAllocator().destroy(value_ptr);
+        const copied = try self.deepCopyValueToAllocator(allocator, value_ptr, owner);
+        ptr.store(copied);
+        if (module_state_ptr) |state| {
+            if (module_slot_index) |slot_idx| {
+                state.markInitialized(slot_idx);
+            }
+            if (had_old_value) {
+                self.freeValueFromAllocator(state.allocator, &old_module_value);
+            }
+        }
+    }
+
     pub fn arrayAllocator(self: *VM, array: HIRArray) VmError!std.mem.Allocator {
         return self.allocatorForOwner(array.owner);
     }
@@ -1246,6 +1175,48 @@ pub const VM = struct {
         };
     }
 
+    fn quantifierElementSatisfies(elem: HIRValue, comp: HIRValue, is_equality: bool) bool {
+        return switch (elem) {
+            .int => |elem_int| switch (comp) {
+                .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
+                else => false,
+            },
+            .float => |elem_float| switch (comp) {
+                .float => |comp_float| if (is_equality) elem_float == comp_float else elem_float > comp_float,
+                .int => |comp_int| blk: {
+                    const comp_float = @as(f64, @floatFromInt(comp_int));
+                    break :blk if (is_equality) elem_float == comp_float else elem_float > comp_float;
+                },
+                else => false,
+            },
+            .string => |elem_str| switch (comp) {
+                .string => |comp_str| if (is_equality) std.mem.eql(u8, elem_str, comp_str) else false,
+                else => false,
+            },
+            else => false,
+        };
+    }
+
+    fn mapKeysMatch(key_a: HIRValue, key_b: HIRValue) bool {
+        return switch (key_a) {
+            .string => |s| switch (key_b) {
+                .string => |ks| std.mem.eql(u8, s, ks),
+                else => false,
+            },
+            .int => |iv| switch (key_b) {
+                .int => |kv| iv == kv,
+                else => false,
+            },
+            .enum_variant => |e| switch (key_b) {
+                .enum_variant => |ek| e.variant_index == ek.variant_index and
+                    std.mem.eql(u8, e.type_name, ek.type_name) and
+                    std.mem.eql(u8, e.variant_name, ek.variant_name),
+                else => false,
+            },
+            else => false,
+        };
+    }
+
     fn execBuiltin(self: *VM, id: ?module.BuiltinId, name: []const u8, arg_count_raw: u32) VmError!void {
         const arg_count: usize = @intCast(arg_count_raw);
 
@@ -1331,27 +1302,7 @@ pub const VM = struct {
                             const arr_len = arr.length;
                             var j: u32 = 0;
                             while (j < arr_len) : (j += 1) {
-                                const elem = arr.elements[j];
-                                const satisfies = switch (elem) {
-                                    .int => |elem_int| switch (comparison_value.value) {
-                                        .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
-                                        else => false,
-                                    },
-                                    .float => |elem_float| switch (comparison_value.value) {
-                                        .float => |comp_float| if (is_equality) elem_float == comp_float else elem_float > comp_float,
-                                        .int => |comp_int| blk: {
-                                            const comp_float = @as(f64, @floatFromInt(comp_int));
-                                            break :blk if (is_equality) elem_float == comp_float else elem_float > comp_float;
-                                        },
-                                        else => false,
-                                    },
-                                    .string => |elem_str| switch (comparison_value.value) {
-                                        .string => |comp_str| if (is_equality) std.mem.eql(u8, elem_str, comp_str) else false,
-                                        else => false,
-                                    },
-                                    else => false,
-                                };
-                                if (satisfies) {
+                                if (quantifierElementSatisfies(arr.elements[j], comparison_value.value, is_equality)) {
                                     found = true;
                                     break;
                                 }
@@ -1373,27 +1324,7 @@ pub const VM = struct {
                             const arr_len = arr.length;
                             var k: u32 = 0;
                             while (k < arr_len) : (k += 1) {
-                                const elem = arr.elements[k];
-                                const satisfies = switch (elem) {
-                                    .int => |elem_int| switch (comparison_value.value) {
-                                        .int => |comp_int| if (is_equality) elem_int == comp_int else elem_int > comp_int,
-                                        else => false,
-                                    },
-                                    .float => |elem_float| switch (comparison_value.value) {
-                                        .float => |comp_float| if (is_equality) elem_float == comp_float else elem_float > comp_float,
-                                        .int => |comp_int| blk: {
-                                            const comp_float = @as(f64, @floatFromInt(comp_int));
-                                            break :blk if (is_equality) elem_float == comp_float else elem_float > comp_float;
-                                        },
-                                        else => false,
-                                    },
-                                    .string => |elem_str| switch (comparison_value.value) {
-                                        .string => |comp_str| if (is_equality) std.mem.eql(u8, elem_str, comp_str) else false,
-                                        else => false,
-                                    },
-                                    else => false,
-                                };
-                                if (!satisfies) {
+                                if (!quantifierElementSatisfies(arr.elements[k], comparison_value.value, is_equality)) {
                                     all_satisfy = false;
                                     break;
                                 }
@@ -1740,25 +1671,7 @@ pub const VM = struct {
         switch (map_frame.value) {
             .map => |map_value| {
                 for (map_value.entries) |entry| {
-                    const keys_match = switch (entry.key.*) {
-                        .string => |entry_str| switch (key_frame.value) {
-                            .string => |key_str| std.mem.eql(u8, entry_str, key_str),
-                            else => false,
-                        },
-                        .int => |entry_int| switch (key_frame.value) {
-                            .int => |key_int| entry_int == key_int,
-                            else => false,
-                        },
-                        .enum_variant => |e_entry| switch (key_frame.value) {
-                            .enum_variant => |e_key| e_entry.variant_index == e_key.variant_index and
-                                std.mem.eql(u8, e_entry.type_name, e_key.type_name) and
-                                std.mem.eql(u8, e_entry.variant_name, e_key.variant_name),
-                            else => false,
-                        },
-                        else => false,
-                    };
-
-                    if (keys_match) {
+                    if (mapKeysMatch(entry.key.*, key_frame.value)) {
                         try self.stack.push(HIRFrame.initFromHIRValue(entry.value.*));
                         return;
                     }
@@ -1790,25 +1703,7 @@ pub const VM = struct {
 
                 var updated = false;
                 for (mutable_map.entries) |*entry| {
-                    const keys_match = switch (entry.key.*) {
-                        .string => |entry_str| switch (key_frame.value) {
-                            .string => |key_str| std.mem.eql(u8, entry_str, key_str),
-                            else => false,
-                        },
-                        .int => |entry_int| switch (key_frame.value) {
-                            .int => |key_int| entry_int == key_int,
-                            else => false,
-                        },
-                        .enum_variant => |e_entry| switch (key_frame.value) {
-                            .enum_variant => |e_key| e_entry.variant_index == e_key.variant_index and
-                                std.mem.eql(u8, e_entry.type_name, e_key.type_name) and
-                                std.mem.eql(u8, e_entry.variant_name, e_key.variant_name),
-                            else => false,
-                        },
-                        else => false,
-                    };
-
-                    if (keys_match) {
+                    if (mapKeysMatch(entry.key.*, key_frame.value)) {
                         self.freeValueFromAllocator(runtime_alloc, entry.value);
                         var new_value = value_frame.value;
                         entry.value.* = try self.deepCopyValueToAllocator(runtime_alloc, &new_value, ValueOwner.Runtime);
@@ -2015,40 +1910,26 @@ pub const VM = struct {
                     .Int => switch (v) {
                         .int => |n| abi_args[i] = .{ .tag = ABI_TAG_INT, .flags = 0, .payload0 = @bitCast(n), .payload1 = 0 },
                         .byte => |b| abi_args[i] = .{ .tag = ABI_TAG_INT, .flags = 0, .payload0 = @bitCast(@as(i64, b)), .payload1 = 0 },
-                        else => {
-                            self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
-                            return ErrorList.RuntimeError;
-                        },
+                        else => return self.abiArgTypeError(qualified_name),
                     },
                     .Float => switch (v) {
                         .float => |f| abi_args[i] = .{ .tag = ABI_TAG_FLOAT, .flags = 0, .payload0 = @bitCast(f), .payload1 = 0 },
                         .int => |n| abi_args[i] = .{ .tag = ABI_TAG_FLOAT, .flags = 0, .payload0 = @bitCast(@as(f64, @floatFromInt(n))), .payload1 = 0 },
                         .byte => |b| abi_args[i] = .{ .tag = ABI_TAG_FLOAT, .flags = 0, .payload0 = @bitCast(@as(f64, @floatFromInt(b))), .payload1 = 0 },
-                        else => {
-                            self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
-                            return ErrorList.RuntimeError;
-                        },
+                        else => return self.abiArgTypeError(qualified_name),
                     },
                     .Byte => switch (v) {
                         .byte => |b| abi_args[i] = .{ .tag = ABI_TAG_BYTE, .flags = 0, .payload0 = b, .payload1 = 0 },
                         .int => |n| {
-                            if (n < 0 or n > std.math.maxInt(u8)) {
-                                self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument out of range for byte in {s}", .{qualified_name});
-                                return ErrorList.RuntimeError;
-                            }
+                            if (n < 0 or n > std.math.maxInt(u8))
+                                return self.abiArgTypeError(qualified_name);
                             abi_args[i] = .{ .tag = ABI_TAG_BYTE, .flags = 0, .payload0 = @intCast(n), .payload1 = 0 };
                         },
-                        else => {
-                            self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
-                            return ErrorList.RuntimeError;
-                        },
+                        else => return self.abiArgTypeError(qualified_name),
                     },
                     .String => switch (v) {
                         .string => |s| abi_args[i] = .{ .tag = ABI_TAG_STRING, .flags = 0, .payload0 = if (s.len == 0) 0 else @intFromPtr(s.ptr), .payload1 = s.len },
-                        else => {
-                            self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
-                            return ErrorList.RuntimeError;
-                        },
+                        else => return self.abiArgTypeError(qualified_name),
                     },
                     .Tetra => switch (v) {
                         .tetra => |t| {
@@ -2058,17 +1939,11 @@ pub const VM = struct {
                             }
                             abi_args[i] = .{ .tag = ABI_TAG_TETRA, .flags = 0, .payload0 = t, .payload1 = 0 };
                         },
-                        else => {
-                            self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
-                            return ErrorList.RuntimeError;
-                        },
+                        else => return self.abiArgTypeError(qualified_name),
                     },
                     .Nothing => switch (v) {
                         .nothing => abi_args[i] = .{ .tag = ABI_TAG_NOTHING, .flags = 0, .payload0 = 0, .payload1 = 0 },
-                        else => {
-                            self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
-                            return ErrorList.RuntimeError;
-                        },
+                        else => return self.abiArgTypeError(qualified_name),
                     },
                     else => {
                         self.reporter.reportRuntimeError(null, ErrorCode.NOT_IMPLEMENTED, "Unsupported parameter type for inline zig VM call: {s}", .{qualified_name});
@@ -2121,23 +1996,18 @@ pub const VM = struct {
             switch (fn_entry.return_type) {
                 .Nothing => return,
                 .Int => {
-                    if (out_ret.tag != ABI_TAG_INT) {
-                        self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned wrong tag for {s}", .{qualified_name});
-                        return ErrorList.RuntimeError;
-                    }
+                    try self.abiCheckReturnTag(out_ret, ABI_TAG_INT, qualified_name);
                     try self.pushValue(.{ .int = @bitCast(out_ret.payload0) });
                     return;
                 },
                 .Float => {
-                    if (out_ret.tag != ABI_TAG_FLOAT) {
-                        self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned wrong tag for {s}", .{qualified_name});
-                        return ErrorList.RuntimeError;
-                    }
+                    try self.abiCheckReturnTag(out_ret, ABI_TAG_FLOAT, qualified_name);
                     try self.pushValue(.{ .float = @bitCast(out_ret.payload0) });
                     return;
                 },
                 .Byte => {
-                    if (out_ret.tag != ABI_TAG_BYTE or out_ret.payload0 > std.math.maxInt(u8)) {
+                    try self.abiCheckReturnTag(out_ret, ABI_TAG_BYTE, qualified_name);
+                    if (out_ret.payload0 > std.math.maxInt(u8)) {
                         self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned invalid byte for {s}", .{qualified_name});
                         return ErrorList.RuntimeError;
                     }
@@ -2145,7 +2015,8 @@ pub const VM = struct {
                     return;
                 },
                 .Tetra => {
-                    if (out_ret.tag != ABI_TAG_TETRA or out_ret.payload0 > 3) {
+                    try self.abiCheckReturnTag(out_ret, ABI_TAG_TETRA, qualified_name);
+                    if (out_ret.payload0 > 3) {
                         self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned invalid tetra for {s}", .{qualified_name});
                         return ErrorList.RuntimeError;
                     }
@@ -2153,10 +2024,7 @@ pub const VM = struct {
                     return;
                 },
                 .String => {
-                    if (out_ret.tag != ABI_TAG_STRING) {
-                        self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned wrong tag for {s}", .{qualified_name});
-                        return ErrorList.RuntimeError;
-                    }
+                    try self.abiCheckReturnTag(out_ret, ABI_TAG_STRING, qualified_name);
                     if (out_ret.payload0 == 0 and out_ret.payload1 != 0) {
                         self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned malformed string for {s}", .{qualified_name});
                         return ErrorList.RuntimeError;
@@ -2184,6 +2052,18 @@ pub const VM = struct {
 
         self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown zig module: {s}", .{module_name});
         return ErrorList.RuntimeError;
+    }
+
+    fn abiArgTypeError(self: *VM, qualified_name: []const u8) VmError {
+        self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Argument type mismatch for {s}", .{qualified_name});
+        return ErrorList.RuntimeError;
+    }
+
+    fn abiCheckReturnTag(self: *VM, out_ret: DoxaAbiValue, expected_tag: u32, qualified_name: []const u8) VmError!void {
+        if (out_ret.tag != expected_tag) {
+            self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned wrong tag for {s}", .{qualified_name});
+            return ErrorList.RuntimeError;
+        }
     }
 
     fn handleReturn(self: *VM, payload: anytype) VmError!void {
@@ -2231,19 +2111,6 @@ pub const VM = struct {
             self.ip = next_ip;
             self.skip_increment = true;
         }
-    }
-
-    fn invokeFunction(self: *VM, function_index: usize, arg_count_raw: u32) VmError!void {
-        if (function_index >= self.bytecode.functions.len) return error.UnimplementedInstruction;
-        const func_ptr = &self.bytecode.functions[function_index];
-        const arg_count: usize = @intCast(arg_count_raw);
-        if (self.stack.len() < arg_count) return error.UnimplementedInstruction;
-        const stack_base = self.stack.len() - arg_count;
-        const return_ip = self.ip;
-        _ = try self.pushFrame(function_index, stack_base, return_ip);
-        if (func_ptr.start_ip >= self.bytecode.instructions.len) return error.UnimplementedInstruction;
-        self.ip = func_ptr.start_ip;
-        self.skip_increment = true;
     }
 
     fn pushFrame(self: *VM, function_index: usize, stack_base: usize, return_ip: usize) VmError!*runtime.Frame {

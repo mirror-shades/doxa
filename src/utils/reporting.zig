@@ -83,14 +83,6 @@ pub const Reporter = struct {
     diagnostics: std.array_list.Managed(Diagnostic),
     options: ReporterOptions,
     allocator: std.mem.Allocator,
-    debug_verbose: bool,
-    debug_lexer: bool,
-    debug_parser: bool,
-    debug_semantic: bool,
-    debug_hir: bool,
-    debug_bytecode: bool,
-    debug_execution: bool,
-    debug_memory: bool,
     file_uri_cache: std.StringHashMap([]const u8),
     published_state: std.StringHashMap(PublishedState),
 
@@ -133,14 +125,6 @@ pub const Reporter = struct {
             .diagnostics = std.array_list.Managed(Diagnostic).init(allocator),
             .options = options,
             .allocator = allocator,
-            .debug_verbose = options.debug_verbose,
-            .debug_lexer = options.debug_lexer,
-            .debug_parser = options.debug_parser,
-            .debug_semantic = options.debug_semantic,
-            .debug_hir = options.debug_hir,
-            .debug_bytecode = options.debug_bytecode,
-            .debug_execution = options.debug_execution,
-            .debug_memory = options.debug_memory,
             .file_uri_cache = std.StringHashMap([]const u8).init(allocator),
             .published_state = std.StringHashMap(PublishedState).init(allocator),
         };
@@ -264,37 +248,37 @@ pub const Reporter = struct {
     }
 
     fn debugLexer(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.debug_lexer and !self.debug_verbose) return;
+        if (!self.options.debug_lexer and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 
     fn debugParser(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.debug_parser and !self.debug_verbose) return;
+        if (!self.options.debug_parser and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 
     fn debugSemantic(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.debug_semantic and !self.debug_verbose) return;
+        if (!self.options.debug_semantic and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 
     fn debugHir(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.debug_hir and !self.debug_verbose) return;
+        if (!self.options.debug_hir and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 
     fn debugBytecode(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.debug_bytecode and !self.debug_verbose) return;
+        if (!self.options.debug_bytecode and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 
     fn debugExecution(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.debug_execution and !self.debug_verbose) return;
+        if (!self.options.debug_execution and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 
     pub fn debugMemory(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.debug_memory and !self.debug_verbose) return;
+        if (!self.options.debug_memory and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 
