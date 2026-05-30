@@ -162,7 +162,19 @@ fn writeBytecodeArtifact(bytecode_module: *BytecodeModule, path: []const u8) !vo
 }
 
 fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *SemanticAnalyzer) !void {
-    const helpers = @import("./analysis/semantic/helpers.zig");
+    const Registration = struct {
+        fn enumDecl(parser_inner: *Parser, analyzer: *SemanticAnalyzer, ed: anytype) !void {
+            const helpers = @import("./analysis/semantic/helpers.zig");
+            const variants = try parser_inner.allocator.alloc([]const u8, ed.variants.len);
+            for (ed.variants, variants) |v, *name| name.* = v.lexeme;
+            try helpers.registerEnumType(analyzer, ed.name.lexeme, variants);
+        }
+        fn groupDecl(analyzer: *SemanticAnalyzer, gd: anytype) !void {
+            const helpers = @import("./analysis/semantic/helpers.zig");
+            try helpers.registerGroupType(analyzer, gd.name.lexeme, gd.members);
+        }
+    };
+
     var cache_it = parser.module_cache.iterator();
     while (cache_it.next()) |entry| {
         const module_info = entry.value_ptr.*;
@@ -170,24 +182,14 @@ fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
         if (module_ast.data != .Block) continue;
         for (module_ast.data.Block.statements) |stmt| {
             switch (stmt.data) {
-                .EnumDecl => |ed| {
-                    const variants = try parser.allocator.alloc([]const u8, ed.variants.len);
-                    for (ed.variants, variants) |v, *name| name.* = v.lexeme;
-                    try helpers.registerEnumType(semantic_analyzer, ed.name.lexeme, variants);
-                },
-                .GroupDecl => |gd| {
-                    try helpers.registerGroupType(semantic_analyzer, gd.name.lexeme, gd.members);
-                },
+                .EnumDecl => |ed| try Registration.enumDecl(parser, semantic_analyzer, ed),
+                .GroupDecl => |gd| try Registration.groupDecl(semantic_analyzer, gd),
                 .Expression => |maybe_expr| {
                     if (maybe_expr) |expr| {
                         if (expr.data == .EnumDecl) {
-                            const ed = expr.data.EnumDecl;
-                            const variants = try parser.allocator.alloc([]const u8, ed.variants.len);
-                            for (ed.variants, variants) |v, *name| name.* = v.lexeme;
-                            try helpers.registerEnumType(semantic_analyzer, ed.name.lexeme, variants);
+                            try Registration.enumDecl(parser, semantic_analyzer, expr.data.EnumDecl);
                         } else if (expr.data == .GroupDecl) {
-                            const gd = expr.data.GroupDecl;
-                            try helpers.registerGroupType(semantic_analyzer, gd.name.lexeme, gd.members);
+                            try Registration.groupDecl(semantic_analyzer, expr.data.GroupDecl);
                         }
                     }
                 },
@@ -245,16 +247,6 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, mod
 
     const hir_program = try hir_generator.generateProgram(folded_statements.items);
     return hir_program;
-}
-
-fn compileDoxaToSoxaFromAST(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, semantic_analyzer: *SemanticAnalyzer, source_path: []const u8, soxa_path: []const u8, reporter: *Reporter) !void {
-    _ = source_path;
-    _ = soxa_path;
-    try parser.ensureReachableModuleDependencies();
-    var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
-    defer reachable_modules.deinit();
-    var hir_program = try generateHIRProgram(memoryManager, statements, reachable_modules, parser, semantic_analyzer, reporter);
-    defer hir_program.deinit();
 }
 
 fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8) !?std.StringHashMap(VM.ZigRuntimeModule) {
