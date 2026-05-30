@@ -34,3 +34,7 @@ var dyn_arr is [1, 2, 3] # heap allocated
 var fixed_arr :: int[3] is dyn_arr # copy is made to the stack
 const static_arr is fixed_arr # static allocation made and refrenced
 ```
+
+### Performance
+
+Dynamic arrays are allocated from the current scope's arena. Array elements are stored in a single contiguous allocation, and mutations that require dynamic storage conversion copy the element data in bulk. Arrays within the same scope share the same arena and benefit from same-scope move semantics — assigning one array variable to another within the same block skips the deep copy.

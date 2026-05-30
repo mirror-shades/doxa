@@ -22,6 +22,11 @@ pub const Variable = struct {
     is_alias: bool,
 };
 
+pub const ScopeKind = enum {
+    analysis,
+    runtime,
+};
+
 pub const Scope = struct {
     id: u32,
     parent: ?*Scope,
@@ -31,6 +36,7 @@ pub const Scope = struct {
     manager: *ScopeManager,
     memory_manager: *MemoryManager,
     arena: std.heap.ArenaAllocator,
+    kind: ScopeKind,
     is_deinited: bool = false,
 
     pub fn init(scope_id: u32, parent: ?*Scope, memory_manager: *MemoryManager) Scope {
@@ -43,28 +49,56 @@ pub const Scope = struct {
             .manager = memory_manager.scope_manager,
             .memory_manager = memory_manager,
             .arena = std.heap.ArenaAllocator.init(memory_manager.allocator),
+            .kind = .analysis,
             .is_deinited = false,
         };
+    }
+
+    pub fn initRuntime(scope_id: u32, parent: ?*Scope, global_allocator: std.mem.Allocator) !*Scope {
+        var arena = std.heap.ArenaAllocator.init(global_allocator);
+        const arena_alloc = arena.allocator();
+
+        const self = try arena_alloc.create(Scope);
+        self.* = .{
+            .id = scope_id,
+            .parent = parent,
+            .allocator = arena_alloc,
+            .variables = std.AutoHashMap(u32, *Variable).init(arena_alloc),
+            .name_map = std.StringHashMap(*Variable).init(arena_alloc),
+            .manager = undefined,
+            .memory_manager = undefined,
+            .arena = arena,
+            .kind = .runtime,
+            .is_deinited = false,
+        };
+        return self;
     }
 
     pub fn deinit(self: *Scope) void {
         if (self.is_deinited) return;
         self.is_deinited = true;
 
-        var it = self.variables.valueIterator();
-        while (it.next()) |var_ptr| {
-            const variable = var_ptr.*;
-            _ = self.manager.variable_map.remove(variable.id);
-            if (!variable.is_alias) {
-                if (self.manager.value_storage.fetchRemove(variable.storage_id)) |kv| {
-                    self.allocator.destroy(kv.value);
+        switch (self.kind) {
+            .analysis => {
+                var it = self.variables.valueIterator();
+                while (it.next()) |var_ptr| {
+                    const variable = var_ptr.*;
+                    _ = self.manager.variable_map.remove(variable.id);
+                    if (!variable.is_alias) {
+                        if (self.manager.value_storage.fetchRemove(variable.storage_id)) |kv| {
+                            self.allocator.destroy(kv.value);
+                        }
+                    }
+                    self.allocator.destroy(variable);
                 }
-            }
-            self.allocator.destroy(variable);
+                self.variables.deinit();
+                self.name_map.deinit();
+                self.arena.deinit();
+            },
+            .runtime => {
+                self.arena.deinit();
+            },
         }
-        self.variables.deinit();
-        self.name_map.deinit();
-        self.arena.deinit();
     }
 
     pub fn createValueBinding(
