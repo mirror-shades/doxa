@@ -105,10 +105,14 @@ zig IO {
         var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
         const stdin = &stdin_reader.interface;
 
-        const line = stdin.takeDelimiterExclusive('\n') catch {
+        var line = stdin.takeDelimiterExclusive('\n') catch {
             setLastError(106);
             return "";
         };
+
+        if (line.len > 0 and line[line.len - 1] == '\r') {
+            line = line[0 .. line.len - 1];
+        }
 
         const State = struct {
             var cache: ?[]u8 = null;

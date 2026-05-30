@@ -583,9 +583,56 @@ pub const LexicalAnalyzer = struct {
         var result = std.array_list.Managed(u8).init(self.allocator);
         errdefer result.deinit();
 
-        while (!self.isAtEnd() and self.peekAt(0) != '"') {
+        var brace_depth: usize = 0;
+
+        while (!self.isAtEnd()) {
             const c = self.peekAt(0);
 
+            // End of outer string only when not inside interpolation
+            if (brace_depth == 0 and c == '"') {
+                break;
+            }
+
+            // In interpolation mode, " starts an inner double-quoted string
+            if (brace_depth > 0 and c == '"') {
+                try self.scanInnerDoubleQuotedString(&result);
+                continue;
+            }
+
+            // In interpolation mode, ' starts an inner single-quoted string
+            if (brace_depth > 0 and c == '\'') {
+                try self.scanInnerSingleQuotedString(&result);
+                continue;
+            }
+
+            // Enter or nest interpolation
+            if (c == '{') {
+                if (brace_depth > 0) {
+                    brace_depth += 1;
+                } else {
+                    brace_depth = 1;
+                }
+                self.advance();
+                try result.append(c);
+                continue;
+            }
+
+            // Exit interpolation level
+            if (brace_depth > 0 and c == '}') {
+                brace_depth -= 1;
+                self.advance();
+                try result.append(c);
+                continue;
+            }
+
+            // Inside interpolation: raw passthrough, no escape processing
+            if (brace_depth > 0) {
+                self.advance();
+                try result.append(c);
+                continue;
+            }
+
+            // Outside interpolation: normal string processing
             if (c == '\n' or c == '\r') {
                 // Look ahead to see if there's an ellipsis continuation
                 var lookahead_pos = self.current + 1; // Skip the newline/carriage return
@@ -681,6 +728,56 @@ pub const LexicalAnalyzer = struct {
         const string_content = try result.toOwnedSlice();
 
         try self.addLongToken(.STRING, .{ .string = string_content }, lexeme);
+    }
+
+    fn scanInnerDoubleQuotedString(self: *LexicalAnalyzer, result: *std.array_list.Managed(u8)) !void {
+        self.advance(); // consume opening "
+        try result.append('"');
+
+        while (!self.isAtEnd()) {
+            const c = self.peekAt(0);
+            self.advance();
+
+            if (c == '\\') {
+                try result.append('\\');
+                if (self.isAtEnd()) return error.UnterminatedString;
+                const next = self.peekAt(0);
+                try result.append(next);
+                self.advance();
+            } else if (c == '"') {
+                try result.append('"');
+                return;
+            } else {
+                try result.append(c);
+            }
+        }
+
+        return error.UnterminatedString;
+    }
+
+    fn scanInnerSingleQuotedString(self: *LexicalAnalyzer, result: *std.array_list.Managed(u8)) !void {
+        self.advance(); // consume opening '
+        try result.append('\'');
+
+        while (!self.isAtEnd()) {
+            const c = self.peekAt(0);
+            self.advance();
+
+            if (c == '\\') {
+                try result.append('\\');
+                if (self.isAtEnd()) return error.UnterminatedString;
+                const next = self.peekAt(0);
+                try result.append(next);
+                self.advance();
+            } else if (c == '\'') {
+                try result.append('\'');
+                return;
+            } else {
+                try result.append(c);
+            }
+        }
+
+        return error.UnterminatedString;
     }
 
     fn singleQuotedString(self: *LexicalAnalyzer) !void {
