@@ -17,18 +17,54 @@ pub fn Methods(comptime Ctx: type) type {
         ) !void {
             const elem_size = self.arrayElementSize(inst.element_type);
             const elem_tag = self.arrayElementTag(inst.element_type);
-            const reg = try self.nextTemp(id);
-            const line = try std.fmt.allocPrint(
-                self.allocator,
-                "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n",
-                .{ reg, elem_size, elem_tag, inst.size },
-            );
-            defer self.allocator.free(line);
-            try w.writeAll(line);
 
-            // Mirror the VM semantics: ArrayNew pushes a single array value onto the stack.
-            // Callers that need to preserve the value (e.g. for declarations) should use
-            // explicit Dup instructions, just like in the bytecode backend.
+            var reg: []const u8 = undefined;
+            if (inst.nested_depth > 0) {
+                const inner_elem_size = self.arrayElementSize(inst.nested_element_type orelse inst.element_type);
+                const inner_elem_tag = self.arrayElementTag(inst.nested_element_type orelse inst.element_type);
+
+                const sizes_ptr = try self.nextTemp(id);
+                const alloca_line = try std.fmt.allocPrint(self.allocator,
+                    "  {s} = alloca [{d} x i64]\n",
+                    .{ sizes_ptr, inst.nested_depth },
+                );
+                defer self.allocator.free(alloca_line);
+                try w.writeAll(alloca_line);
+
+                for (0..@as(usize, inst.nested_depth)) |i| {
+                    const slot_ptr = try self.nextTemp(id);
+                    const gep_line = try std.fmt.allocPrint(self.allocator,
+                        "  {s} = getelementptr [{d} x i64], ptr {s}, i32 0, i32 {d}\n",
+                        .{ slot_ptr, inst.nested_depth, sizes_ptr, i },
+                    );
+                    defer self.allocator.free(gep_line);
+                    try w.writeAll(gep_line);
+
+                    const store_line = try std.fmt.allocPrint(self.allocator,
+                        "  store i64 {d}, ptr {s}\n",
+                        .{ inst.nested_sizes[i], slot_ptr },
+                    );
+                    defer self.allocator.free(store_line);
+                    try w.writeAll(store_line);
+                }
+
+                reg = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator,
+                    "  {s} = call ptr @doxa_array_new_nested(i64 {d}, i64 {d}, i64 {d}, ptr {s}, i64 {d}, i64 {d}, i64 {d})\n",
+                    .{ reg, elem_size, elem_tag, inst.size, sizes_ptr, inst.nested_depth, inner_elem_size, inner_elem_tag },
+                );
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+            } else {
+                reg = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator,
+                    "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n",
+                    .{ reg, elem_size, elem_tag, inst.size },
+                );
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+            }
+
             const arr_val = StackVal{
                 .name = reg,
                 .ty = .PTR,

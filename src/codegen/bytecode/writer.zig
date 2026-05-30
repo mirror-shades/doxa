@@ -132,10 +132,24 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .Throw => |payload| try writer.print("ip[{d}] Throw type:{s}\n", .{ idx, @tagName(payload.exception_type) }),
         .EnterScope => |payload| try writer.print("ip[{d}] EnterScope id:{} vars:{}\n", .{ idx, payload.scope_id, payload.var_count }),
         .ExitScope => |payload| try writer.print("ip[{d}] ExitScope id:{}\n", .{ idx, payload.scope_id }),
-        .ArrayNew => |payload| try writer.print(
-            "ip[{d}] ArrayNew elem:{s} size:{} nested:{} storage:{s}\n",
-            .{ idx, @tagName(payload.element_type), payload.static_size, payload.nested_element_type != null, @tagName(payload.storage_kind) },
-        ),
+        .ArrayNew => |payload| {
+            if (payload.nested_depth > 0) {
+                try writer.print(
+                    "ip[{d}] ArrayNew elem:{s} size:{} nested:{} depths:[",
+                    .{ idx, @tagName(payload.element_type), payload.static_size, payload.nested_element_type != null },
+                );
+                for (0..@as(usize, payload.nested_depth)) |i| {
+                    if (i > 0) try writer.print(",", .{});
+                    try writer.print("{d}", .{payload.nested_sizes[i]});
+                }
+                try writer.print("] storage:{s}\n", .{@tagName(payload.storage_kind)});
+            } else {
+                try writer.print(
+                    "ip[{d}] ArrayNew elem:{s} size:{} nested:{} storage:{s}\n",
+                    .{ idx, @tagName(payload.element_type), payload.static_size, payload.nested_element_type != null, @tagName(payload.storage_kind) },
+                );
+            }
+        },
         .ArrayGet => |payload| try writer.print("ip[{d}] ArrayGet bounds_check:{}\n", .{ idx, payload.bounds_check }),
         .ArraySet => |payload| try writer.print("ip[{d}] ArraySet bounds_check:{}\n", .{ idx, payload.bounds_check }),
         .ArrayPush => |payload| try writer.print("ip[{d}] ArrayPush resize:{s}\n", .{ idx, @tagName(payload.resize) }),

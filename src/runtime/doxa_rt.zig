@@ -746,6 +746,39 @@ pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callc
     return hdr_ptr;
 }
 
+const ARRAY_TAG: u64 = 6;
+
+pub export fn doxa_array_new_nested(
+    elem_size: u64,
+    elem_tag: u64,
+    init_len: u64,
+    nested_sizes: [*]const u64,
+    nested_depth: u64,
+    inner_elem_size: u64,
+    inner_elem_tag: u64,
+) callconv(.c) *ArrayHeader {
+    const outer = doxa_array_new(elem_size, elem_tag, init_len);
+    if (nested_depth == 0 or elem_tag != ARRAY_TAG) return outer;
+
+    var idx: u64 = 0;
+    while (idx < init_len) : (idx += 1) {
+        const inner: *ArrayHeader = if (nested_depth == 1)
+            doxa_array_new(inner_elem_size, inner_elem_tag, nested_sizes[0])
+        else
+            doxa_array_new_nested(
+                @sizeOf(*anyopaque),
+                ARRAY_TAG,
+                nested_sizes[0],
+                nested_sizes + 1,
+                nested_depth - 1,
+                inner_elem_size,
+                inner_elem_tag,
+            );
+        doxa_array_set_i64(outer, idx, @as(i64, @bitCast(@intFromPtr(inner))));
+    }
+    return outer;
+}
+
 pub export fn doxa_array_clone(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
     const src = hdr orelse return doxa_array_new(8, 0, 0);
     const result = doxa_array_new(src.elem_size, src.elem_tag, src.len);
