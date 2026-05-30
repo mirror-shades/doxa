@@ -91,7 +91,7 @@ pub fn braceExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Ex
     const starts_like_statement = first_tok == .VAR or first_tok == .CONST or first_tok == .FUNCTION or
         first_tok == .IF or first_tok == .WHILE or first_tok == .FOR or first_tok == .RETURN or
         first_tok == .BREAK or first_tok == .CONTINUE or first_tok == .IMPORT;
-    const literal_key_start = first_tok == .STRING or first_tok == .SINGLE_STRING or first_tok == .INT or first_tok == .FLOAT or first_tok == .BYTE or first_tok == .TETRA or first_tok == .DOT;
+    const literal_key_start = first_tok == .STRING or first_tok == .INT or first_tok == .FLOAT or first_tok == .BYTE or first_tok == .TETRA or first_tok == .DOT;
     const is_map = !starts_like_statement and literal_key_start and (first_tok != .RIGHT_BRACE and sep1 == .ASSIGN);
     if (is_map) {
         return self.parseMap();
@@ -1135,9 +1135,9 @@ pub fn literal(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr
             self.advance();
             break :blk new_expr;
         },
-        .STRING, .SINGLE_STRING => blk: {
+        .STRING => blk: {
             self.advance();
-            const interpolated = current.type == .STRING;
+            const interpolated = true;
             const new_expr = try string_interpolation.buildStringLiteralExpr(self, current.literal.string, ast.SourceSpan.fromToken(current), interpolated);
             break :blk new_expr;
         },

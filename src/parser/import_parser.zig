@@ -61,7 +61,7 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
     }
     self.advance();
 
-    if (self.peek().type != .STRING and self.peek().type != .SINGLE_STRING and self.peek().type != .STD) {
+    if (self.peek().type != .STRING and self.peek().type != .STD) {
         const current_token = self.peek();
         const location = Location{
             .file = self.current_file,
@@ -78,7 +78,7 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
     }
 
     var module_path: []const u8 = undefined;
-    if (self.peek().type == .STRING or self.peek().type == .SINGLE_STRING) {
+    if (self.peek().type == .STRING) {
         module_path = self.peek().lexeme;
         if (module_path.len >= 2) {
             module_path = module_path[1 .. module_path.len - 1];
@@ -186,7 +186,7 @@ pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
     }
     self.advance();
 
-    if (self.peek().type != .STRING and self.peek().type != .SINGLE_STRING) {
+    if (self.peek().type != .STRING) {
         const current_token = self.peek();
         const location = Location{
             .file = self.current_file,

@@ -1039,7 +1039,7 @@ pub const Parser = struct {
             const key = blk: {
                 const token_type = self.peek().type;
                 switch (token_type) {
-                    .INT, .FLOAT, .STRING, .SINGLE_STRING, .BYTE, .LOGIC, .IDENTIFIER, .DOT => {
+                    .INT, .FLOAT, .STRING, .BYTE, .LOGIC, .IDENTIFIER, .DOT => {
                         const prec = try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
                         break :blk prec;
                     },
