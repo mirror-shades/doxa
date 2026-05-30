@@ -2139,7 +2139,6 @@ pub const VM = struct {
                 const dest_alloc = self.frames.items[self.frames.items.len - 1].arena.allocator();
                 promoted_value = try self.deepCopyValueToAllocator(dest_alloc, &mut_val, ValueOwner.Runtime);
             } else {
-                // No caller: promote to VM allocator; program likely ends soon
                 promoted_value = try self.deepCopyValueToAllocator(self.allocator, &mut_val, ValueOwner.Runtime);
             }
         }

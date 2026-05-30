@@ -902,6 +902,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
     }
 
     var type_info = ast.TypeInfo{ .base = .Nothing, .is_mutable = !is_const };
+    var type_annotation_expr: ?*ast.TypeExpr = null;
 
     if (self.peek().type == .TYPE_SYMBOL) {
         self.advance();
@@ -909,6 +910,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
         type_info = type_info_ptr.*;
         self.allocator.destroy(type_info_ptr);
+        type_annotation_expr = type_expr;
         type_info.is_mutable = !is_const;
     }
 
@@ -995,6 +997,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
         type_info = type_info_ptr.*;
         self.allocator.destroy(type_info_ptr);
+        type_annotation_expr = type_expr;
 
         type_info.is_mutable = !is_const;
     }
@@ -1075,6 +1078,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
                 .name = name,
                 .type_info = type_info,
                 .initializer = initializer,
+                .type_expr = type_annotation_expr,
                 .is_public = is_public,
             },
         },
