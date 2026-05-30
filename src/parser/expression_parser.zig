@@ -694,33 +694,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     var base_type_expr: ?*ast.TypeExpr = null;
     var consumed_token = false;
 
-    const maybe_basic_type: ?ast.BasicType = blk: {
-        switch (type_token.type) {
-            .INT_TYPE => break :blk ast.BasicType.Integer,
-            .BYTE_TYPE => break :blk ast.BasicType.Byte,
-            .FLOAT_TYPE => break :blk ast.BasicType.Float,
-            .STRING_TYPE => break :blk ast.BasicType.String,
-            .TETRA_TYPE => break :blk ast.BasicType.Tetra,
-            .NOTHING_TYPE => break :blk ast.BasicType.Nothing,
-            else => {
-                if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
-                if (std.mem.eql(u8, type_name, "Int")) break :blk ast.BasicType.Integer;
-                if (std.mem.eql(u8, type_name, "byte")) break :blk ast.BasicType.Byte;
-                if (std.mem.eql(u8, type_name, "Byte")) break :blk ast.BasicType.Byte;
-                if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
-                if (std.mem.eql(u8, type_name, "Float")) break :blk ast.BasicType.Float;
-                if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
-                if (std.mem.eql(u8, type_name, "String")) break :blk ast.BasicType.String;
-                if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
-                if (std.mem.eql(u8, type_name, "Tetra")) break :blk ast.BasicType.Tetra;
-                if (std.mem.eql(u8, type_name, "nothing")) break :blk ast.BasicType.Nothing;
-                if (std.mem.eql(u8, type_name, "Nothing")) break :blk ast.BasicType.Nothing;
-                break :blk null;
-            },
-        }
-    };
-
-    if (maybe_basic_type) |basic| {
+    if (resolveBasicTypeName(type_token.type, type_name)) |basic| {
         self.advance();
         consumed_token = true;
         base_type_expr = try self.allocator.create(ast.TypeExpr);
@@ -1469,33 +1443,7 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     var base_type_expr: ?*ast.TypeExpr = null;
     var consumed_token = false;
 
-    const maybe_basic_type: ?ast.BasicType = blk: {
-        switch (type_token.type) {
-            .INT_TYPE => break :blk ast.BasicType.Integer,
-            .BYTE_TYPE => break :blk ast.BasicType.Byte,
-            .FLOAT_TYPE => break :blk ast.BasicType.Float,
-            .STRING_TYPE => break :blk ast.BasicType.String,
-            .TETRA_TYPE => break :blk ast.BasicType.Tetra,
-            .NOTHING_TYPE => break :blk ast.BasicType.Nothing,
-            else => {
-                if (std.mem.eql(u8, type_name, "int")) break :blk ast.BasicType.Integer;
-                if (std.mem.eql(u8, type_name, "Int")) break :blk ast.BasicType.Integer;
-                if (std.mem.eql(u8, type_name, "byte")) break :blk ast.BasicType.Byte;
-                if (std.mem.eql(u8, type_name, "Byte")) break :blk ast.BasicType.Byte;
-                if (std.mem.eql(u8, type_name, "float")) break :blk ast.BasicType.Float;
-                if (std.mem.eql(u8, type_name, "Float")) break :blk ast.BasicType.Float;
-                if (std.mem.eql(u8, type_name, "string")) break :blk ast.BasicType.String;
-                if (std.mem.eql(u8, type_name, "String")) break :blk ast.BasicType.String;
-                if (std.mem.eql(u8, type_name, "tetra")) break :blk ast.BasicType.Tetra;
-                if (std.mem.eql(u8, type_name, "Tetra")) break :blk ast.BasicType.Tetra;
-                if (std.mem.eql(u8, type_name, "nothing")) break :blk ast.BasicType.Nothing;
-                if (std.mem.eql(u8, type_name, "Nothing")) break :blk ast.BasicType.Nothing;
-                break :blk null;
-            },
-        }
-    };
-
-    if (maybe_basic_type) |basic_type| {
+    if (resolveBasicTypeName(type_token.type, type_name)) |basic_type| {
         self.advance();
         consumed_token = true;
 
@@ -1569,17 +1517,35 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     return base_type_expr;
 }
 
-fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {
-    const type_token = self.peek();
-    const basic_type = switch (type_token.type) {
+fn resolveBasicTypeName(token_type: token.TokenType, type_name: []const u8) ?ast.BasicType {
+    return switch (token_type) {
         .INT_TYPE => ast.BasicType.Integer,
         .BYTE_TYPE => ast.BasicType.Byte,
         .FLOAT_TYPE => ast.BasicType.Float,
         .STRING_TYPE => ast.BasicType.String,
         .TETRA_TYPE => ast.BasicType.Tetra,
         .NOTHING_TYPE => ast.BasicType.Nothing,
-        else => return null,
+        else => {
+            if (std.mem.eql(u8, type_name, "int")) return ast.BasicType.Integer;
+            if (std.mem.eql(u8, type_name, "Int")) return ast.BasicType.Integer;
+            if (std.mem.eql(u8, type_name, "byte")) return ast.BasicType.Byte;
+            if (std.mem.eql(u8, type_name, "Byte")) return ast.BasicType.Byte;
+            if (std.mem.eql(u8, type_name, "float")) return ast.BasicType.Float;
+            if (std.mem.eql(u8, type_name, "Float")) return ast.BasicType.Float;
+            if (std.mem.eql(u8, type_name, "string")) return ast.BasicType.String;
+            if (std.mem.eql(u8, type_name, "String")) return ast.BasicType.String;
+            if (std.mem.eql(u8, type_name, "tetra")) return ast.BasicType.Tetra;
+            if (std.mem.eql(u8, type_name, "Tetra")) return ast.BasicType.Tetra;
+            if (std.mem.eql(u8, type_name, "nothing")) return ast.BasicType.Nothing;
+            if (std.mem.eql(u8, type_name, "Nothing")) return ast.BasicType.Nothing;
+            return null;
+        },
     };
+}
+
+fn parseBasicType(self: *Parser) ErrorList!?*ast.TypeExpr {
+    const type_token = self.peek();
+    const basic_type = resolveBasicTypeName(type_token.type, type_token.lexeme) orelse return null;
 
     self.advance();
 
