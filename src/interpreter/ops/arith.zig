@@ -1,5 +1,6 @@
 const std = @import("std");
 const HIRValue = @import("../../codegen/hir/soxa_values.zig").HIRValue;
+const SoxaValues = @import("../../codegen/hir/soxa_values.zig");
 const Core = @import("../core.zig");
 const HIRFrame = Core.HIRFrame;
 const Errors = @import("../../utils/errors.zig");
@@ -22,7 +23,7 @@ pub fn exec(vm: anytype, a: anytype) !void {
                             const len_a = arr_a.length;
                             const len_b = arr_b.length;
 
-                            const new_elements = try vm.runtimeAllocator().alloc(HIRValue, len_a + len_b);
+                            const new_elements = try vm.scopeAllocator().alloc(HIRValue, len_a + len_b);
 
                             for (0..len_a) |i| {
                                 new_elements[i] = arr_a.elements[i];
@@ -38,6 +39,8 @@ pub fn exec(vm: anytype, a: anytype) !void {
                                     .capacity = len_a + len_b,
                                     .length = len_a + len_b,
                                     .element_type = arr_a.element_type,
+                                    .owner = SoxaValues.ValueOwner.Scope,
+                                    .scope_id = vm.currentScopeId(),
                                 },
                             };
 

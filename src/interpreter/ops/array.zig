@@ -61,8 +61,13 @@ pub fn resolveArrayIndex(index: HIRFrame, array_length: usize) !u32 {
 pub fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
     var converted = array;
 
-    if (converted.owner != SoxaValues.ValueOwner.Runtime) {
-        const runtime_alloc = vm.runtimeAllocator();
+    const needs_conversion = switch (converted.owner) {
+        .Module => true,
+        else => false,
+    };
+
+    if (needs_conversion) {
+        const runtime_alloc = vm.scopeAllocator();
         const element_count = converted.elements.len;
         const new_elements = try runtime_alloc.alloc(HIRValue, element_count);
 
@@ -70,7 +75,7 @@ pub fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
 
         converted.elements = new_elements;
         converted.capacity = @intCast(element_count);
-        converted.owner = SoxaValues.ValueOwner.Runtime;
+        converted.owner = SoxaValues.ValueOwner.Scope;
         converted.storage_kind = .dynamic;
         return converted;
     }
@@ -78,7 +83,7 @@ pub fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
     if (converted.storage_kind == .dynamic) return converted;
 
     const element_count = converted.elements.len;
-    const allocator = vm.runtimeAllocator();
+    const allocator = vm.scopeAllocator();
     const new_elements = try allocator.alloc(HIRValue, element_count);
 
     @memcpy(new_elements, converted.elements);
@@ -99,7 +104,7 @@ pub fn arrayNew(vm: anytype, a: anytype) !void {
         .dynamic => if (requested_len == 0) 8 else requested_len,
         else => requested_len,
     };
-    const elements = try vm.runtimeAllocator().alloc(HIRValue, initial_capacity);
+    const elements = try vm.scopeAllocator().alloc(HIRValue, initial_capacity);
 
     const default_value = getDefaultValue(a.element_type);
 
@@ -119,6 +124,8 @@ pub fn arrayNew(vm: anytype, a: anytype) !void {
             .element_type = a.element_type,
             .nested_element_type = a.nested_element_type,
             .storage_kind = storage_kind,
+            .owner = SoxaValues.ValueOwner.Scope,
+            .scope_id = vm.currentScopeId(),
         },
     };
 
@@ -158,7 +165,7 @@ pub fn arrayGet(vm: anytype, a: anytype) !void {
                 return;
             }
             const char_str = s[resolved_index .. resolved_index + 1];
-            const char_copy = try vm.runtimeAllocator().dupe(u8, char_str);
+            const char_copy = try vm.scopeAllocator().dupe(u8, char_str);
             try vm.stack.push(HIRFrame.initString(char_copy));
         },
         .nothing => {
@@ -254,7 +261,7 @@ pub fn arrayPop(vm: anytype) !void {
             mutable_arr.length -= 1;
             const last_idx = mutable_arr.length;
             var last_element = mutable_arr.elements[last_idx];
-            const last_element_copy = try vm.deepCopyValueToAllocator(vm.runtimeAllocator(), &last_element, SoxaValues.ValueOwner.Runtime);
+            const last_element_copy = try vm.deepCopyValueToAllocator(vm.scopeAllocator(), &last_element, SoxaValues.ValueOwner.Scope);
 
             mutable_arr.elements[last_idx] = nothing_value;
 
@@ -285,8 +292,8 @@ pub fn arrayPop(vm: anytype) !void {
 
             const last_char = s_val[last_char_start..s_val.len];
             const remaining = s_val[0..last_char_start];
-            const remaining_copy = try vm.runtimeAllocator().dupe(u8, remaining);
-            const last_char_copy = try vm.runtimeAllocator().dupe(u8, last_char);
+            const remaining_copy = try vm.scopeAllocator().dupe(u8, remaining);
+            const last_char_copy = try vm.scopeAllocator().dupe(u8, last_char);
 
             try vm.stack.push(HIRFrame.initString(remaining_copy));
             try vm.stack.push(HIRFrame.initString(last_char_copy));
@@ -383,7 +390,7 @@ pub fn arrayInsert(vm: anytype) !void {
             };
             const idx: usize = index_val;
             const new_len = s.len + insert_str.len;
-            const new_buf = try vm.runtimeAllocator().alloc(u8, new_len);
+            const new_buf = try vm.scopeAllocator().alloc(u8, new_len);
             @memcpy(new_buf[0..idx], s[0..idx]);
             @memcpy(new_buf[idx .. idx + insert_str.len], insert_str);
             @memcpy(new_buf[idx + insert_str.len ..], s[idx..]);
@@ -432,7 +439,7 @@ pub fn arrayRemove(vm: anytype) !void {
             var mutable_arr = arr;
             mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
             var removed_elem = mutable_arr.elements[index_val];
-            const removed_elem_copy = try vm.deepCopyValueToAllocator(vm.runtimeAllocator(), &removed_elem, SoxaValues.ValueOwner.Runtime);
+            const removed_elem_copy = try vm.deepCopyValueToAllocator(vm.scopeAllocator(), &removed_elem, SoxaValues.ValueOwner.Scope);
             var i: u32 = index_val;
             while (i + 1 < mutable_arr.capacity and i + 1 < logical_len) : (i += 1) {
                 mutable_arr.elements[i] = mutable_arr.elements[i + 1];
@@ -450,10 +457,10 @@ pub fn arrayRemove(vm: anytype) !void {
             const idx: usize = index_val;
             const removed_slice = s[idx .. idx + 1];
             const new_len = s.len - 1;
-            const new_buf = try vm.runtimeAllocator().alloc(u8, new_len);
+            const new_buf = try vm.scopeAllocator().alloc(u8, new_len);
             @memcpy(new_buf[0..idx], s[0..idx]);
             @memcpy(new_buf[idx..], s[idx + 1 ..]);
-            const removed_copy = try vm.runtimeAllocator().dupe(u8, removed_slice);
+            const removed_copy = try vm.scopeAllocator().dupe(u8, removed_slice);
             try vm.stack.push(HIRFrame.initString(new_buf));
             try vm.stack.push(HIRFrame.initString(removed_copy));
         },
@@ -525,7 +532,7 @@ pub fn arraySlice(vm: anytype) !void {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array slice out of bounds: start={}, length={} (max length: {})", .{ start_val, length_val, logical_len - start_val });
             }
 
-            const sliced_elements = try vm.runtimeAllocator().alloc(HIRValue, length_val);
+            const sliced_elements = try vm.scopeAllocator().alloc(HIRValue, length_val);
             for (0..length_val) |i| {
                 sliced_elements[i] = arr.elements[start_val + i];
             }
@@ -535,6 +542,8 @@ pub fn arraySlice(vm: anytype) !void {
                 .capacity = length_val,
                 .length = length_val,
                 .element_type = arr.element_type,
+                .owner = SoxaValues.ValueOwner.Scope,
+                .scope_id = vm.currentScopeId(),
             } };
 
             try vm.stack.push(HIRFrame.initFromHIRValue(sliced_arr));
@@ -548,7 +557,7 @@ pub fn arraySlice(vm: anytype) !void {
             }
 
             const sliced_str = s[start_val .. start_val + length_val];
-            const duplicated = try vm.runtimeAllocator().dupe(u8, sliced_str);
+            const duplicated = try vm.scopeAllocator().dupe(u8, sliced_str);
             try vm.stack.push(HIRFrame.initString(duplicated));
         },
         else => {
@@ -583,7 +592,7 @@ pub fn arrayConcat(vm: anytype) !void {
                     const len_a = arr_a.length;
                     const len_b = arr_b.length;
 
-                    const new_elements = try vm.runtimeAllocator().alloc(HIRValue, len_a + len_b);
+                    const new_elements = try vm.scopeAllocator().alloc(HIRValue, len_a + len_b);
 
                     for (0..len_a) |i| {
                         new_elements[i] = arr_a.elements[i];
@@ -599,6 +608,8 @@ pub fn arrayConcat(vm: anytype) !void {
                             .capacity = len_a + len_b,
                             .length = len_a + len_b,
                             .element_type = arr_a.element_type,
+                            .owner = SoxaValues.ValueOwner.Scope,
+                            .scope_id = vm.currentScopeId(),
                         },
                     };
 
@@ -705,7 +716,7 @@ pub fn arrayRange(vm: anytype, r: anytype) !void {
     else
         0;
 
-    const elements = try vm.runtimeAllocator().alloc(HIRValue, size);
+    const elements = try vm.scopeAllocator().alloc(HIRValue, size);
 
     var i: u32 = 0;
     var current = start_val;
@@ -720,6 +731,8 @@ pub fn arrayRange(vm: anytype, r: anytype) !void {
             .capacity = size,
             .length = size,
             .element_type = r.element_type,
+            .owner = SoxaValues.ValueOwner.Scope,
+            .scope_id = vm.currentScopeId(),
         },
     };
 
@@ -744,7 +757,7 @@ pub fn getDefaultValue(hir_type: HIRType) HIRValue {
         .Struct => HIRValue{ .struct_instance = .{
             .type_name = "",
             .fields = &[_]HIRStructField{},
-            .owner = SoxaValues.ValueOwner.Runtime,
+            .owner = SoxaValues.ValueOwner.Scope,
         } },
         .Map => HIRValue{ .map = .{
             .entries = &[_]HIRMapEntry{},

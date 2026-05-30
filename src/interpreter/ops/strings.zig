@@ -171,10 +171,10 @@ pub fn exec(vm: anytype, s: anytype) !void {
     }
 
     if (s.op == .ToString) {
-        const value_ptr = try vm.runtimeAllocator().create(HIRValue);
+        const value_ptr = try vm.scopeAllocator().create(HIRValue);
         value_ptr.* = val.value;
-        defer vm.runtimeAllocator().destroy(value_ptr);
-        const result = try vm.valueToString(vm.runtimeAllocator(), value_ptr);
+        defer vm.scopeAllocator().destroy(value_ptr);
+        const result = try vm.valueToString(vm.scopeAllocator(), value_ptr);
         try vm.stack.push(HIRFrame.initString(result));
         return;
     }
@@ -199,7 +199,7 @@ pub fn exec(vm: anytype, s: anytype) !void {
             .array => |a| a,
             else => return vm.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@pack: expected byte array", .{}),
         };
-        const bytes = try vm.runtimeAllocator().alloc(u8, arr.length);
+        const bytes = try vm.scopeAllocator().alloc(u8, arr.length);
         for (0..arr.length) |i| {
             bytes[i] = switch (arr.elements[i]) {
                 .byte => |b| b,
@@ -214,7 +214,7 @@ pub fn exec(vm: anytype, s: anytype) !void {
             .string => |s_val| s_val,
             else => return vm.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@unpack: expected string", .{}),
         };
-        const elements = try vm.runtimeAllocator().alloc(HIRValue, str.len);
+        const elements = try vm.scopeAllocator().alloc(HIRValue, str.len);
         for (str, 0..) |byte, i| {
             elements[i] = HIRValue{ .byte = byte };
         }
@@ -252,8 +252,8 @@ pub fn exec(vm: anytype, s: anytype) !void {
 
                     const last_char = s_val[last_char_start..s_val.len];
                     const remaining = s_val[0..last_char_start];
-                    const remaining_copy = try vm.runtimeAllocator().dupe(u8, remaining);
-                    const last_char_copy = try vm.runtimeAllocator().dupe(u8, last_char);
+                    const remaining_copy = try vm.scopeAllocator().dupe(u8, remaining);
+                    const last_char_copy = try vm.scopeAllocator().dupe(u8, last_char);
 
                     try vm.stack.push(HIRFrame.initString(remaining_copy));
                     try vm.stack.push(HIRFrame.initString(last_char_copy));
@@ -281,7 +281,7 @@ pub fn exec(vm: anytype, s: anytype) !void {
                     const end_idx = start_idx + len;
 
                     const substring = s_val[start_idx..end_idx];
-                    const substring_copy = try vm.runtimeAllocator().dupe(u8, substring);
+                    const substring_copy = try vm.scopeAllocator().dupe(u8, substring);
                     try vm.stack.push(HIRFrame.initString(substring_copy));
                 },
                 .Concat => {
@@ -290,7 +290,7 @@ pub fn exec(vm: anytype, s: anytype) !void {
                         return ErrorList.TypeError;
                     }
 
-                    const allocator = vm.runtimeAllocator();
+                    const allocator = vm.scopeAllocator();
                     const result = try std.fmt.allocPrint(allocator, "{s}{s}", .{ s_val, str2.value.string });
                     try vm.stack.push(HIRFrame.initString(result));
                 },

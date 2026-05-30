@@ -34,14 +34,17 @@ pub const HIRArray = struct {
     nested_element_type: ?HIRType = null, // For nested arrays: what type are the nested elements?
     storage_kind: ArrayStorageKind = .dynamic,
     owner: ValueOwner = .Runtime,
+    scope_id: u32 = 0,
 };
 
 pub const HIRStruct = struct {
     type_name: []const u8,
     fields: []HIRStructField,
-    field_name: ?[]const u8 = null, // Track field name for nested struct access
+    value_pool: []HIRValue = &.{},
+    field_name: ?[]const u8 = null,
     path: ?[]const u8 = @as(?[]const u8, null),
     owner: ValueOwner = .Runtime,
+    scope_id: u32 = 0,
 };
 
 pub const HIRStructField = struct {
@@ -53,11 +56,14 @@ pub const HIRStructField = struct {
 
 pub const HIRMap = struct {
     entries: []HIRMapEntry,
+    key_pool: []HIRValue = &.{},
+    value_pool: []HIRValue = &.{},
     key_type: HIRType,
     value_type: HIRType,
     path: ?[]const u8 = @as(?[]const u8, null),
     else_value: ?*HIRValue = null,
     owner: ValueOwner = .Runtime,
+    scope_id: u32 = 0,
 };
 
 pub const HIRMapEntry = struct {
@@ -71,6 +77,7 @@ pub const HIREnum = struct {
     variant_name: []const u8,
     variant_index: u32,
     path: ?[]const u8 = @as(?[]const u8, null),
+    scope_id: u32 = 0,
 };
 
 pub const HIRGroup = struct {
@@ -78,6 +85,7 @@ pub const HIRGroup = struct {
     member_index: u32,
     payload: Payload,
     path: ?[]const u8 = @as(?[]const u8, null),
+    scope_id: u32 = 0,
 
     pub const Payload = union(enum) {
         enum_variant: HIREnum,

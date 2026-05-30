@@ -51,3 +51,8 @@ map CarSeats returns string | nothing {
 
 ### Notes on Inference
 
+
+### Performance
+
+Maps are allocated from the current scope's arena. All keys and values are stored in contiguous pools — two slices holding all keys and all values respectively. Map mutations are performed in-place: setting a value for an existing key updates the value slot directly without copying the map. New entries extend the pools via realloc.
+
