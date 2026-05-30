@@ -58,11 +58,44 @@ fn parseFormatTemplate(self: *Parser, format_string: []const u8) ErrorList!*ast.
             try template_parts.append(try ast.createStringPart(self.allocator, part));
 
             var j = i + 1;
-            while (j < format_string.len and format_string[j] != '}') {
-                j += 1;
+            var depth: usize = 1;
+            while (j < format_string.len and depth > 0) {
+                switch (format_string[j]) {
+                    '{' => {
+                        depth += 1;
+                        j += 1;
+                    },
+                    '}' => {
+                        depth -= 1;
+                        if (depth > 0) j += 1;
+                    },
+                    '"' => {
+                        j += 1;
+                        while (j < format_string.len and format_string[j] != '"') {
+                            if (format_string[j] == '\\') {
+                                j += 2;
+                            } else {
+                                j += 1;
+                            }
+                        }
+                        if (j < format_string.len) j += 1;
+                    },
+                    '\'' => {
+                        j += 1;
+                        while (j < format_string.len and format_string[j] != '\'') {
+                            if (format_string[j] == '\\') {
+                                j += 2;
+                            } else {
+                                j += 1;
+                            }
+                        }
+                        if (j < format_string.len) j += 1;
+                    },
+                    else => j += 1,
+                }
             }
 
-            if (j >= format_string.len) {
+            if (depth > 0) {
                 return error.UnmatchedOpenBrace;
             }
 
