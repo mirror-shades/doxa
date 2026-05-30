@@ -826,19 +826,8 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         self.advance();
 
         var size: ?*ast.Expr = null;
-        if (self.peek().type == .INT) {
-            const size_expr = try self.allocator.create(ast.Expr);
-            size_expr.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(self.peek()),
-                },
-                .data = .{
-                    .Literal = self.peek().literal,
-                },
-            };
-            size = size_expr;
-            self.advance();
+        if (self.peek().type != .RIGHT_BRACKET) {
+            size = try parseExpression(self) orelse return error.ExpectedExpression;
         }
 
         if (self.peek().type != .RIGHT_BRACKET) {

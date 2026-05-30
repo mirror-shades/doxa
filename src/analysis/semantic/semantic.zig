@@ -723,7 +723,7 @@ pub const SemanticAnalyzer = struct {
             }
         }
 
-        for (statements) |stmt| {
+        for (statements, 0..) |stmt, i| {
             switch (stmt.data) {
                 .VarDecl => |decl| {
                     // Create TypeInfo
@@ -740,10 +740,24 @@ pub const SemanticAnalyzer = struct {
                             } else {
                                 // Use explicit type, but resolve custom types
                                 type_info.* = try self.resolveTypeInfo(decl.type_info);
+                                if (decl.type_expr) |type_expr| {
+                                    try self.resolveArraySizes(type_info, type_expr);
+                                    if (type_info.base == .Array) {
+                                        statements[i].data.VarDecl.type_info.array_size = type_info.array_size;
+                                        statements[i].data.VarDecl.type_info.array_storage = type_info.array_storage;
+                                    }
+                                }
                             }
                         } else {
                             // Use explicit type, but resolve custom types
                             type_info.* = try self.resolveTypeInfo(decl.type_info);
+                            if (decl.type_expr) |type_expr| {
+                                try self.resolveArraySizes(type_info, type_expr);
+                                if (type_info.base == .Array) {
+                                    statements[i].data.VarDecl.type_info.array_size = type_info.array_size;
+                                    statements[i].data.VarDecl.type_info.array_storage = type_info.array_storage;
+                                }
+                            }
                         }
                         // Preserve mutability from the variable declaration (var vs const)
                         type_info.is_mutable = decl.type_info.is_mutable;
@@ -797,6 +811,7 @@ pub const SemanticAnalyzer = struct {
                             .String => TokenLiteral{ .string = "" },
                             .Tetra => TokenLiteral{ .tetra = .false },
                             .Byte => TokenLiteral{ .byte = 0 },
+                            .Array => try self.defaultTypeLiteral(type_info),
                             .Union => if (type_info.union_type) |ut| self.getUnionDefaultValue(ut) else TokenLiteral{ .nothing = {} },
                             else => TokenLiteral{ .nothing = {} },
                         };
@@ -1010,6 +1025,21 @@ pub const SemanticAnalyzer = struct {
                 else => {},
             }
         }
+
+        for (statements) |*stmt| {
+            if (stmt.data == .VarDecl) {
+                if (stmt.data.VarDecl.type_expr) |_| {
+                    if (stmt.data.VarDecl.type_info.base == .Array and stmt.data.VarDecl.type_info.array_size == null) {
+                        if (scope.lookupVariable(stmt.data.VarDecl.name.lexeme)) |variable| {
+                            if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                                stmt.data.VarDecl.type_info.array_size = storage.type_info.array_size;
+                                stmt.data.VarDecl.type_info.array_storage = storage.type_info.array_storage;
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn validateStatements(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!void {
@@ -1089,7 +1119,7 @@ pub const SemanticAnalyzer = struct {
                                     .String => TokenLiteral{ .string = "" },
                                     .Tetra => TokenLiteral{ .tetra = .false },
                                     .Byte => TokenLiteral{ .byte = 0 },
-                                    .Array => TokenLiteral{ .array = &[_]TokenLiteral{} },
+                                    .Array => blk: { break :blk try self.defaultTypeLiteral(type_info); },
                                     .Union => if (type_info.union_type) |ut|
                                         self.getUnionDefaultValue(ut)
                                     else
@@ -1421,6 +1451,76 @@ pub const SemanticAnalyzer = struct {
 
         // Return the original type info if no resolution needed
         return type_info;
+    }
+
+    fn resolveArraySizes(self: *SemanticAnalyzer, type_info: *ast.TypeInfo, type_expr: *ast.TypeExpr) ErrorList!void {
+        switch (type_expr.data) {
+            .Array => |*array_type| {
+                if (array_type.size) |size_expr| {
+                    if (type_info.base == .Array and type_info.array_size == null) {
+                        const size_value = self.evaluateExpression(size_expr) catch |err| {
+                            const location = getLocationFromBase(size_expr.base);
+                            self.reporter.reportCompileError(
+                                location,
+                                ErrorCode.INVALID_ARRAY_TYPE,
+                                "array size must be a compile-time constant integer",
+                                .{},
+                            );
+                            return err;
+                        };
+                        if (size_value == .int) {
+                            type_info.array_size = @intCast(size_value.int);
+                            type_info.array_storage = .fixed;
+                        } else {
+                            const location = getLocationFromBase(size_expr.base);
+                            self.reporter.reportCompileError(
+                                location,
+                                ErrorCode.INVALID_ARRAY_TYPE,
+                                "array size must be an integer",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                        }
+                    }
+                }
+                if (type_info.base == .Array) {
+                    if (type_info.array_type) |child_type_info| {
+                        try self.resolveArraySizes(child_type_info, array_type.element_type);
+                    }
+                }
+            },
+            .Struct => |fields| {
+                if (type_info.base == .Struct) {
+                    if (type_info.struct_fields) |struct_fields| {
+                        for (fields, struct_fields) |field, *sf| {
+                            try self.resolveArraySizes(sf.type_info, field.type_expr);
+                        }
+                    }
+                }
+            },
+            .Union => |types| {
+                if (type_info.base == .Union) {
+                    if (type_info.union_type) |union_type| {
+                        for (types, union_type.types) |ut, ut_info| {
+                            try self.resolveArraySizes(ut_info, ut);
+                        }
+                    }
+                }
+            },
+            .Map => |*map| {
+                if (type_info.base == .Map) {
+                    if (type_info.map_key_type) |key_type_info| {
+                        if (map.key_type) |key_type_expr| {
+                            try self.resolveArraySizes(key_type_info, key_type_expr);
+                        }
+                    }
+                    if (type_info.map_value_type) |value_type_info| {
+                        try self.resolveArraySizes(value_type_info, map.value_type);
+                    }
+                }
+            },
+            else => {},
+        }
     }
 
     fn tryTagConstLiteralArray(self: *SemanticAnalyzer, type_info: *ast.TypeInfo, initializer: *ast.Expr) void {
@@ -1959,6 +2059,19 @@ pub const SemanticAnalyzer = struct {
                 },
                 else => TokenLiteral{ .nothing = {} },
             },
+            .DOUBLE_SLASH => switch (left) {
+                .int => |l| switch (right) {
+                    .int => |r| TokenLiteral{ .int = @divTrunc(l, r) },
+                    .byte => |r| TokenLiteral{ .int = @divTrunc(l, @as(i64, r)) },
+                    else => TokenLiteral{ .nothing = {} },
+                },
+                .byte => |l| switch (right) {
+                    .int => |r| TokenLiteral{ .int = @divTrunc(@as(i64, l), r) },
+                    .byte => |r| TokenLiteral{ .byte = l / r },
+                    else => TokenLiteral{ .nothing = {} },
+                },
+                else => TokenLiteral{ .nothing = {} },
+            },
             .POWER => switch (left) {
                 .int => |l| switch (right) {
                     .int => |r| blk: {
@@ -2009,6 +2122,29 @@ pub const SemanticAnalyzer = struct {
                     .neither => .both,
                 } },
                 else => TokenLiteral{ .nothing = {} },
+            },
+            else => TokenLiteral{ .nothing = {} },
+        };
+    }
+
+    fn defaultTypeLiteral(self: *SemanticAnalyzer, type_info: *const ast.TypeInfo) !TokenLiteral {
+        return switch (type_info.base) {
+            .Int => TokenLiteral{ .int = 0 },
+            .Float => TokenLiteral{ .float = 0.0 },
+            .String => TokenLiteral{ .string = "" },
+            .Tetra => TokenLiteral{ .tetra = .false },
+            .Byte => TokenLiteral{ .byte = 0 },
+            .Array => blk: {
+                if (type_info.array_type) |element_type| {
+                    if (type_info.array_size) |size| {
+                        const elements = try self.allocator.alloc(TokenLiteral, size);
+                        for (0..size) |i| {
+                            elements[i] = try self.defaultTypeLiteral(element_type);
+                        }
+                        break :blk TokenLiteral{ .array = elements };
+                    }
+                }
+                break :blk TokenLiteral{ .array = &.{} };
             },
             else => TokenLiteral{ .nothing = {} },
         };

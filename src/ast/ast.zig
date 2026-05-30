@@ -241,6 +241,7 @@ pub const Stmt = struct {
             name: Token,
             type_info: TypeInfo,
             initializer: ?*Expr,
+            type_expr: ?*TypeExpr = null,
             is_public: bool = false,
         },
         Block: []Stmt,
@@ -317,6 +318,10 @@ pub const Stmt = struct {
                 if (v.initializer) |init| {
                     init.deinit(allocator);
                     allocator.destroy(init);
+                }
+                if (v.type_expr) |type_expr| {
+                    type_expr.deinit(allocator);
+                    allocator.destroy(type_expr);
                 }
             },
             .Block => |statements| {
@@ -943,6 +948,10 @@ pub const Expr = struct {
                             if (decl.initializer) |init| {
                                 init.deinit(allocator);
                                 allocator.destroy(init);
+                            }
+                            if (decl.type_expr) |type_expr| {
+                                type_expr.deinit(allocator);
+                                allocator.destroy(type_expr);
                             }
                         },
                         .Expression => |maybe_expr| {
