@@ -77,7 +77,11 @@ Module global variables use a persistent allocator that lives for the program's 
 
 ### Analysis-Phase Scopes
 
-During semantic analysis, a parallel scope tree is maintained by `ScopeManager` (see `src/utils/memory.zig`). These analysis scopes track variable declarations, types, and aliasing for type-checking and name resolution. They are separate from runtime scopes — the compiler backend (LLVM IR generation) treats `EnterScope`/`ExitScope` as no-ops since LLVM manages its own stack frames.
+During semantic analysis, a parallel scope tree is maintained by `ScopeManager` (see `src/utils/memory.zig`). These analysis scopes (`ScopeKind.analysis`) track variable declarations, types, and aliasing for type-checking and name resolution. They are separate from runtime scopes (`ScopeKind.runtime`) which use pure O(1) arena cleanup.
+
+### Compiler Backend
+
+In the compiled output, each `EnterScope` HIR instruction emits a call to `doxa_scope_enter()` (in `src/runtime/arena.zig`), creating a child arena backed by `std.heap.ArenaAllocator`. Each `ExitScope` emits `doxa_scope_exit()`, popping back to the parent arena. Heap values stored into variables are deep-copied via `emitCloneForStore` (cloning strings via `doxa_str_clone`, arrays via `doxa_array_clone`, structs via `doxa_struct_clone`, maps via `doxa_map_clone`). The root scope is never destroyed — the OS reclaims it at process exit.
 
 ## Performance Characteristics
 
@@ -92,21 +96,34 @@ During semantic analysis, a parallel scope tree is maintained by `ScopeManager` 
 - **Memory usage:** Arenas hold all memory until scope exit (no incremental free)
 - **No heap compaction:** Memory fragmentation within arenas
 - **Scope lifetime:** Objects can't outlive their allocating scope
-- **Deep copy cost:** Return values are copied between scopes; aliases reduce this
+- **Deep copy cost:** Return values are copied between scopes
+
+### Known Trade-offs
+
+| Issue | Rationale |
+|-------|-----------|
+| **Arena buffer accumulation on resize** — When an array or map grows, the old buffer is abandoned in the arena. Repeated resizes accumulate dead buffers. | Matches VM behavior. All buffers bulk-freed on scope exit in O(1). |
+| **Functions with explicit `return` skip `ExitScope`** — The bytecode generator omits `ExitScope` when a function has a return statement. Scopes accumulate on `scope_stack` until VM reset/deinit. | Bounded per program execution, cleaned at VM deinit. Proper unwinding requires deep-copying frame locals that reference scope memory before deinit — deferred. |
+| **Runtime scopes allocate empty hashmaps** — `Scope.initRuntime` initializes `variables`/`name_map` hashmaps that are never populated by the VM. ~200 bytes of arena waste per scope. | Making them optional adds `.?` overhead to all analysis code paths. |
+| **Compiler clone-on-store is always-on** — Every `StoreVar`/`StoreDecl` clones heap values, even same-scope stores. | Simpler than tracking arena ownership in LLVM IR. Cloning is bump-pointer allocation + memcpy, so cost is low. |
+
+### Deferred: Return Value Move Semantics
+
+When a function returns a complex value (array, struct, map) and the callee's scope persists (ExitScope skipped for functions with `return`), the return value's inner pointers remain valid in the callee's scope arena. Pushing the original value (move) instead of deep-copying avoids O(n) allocation + memcpy. Infrastructure (`isScopeOnStack` helper) was prototyped. The optimization is correct for values in persistent scopes but interacted poorly with alias parameters in the brainfuck test — aliased variables may reference scope memory that the move incorrectly assumes is still valid. Deferred pending deeper alias analysis.
 
 ## Edge Cases
 
 ### Cyclic References
-Not applicable — scope cleanup prevents cycles by design. A value's arena outlives all references to it.
+Scope cleanup prevents cycles by design. A value's arena outlives all references to it.
 
 ### Dangling Pointers
-Impossible — objects can't outlive their scope. There are no pointers in user code; aliases are scoped to the call.
+Objects can't outlive their scope. There are no pointers in user code; aliases are scoped to the call.
 
 ### Memory Leaks
-Prevented — scopes guarantee cleanup. Every `{` is matched by a `}` that frees the arena.
+Scopes guarantee cleanup. Every `{` is matched by a `}` that frees the arena.
 
 ### Large Allocations
-Controlled through scope-based cleanup timing. Insert anonymous blocks to free large temporaries early.
+Controlled through scope-based cleanup timing. Anonymous blocks can be used within a scope to create narrower arenas that will clean up large allocations.
 
 ### Two-Phase Execution
 Doxa runs analysis (semantic checks, type inference, IR generation) then execution (VM or compiled). Analysis scopes are managed by `MemoryManager` / `ScopeManager` and are cleaned up after IR generation. Runtime scopes are managed by the VM's scope stack and cleaned up on scope exit during execution.
