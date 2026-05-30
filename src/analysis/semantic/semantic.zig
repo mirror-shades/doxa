@@ -1942,6 +1942,99 @@ pub const SemanticAnalyzer = struct {
                 // No branches: return original value (narrowing only affects type, not value)
                 return value_literal;
             },
+            .InternalCall => |icall| {
+                const receiver_value = try self.evaluateExpression(icall.receiver);
+                switch (icall.method.type) {
+                    .TOINT => {
+                        return switch (receiver_value) {
+                            .int => receiver_value,
+                            .byte => |b| TokenLiteral{ .int = b },
+                            .float => |f| TokenLiteral{ .int = @intFromFloat(f) },
+                            .string => |s| blk: {
+                                const trimmed = std.mem.trim(u8, s, &std.ascii.whitespace);
+                                if (trimmed.len > 2 and std.mem.eql(u8, trimmed[0..2], "0x")) {
+                                    const parsed = std.fmt.parseInt(i64, trimmed[2..], 16) catch break :blk TokenLiteral{ .int = 0 };
+                                    break :blk TokenLiteral{ .int = parsed };
+                                }
+                                const parsed = std.fmt.parseInt(i64, trimmed, 10) catch break :blk TokenLiteral{ .int = 0 };
+                                break :blk TokenLiteral{ .int = parsed };
+                            },
+                            else => TokenLiteral{ .int = 0 },
+                        };
+                    },
+                    .TOFLOAT => {
+                        return switch (receiver_value) {
+                            .float => receiver_value,
+                            .int => |i| TokenLiteral{ .float = @floatFromInt(i) },
+                            .byte => |b| TokenLiteral{ .float = @floatFromInt(b) },
+                            .string => |s| blk: {
+                                const parsed = std.fmt.parseFloat(f64, s) catch break :blk TokenLiteral{ .float = 0.0 };
+                                break :blk TokenLiteral{ .float = parsed };
+                            },
+                            else => TokenLiteral{ .float = 0.0 },
+                        };
+                    },
+                    .TOBYTE => {
+                        return switch (receiver_value) {
+                            .byte => receiver_value,
+                            .int => |i| TokenLiteral{ .byte = @intCast(i) },
+                            .float => |f| TokenLiteral{ .byte = @intCast(@as(i64, @intFromFloat(f))) },
+                            .string => |s| blk: {
+                                if (s.len == 1) break :blk TokenLiteral{ .byte = s[0] };
+                                const parsed = std.fmt.parseInt(u8, s, 10) catch break :blk TokenLiteral{ .byte = 0 };
+                                break :blk TokenLiteral{ .byte = parsed };
+                            },
+                            else => TokenLiteral{ .byte = 0 },
+                        };
+                    },
+                    .TOSTRING => {
+                        return switch (receiver_value) {
+                            .string => receiver_value,
+                            .int => |i| blk: {
+                                const buf = try self.allocator.alloc(u8, 32);
+                                break :blk TokenLiteral{ .string = try std.fmt.bufPrint(buf, "{}", .{i}) };
+                            },
+                            .float => |f| blk: {
+                                const buf = try self.allocator.alloc(u8, 32);
+                                break :blk TokenLiteral{ .string = try std.fmt.bufPrint(buf, "{}", .{f}) };
+                            },
+                            .byte => |b| blk: {
+                                const buf = try self.allocator.alloc(u8, 32);
+                                break :blk TokenLiteral{ .string = try std.fmt.bufPrint(buf, "{}", .{b}) };
+                            },
+                            else => TokenLiteral{ .string = "" },
+                        };
+                    },
+                    .LENGTH => {
+                        if (icall.receiver.data == .Variable) {
+                            const var_name = icall.receiver.data.Variable.lexeme;
+                            if (helpers.lookupVariable(self, var_name)) |variable| {
+                                if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                                    if (storage.type_info.array_size) |size| {
+                                        return TokenLiteral{ .int = @intCast(size) };
+                                    }
+                                }
+                            }
+                        }
+                        return switch (receiver_value) {
+                            .string => |s| TokenLiteral{ .int = @intCast(s.len) },
+                            .array => |a| TokenLiteral{ .int = @intCast(a.len) },
+                            else => TokenLiteral{ .int = 0 },
+                        };
+                    },
+                    else => {
+                        const inferred_type = try infer_type.inferTypeFromExpr(self, expr);
+                        return switch (inferred_type.base) {
+                            .Int => TokenLiteral{ .int = 0 },
+                            .Float => TokenLiteral{ .float = 0.0 },
+                            .String => TokenLiteral{ .string = "" },
+                            .Tetra => TokenLiteral{ .tetra = .false },
+                            .Byte => TokenLiteral{ .byte = 0 },
+                            else => TokenLiteral{ .nothing = {} },
+                        };
+                    },
+                }
+            },
             else => {
                 // For complex expressions that can't be evaluated at compile time,
                 // return a default value based on the inferred type

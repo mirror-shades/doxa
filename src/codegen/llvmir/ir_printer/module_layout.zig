@@ -45,6 +45,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_print_array_hdr(ptr)\n");
             try w.writeAll("declare i1 @doxa_str_eq(ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
+            try w.writeAll("declare ptr @doxa_array_new_nested(i64, i64, i64, ptr, i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_clone(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_get_i64(ptr, i64)\n");

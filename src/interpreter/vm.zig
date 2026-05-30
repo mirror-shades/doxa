@@ -431,6 +431,8 @@ pub const VM = struct {
                     .size = payload.static_size,
                     .nested_element_type = toOptionalHIRType(payload.nested_element_type),
                     .storage_kind = payload.storage_kind,
+                    .nested_sizes = payload.nested_sizes,
+                    .nested_depth = payload.nested_depth,
                 });
             },
             .ArrayGet => |payload| {

@@ -506,6 +506,40 @@ tetraArr[9]?
 strArr[0]?
 strArr[9]?
 
+var sized_arr_literal :: int[4]
+@length(sized_arr_literal)? # 4
+sized_arr_literal[0]? # 0
+sized_arr_literal[3]? # 0
+
+var sized_arr_literal_exp :: int[4+1]
+@length(sized_arr_literal_exp)? # 5
+sized_arr_literal_exp[0]? # 0
+sized_arr_literal_exp[4]? # 0
+
+const array_length is 4
+var sized_arr :: int[array_length]
+@length(sized_arr)? # 4
+sized_arr[0]? # 0
+sized_arr[3]? # 0
+
+var sized_arr2 :: int[array_length + @int("1")]
+@length(sized_arr2)? # 5
+sized_arr2[0]? # 0
+sized_arr2[4]? # 0
+
+var sized_arr_nested_literal :: int[5][2]
+@length(sized_arr_nested_literal)? # 5
+sized_arr_nested_literal? # [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]
+
+var sized_arr_nested :: int[array_length + @int("1")][array_length // 2]
+@length(sized_arr_nested)? # 5
+@length(sized_arr_nested[0])? # 2
+sized_arr_nested? # [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]]
+
+var sized_arr_intrinsic :: int[@length(sized_arr_nested)]
+@length(sized_arr_intrinsic)? # 5
+sized_arr_intrinsic? # [0, 0, 0, 0, 0]
+
 ###
 # ARRAY OF ARRAYS
 ##

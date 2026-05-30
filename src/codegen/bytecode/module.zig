@@ -142,6 +142,8 @@ pub const Instruction = union(enum) {
         static_size: u32,
         nested_element_type: ?BytecodeType,
         storage_kind: hir_types.ArrayStorageKind,
+        nested_sizes: [4]u32 = [_]u32{0} ** 4,
+        nested_depth: u3 = 0,
     },
     ArrayGet: struct { bounds_check: bool },
     ArraySet: struct { bounds_check: bool },

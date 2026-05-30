@@ -822,39 +822,57 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
     }
     if (base_type_expr == null) return error.ExpectedType;
 
-    while (self.peek().type == .LEFT_BRACKET) {
-        self.advance();
+    {
+        var array_brackets = std.array_list.Managed(struct { size: ?*ast.Expr, span: ast.SourceSpan }).init(self.allocator);
+        defer array_brackets.deinit();
 
-        var size: ?*ast.Expr = null;
-        if (self.peek().type != .RIGHT_BRACKET) {
-            size = try parseExpression(self) orelse return error.ExpectedExpression;
-        }
+        while (self.peek().type == .LEFT_BRACKET) {
+            self.advance();
 
-        if (self.peek().type != .RIGHT_BRACKET) {
-            if (size) |s| {
-                s.deinit(self.allocator);
-                self.allocator.destroy(s);
+            var size: ?*ast.Expr = null;
+            if (self.peek().type != .RIGHT_BRACKET) {
+                size = try parseExpression(self) orelse return error.ExpectedExpression;
             }
-            base_type_expr.?.deinit(self.allocator);
-            self.allocator.destroy(base_type_expr.?);
-            return error.ExpectedRightBracket;
-        }
-        self.advance();
 
-        const array_type_expr = try self.allocator.create(ast.TypeExpr);
-        array_type_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(self.peek()),
-            },
-            .data = .{
-                .Array = .{
-                    .element_type = base_type_expr.?,
-                    .size = size,
+            if (self.peek().type != .RIGHT_BRACKET) {
+                if (size) |s| {
+                    s.deinit(self.allocator);
+                    self.allocator.destroy(s);
+                }
+                for (array_brackets.items) |b| {
+                    if (b.size) |bs| {
+                        bs.deinit(self.allocator);
+                        self.allocator.destroy(bs);
+                    }
+                }
+                base_type_expr.?.deinit(self.allocator);
+                self.allocator.destroy(base_type_expr.?);
+                return error.ExpectedRightBracket;
+            }
+            self.advance();
+
+            try array_brackets.append(.{ .size = size, .span = ast.SourceSpan.fromToken(self.peek()) });
+        }
+
+        var i: usize = array_brackets.items.len;
+        while (i > 0) {
+            i -= 1;
+            const bracket = array_brackets.items[i];
+            const array_type_expr = try self.allocator.create(ast.TypeExpr);
+            array_type_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = bracket.span,
                 },
-            },
-        };
-        base_type_expr = array_type_expr;
+                .data = .{
+                    .Array = .{
+                        .element_type = base_type_expr.?,
+                        .size = bracket.size,
+                    },
+                },
+            };
+            base_type_expr = array_type_expr;
+        }
     }
 
     if (self.peek().type == .PIPE) {
@@ -1474,33 +1492,55 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
         return null;
     }
 
-    while (self.peek().type == .LEFT_BRACKET) {
-        self.advance();
+    {
+        var array_brackets = std.array_list.Managed(struct { size: ?*ast.Expr, span: ast.SourceSpan }).init(self.allocator);
+        defer array_brackets.deinit();
 
-        var array_size: ?*ast.Expr = null;
-        if (self.peek().type != .RIGHT_BRACKET) {
-            array_size = try parseExpression(self) orelse return error.ExpectedExpression;
+        while (self.peek().type == .LEFT_BRACKET) {
+            self.advance();
+
+            var array_size: ?*ast.Expr = null;
+            if (self.peek().type != .RIGHT_BRACKET) {
+                array_size = try parseExpression(self) orelse return error.ExpectedExpression;
+            }
+
+            if (self.peek().type != .RIGHT_BRACKET) {
+                if (array_size) |s| {
+                    s.deinit(self.allocator);
+                    self.allocator.destroy(s);
+                }
+                for (array_brackets.items) |b| {
+                    if (b.size) |bs| {
+                        bs.deinit(self.allocator);
+                        self.allocator.destroy(bs);
+                    }
+                }
+                return error.ExpectedRightBracket;
+            }
+            self.advance();
+
+            try array_brackets.append(.{ .size = array_size, .span = ast.SourceSpan.fromToken(type_token) });
         }
 
-        if (self.peek().type != .RIGHT_BRACKET) {
-            return error.ExpectedRightBracket;
-        }
-        self.advance();
-
-        const array_type_expr = try self.allocator.create(ast.TypeExpr);
-        array_type_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(type_token),
-            },
-            .data = .{
-                .Array = ast.ArrayType{
-                    .element_type = base_type_expr.?,
-                    .size = array_size,
+        var i: usize = array_brackets.items.len;
+        while (i > 0) {
+            i -= 1;
+            const bracket = array_brackets.items[i];
+            const array_type_expr = try self.allocator.create(ast.TypeExpr);
+            array_type_expr.* = .{
+                .base = .{
+                    .id = ast.generateNodeId(),
+                    .span = bracket.span,
                 },
-            },
-        };
-        base_type_expr = array_type_expr;
+                .data = .{
+                    .Array = ast.ArrayType{
+                        .element_type = base_type_expr.?,
+                        .size = bracket.size,
+                    },
+                },
+            };
+            base_type_expr = array_type_expr;
+        }
     }
 
     return base_type_expr;

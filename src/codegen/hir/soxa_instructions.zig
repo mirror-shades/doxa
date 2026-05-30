@@ -388,6 +388,8 @@ pub const HIRInstruction = union(enum) {
         size: u32, // 0 = dynamic array
         nested_element_type: ?HIRType = null, // For nested arrays like int[][]
         storage_kind: ArrayStorageKind = .dynamic,
+        nested_sizes: [4]u32 = [_]u32{0} ** 4,
+        nested_depth: u3 = 0,
     },
 
     /// Get array element by index

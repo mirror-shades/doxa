@@ -33,6 +33,33 @@ fn resolveArrayElementInfo(self: *HIRGenerator, element_info: ?*const ast.TypeIn
     return .{ .element_type = .Unknown, .nested_element_type = null };
 }
 
+const NestedSizes = struct {
+    sizes: [4]u32 = [_]u32{0} ** 4,
+    depth: u3 = 0,
+    truncated: bool = false,
+};
+
+fn collectNestedSizes(array_type: ?*const ast.TypeInfo) NestedSizes {
+    var result = NestedSizes{};
+    var cursor = array_type;
+    while (cursor) |info| {
+        if (info.base == .Array and info.array_storage == .fixed) {
+            if (info.array_size) |s| {
+                if (result.depth < 4) {
+                    result.sizes[result.depth] = @intCast(s);
+                    result.depth += 1;
+                } else {
+                    result.truncated = true;
+                }
+            }
+            cursor = info.array_type;
+        } else {
+            break;
+        }
+    }
+    return result;
+}
+
 pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || ErrorList)!void {
     switch (stmt.data) {
         .ZigDecl => {
@@ -303,12 +330,24 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 if (decl.type_info.base == .Array) {
                     const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
                     const resolved = resolveArrayElementInfo(self, decl.type_info.array_type);
+                    const nested = collectNestedSizes(decl.type_info.array_type);
+
+                    if (nested.truncated) {
+                        self.reporter.reportCompileError(
+                            stmt.base.location(),
+                            ErrorCode.INVALID_ARRAY_TYPE,
+                            "nested arrays are limited to 4 levels",
+                            .{},
+                        );
+                    }
 
                     try self.instructions.append(.{ .ArrayNew = .{
                         .element_type = resolved.element_type,
                         .size = size,
                         .nested_element_type = resolved.nested_element_type,
                         .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
+                        .nested_sizes = nested.sizes,
+                        .nested_depth = nested.depth,
                     } });
 
                     try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
@@ -348,11 +387,24 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 nested_element_type = SoxaTypes.arrayInnermostElementType(element_type);
                             }
 
+                            const nested = collectNestedSizes(decl.type_info.array_type);
+
+                            if (nested.truncated) {
+                                self.reporter.reportCompileError(
+                                    stmt.base.location(),
+                                    ErrorCode.INVALID_ARRAY_TYPE,
+                                    "nested arrays are limited to 4 levels",
+                                    .{},
+                                );
+                            }
+
                             try self.instructions.append(.{ .ArrayNew = .{
                                 .element_type = element_type,
                                 .size = size,
                                 .nested_element_type = nested_element_type,
                                 .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
+                                .nested_sizes = nested.sizes,
+                                .nested_depth = nested.depth,
                             } });
 
                             try self.trackArrayElementType(decl.name.lexeme, element_type);

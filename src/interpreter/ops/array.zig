@@ -94,6 +94,40 @@ pub fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
     return converted;
 }
 
+fn createDefaultArrayValue(
+    vm: anytype,
+    element_type: HIRType,
+    nested_sizes: []const u32,
+    nested_element_type: ?HIRType,
+) !HIRValue {
+    if (nested_sizes.len == 0) {
+        return getDefaultValue(element_type);
+    }
+
+    const inner_size = nested_sizes[0];
+    const inner_sizes = nested_sizes[1..];
+    const elements = try vm.scopeAllocator().alloc(HIRValue, inner_size);
+
+    var i: usize = 0;
+    while (i < inner_size) : (i += 1) {
+        const inner_el_type: HIRType = if (element_type == .Array) element_type.Array.* else element_type;
+        elements[i] = try createDefaultArrayValue(vm, inner_el_type, inner_sizes, null);
+    }
+
+    return HIRValue{
+        .array = .{
+            .elements = elements,
+            .capacity = @intCast(inner_size),
+            .length = @intCast(inner_size),
+            .element_type = element_type,
+            .nested_element_type = nested_element_type,
+            .storage_kind = ArrayStorageKind.fixed,
+            .owner = SoxaValues.ValueOwner.Scope,
+            .scope_id = vm.currentScopeId(),
+        },
+    };
+}
+
 pub fn arrayNew(vm: anytype, a: anytype) !void {
     const storage_kind: ArrayStorageKind = if (@hasField(@TypeOf(a), "storage_kind"))
         a.storage_kind
@@ -106,11 +140,17 @@ pub fn arrayNew(vm: anytype, a: anytype) !void {
     };
     const elements = try vm.scopeAllocator().alloc(HIRValue, initial_capacity);
 
-    const default_value = getDefaultValue(a.element_type);
+    const has_nested = @hasField(@TypeOf(a), "nested_depth") and @hasField(@TypeOf(a), "nested_sizes");
+    const nested_depth: u32 = if (has_nested) a.nested_depth else 0;
+    const nested_sizes_slice: []const u32 = if (has_nested) a.nested_sizes[0..@intCast(nested_depth)] else &[_]u32{};
 
     var i: usize = 0;
     while (i < requested_len and i < elements.len) : (i += 1) {
-        elements[i] = default_value;
+        if (nested_depth > 0) {
+            elements[i] = try createDefaultArrayValue(vm, a.element_type, nested_sizes_slice, a.nested_element_type);
+        } else {
+            elements[i] = getDefaultValue(a.element_type);
+        }
     }
     while (i < elements.len) : (i += 1) {
         elements[i] = nothing_value;
