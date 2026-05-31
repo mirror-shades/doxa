@@ -30,6 +30,7 @@ pub const ScopeKind = enum {
 pub const Scope = struct {
     id: u32,
     parent: ?*Scope,
+    children: std.ArrayListUnmanaged(*Scope),
     variables: std.AutoHashMap(u32, *Variable),
     name_map: std.StringHashMap(*Variable),
     allocator: std.mem.Allocator,
@@ -43,6 +44,7 @@ pub const Scope = struct {
         return .{
             .id = scope_id,
             .parent = parent,
+            .children = .{},
             .allocator = memory_manager.allocator,
             .variables = std.AutoHashMap(u32, *Variable).init(memory_manager.allocator),
             .name_map = std.StringHashMap(*Variable).init(memory_manager.allocator),
@@ -62,6 +64,7 @@ pub const Scope = struct {
         self.* = .{
             .id = scope_id,
             .parent = parent,
+            .children = .{},
             .allocator = arena_alloc,
             .variables = std.AutoHashMap(u32, *Variable).init(arena_alloc),
             .name_map = std.StringHashMap(*Variable).init(arena_alloc),
@@ -93,6 +96,7 @@ pub const Scope = struct {
                 }
                 self.variables.deinit();
                 self.name_map.deinit();
+                self.children.deinit(self.allocator);
                 self.arena.deinit();
             },
             .runtime => {
@@ -354,6 +358,9 @@ pub const MemoryManager = struct {
         const scope = try self.allocator.create(Scope);
         scope.* = Scope.init(scope_id, parent, self);
         try self.scope_pool.append(self.allocator, scope);
+        if (parent) |p| {
+            try p.children.append(self.allocator, scope);
+        }
         return scope;
     }
 
