@@ -93,6 +93,8 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - struct/map serialization for .soxa caching is incomplete
 - tweak how for loop variables are declared, it is the only keywordless binding in the language which feels wrong
 - expand tests
+- improve error logging with better messages, code snippets, underlines
+- improve effiency literally everywhere
 
 
 ## Example

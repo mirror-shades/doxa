@@ -2327,7 +2327,6 @@ pub const SemanticAnalyzer = struct {
     fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo, struct_type: ?[]const u8) !void {
         // Create function scope with parameters
         const func_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
-        defer func_scope.deinit();
 
         // Add parameters to function scope
         for (func.params) |param| {

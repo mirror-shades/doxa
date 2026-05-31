@@ -5,14 +5,46 @@ const TokenType = token.TokenType;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 const Tetra = @import("../types/types.zig").Tetra;
 
+const Memory = @import("../utils/memory.zig");
+const Scope = Memory.Scope;
+
 pub const ConstantFolder = struct {
     allocator: std.mem.Allocator,
     optimizations_made: u32 = 0,
+    root_scope: *Scope,
+    current_scope: *Scope,
+    scope_child_index: std.AutoHashMap(u32, usize),
 
-    pub fn init(allocator: std.mem.Allocator) ConstantFolder {
+    pub fn init(allocator: std.mem.Allocator, root_scope: *Scope) ConstantFolder {
         return ConstantFolder{
             .allocator = allocator,
+            .root_scope = root_scope,
+            .current_scope = root_scope,
+            .scope_child_index = std.AutoHashMap(u32, usize).init(allocator),
         };
+    }
+
+    pub fn deinit(self: *ConstantFolder) void {
+        self.scope_child_index.deinit();
+    }
+
+    fn enterScope(self: *ConstantFolder) void {
+        var idx = self.scope_child_index.get(self.current_scope.id) orelse 0;
+        const children = self.current_scope.children.items;
+        while (idx < children.len) : (idx += 1) {
+            const child = children[idx];
+            if (!child.is_deinited) {
+                self.scope_child_index.put(self.current_scope.id, idx + 1) catch {};
+                self.current_scope = child;
+                return;
+            }
+        }
+    }
+
+    fn leaveScope(self: *ConstantFolder) void {
+        if (self.current_scope.parent) |parent| {
+            self.current_scope = parent;
+        }
     }
 
     pub fn foldExpr(self: *ConstantFolder, expr: *ast.Expr) std.mem.Allocator.Error!*ast.Expr {
@@ -156,11 +188,31 @@ pub const ConstantFolder = struct {
                 return expr;
             },
             .Block => |*block| {
+                self.enterScope();
+                defer self.leaveScope();
+
                 for (block.statements) |*stmt| {
                     _ = try self.foldStmt(stmt);
                 }
                 if (block.value) |value| {
                     block.value = try self.foldExpr(value);
+                }
+                return expr;
+            },
+            .Variable => |var_token| {
+                if (self.current_scope.lookupVariable(var_token.lexeme)) |variable| {
+                    const scope_manager = self.current_scope.manager;
+                    if (scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                        if (storage.constant and isPropagatableValue(storage.value)) {
+                            self.optimizations_made += 1;
+                            const folded_expr = try self.allocator.create(ast.Expr);
+                            folded_expr.* = .{
+                                .base = expr.base,
+                                .data = .{ .Literal = storage.value },
+                            };
+                            return folded_expr;
+                        }
+                    }
                 }
                 return expr;
             },
@@ -188,11 +240,17 @@ pub const ConstantFolder = struct {
                 }
             },
             .Block => |statements| {
+                self.enterScope();
+                defer self.leaveScope();
+
                 for (statements) |*inner_stmt| {
                     _ = try self.foldStmt(inner_stmt);
                 }
             },
             .FunctionDecl => |*func| {
+                self.enterScope();
+                defer self.leaveScope();
+
                 for (func.body) |*inner_stmt| {
                     _ = try self.foldStmt(inner_stmt);
                 }
@@ -210,7 +268,6 @@ pub const ConstantFolder = struct {
 
     fn foldBinaryOp(self: *ConstantFolder, left: TokenLiteral, operator: token.Token, right: TokenLiteral) ?TokenLiteral {
         return switch (operator.type) {
-            // Arithmetic operations
             .PLUS => self.foldAdd(left, right),
             .MINUS => self.foldSub(left, right),
             .ASTERISK => self.foldMul(left, right),
@@ -218,7 +275,6 @@ pub const ConstantFolder = struct {
             .MODULO => self.foldMod(left, right),
             .POWER => null,
 
-            // Comparison operations
             .LESS => self.foldLess(left, right),
             .LESS_EQUAL => self.foldLessEqual(left, right),
             .GREATER => self.foldGreater(left, right),
@@ -226,7 +282,6 @@ pub const ConstantFolder = struct {
             .EQUALITY => self.foldEqual(left, right),
             .BANG_EQUAL => self.foldNotEqual(left, right),
 
-            // Logical operations
             .AND => self.foldAnd(left, right),
             .OR => self.foldOr(left, right),
             .XOR => self.foldXor(left, right),
@@ -344,7 +399,6 @@ pub const ConstantFolder = struct {
 
     fn foldDiv(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
         _ = self;
-        // All division promotes to float. Return null on divide-by-zero.
         return switch (left) {
             .int => |l| switch (right) {
                 .float => |r| if (r != 0.0) TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / r } else null,
@@ -696,7 +750,7 @@ pub const ConstantFolder = struct {
             .tetra => |t| switch (t) {
                 .true => true,
                 .false => false,
-                .both => true, // Conservative: assume might be true
+                .both => true,
                 .neither => false,
             },
             .int => |i| i != 0,
@@ -704,7 +758,7 @@ pub const ConstantFolder = struct {
             .float => |f| f != 0.0,
             .string => |s| s.len > 0,
             .nothing => false,
-            else => true, // Conservative: assume other types are truthy
+            else => true,
         };
     }
 
@@ -716,3 +770,10 @@ pub const ConstantFolder = struct {
         return self.optimizations_made;
     }
 };
+
+fn isPropagatableValue(value: TokenLiteral) bool {
+    return switch (value) {
+        .int, .float, .byte, .string, .tetra, .nothing => true,
+        else => false,
+    };
+}
