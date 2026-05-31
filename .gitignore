@@ -8,7 +8,8 @@
 !test/**
 test/out/
 !.github/**
-
+!.gitattributes
+doxa/**
 .doxa-cache/
 bin/
 !.gitignore
