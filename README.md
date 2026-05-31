@@ -83,9 +83,17 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 
 ## TODO:
 
-- finish standard lib
+- flesh out standard lib
 - sandbox zig execution
 - add better bounding to lsp mode
+- break up remaining monolith files
+- add abstraction/templates to llvmir printer to reduce duplication
+- error recovery for better LSP diagnostics
+- slim the HIR instruction set to a smaller set of primitives
+- struct/map serialization for .soxa caching is incomplete
+- tweak how for loop variables are declared, it is the only keywordless binding in the language which feels wrong
+- expand tests
+
 
 ## Example
 
