@@ -335,6 +335,7 @@ pub const BytecodeGenerator = struct {
                 .{ "power", .power },
                 .{ "powi", .powi },
                 .{ "dice_roll", .dice_roll },
+                .{ "range", .range },
                 .{ "exists_quantifier_gt", .exists_quantifier_gt },
                 .{ "exists_quantifier_eq", .exists_quantifier_eq },
                 .{ "forall_quantifier_gt", .forall_quantifier_gt },
@@ -389,10 +390,6 @@ pub const BytecodeGenerator = struct {
                     // For alias parameters, we need to store to the alias slot
                     // This will be handled by the VM using the alias reference
                     try self.instructions.append(self.allocator, .{ .StoreAlias = .{ .slot_index = payload.slot_index, .type_tag = try module.typeFromHIR(payload.expected_type) } });
-                },
-                .ResolveAlias => |payload| {
-                    // Resolve an alias to its target slot
-                    try self.instructions.append(self.allocator, .{ .ResolveAlias = .{ .target_slot = payload.target_slot } });
                 },
                 .BindAlias => |payload| {
                     // Bind an alias to its target variable
@@ -463,10 +460,6 @@ pub const BytecodeGenerator = struct {
                     .Unknown => .Nothing,
                     else => payload.return_type,
                 }) } }),
-                .TypeOf => |payload| try self.instructions.append(self.allocator, .{ .TypeOf = .{ .value_type = try module.typeFromHIR(switch (payload.value_type) {
-                    .Unknown => .Nothing,
-                    else => payload.value_type,
-                }) } }),
                 .GetField => |payload| try self.instructions.append(self.allocator, .{ .GetField = .{ .field_name = payload.field_name, .container_type = try module.typeFromHIR(switch (payload.container_type) {
                     .Unknown => .Nothing,
                     else => payload.container_type,
@@ -498,9 +491,6 @@ pub const BytecodeGenerator = struct {
                 .ArraySlice => try self.instructions.append(self.allocator, .ArraySlice),
                 .ArrayLen => try self.instructions.append(self.allocator, .ArrayLen),
                 .ArrayConcat => try self.instructions.append(self.allocator, .ArrayConcat),
-                .Range => |payload| try self.instructions.append(self.allocator, .{ .Range = .{ .element_type = try module.typeFromHIR(payload.element_type) } }),
-                .Exists => |payload| try self.instructions.append(self.allocator, .{ .Exists = .{ .predicate_type = try module.typeFromHIR(payload.predicate_type) } }),
-                .Forall => |payload| try self.instructions.append(self.allocator, .{ .Forall = .{ .predicate_type = try module.typeFromHIR(payload.predicate_type) } }),
                 .ArrayCompoundAssign => |payload| try self.instructions.append(self.allocator, .{ .ArrayCompoundAssign = .{ .bounds_check = payload.bounds_check, .op = payload.op } }),
                 .StructNew => |payload| try self.instructions.append(self.allocator, .{ .StructNew = .{
                     .type_name = payload.type_name,
@@ -508,11 +498,6 @@ pub const BytecodeGenerator = struct {
                     .field_names = payload.field_names,
                     .field_types = payload.field_types,
                     .size_bytes = payload.size_bytes,
-                } }),
-                .EnumNew => |payload| try self.instructions.append(self.allocator, .{ .EnumNew = .{
-                    .enum_name = payload.enum_name,
-                    .variant_name = payload.variant_name,
-                    .variant_index = payload.variant_index,
                 } }),
                 .Peek => |payload| try self.instructions.append(self.allocator, .{ .Peek = .{
                     .name = payload.name,
@@ -524,14 +509,6 @@ pub const BytecodeGenerator = struct {
                     .union_members = payload.union_members,
                 } }),
                 .PeekStruct => |payload| try self.instructions.append(self.allocator, .{ .PeekStruct = .{
-                    .type_name = payload.type_name,
-                    .field_count = payload.field_count,
-                    .field_names = payload.field_names,
-                    .field_types = payload.field_types,
-                    .location = payload.location,
-                    .should_pop_after_peek = payload.should_pop_after_peek,
-                } }),
-                .PrintStruct => |payload| try self.instructions.append(self.allocator, .{ .PrintStruct = .{
                     .type_name = payload.type_name,
                     .field_count = payload.field_count,
                     .field_names = payload.field_names,

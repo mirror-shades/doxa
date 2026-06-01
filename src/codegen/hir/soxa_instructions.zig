@@ -121,18 +121,11 @@ pub const HIRInstruction = union(enum) {
         expected_type: HIRType,
     },
 
-    /// Resolve an alias to its target slot dynamically
-    ResolveAlias: struct {
-        alias_name: []const u8,
-        target_slot: u32,
-    },
-
     /// Bind an alias to its target variable (unified from StoreParamAlias)
     BindAlias: struct {
         alias_name: []const u8,
         target_variable_name: []const u8,
         alias_slot: u32,
-        target_slot: u32,
         target_type: HIRType,
     },
 
@@ -274,13 +267,6 @@ pub const HIRInstruction = union(enum) {
     // COMPLEX OPERATIONS
     //==================================================================
 
-    /// Type reflection operation
-    /// VM: Returns type information for a value
-    /// LLVM: Generate type metadata
-    TypeOf: struct {
-        value_type: HIRType,
-    },
-
     /// Array/struct field access
     /// VM: OP_GET_FIELD
     /// LLVM: LLVMBuildStructGEP or LLVMBuildGEP
@@ -399,27 +385,8 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Complex allocation + memcpy
     ArrayConcat,
 
-    /// Create array from range (start to end)
-    /// VM: Create array with integers from start to end (inclusive)
-    /// LLVM: Generate loop to populate array
-    Range: struct {
-        element_type: HIRType,
-    },
-
-    /// Exists quantifier operation
-    /// VM: Check if any element satisfies predicate
-    /// LLVM: Generate loop with early exit
-    Exists: struct {
-        predicate_type: HIRType,
-    },
-
-    /// Forall quantifier operation
-    /// VM: Check if all elements satisfy predicate
-    /// LLVM: Generate loop with early exit
-    Forall: struct {
-        predicate_type: HIRType,
-    },
-
+    //==================================================================
+    // COMPOUND ASSIGNMENT OPERATIONS
     //==================================================================
     // COMPOUND ASSIGNMENT OPERATIONS (Long-term fix)
     //==================================================================
@@ -455,15 +422,6 @@ pub const HIRInstruction = union(enum) {
     // ENUM OPERATIONS (Phase 1)
     //==================================================================
 
-    /// Create enum variant
-    /// VM: Store variant index and type info
-    /// LLVM: Tagged union representation
-    EnumNew: struct {
-        enum_name: []const u8,
-        variant_name: []const u8,
-        variant_index: u32,
-    },
-
     //==================================================================
     // DEBUG/INTROSPECTION
     //==================================================================
@@ -486,19 +444,6 @@ pub const HIRInstruction = union(enum) {
     /// VM: OP_PEEK_STRUCT
     /// LLVM: Generate constant string based on LLVM type
     PeekStruct: struct {
-        type_name: []const u8, // Changed from struct_name to type_name
-        struct_id: StructId,
-        field_count: u32,
-        field_names: [][]const u8,
-        field_types: []HIRType,
-        location: ?Reporting.Location,
-        should_pop_after_peek: bool,
-    },
-
-    /// Prints a struct
-    /// VM: OP_PEEK_STRUCT
-    /// LLVM: Generate constant string based on LLVM type
-    PrintStruct: struct {
         type_name: []const u8, // Changed from struct_name to type_name
         struct_id: StructId,
         field_count: u32,

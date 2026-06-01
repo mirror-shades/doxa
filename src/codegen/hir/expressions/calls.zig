@@ -779,7 +779,16 @@ pub const CallsHandler = struct {
             }
         } else if (std.mem.eql(u8, name, "type")) {
             try self.generator.generateExpression(internal_data.receiver, true, false);
-            try self.generator.instructions.append(.{ .TypeOf = .{ .value_type = .Unknown } });
+            try self.generator.instructions.append(.{
+                .Call = .{
+                    .function_index = 0,
+                    .qualified_name = "type",
+                    .arg_count = 1,
+                    .call_kind = .BuiltinFunction,
+                    .target_module = null,
+                    .return_type = .String,
+                },
+            });
         } else {
             const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
@@ -859,7 +868,6 @@ pub const CallsHandler = struct {
                         .alias_name = param.name.lexeme,
                         .target_variable_name = param.name.lexeme,
                         .alias_slot = @intCast(i + 1),
-                        .target_slot = 0,
                         .target_type = expected_t,
                     },
                 });

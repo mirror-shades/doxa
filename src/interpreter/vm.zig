@@ -333,22 +333,8 @@ pub const VM = struct {
             .GroupExtractPayload => {
                 try ops_type.TypeOps.execGroupExtractPayload(self, {});
             },
-            .TypeOf => |payload| {
-                try ops_type.TypeOps.execTypeOf(self, .{ .value_type = toHIRType(payload.value_type) });
-            },
-            .Exists => |payload| {
-                _ = payload;
-                try self.execQuantifier(true);
-            },
-            .Forall => |payload| {
-                _ = payload;
-                try self.execQuantifier(false);
-            },
             .StructNew => |payload| {
                 try self.execStructNew(payload);
-            },
-            .EnumNew => |payload| {
-                try self.execEnumNew(payload);
             },
             .StoreFieldName => |payload| {
                 try self.execStoreFieldName(payload);
@@ -394,12 +380,6 @@ pub const VM = struct {
                 const ptr = frame.pointer(payload.slot_index);
                 const owner = self.ownerForPointer(ptr);
                 try self.storeValueAtPtr(value, ptr, owner, null);
-            },
-            .ResolveAlias => |payload| {
-                const frame = try self.currentFrame();
-                const ptr = frame.pointer(payload.target_slot);
-                const value = ptr.load();
-                try self.stack.pushValue(value);
             },
             .Dup => {
                 if (self.stack.sp == 0) {
@@ -456,11 +436,6 @@ pub const VM = struct {
             .ArrayConcat => {
                 try ops_array.arrayConcat(self);
             },
-            .Range => |payload| {
-                try ops_array.arrayRange(self, .{
-                    .element_type = toHIRType(payload.element_type),
-                });
-            },
             .ArrayCompoundAssign => |payload| {
                 try ops_array.arrayCompoundAssign(self, payload.bounds_check, payload.op);
             },
@@ -513,16 +488,6 @@ pub const VM = struct {
             },
             .PeekStruct => |payload| {
                 try PrintOps.execPeekStruct(self, .{
-                    .type_name = payload.type_name,
-                    .field_count = payload.field_count,
-                    .field_names = payload.field_names,
-                    .field_types = payload.field_types,
-                    .location = payload.location,
-                    .should_pop_after_peek = payload.should_pop_after_peek,
-                });
-            },
-            .PrintStruct => |payload| {
-                try PrintOps.execPrintStruct(self, .{
                     .type_name = payload.type_name,
                     .field_count = payload.field_count,
                     .field_names = payload.field_names,
@@ -1377,7 +1342,20 @@ pub const VM = struct {
                     try self.stack.push(HIRFrame.initNothing());
                     return;
                 },
-                .pop, .insert, .remove, .slice, .string, .int, .float, .type_, .println, .panic, .std, .dice_roll => {
+                .type_ => {
+                    var val = try self.stack.pop();
+                    const type_str = try self.valueToString(self.scopeAllocator(), &val.value);
+                    defer self.scopeAllocator().free(type_str);
+                    try self.stack.push(HIRFrame.initString(type_str));
+                    return;
+                },
+                .range => {
+                    try ops_array.arrayRange(self, .{
+                        .element_type = .Int,
+                    });
+                    return;
+                },
+                .pop, .insert, .remove, .slice, .string, .int, .float, .println, .panic, .std, .dice_roll => {
                     self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Builtin '{s}' should not arrive as a VM call (handled at bytecode level)", .{name});
                     return ErrorList.TypeError;
                 },

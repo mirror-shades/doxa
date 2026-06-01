@@ -24,7 +24,6 @@ const LabelGenerator = ResourceManager.LabelGenerator;
 const ConstantManager = ResourceManager.ConstantManager;
 const SymbolTable = @import("symbol_table.zig").SymbolTable;
 const TypeSystem = @import("type_system.zig").TypeSystem;
-const AliasTracker = @import("alias_tracker.zig").AliasTracker;
 const SlotManager = @import("slot_manager.zig").SlotManager;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -187,7 +186,6 @@ pub const HIRGenerator = struct {
     type_system: TypeSystem,
     struct_methods: std.StringHashMap(std.StringHashMap(StructMethodInfo)),
 
-    alias_tracker: AliasTracker,
     slot_manager: SlotManager,
 
     function_signatures: std.StringHashMap(FunctionInfo),
@@ -279,7 +277,6 @@ pub const HIRGenerator = struct {
             .label_generator = LabelGenerator.init(allocator),
             .type_system = TypeSystem.init(allocator, reporter, semantic_analyzer),
             .struct_methods = std.StringHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
-            .alias_tracker = AliasTracker.init(allocator),
             .slot_manager = SlotManager.init(allocator),
             .function_signatures = std.StringHashMap(FunctionInfo).init(allocator),
             .function_bodies = std.array_list.Managed(FunctionBody).init(allocator),
@@ -308,7 +305,6 @@ pub const HIRGenerator = struct {
         var methods_it = self.struct_methods.valueIterator();
         while (methods_it.next()) |tbl| tbl.*.deinit();
         self.struct_methods.deinit();
-        self.alias_tracker.deinit();
         self.slot_manager.deinit();
         self.function_signatures.deinit();
         self.function_bodies.deinit();
@@ -760,7 +756,6 @@ pub const HIRGenerator = struct {
                             .alias_name = param.name.lexeme,
                             .target_variable_name = param.name.lexeme,
                             .alias_slot = alias_slot,
-                            .target_slot = 0,
                             .target_type = param_type,
                         },
                     });
@@ -795,7 +790,6 @@ pub const HIRGenerator = struct {
                                     .alias_name = "this",
                                     .target_variable_name = "this",
                                     .alias_slot = alias_slot,
-                                    .target_slot = 0,
                                     .target_type = HIRType{ .Struct = 0 },
                                 },
                             });

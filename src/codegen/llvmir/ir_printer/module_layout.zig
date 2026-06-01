@@ -487,7 +487,6 @@ pub fn Methods(comptime Ctx: type) type {
                     .Map => |m| try self.emitMap(w, &stack, &id, m),
                     .MapGet => |mg| try self.emitMapGet(w, &stack, &id, mg),
                     .MapSet => |ms| try self.emitMapSet(w, &stack, &id, ms),
-                    .Range => |r| try self.emitRange(w, &stack, &id, r),
                     .StructNew => |sn| try self.emitStructNew(w, &stack, &id, sn, peek_state),
                     .GetField => |gf| try self.emitGetField(w, &stack, &id, gf),
                     .SetField => |sf| try self.emitSetField(w, &stack, &id, sf),

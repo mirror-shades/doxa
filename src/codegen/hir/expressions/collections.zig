@@ -110,18 +110,18 @@ pub const CollectionsHandler = struct {
 
     /// Generate HIR for range expressions (e.g., 1 to 6)
     pub fn generateRange(self: *CollectionsHandler, range: struct { start: *ast.Expr, end: *ast.Expr }, preserve_result: bool) !void {
-        _ = preserve_result; // Unused parameter
+        _ = preserve_result;
 
-        // Generate the start value
         try self.generator.generateExpression(range.start, true, false);
-
-        // Generate the end value
         try self.generator.generateExpression(range.end, true, false);
-
-        // Generate Range instruction that creates an array from start to end
         try self.generator.instructions.append(.{
-            .Range = .{
-                .element_type = .Int, // Ranges always produce integer arrays
+            .Call = .{
+                .function_index = 0,
+                .qualified_name = "range",
+                .arg_count = 2,
+                .call_kind = .BuiltinFunction,
+                .target_module = null,
+                .return_type = .Nothing,
             },
         });
     }
@@ -279,7 +279,6 @@ pub const CollectionsHandler = struct {
 
         if (is_compound_assignment) {
             // Handle compound assignment: array[index] += value
-            // Generate: array, index, value, ArrayGetAndAdd (atomic operation)
 
             // Generate array expression
             try self.generator.generateExpression(assign_data.array, true, false);
