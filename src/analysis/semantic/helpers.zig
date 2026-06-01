@@ -415,31 +415,13 @@ pub fn unionContainsNothing(self: *SemanticAnalyzer, union_type_info: ast.TypeIn
     return false;
 }
 
-/// REWRITE: unifyTypes uses structural checks
 pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
-    // WORKAROUND: If expected is Custom and actual is Union with matching Custom type, allow it
-    if (expected.base == .Custom and actual.base == .Union) {
-        if (actual.union_type) |union_type| {
-            // Check if any union member matches the expected custom type
-            for (union_type.types) |member_type| {
-                if (member_type.base == .Custom and
-                    expected.custom_type != null and
-                    member_type.custom_type != null and
-                    std.mem.eql(u8, expected.custom_type.?, member_type.custom_type.?))
-                {
-                    // Found matching custom type in union, accept it
-                    return;
-                }
-            }
-        }
-    }
-
-    // GROUP WIDENING: If expected is a group, any member type is assignable
+    // ── Phase 1: Group widening ──
+    // If expected is a group, any member type (or union of members) is assignable.
     if (expected.base == .Custom and expected.custom_type != null) {
         if (self.custom_types.get(expected.custom_type.?)) |ct| {
             if (ct.kind == .Group) {
                 if (typeIsGroupMember(self, expected.custom_type.?, actual)) return;
-                // Also allow if actual is a union where every member is a group member
                 if (actual.base == .Union) {
                     if (actual.union_type) |act_u| {
                         var all_allowed = true;
@@ -456,12 +438,12 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
         }
     }
 
-    // If expected is union, actual must be a member (or a subset if it's a union)
+    // ── Phase 2: Expected is Union ──
+    // Actual must be a member of the expected union (or a subset if actual is also a union).
     if (expected.base == .Union) {
         if (expected.union_type) |exp_u| {
             if (actual.base == .Union) {
                 if (actual.union_type) |act_u| {
-                    // Every actual member must be allowed by expected
                     for (act_u.types) |act_m| {
                         var allowed = false;
                         for (exp_u.types) |exp_m| {
@@ -471,7 +453,6 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
                             }
                         }
                         if (!allowed) {
-                            // Build expected list (pretty)
                             var list = std.ArrayListUnmanaged(u8){};
                             defer list.deinit(self.allocator);
                             for (exp_u.types, 0..) |m, i| {
@@ -490,9 +471,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
                     }
                     return;
                 }
-                // Handle union with null union_type if needed
             } else {
-                // Non-union actual must match one member structurally
                 for (exp_u.types) |m| {
                     if (typeMatchesUnionMember(self, m, actual)) return;
                 }
@@ -514,19 +493,29 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
         }
     }
 
-    // Non-union expected: structural equality or permitted implicit conversions
+    // ── Phase 3: Actual is Union, expected is NOT Union ──
+    // Unions must be narrowed with 'as' or 'match' before assignment to a non-union type.
+    if (actual.base == .Union) {
+        self.reporter.reportCompileError(
+            span.location,
+            ErrorCode.TYPE_MISMATCH,
+            "{s} is not assignable to type {s}; use 'as' or 'match' to narrow the union",
+            .{ typeLabel(actual), typeLabel(expected) },
+        );
+        self.fatal_error = true;
+        return;
+    }
+
+    // ── Phase 4: Non-union structural equality + implicit conversions ──
     if (!typesEqual(self, expected, actual)) {
-        // Implicit conversions (adjust to taste)
         if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) return;
         if (expected.base == .Byte and actual.base == .Int) return;
         if (expected.base == .Int and actual.base == .Byte) return;
 
-        // Allow enum variant literal to enum type
         if (expected.base == .Enum and actual.base == .Enum) {
             if (expected.custom_type != null and actual.custom_type != null and
                 std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?)) return;
         }
-        // Allow custom/struct compatibility by name (if both named)
         if ((expected.base == .Custom and actual.base == .Custom) and
             expected.custom_type != null and actual.custom_type != null and
             std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?))
@@ -534,7 +523,6 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
             return;
         }
 
-        // Otherwise mismatch
         self.reporter.reportCompileError(
             span.location,
             ErrorCode.TYPE_MISMATCH,
@@ -545,7 +533,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
         return;
     }
 
-    // Complex shape recursion
+    // ── Phase 5: Structural recursion ──
     switch (expected.base) {
         .Array => {
             if (expected.array_type) |e|
