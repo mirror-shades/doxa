@@ -1258,27 +1258,15 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
     }
 
     const var_expr = try self.allocator.create(ast.Expr);
-    if (name.type == .FIELD_ACCESS) {
-        var_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(name),
-            },
-            .data = .{
-                .EnumMember = name,
-            },
-        };
-    } else {
-        var_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(name),
-            },
-            .data = .{
-                .Variable = name,
-            },
-        };
-    }
+    var_expr.* = .{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(name),
+        },
+        .data = .{
+            .Variable = name,
+        },
+    };
 
     if (self.peek().type == .LEFT_BRACKET) {
         self.advance();

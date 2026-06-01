@@ -1079,7 +1079,17 @@ pub const SemanticAnalyzer = struct {
     }
 
     pub fn validateStatements(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!void {
+        var prev_was_terminator = false;
         for (statements) |stmt| {
+            if (prev_was_terminator) {
+                self.reporter.reportWarning(
+                    getLocationFromBase(stmt.base),
+                    ErrorCode.UNREACHABLE_CODE,
+                    "unreachable code",
+                    .{},
+                );
+            }
+
             switch (stmt.data) {
                 .VarDecl => |decl| {
                     // For function bodies, we need to add local variables to the function scope
@@ -1215,6 +1225,9 @@ pub const SemanticAnalyzer = struct {
                 .Expression => |expr| {
                     if (expr) |expression| {
                         _ = try infer_type.inferTypeFromExpr(self, expression);
+                        if (expression.data == .Unreachable) {
+                            prev_was_terminator = true;
+                        }
                     }
                 },
                 .Return => |return_stmt| {
@@ -1222,6 +1235,7 @@ pub const SemanticAnalyzer = struct {
                         // Validate return value type
                         _ = try infer_type.inferTypeFromExpr(self, value);
                     }
+                    prev_was_terminator = true;
                 },
                 .FunctionDecl => |func| {
                     var method_struct_type: ?[]const u8 = null;
@@ -1250,6 +1264,9 @@ pub const SemanticAnalyzer = struct {
                         _ = try infer_type.inferTypeFromExpr(self, entry.key);
                         _ = try infer_type.inferTypeFromExpr(self, entry.value);
                     }
+                },
+                .Break, .Continue => {
+                    prev_was_terminator = true;
                 },
                 // TODO: Handle other statements...
                 else => {},
