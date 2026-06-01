@@ -257,7 +257,7 @@ function shunt(tokens :: CalcToken[]) returns CalcToken[] | Error {
     return output
 }
 
-entry function main() {
+public entry function main() {
     const expr_result is io.input()
     expr_result as string then {
         calculate(expr_result)

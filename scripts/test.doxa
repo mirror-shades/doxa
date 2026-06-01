@@ -45,7 +45,7 @@ pub function parse_run_output(zig_path :: string, test_path :: string) returns a
     return test_cases
 }
 
-entry function main() {
+public entry function main() {
     var total_fails :: int
 
     const result is parse_run_output("zig", "./test/misc/bigfile.doxa")

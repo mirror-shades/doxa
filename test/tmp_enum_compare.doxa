@@ -8,7 +8,7 @@ enum Stoplight {
     Yellow,
 }
 
-entry function main() {
+public entry function main() {
     const a is Color.Red
     const b is Stoplight.Red
     const c is Color.Green

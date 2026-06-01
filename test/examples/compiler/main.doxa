@@ -11,7 +11,7 @@ enum Error {
     TOO_FEW_ARGS
 }
 
-entry function main() {
+public entry function main() {
     const argc is std.process.argc() as int else 0
     for i while i < argc do i += 1 {
         std.process.argv(i)?
@@ -21,7 +21,7 @@ entry function main() {
     var program_src is "
     ...var hello is \"hello... world\"\n
     ...\n
-    ...entry function main() {\n
+    ...public entry function main() {\n
     ...    hello?\n
     ...}\n"
 

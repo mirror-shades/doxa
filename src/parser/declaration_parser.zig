@@ -871,6 +871,21 @@ pub fn parseFunctionDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     self.advance();
 
+    if (is_entry and !is_public) {
+        const entry_loc = self.entry_point_location orelse function_name;
+        const location = Location{
+            .file = self.current_file,
+            .file_uri = self.current_file_uri,
+            .range = .{
+                .start_line = entry_loc.line,
+                .start_col = entry_loc.column,
+                .end_line = entry_loc.line,
+                .end_col = entry_loc.column + @as(u32, @intCast(entry_loc.lexeme.len)),
+            },
+        };
+        self.reporter.reportWarning(location, ErrorCode.ENTRY_SHOULD_BE_PUBLIC, "entry functions should be marked 'public'", .{});
+    }
+
     return ast.Stmt{
         .base = .{
             .id = ast.generateNodeId(),

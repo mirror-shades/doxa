@@ -364,6 +364,7 @@ pub const ErrorCode = struct {
     pub const MISSING_BRACKET = "E2003";
     pub const USE_IS_FOR_ASSIGNMENT = "E2004";
     pub const MISSING_ENTRY_POINT_FUNCTION = "E2005";
+    pub const ENTRY_SHOULD_BE_PUBLIC = "W2005";
     pub const EXPECTED_EXPRESSION = "E2006";
     pub const EXPECTED_IDENTIFIER = "E2007";
     pub const EXPECTED_TYPE = "E2008";
