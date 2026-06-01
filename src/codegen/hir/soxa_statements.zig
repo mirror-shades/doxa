@@ -463,12 +463,14 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);
 
                 if (is_literal) {
-                    // For literal constants, use StoreConst
-                    try self.instructions.append(.{ .StoreConst = .{
+                    // For literal constants, use StoreDecl with is_const
+                    try self.instructions.append(.{ .StoreDecl = .{
                         .var_index = var_idx,
                         .var_name = decl.name.lexeme,
                         .scope_kind = scope_kind,
                         .module_context = null,
+                        .declared_type = var_type,
+                        .is_const = true,
                     } });
                 } else {
                     // For non-literal const declarations, use StoreDecl with is_const = true
@@ -523,11 +525,13 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             const enum_type_value = HIRValue{ .string = enum_decl.name.lexeme };
             const const_idx = try self.addConstant(enum_type_value);
             try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
-            try self.instructions.append(.{ .StoreConst = .{
+            try self.instructions.append(.{ .StoreDecl = .{
                 .var_index = var_idx,
                 .var_name = enum_decl.name.lexeme,
                 .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
                 .module_context = null,
+                .declared_type = HIRType{ .Enum = 0 },
+                .is_const = true,
             } });
         },
         .GroupDecl => |group_decl| {
@@ -540,11 +544,13 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             const group_type_value = HIRValue{ .string = group_decl.name.lexeme };
             const const_idx = try self.addConstant(group_type_value);
             try self.instructions.append(.{ .Const = .{ .value = group_type_value, .constant_id = const_idx } });
-            try self.instructions.append(.{ .StoreConst = .{
+            try self.instructions.append(.{ .StoreDecl = .{
                 .var_index = var_idx,
                 .var_name = group_decl.name.lexeme,
                 .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
                 .module_context = null,
+                .declared_type = HIRType{ .Group = gid },
+                .is_const = true,
             } });
         },
         .Assert => |assert_stmt| {

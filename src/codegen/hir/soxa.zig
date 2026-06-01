@@ -87,16 +87,8 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_VAR));
                 try bytecode.append(@intCast(v.var_index));
             },
-            .StoreConst => |v| {
-                try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_CONST));
-                try bytecode.append(@intCast(v.var_index));
-            },
-            .PushStorageId => |p| {
+            .PushStorageId => |_| {
                 try bytecode.append(@intFromEnum(instructions.OpCode.OP_CONST)); // Use OP_CONST for now
-                try bytecode.append(@intCast(p.var_index));
-            },
-            .StoreParamAlias => |_| {
-                try bytecode.append(@intFromEnum(instructions.OpCode.OP_SET_VAR)); // Use OP_SET_VAR for now
                 try bytecode.append(0); // Placeholder index
             },
             .IntArith => |a| {
@@ -185,7 +177,7 @@ pub fn translateToVMBytecode(program: *HIRProgram, allocator: std.mem.Allocator,
 
 fn getBytecodeSize(instruction: HIRInstruction) u32 {
     return switch (instruction) {
-        .Const, .LoadVar, .StoreVar, .StoreConst, .Jump, .JumpCond, .Call, .TailCall, .UnionConstruct => 2, // opcode + operand
+        .Const, .LoadVar, .StoreVar, .Jump, .JumpCond, .Call, .UnionConstruct => 2, // opcode + operand
         .IntArith, .FloatArith, .Convert, .Compare, .Return, .Dup, .Pop, .Swap, .Peek, .Halt, .AssertFail, .Unreachable => 1, // opcode only
         .Label => 0, // No bytecode generated
         else => 1, // Default to 1 byte
@@ -503,22 +495,16 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeInt(u32, @as(u32, @intCast(v.var_name.len)), .little);
             try writer.writeAll(v.var_name);
         },
-        .StoreConst => |v| {
-            try writer.writeByte(23); // Instruction tag (new)
-            try writer.writeInt(u32, v.var_index, .little);
-            try writer.writeInt(u32, @as(u32, @intCast(v.var_name.len)), .little);
-            try writer.writeAll(v.var_name);
-        },
         .PushStorageId => |p| {
             try writer.writeByte(24); // Instruction tag (new)
             try writer.writeInt(u32, p.var_index, .little);
             try writer.writeInt(u32, @as(u32, @intCast(p.var_name.len)), .little);
             try writer.writeAll(p.var_name);
         },
-        .StoreParamAlias => |s| {
-            try writer.writeByte(25); // Instruction tag (new)
-            try writer.writeInt(u32, @as(u32, @intCast(s.param_name.len)), .little);
-            try writer.writeAll(s.param_name);
+        .BindAlias => |s| {
+            try writer.writeByte(25); // Instruction tag (was StoreParamAlias)
+            try writer.writeInt(u32, @as(u32, @intCast(s.alias_name.len)), .little);
+            try writer.writeAll(s.alias_name);
         },
         .UnionConstruct => |u| {
             try writer.writeByte(26); // Instruction tag (new)
@@ -555,6 +541,8 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeAll(c.qualified_name);
             // CRITICAL FIX: Save call_kind!
             try writer.writeByte(@intFromEnum(c.call_kind));
+            // Save tail flag
+            try writer.writeByte(if (c.tail) 1 else 0);
         },
         .Return => |r| {
             try writer.writeByte(8); // Instruction tag
@@ -570,22 +558,6 @@ fn writeHIRInstruction(writer: anytype, instruction: HIRInstruction, allocator: 
             try writer.writeByte(11); // Instruction tag
             try writer.writeInt(u32, @as(u32, @intCast(l.name.len)), .little);
             try writer.writeAll(l.name);
-        },
-        .PrintBegin => {
-            try writer.writeByte(32); // Instruction tag
-        },
-        .PrintStr => |p| {
-            try writer.writeByte(33); // Instruction tag
-            try writer.writeInt(u32, p.const_id, .little);
-        },
-        .PrintVal => {
-            try writer.writeByte(34); // Instruction tag
-        },
-        .PrintNewline => {
-            try writer.writeByte(35); // Instruction tag
-        },
-        .PrintEnd => {
-            try writer.writeByte(36); // Instruction tag
         },
         .Halt => {
             try writer.writeByte(12); // Instruction tag
@@ -719,13 +691,6 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             _ = try reader.readAll(name);
             return HIRInstruction{ .StoreVar = .{ .var_index = var_index, .var_name = name, .scope_kind = .Local, .module_context = null, .expected_type = .Auto } };
         },
-        23 => { // StoreConst
-            const var_index = try reader.readInt(u32, .little);
-            const name_len = try reader.readInt(u32, .little);
-            const name = try allocator.alloc(u8, name_len);
-            _ = try reader.readAll(name);
-            return HIRInstruction{ .StoreConst = .{ .var_index = var_index, .var_name = name } };
-        },
         3 => { // IntArith
             const op_byte = try reader.readByte();
             const op = @as(ArithOp, @enumFromInt(op_byte));
@@ -791,14 +756,6 @@ fn readHIRInstruction(reader: anytype, allocator: std.mem.Allocator) !HIRInstruc
             _ = try reader.readAll(name);
             return HIRInstruction{ .Label = .{ .name = name, .vm_address = 0 } };
         },
-        32 => HIRInstruction.PrintBegin,
-        33 => blk: {
-            const cid = try reader.readInt(u32, .little);
-            break :blk HIRInstruction{ .PrintStr = .{ .const_id = cid } };
-        },
-        34 => HIRInstruction.PrintVal,
-        35 => HIRInstruction.PrintNewline,
-        36 => HIRInstruction.PrintEnd,
         12 => HIRInstruction.Halt,
         13 => { // Peek
             const has_name = (try reader.readByte()) != 0;
@@ -962,9 +919,8 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .StoreVar => |v| try writer.print("    StoreVar {} \"{s}\" {s}          ; Store variable\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
         .StoreDecl => |d| try writer.print("    StoreDecl {} \"{s}\" {s} {s} {s} ; Store declaration\n", .{ d.var_index, d.var_name, @tagName(d.scope_kind), @tagName(d.declared_type), if (d.is_const) "true" else "false" }),
-        .StoreConst => |v| try writer.print("    StoreConst {} \"{s}\" {s}        ; Store constant\n", .{ v.var_index, v.var_name, @tagName(v.scope_kind) }),
         .PushStorageId => |p| try writer.print("    PushStorageId {} \"{s}\"     ; Push storage ID for alias\n", .{ p.var_index, p.var_name }),
-        .StoreParamAlias => |s| try writer.print("    StoreParamAlias \"{s}\" {}      ; Store alias parameter\n", .{ s.param_name, s.var_index }),
+        .BindAlias => |s| try writer.print("    BindAlias \"{s}\" {}      ; Bind alias parameter\n", .{ s.alias_name, s.alias_slot }),
 
         .Arith => |a| {
             const op_name = switch (a.op) {
@@ -987,8 +943,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .JumpCond => |j| try writer.print("    JumpCond {s} {s}            ; Conditional jump\n", .{ j.label_true, j.label_false }),
 
-        .Call => |c| try writer.print("    Call {} {} \"{s}\" {s}      ; Function call\n", .{ c.function_index, c.arg_count, c.qualified_name, @tagName(c.call_kind) }),
-        .TailCall => |c| try writer.print("    TailCall {} {} \"{s}\" {s}      ; Tail call optimization\n", .{ c.function_index, c.arg_count, c.qualified_name, @tagName(c.call_kind) }),
+        .Call => |c| try writer.print("    Call {} {} \"{s}\" {s} tail={}     ; Function call\n", .{ c.function_index, c.arg_count, c.qualified_name, @tagName(c.call_kind), c.tail }),
 
         .Return => |r| try writer.print("    Return {}                   ; Return from function\n", .{r.has_value}),
 
@@ -1042,34 +997,6 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
                 try writer.print(" @{s}:{d}:{d}", .{ loc.file, loc.range.start_line, loc.range.start_col });
             }
             try writer.writeAll("         ; Peek struct\n");
-        },
-
-        .Print => {
-            try writer.print("    Print         ; Print value\n", .{});
-        },
-        .PrintBegin => {
-            try writer.print("    PrintBegin         ; Streaming print begin\n", .{});
-        },
-        .PrintStr => |i| {
-            try writer.print("    PrintStr {}         ; Streaming print string const id\n", .{i.const_id});
-        },
-        .PrintVal => {
-            try writer.print("    PrintVal         ; Streaming print value\n", .{});
-        },
-        .PrintNewline => {
-            try writer.print("    PrintNewline         ; Streaming print newline\n", .{});
-        },
-        .PrintEnd => {
-            try writer.print("    PrintEnd         ; Streaming print end\n", .{});
-        },
-
-        .PrintInterpolated => |i| {
-            try writer.print("    PrintInterpolated {} {} {} [", .{ i.format_parts.len, i.placeholder_indices.len, i.argument_count });
-            for (i.format_part_ids, 0..) |id, idx| {
-                try writer.print("{}", .{id});
-                if (idx < i.format_part_ids.len - 1) try writer.writeByte(',');
-            }
-            try writer.print("]        ; Interpolated print\n", .{});
         },
 
         .AssertFail => |a| {

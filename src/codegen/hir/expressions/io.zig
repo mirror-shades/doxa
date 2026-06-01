@@ -9,46 +9,16 @@ const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 
 const StructPeekInfo = HIRGenerator.StructPeekInfo;
 
-/// Handle I/O and debugging operations: print, peek, input
-pub const IOHandler = struct {
-    generator: *HIRGenerator,
+    /// Handle I/O and debugging operations: peek, input
+    pub const IOHandler = struct {
+        generator: *HIRGenerator,
 
-    pub fn init(generator: *HIRGenerator) IOHandler {
-        return .{ .generator = generator };
-    }
-
-    /// Generate HIR for print expressions (always leaves `nothing` on the stack, like a void-returning call).
-    pub fn generatePrint(self: *IOHandler, print: ast.PrintExpr, _: bool) !void {
-        try self.generator.instructions.append(.PrintBegin);
-
-        if (print.expr.data == .InterpolatedString) {
-            const template = print.expr.data.InterpolatedString;
-            for (template.parts) |part| {
-                switch (part) {
-                    .String => |text| {
-                        if (text.len == 0) continue;
-                        const const_id = try self.generator.addConstant(.{ .string = text });
-                        try self.generator.instructions.append(.{ .PrintStr = .{ .const_id = const_id } });
-                    },
-                    .Expression => |part_expr| {
-                        try self.generator.generateExpression(part_expr, true, false);
-                        try self.generator.instructions.append(.PrintVal);
-                    },
-                }
-            }
-        } else {
-            try self.generator.generateExpression(print.expr, true, false);
-            try self.generator.instructions.append(.PrintVal);
+        pub fn init(generator: *HIRGenerator) IOHandler {
+            return .{ .generator = generator };
         }
 
-        try self.generator.instructions.append(.PrintEnd);
-
-        const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
-        try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
-    }
-
-    /// Generate HIR for peek expressions
-    pub fn generatePeek(self: *IOHandler, peek: ast.PeekExpr, preserve_result: bool) !void {
+        /// Generate HIR for peek expressions
+        pub fn generatePeek(self: *IOHandler, peek: ast.PeekExpr, preserve_result: bool) !void {
         // Set current peek expression for field access tracking
         self.generator.current_peek_expr = peek.expr;
         defer self.generator.current_peek_expr = null;
