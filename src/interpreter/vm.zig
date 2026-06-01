@@ -503,30 +503,6 @@ pub const VM = struct {
             .Return => |payload| {
                 try self.handleReturn(payload);
             },
-            .Print => {
-                try PrintOps.execPrint(self);
-            },
-            .PrintBegin => {
-                // no-op for now (future: buffering)
-            },
-            .PrintStr => |payload| {
-                if (payload.const_id >= self.bytecode.constants.len) return error.UnimplementedInstruction;
-                const val = self.bytecode.constants[payload.const_id];
-                switch (val) {
-                    .string => |s| try PrintOps.printRaw(self, s),
-                    else => {},
-                }
-            },
-            .PrintVal => {
-                const top = try self.popValue();
-                try PrintOps.formatHIRValueRaw(self, top, .stdout);
-            },
-            .PrintNewline => {
-                try PrintOps.printRaw(self, "\n");
-            },
-            .PrintEnd => {
-                // no-op for now (future: flush)
-            },
             .Peek => |payload| {
                 try PrintOps.execPeek(self, .{
                     .name = payload.name,
