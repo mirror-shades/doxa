@@ -80,16 +80,6 @@ pub const StructInstanceField = struct {
     }
 };
 
-pub const MapField = struct {
-    name: Token,
-    type_expr: *TypeExpr,
-
-    pub fn deinit(self: *MapField, allocator: std.mem.Allocator) void {
-        self.type_expr.deinit(allocator);
-        allocator.destroy(self.type_expr);
-    }
-};
-
 pub const MapEntry = struct {
     key: *Expr,
     value: *Expr,
@@ -254,14 +244,6 @@ pub const Stmt = struct {
             is_public: bool = false,
             defining_module: ?[]const u8 = null,
         },
-        MapDecl: struct {
-            name: Token,
-            key_type: TypeInfo,
-            value_type: TypeInfo,
-            fields: []*MapField,
-            else_value: ?*Expr = null,
-            is_public: bool = false,
-        },
         Return: struct {
             value: ?*Expr,
             type_info: TypeInfo,
@@ -352,17 +334,6 @@ pub const Stmt = struct {
                     allocator.free(member.qualifier);
                 }
                 allocator.free(decl.members);
-            },
-            .MapDecl => |*m| {
-                for (m.fields) |field| {
-                    field.deinit(allocator);
-                    allocator.destroy(field);
-                }
-                allocator.free(m.fields);
-                if (m.else_value) |else_val| {
-                    else_val.deinit(allocator);
-                    allocator.destroy(else_val);
-                }
             },
             .MapLiteral => |*map_literal| {
                 for (map_literal.entries) |entry| {
@@ -1284,7 +1255,6 @@ fn dumpStmt(writer: anytype, stmt: *const Stmt, depth: u32) @TypeOf(writer).Erro
             try writer.print("Stmt.FunctionDecl name={s}\n", .{f.name.lexeme});
             for (f.body) |*s| try dumpStmt(writer, s, depth + 1);
         },
-        .MapDecl => |*m| try writer.print("Stmt.MapDecl name={s}\n", .{m.name.lexeme}),
         .Return => |*r| {
             try writer.print("Stmt.Return\n", .{});
             if (r.value) |value| try dumpExpr(writer, value, depth + 1);

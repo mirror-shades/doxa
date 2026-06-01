@@ -754,16 +754,6 @@ const Server = struct {
                     .end_character = entry.end_character,
                 });
             },
-            .MapDecl => |m| {
-                try index.symbols.append(.{
-                    .name = try alloc.dupe(u8, m.name.lexeme),
-                    .kind = 23,
-                    .start_line = entry.start_line,
-                    .start_character = entry.start_character,
-                    .end_line = entry.end_line,
-                    .end_character = entry.end_character,
-                });
-            },
             .Module => |mod| {
                 try index.symbols.append(.{
                     .name = try alloc.dupe(u8, mod.name.lexeme),

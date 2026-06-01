@@ -615,53 +615,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
             try self.instructions.append(map_instruction);
         },
-        .MapDecl => |map_decl| {
-            // Generate the map literal
-            var reverse_i = map_decl.fields.len;
-            while (reverse_i > 0) {
-                reverse_i -= 1;
-                const field = map_decl.fields[reverse_i];
-                // TODO: Create expression from field.name (Token) for key
-                // TODO: Create expression from field.type_expr (*TypeExpr) for value
-                _ = field; // Remove when implemented
-            }
-
-            const dummy_entries = try self.allocator.alloc(HIRMapEntry, map_decl.fields.len);
-            for (dummy_entries) |*entry| {
-                const nothing_key = try self.allocator.create(HIRValue);
-                nothing_key.* = .{ .nothing = .{} };
-                const nothing_value = try self.allocator.create(HIRValue);
-                nothing_value.* = .{ .nothing = .{} };
-                entry.* = HIRMapEntry{
-                    .key = nothing_key,
-                    .value = nothing_value,
-                };
-            }
-
-            try self.instructions.append(.{
-                .Map = .{
-                    .entries = dummy_entries,
-                    .key_type = .String, // TODO: infer from fields
-                    .value_type = .Unknown, // TODO: infer from fields
-                },
-            });
-
-            // Store it in a variable
-            const var_idx = try self.getOrCreateVariable(map_decl.name.lexeme);
-            const is_module_ctx = self.current_function == null and self.isModuleContext();
-            const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(map_decl.name.lexeme, is_module_ctx);
-
-            try self.instructions.append(.{
-                .StoreDecl = .{
-                    .var_index = var_idx,
-                    .var_name = map_decl.name.lexeme,
-                    .scope_kind = scope_kind,
-                    .module_context = null,
-                    .declared_type = .Unknown, // Map type
-                    .is_const = false, // Maps are mutable
-                },
-            });
-        },
         else => {
             self.reporter.reportCompileError(
                 stmt.base.location(),
