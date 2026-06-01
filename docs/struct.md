@@ -1,6 +1,6 @@
 Since Doxa has a tightly limited number of types, structs are useful for modeling more complex data. Structs are based off composition to avoid pitfalls inherent to inheretance. Variables, functions, and methods are all private unless marked pub.
 
-Struct instantiation uses a `$` sigil prefix to diferentiate it from a normal identifier. 
+Struct instantiation **always** requires a `$` sigil prefix. An identifier followed by `{` without `$` is always parsed as an implicit match expression — never as a struct literal.
 
 ### Real world example
 

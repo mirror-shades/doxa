@@ -183,7 +183,26 @@ pub const ConstantFolder = struct {
             .FunctionCall => |*call| {
                 call.callee = try self.foldExpr(call.callee);
                 for (call.arguments) |*arg| {
-                    arg.expr = try self.foldExpr(arg.expr);
+                    if (!arg.is_alias) {
+                        arg.expr = try self.foldExpr(arg.expr);
+                    }
+                }
+                return expr;
+            },
+            .Variable => |var_token| {
+                if (self.current_scope.lookupVariable(var_token.lexeme)) |variable| {
+                    const scope_manager = self.current_scope.manager;
+                    if (scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                        if (storage.constant and isPropagatableVar(variable, storage)) {
+                            self.optimizations_made += 1;
+                            const folded_expr = try self.allocator.create(ast.Expr);
+                            folded_expr.* = .{
+                                .base = expr.base,
+                                .data = .{ .Literal = storage.value },
+                            };
+                            return folded_expr;
+                        }
+                    }
                 }
                 return expr;
             },
@@ -196,23 +215,6 @@ pub const ConstantFolder = struct {
                 }
                 if (block.value) |value| {
                     block.value = try self.foldExpr(value);
-                }
-                return expr;
-            },
-            .Variable => |var_token| {
-                if (self.current_scope.lookupVariable(var_token.lexeme)) |variable| {
-                    const scope_manager = self.current_scope.manager;
-                    if (scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                        if (storage.constant and isPropagatableValue(storage.value)) {
-                            self.optimizations_made += 1;
-                            const folded_expr = try self.allocator.create(ast.Expr);
-                            folded_expr.* = .{
-                                .base = expr.base,
-                                .data = .{ .Literal = storage.value },
-                            };
-                            return folded_expr;
-                        }
-                    }
                 }
                 return expr;
             },
@@ -771,9 +773,13 @@ pub const ConstantFolder = struct {
     }
 };
 
-fn isPropagatableValue(value: TokenLiteral) bool {
-    return switch (value) {
-        .int, .float, .byte, .string, .tetra, .nothing => true,
+fn isPropagatableVar(variable: *const Memory.Variable, storage: *const Memory.ValueStorage) bool {
+    if (!storage.constant) return false;
+    return switch (storage.value) {
+        .int => switch (variable.type) {
+            .FUNCTION, .STRUCT, .ENUM, .GROUP_TYPE, .MODULE => false,
+            else => true,
+        },
         else => false,
     };
 }
