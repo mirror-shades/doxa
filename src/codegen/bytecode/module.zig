@@ -170,13 +170,6 @@ pub const Instruction = union(enum) {
     StoreFieldName: struct { field_name: []const u8 },
     EnterScope: struct { scope_id: u32, var_count: u32 },
     ExitScope: struct { scope_id: u32 },
-    Print,
-    // Streaming print ops
-    PrintBegin,
-    PrintStr: struct { const_id: ConstIndex },
-    PrintVal,
-    PrintNewline,
-    PrintEnd,
     Peek: struct {
         name: ?[]const u8,
         value_type: BytecodeType,

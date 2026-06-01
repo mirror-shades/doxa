@@ -110,11 +110,6 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .TypeCheck => |payload| try writer.print("ip[{d}] TypeCheck type:{s}\n", .{ idx, payload.type_name }),
         .Jump => |payload| try writer.print("ip[{d}] Jump label:{}\n", .{ idx, payload.label_id }),
         .JumpIfFalse => |payload| try writer.print("ip[{d}] JumpIfFalse label:{} type:{s}\n", .{ idx, payload.label_id, @tagName(payload.condition_type) }),
-        .PrintBegin => try writer.print("ip[{d}] PrintBegin\n", .{idx}),
-        .PrintStr => |payload| try writer.print("ip[{d}] PrintStr const:{}\n", .{ idx, payload.const_id }),
-        .PrintVal => try writer.print("ip[{d}] PrintVal\n", .{idx}),
-        .PrintNewline => try writer.print("ip[{d}] PrintNewline\n", .{idx}),
-        .PrintEnd => try writer.print("ip[{d}] PrintEnd\n", .{idx}),
         .JumpIfTrue => |payload| try writer.print("ip[{d}] JumpIfTrue label:{} type:{s}\n", .{ idx, payload.label_id, @tagName(payload.condition_type) }),
         .Label => |payload| try writer.print("ip[{d}] Label {}\n", .{ idx, payload.id }),
         .Call => |payload| try writeCallInstruction(idx, "Call", payload, writer),
@@ -156,7 +151,6 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .GetField => |payload| try writer.print("ip[{d}] GetField {s} idx:{} container:{s}\n", .{ idx, payload.field_name, payload.field_index, @tagName(payload.container_type) }),
         .SetField => |payload| try writer.print("ip[{d}] SetField {s} idx:{} container:{s}\n", .{ idx, payload.field_name, payload.field_index, @tagName(payload.container_type) }),
         .StoreFieldName => |payload| try writer.print("ip[{d}] StoreFieldName {s}\n", .{ idx, payload.field_name }),
-        .Print => try writer.print("ip[{d}] Print\n", .{idx}),
         .Peek => |payload| {
             const name = payload.name orelse "-";
             try writer.print("ip[{d}] Peek name:{s} type:{s}\n", .{ idx, name, @tagName(payload.value_type) });
