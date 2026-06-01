@@ -523,22 +523,6 @@ pub const SoxaTextParser = struct {
             const type_str = tokens.next() orelse return;
             const expected_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Float")) .Float else if (std.mem.eql(u8, type_str, "String")) .String else if (std.mem.eql(u8, type_str, "Tetra")) .Tetra else if (std.mem.eql(u8, type_str, "Nothing")) .Nothing else .Int;
             try self.instructions.append(HIRInstruction{ .StoreAlias = .{ .slot_index = slot_index, .var_name = var_name, .expected_type = expected_type } });
-        } else if (std.mem.eql(u8, op, "StoreConst")) {
-            // StoreConst has been unified into StoreDecl - read as StoreDecl with is_const=true
-            const idx_str = tokens.next() orelse return;
-            const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
-            const name_quoted = tokens.next() orelse return;
-            const var_name = try self.parseQuotedString(name_quoted);
-            const scope_str = tokens.next() orelse "Local";
-            const scope_kind = if (std.mem.eql(u8, scope_str, "ModuleGlobal"))
-                ScopeKind.ModuleGlobal
-            else if (std.mem.eql(u8, scope_str, "ImportedModule"))
-                ScopeKind.ImportedModule
-            else if (std.mem.eql(u8, scope_str, "Builtin"))
-                ScopeKind.Builtin
-            else
-                ScopeKind.Local;
-            try self.instructions.append(HIRInstruction{ .StoreDecl = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .declared_type = .Int, .is_const = true } });
         } else if (std.mem.eql(u8, op, "StoreDecl")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
@@ -560,18 +544,6 @@ pub const SoxaTextParser = struct {
             const const_str = tokens.next() orelse "false";
             const is_const = std.mem.eql(u8, const_str, "true");
             try self.instructions.append(HIRInstruction{ .StoreDecl = .{ .var_index = var_index, .var_name = var_name, .scope_kind = scope_kind, .module_context = null, .declared_type = declared_type, .is_const = is_const } });
-        } else if (std.mem.eql(u8, op, "StoreParamAlias")) {
-            const name_quoted = tokens.next() orelse return;
-            const param_name = try self.parseQuotedString(name_quoted);
-            const idx_str = tokens.next() orelse return;
-            const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
-            // Optional trailing type token for alias param
-            const maybe_type = tokens.next();
-            const param_type: HIRType = if (maybe_type) |t|
-                (if (std.mem.eql(u8, t, "Int")) .Int else if (std.mem.eql(u8, t, "Byte")) .Byte else if (std.mem.eql(u8, t, "Float")) .Float else if (std.mem.eql(u8, t, "String")) .String else if (std.mem.eql(u8, t, "Tetra")) .Tetra else if (std.mem.eql(u8, t, "Nothing")) .Nothing else .Int)
-            else
-                .Int;
-            try self.instructions.append(HIRInstruction{ .BindAlias = .{ .alias_name = param_name, .target_variable_name = param_name, .alias_slot = var_index, .target_slot = 0, .target_type = param_type } });
         } else if (std.mem.eql(u8, op, "PushStorageId")) {
             const idx_str = tokens.next() orelse return;
             const var_index = std.fmt.parseInt(u32, idx_str, 10) catch return;
@@ -634,42 +606,6 @@ pub const SoxaTextParser = struct {
                     .call_kind = call_kind,
                     .target_module = try self.inferTargetModule(qualified_name, call_kind),
                     .return_type = return_type,
-                },
-            });
-        } else if (std.mem.eql(u8, op, "TailCall")) {
-            const func_idx_str = tokens.next() orelse return;
-            const arg_count_str = tokens.next() orelse return;
-            const name_quoted = tokens.next() orelse return;
-            const kind_str = tokens.next() orelse return;
-
-            const function_index = std.fmt.parseInt(u32, func_idx_str, 10) catch return;
-            const arg_count = std.fmt.parseInt(u32, arg_count_str, 10) catch return;
-            const qualified_name = try self.parseQuotedString(name_quoted);
-            const call_kind = if (std.mem.eql(u8, kind_str, "LocalFunction")) CallKind.LocalFunction else if (std.mem.eql(u8, kind_str, "ModuleFunction")) CallKind.ModuleFunction else if (std.mem.eql(u8, kind_str, "BuiltinFunction")) CallKind.BuiltinFunction else CallKind.LocalFunction;
-
-            var return_type: HIRType = .Unknown;
-            if (call_kind == .LocalFunction and function_index < self.functions.items.len) {
-                return_type = self.functions.items[function_index].return_type;
-            }
-
-            // Read tail flag (may be absent in older .soxa files)
-            var tail: bool = false;
-            const tail_str = tokens.next();
-            if (tail_str) |ts| {
-                if (std.mem.eql(u8, ts, "1")) {
-                    tail = true;
-                }
-            }
-
-            try self.instructions.append(HIRInstruction{
-                .Call = .{
-                    .function_index = function_index,
-                    .qualified_name = qualified_name,
-                    .arg_count = arg_count,
-                    .call_kind = call_kind,
-                    .target_module = try self.inferTargetModule(qualified_name, call_kind),
-                    .return_type = return_type,
-                    .tail = tail,
                 },
             });
         } else if (std.mem.eql(u8, op, "Return")) {
@@ -807,8 +743,6 @@ pub const SoxaTextParser = struct {
                     .union_members = union_members,
                 } });
             }
-        } else if (std.mem.eql(u8, op, "Print")) {
-            try self.instructions.append(.{ .Print = .{} });
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
             const size_str = tokens.next() orelse return;
@@ -849,10 +783,6 @@ pub const SoxaTextParser = struct {
             const op_str = tokens.next() orelse return;
             const arith_op = std.meta.stringToEnum(ArithOp, op_str) orelse ArithOp.Add;
             try self.instructions.append(HIRInstruction{ .ArrayCompoundAssign = .{ .bounds_check = bounds_check, .op = arith_op } });
-        } else if (std.mem.eql(u8, op, "Range")) {
-            const type_str = tokens.next() orelse return;
-            const element_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Float")) .Float else .Int;
-            try self.instructions.append(HIRInstruction{ .Range = .{ .element_type = element_type } });
         } else if (std.mem.eql(u8, op, "Map")) {
             const count_str = tokens.next() orelse return;
             const key_type_str = tokens.next() orelse return;
@@ -1075,6 +1005,12 @@ pub const SoxaTextParser = struct {
                         .end_col = 0,
                     },
                 },
+            } });
+        } else if (std.mem.eql(u8, op, "LoadModule")) {
+            const name_quoted = tokens.next() orelse return;
+            const module_name = try self.parseQuotedString(name_quoted);
+            try self.instructions.append(HIRInstruction{ .LoadModule = .{
+                .module_name = module_name,
             } });
         }
     }

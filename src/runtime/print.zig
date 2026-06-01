@@ -36,28 +36,6 @@ pub const PrintOps = struct {
         _ = vm; // unused for now
         try printToStdout("{s}", .{s});
     }
-    fn getVmConstant(vm: anytype, id: usize) ?HIRValue {
-        const vm_type = @TypeOf(vm);
-        const info = @typeInfo(vm_type);
-        switch (info) {
-            .pointer => |ptr| {
-                const child = ptr.child;
-                if (@hasField(child, "program")) {
-                    if (id < vm.program.constant_pool.len) {
-                        return vm.program.constant_pool[id];
-                    }
-                }
-                if (@hasField(child, "bytecode")) {
-                    const module_ptr = vm.bytecode;
-                    if (module_ptr.*.constants.len > id) {
-                        return module_ptr.*.constants[id];
-                    }
-                }
-            },
-            else => {},
-        }
-        return null;
-    }
 
     pub fn execPrint(vm: anytype) !void {
         const value = try vm.stack.pop();
@@ -212,42 +190,6 @@ pub const PrintOps = struct {
 
         if (!i.should_pop_after_peek) {
             try vm.stack.push(value);
-        }
-    }
-
-    pub fn execPrintInterpolated(vm: anytype, interp: anytype) !void {
-        var args = try vm.scopeAllocator().alloc(HIRValue, interp.argument_count);
-        defer vm.scopeAllocator().free(args);
-
-        for (0..interp.argument_count) |i| {
-            const arg = try vm.stack.pop();
-            args[interp.argument_count - 1 - i] = arg.value;
-        }
-
-        var actual_format_parts = std.array_list.Managed([]const u8).init(vm.scopeAllocator());
-        defer actual_format_parts.deinit();
-
-        for (interp.format_part_ids) |id| {
-            if (getVmConstant(vm, id)) |constant| {
-                if (constant == .string) {
-                    try actual_format_parts.append(constant.string);
-                    continue;
-                }
-            }
-            try actual_format_parts.append("");
-        }
-
-        for (actual_format_parts.items, 0..) |part, i| {
-            if (part.len != 0) {
-                try printFormatted(.stdout, "{s}", .{part});
-            }
-
-            if (i < interp.placeholder_indices.len) {
-                const arg_index = interp.placeholder_indices[i];
-                if (arg_index < args.len) {
-                    try PrintOps.formatHIRValueRaw(vm, args[arg_index], .stdout);
-                }
-            }
         }
     }
 

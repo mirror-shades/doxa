@@ -930,13 +930,6 @@ pub fn Methods(comptime Ctx: type) type {
                     try registerVariant.add(self, ev.type_name, ev.variant_index, ev.variant_name);
                 }
             }
-
-            for (hir.instructions) |inst| {
-                if (inst == .EnumNew) {
-                    const ev = inst.EnumNew;
-                    try registerVariant.add(self, ev.enum_name, ev.variant_index, ev.variant_name);
-                }
-            }
         }
 
         pub fn emitEnumPrint(
