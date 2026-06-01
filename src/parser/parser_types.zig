@@ -1434,7 +1434,6 @@ pub const Parser = struct {
             .Block => |statements| statementsReferenceName(statements, name),
             .FunctionDecl => |func| statementsReferenceName(func.body, name),
             .Return => |ret| if (ret.value) |value| exprReferencesName(value, name) else false,
-            .MapDecl => |decl| if (decl.else_value) |else_value| exprReferencesName(else_value, name) else false,
             .MapLiteral => |lit| blk: {
                 for (lit.entries) |entry| {
                     if (exprReferencesName(entry.key, name) or exprReferencesName(entry.value, name)) break :blk true;
@@ -1767,7 +1766,7 @@ pub const Parser = struct {
                                 }
                             }
                         },
-                        .ZigDecl, .Block, .MapDecl, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast => {},
+                        .ZigDecl, .Block, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast => {},
                     }
                 }
             },
