@@ -1,4 +1,5 @@
 const std = @import("std");
+const ArithOp = @import("../../hir/soxa_instructions.zig").ArithOp;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -478,14 +479,12 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        const ArrayCompoundOp = enum { Add, Sub, Mul, Div, Mod, Pow };
-
         pub fn emitArrayGetAndArith(
             self: *IRPrinter,
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            op: ArrayCompoundOp,
+            op: ArithOp,
         ) !void {
             if (stack.items.len < 3) return;
             const value = stack.items[stack.items.len - 1];
@@ -531,6 +530,7 @@ pub fn Methods(comptime Ctx: type) type {
                         .Sub => try std.fmt.allocPrint(self.allocator, "  {s} = fsub double {s}, {s}\n", .{ op_double, current_double, value_double }),
                         .Mul => try std.fmt.allocPrint(self.allocator, "  {s} = fmul double {s}, {s}\n", .{ op_double, current_double, value_double }),
                         .Div => try std.fmt.allocPrint(self.allocator, "  {s} = fdiv double {s}, {s}\n", .{ op_double, current_double, value_double }),
+                        .IntDiv => try std.fmt.allocPrint(self.allocator, "  {s} = fdiv double {s}, {s}\n", .{ op_double, current_double, value_double }),
                         .Mod => try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ op_double, current_double, value_double }),
                         .Pow => try std.fmt.allocPrint(self.allocator, "  {s} = call double @llvm.pow.f64(double {s}, double {s})\n", .{ op_double, current_double, value_double }),
                     };
@@ -548,7 +548,7 @@ pub fn Methods(comptime Ctx: type) type {
                         .Add => try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ tmp, current_bits.name, value_bits.name }),
                         .Sub => try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ tmp, current_bits.name, value_bits.name }),
                         .Mul => try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ tmp, current_bits.name, value_bits.name }),
-                        .Div => try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ tmp, current_bits.name, value_bits.name }),
+                        .Div, .IntDiv => try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ tmp, current_bits.name, value_bits.name }),
                         .Mod => try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ tmp, current_bits.name, value_bits.name }),
                         .Pow => blk: {
                             const lhs_double = try self.nextTemp(id);
@@ -589,7 +589,7 @@ pub fn Methods(comptime Ctx: type) type {
                             result_bits_reg = try self.nextTemp(id);
                             break :blk try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ result_bits_reg, current_bits.name, value_bits.name });
                         },
-                        .Div => blk: {
+                        .Div, .IntDiv => blk: {
                             const q = try self.nextTemp(id);
                             const r = try self.nextTemp(id);
                             const r_nz = try self.nextTemp(id);

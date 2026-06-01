@@ -461,23 +461,8 @@ pub const VM = struct {
                     .element_type = toHIRType(payload.element_type),
                 });
             },
-            .ArrayGetAndAdd => |payload| {
-                try ops_array.arrayGetAndAdd(self, payload);
-            },
-            .ArrayGetAndSub => |payload| {
-                try ops_array.arrayGetAndSub(self, payload);
-            },
-            .ArrayGetAndMul => |payload| {
-                try ops_array.arrayGetAndMul(self, payload);
-            },
-            .ArrayGetAndDiv => |payload| {
-                try ops_array.arrayGetAndDiv(self, payload);
-            },
-            .ArrayGetAndMod => |payload| {
-                try ops_array.arrayGetAndMod(self, payload);
-            },
-            .ArrayGetAndPow => |payload| {
-                try ops_array.arrayGetAndPow(self, payload);
+            .ArrayCompoundAssign => |payload| {
+                try ops_array.arrayCompoundAssign(self, payload.bounds_check, payload.op);
             },
             .Map => |payload| {
                 try self.execMap(payload);
