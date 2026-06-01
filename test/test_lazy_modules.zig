@@ -150,3 +150,4 @@ test "lazy modules: circular imports are detected when reached" {
     _ = try parser.ensureNestedModuleNamespace("cycle", "b");
     try testing.expectError(error.CircularImport, parser.ensureNestedModuleNamespace("cycle.b", "a"));
 }
+

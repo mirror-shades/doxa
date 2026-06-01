@@ -202,7 +202,6 @@ fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
 fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
     const root_scope = semantic_analyzer.memory.scope_manager.root_scope orelse return error.MissingRootScope;
     var constant_folder = ConstantFolder.init(memoryManager.getAnalysisAllocator(), root_scope);
-    defer constant_folder.deinit();
     var folded_statements = std.array_list.Managed(AST.Stmt).init(memoryManager.getAnalysisAllocator());
     defer folded_statements.deinit();
 

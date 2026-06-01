@@ -359,7 +359,7 @@ pub const MemoryManager = struct {
         scope.* = Scope.init(scope_id, parent, self);
         try self.scope_pool.append(self.allocator, scope);
         if (parent) |p| {
-            try p.children.append(self.allocator, scope);
+            try p.children.append(p.allocator, scope);
         }
         return scope;
     }

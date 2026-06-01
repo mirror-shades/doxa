@@ -1168,10 +1168,11 @@ pub const SemanticAnalyzer = struct {
                 },
                 .Block => |block_stmts| {
                     const prev_scope = self.current_scope;
-                    self.current_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+                    const block_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+                    self.current_scope = block_scope;
                     defer {
                         self.current_scope = prev_scope;
-                        // Scope cleanup handled by memory manager
+                        block_scope.deinit();
                     }
                     try self.validateStatements(block_stmts);
                 },
