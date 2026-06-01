@@ -1257,58 +1257,6 @@ pub fn variable(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Exp
         return this_expr;
     }
 
-    if (self.peek().type == .DOT) {
-        const namespace = name.lexeme;
-
-        if (self.module_namespaces.contains(namespace)) {
-            self.advance();
-
-            if (self.peek().type != .IDENTIFIER) {
-                return error.ExpectedIdentifier;
-            }
-
-            const symbol_name = self.peek();
-            self.advance();
-
-            const namespace_var = try self.allocator.create(ast.Expr);
-            namespace_var.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(name),
-                },
-                .data = .{
-                    .Variable = name,
-                },
-            };
-
-            const field_access = try self.allocator.create(ast.Expr);
-            field_access.* = .{
-                .base = .{
-                    .id = ast.generateNodeId(),
-                    .span = ast.SourceSpan.fromToken(symbol_name),
-                },
-                .data = .{
-                    .FieldAccess = .{
-                        .object = namespace_var,
-                        .field = symbol_name,
-                    },
-                },
-            };
-
-            if (self.peek().type == .LEFT_BRACKET) {
-                self.advance();
-                return self.index(field_access, .NONE);
-            }
-
-            // Check if this field access is followed by parentheses - treat as function call
-            if (self.peek().type == .LEFT_PAREN) {
-                return self.call(field_access, .CALL);
-            }
-
-            return field_access;
-        }
-    }
-
     const var_expr = try self.allocator.create(ast.Expr);
     if (name.type == .FIELD_ACCESS) {
         var_expr.* = .{

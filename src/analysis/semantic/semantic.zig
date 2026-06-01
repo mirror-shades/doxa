@@ -317,11 +317,6 @@ pub const SemanticAnalyzer = struct {
         self.memory.scope_manager.root_scope = root_scope;
         self.current_scope = root_scope;
 
-        if (self.parser) |p| {
-            const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(p);
-            try parser_mut.ensureSpecificImports();
-        }
-
         // Process imported symbols to register their methods
         try self.processImportedSymbols();
 

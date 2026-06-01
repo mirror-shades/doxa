@@ -87,8 +87,6 @@ pub const Parser = struct {
 
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
-    declared_types: std.StringHashMap(void),
-
     module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
     import_stack: std.array_list.Managed(ImportStackEntry),
 
@@ -110,7 +108,6 @@ pub const Parser = struct {
             .module_imports = std.StringHashMap(std.StringHashMap(ModuleImportEntry)).init(allocator),
             .specific_imports = std.array_list.Managed(SpecificImportEntry).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
-            .declared_types = std.StringHashMap(void).init(allocator),
             .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
             .import_stack = std.array_list.Managed(ImportStackEntry).init(allocator),
         };
@@ -126,7 +123,6 @@ pub const Parser = struct {
         if (self.imported_symbols) |*imported_symbols| {
             imported_symbols.deinit();
         }
-        self.declared_types.deinit();
         self.module_resolution_status.deinit();
         self.import_stack.deinit();
     }
@@ -247,41 +243,7 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        // first pass: imports and modules
-        var start_index_after_imports = self.current;
-        while (start_index_after_imports < self.tokens.len) {
-            var pass_is_public = false;
-            var token_type = self.tokens[start_index_after_imports].type;
-            if (token_type == .PUBLIC and start_index_after_imports + 1 < self.tokens.len) {
-                const next_type = self.tokens[start_index_after_imports + 1].type;
-                if (next_type == .IMPORT or next_type == .MODULE) {
-                    pass_is_public = true;
-                    token_type = next_type;
-                } else {
-                    break;
-                }
-            }
-            if (token_type != .IMPORT and token_type != .MODULE) break;
-
-            const temp_current = self.current;
-            self.current = start_index_after_imports;
-            if (pass_is_public) {
-                self.advance();
-            }
-
-            if (token_type == .MODULE) {
-                _ = try import_parser.parseModuleStmt(self, pass_is_public);
-            } else {
-                _ = try import_parser.parseImportStmt(self, pass_is_public);
-            }
-
-            start_index_after_imports = self.current;
-
-            self.current = temp_current;
-        }
-        self.current = start_index_after_imports;
-
-        // second pass: all other statements
+        // parse all statements (single pass)
         while (self.peek().type != .EOF) {
             const loop_start_pos = self.current;
 
@@ -864,65 +826,6 @@ pub const Parser = struct {
 
         if (current_token.type != .IDENTIFIER and current_token.type != .FIELD_ACCESS) {
             return error.ExpectedIdentifier;
-        }
-
-        // Check if this is an enum member access
-        if (left != null and left.?.data == .Variable) {
-            const var_name = left.?.data.Variable;
-            if (self.declared_types.contains(var_name.lexeme)) {
-                // Check if this is actually an enum or group type by looking for declarations
-                var is_enum_type = false;
-                var i: usize = 0;
-                while (i < self.tokens.len) : (i += 1) {
-                    if (self.tokens[i].type == .ENUM_TYPE or self.tokens[i].type == .GROUP_TYPE) {
-                        i += 1;
-                        if (i < self.tokens.len and std.mem.eql(u8, self.tokens[i].lexeme, var_name.lexeme)) {
-                            is_enum_type = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (is_enum_type) {
-                    // This is an enum/group member access
-                    self.advance();
-
-                    var found_valid_variant = false;
-                    var j: usize = 0;
-                    while (j < self.tokens.len) : (j += 1) {
-                        if (self.tokens[j].type == .ENUM_TYPE or self.tokens[j].type == .GROUP_TYPE) {
-                            j += 2;
-
-                            if (self.tokens[j].type != .LEFT_BRACE) continue;
-                            j += 1;
-
-                            while (j < self.tokens.len and self.tokens[j].type != .RIGHT_BRACE) : (j += 1) {
-                                if (self.tokens[j].type == .IDENTIFIER) {
-                                    if (std.mem.eql(u8, self.tokens[j].lexeme, current_token.lexeme)) {
-                                        found_valid_variant = true;
-                                        break;
-                                    }
-                                }
-                            }
-                            if (found_valid_variant) break;
-                        }
-                    }
-
-                    if (found_valid_variant) {
-                        const enum_member = try self.allocator.create(ast.Expr);
-                        enum_member.* = .{
-                            .base = .{
-                                .id = ast.generateNodeId(),
-                                .span = ast.SourceSpan.fromToken(self.peek()),
-                            },
-                            .data = .{
-                                .EnumMember = current_token,
-                            },
-                        };
-                        return enum_member;
-                    }
-                }
-            }
         }
 
         self.advance();
