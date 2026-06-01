@@ -301,6 +301,7 @@ fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "DoxVM: ")) continue;
         const j = std.mem.indexOf(u8, line, "]") orelse continue;
         if (j == 0) continue;
         const lineWithVar = line[j + 1 ..];

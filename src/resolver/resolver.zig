@@ -69,7 +69,7 @@ pub const Resolver = struct {
                 switch (sym.kind) {
                     .Enum, .Group => {
                         if (sym.name.len > 0) {
-                            self.enum_group_names.put(sym.name, {}) catch {};
+                            self.putName(sym.name);
                         }
                     },
                     else => {},
@@ -78,12 +78,16 @@ pub const Resolver = struct {
         }
     }
 
+    fn putName(self: *Resolver, name: []const u8) void {
+        self.enum_group_names.put(name, {}) catch {};
+    }
+
     fn walkStmt(self: *Resolver, stmt: ast.Stmt, ctx: WalkContext) void {
         switch (ctx) {
             .Collect => {
                 switch (stmt.data) {
-                    .EnumDecl => |ed| self.enum_group_names.put(ed.name.lexeme, {}) catch {},
-                    .GroupDecl => |gd| self.enum_group_names.put(gd.name.lexeme, {}) catch {},
+                    .EnumDecl => |ed| self.putName(ed.name.lexeme),
+                    .GroupDecl => |gd| self.putName(gd.name.lexeme),
                     else => {},
                 }
             },
@@ -102,6 +106,25 @@ pub const Resolver = struct {
             },
             .VarDecl => |var_decl| {
                 if (var_decl.initializer) |initializer| self.walkExpr(initializer, ctx);
+            },
+            .Assert => |a| {
+                self.walkExpr(a.condition, ctx);
+                if (a.message) |m| self.walkExpr(m, ctx);
+            },
+            .Cast => |c| {
+                self.walkExpr(c.value, ctx);
+                if (c.then_branch) |b| self.walkExpr(b, ctx);
+                if (c.else_branch) |b| self.walkExpr(b, ctx);
+            },
+            .Return => |r| {
+                if (r.value) |v| self.walkExpr(v, ctx);
+            },
+            .MapLiteral => |ml| {
+                for (ml.entries) |entry| {
+                    self.walkExpr(entry.key, ctx);
+                    self.walkExpr(entry.value, ctx);
+                }
+                if (ml.else_value) |ev| self.walkExpr(ev, ctx);
             },
             else => {},
         }
@@ -128,8 +151,8 @@ pub const Resolver = struct {
             },
             .Collect => {
                 switch (expr.data) {
-                    .EnumDecl => |ed| self.enum_group_names.put(ed.name.lexeme, {}) catch {},
-                    .GroupDecl => |gd| self.enum_group_names.put(gd.name.lexeme, {}) catch {},
+                    .EnumDecl => |ed| self.putName(ed.name.lexeme),
+                    .GroupDecl => |gd| self.putName(gd.name.lexeme),
                     else => {},
                 }
             },
@@ -223,6 +246,7 @@ pub const Resolver = struct {
                     self.walkExpr(entry.key, ctx);
                     self.walkExpr(entry.value, ctx);
                 }
+                if (ml.else_value) |ev| self.walkExpr(ev, ctx);
             },
             .Map => |m| {
                 for (m.entries) |entry| {

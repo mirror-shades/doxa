@@ -824,7 +824,7 @@ pub const Parser = struct {
 
         const current_token = self.peek();
 
-        if (current_token.type != .IDENTIFIER and current_token.type != .FIELD_ACCESS) {
+        if (current_token.type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
 

@@ -951,6 +951,17 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             }
 
+            if (if_expr.condition.?.data == .Literal) {
+                const literal = if_expr.condition.?.data.Literal;
+                const tag = @tagName(literal.tetra);
+                self.reporter.reportWarning(
+                    getLocationFromBase(if_expr.condition.?.base),
+                    ErrorCode.CONDITION_ALWAYS_TRUE,
+                    "condition is always {s}",
+                    .{tag},
+                );
+            }
+
             const then_type = try infer_type.inferTypeFromExpr(self, if_expr.then_branch.?);
             if (if_expr.else_branch) |else_branch| {
                 const else_type = try infer_type.inferTypeFromExpr(self, else_branch);
@@ -2447,6 +2458,16 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
             if (loop.condition) |cond| {
                 _ = try infer_type.inferTypeFromExpr(self, cond);
+                if (cond.data == .Literal) {
+                    const literal = cond.data.Literal;
+                    const tag = @tagName(literal.tetra);
+                    self.reporter.reportWarning(
+                        getLocationFromBase(cond.base),
+                        ErrorCode.CONDITION_ALWAYS_TRUE,
+                        "condition is always {s}",
+                        .{tag},
+                    );
+                }
             }
 
             // Create iteration scope for loop body

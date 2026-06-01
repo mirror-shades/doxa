@@ -137,6 +137,7 @@ pub fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ar
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
+        if (std.mem.startsWith(u8, line, "DoxVM: ")) continue;
         const close_bracket = std.mem.indexOfScalar(u8, line, ']') orelse continue;
         const line_with_var = line[close_bracket + 1 ..];
         const colon = std.mem.indexOfScalar(u8, line_with_var, ':') orelse continue;
