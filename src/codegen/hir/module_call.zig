@@ -250,13 +250,14 @@ pub fn tryEmitTailCall(generator: *HIRGenerator, expr: *ast.Expr) bool {
     const return_type = generator.inferCallReturnType(resolved.qualified_name, resolved.call_kind) catch .Nothing;
     const target_module = generator.computeTargetModule(resolved.qualified_name, resolved.call_kind) catch return false;
 
-    const tail_call = HIRInstruction{ .TailCall = .{
+    const tail_call = HIRInstruction{ .Call = .{
         .function_index = function_index,
         .qualified_name = resolved.qualified_name,
         .arg_count = @intCast(call.arguments.len),
         .call_kind = resolved.call_kind,
         .target_module = target_module,
         .return_type = return_type,
+        .tail = true,
     } };
 
     generator.instructions.append(tail_call) catch return false;

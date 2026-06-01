@@ -89,16 +89,6 @@ pub const HIRInstruction = union(enum) {
         expected_type: HIRType, // Add expected type for coercion
     },
 
-    /// Store constant (one-time assignment)
-    /// VM: OP_SET_CONST
-    /// LLVM: LLVMAddGlobal with constant flag
-    StoreConst: struct {
-        var_index: u32,
-        var_name: []const u8,
-        scope_kind: ScopeKind,
-        module_context: ?[]const u8,
-    },
-
     /// Store variable declaration (var/const with initializer)
     /// VM: OP_SET_VAR with declaration context
     /// LLVM: LLVMAddGlobal with proper type inference
@@ -116,13 +106,6 @@ pub const HIRInstruction = union(enum) {
         var_index: u32,
         var_name: []const u8,
         scope_kind: ScopeKind,
-    },
-
-    /// Consumes a storage_id_ref from stack and creates an alias variable
-    StoreParamAlias: struct {
-        param_name: []const u8,
-        param_type: HIRType, // For initial type info of the alias
-        var_index: u32, // Variable index for the alias parameter
     },
 
     /// Load value from an alias parameter
@@ -144,7 +127,7 @@ pub const HIRInstruction = union(enum) {
         target_slot: u32,
     },
 
-    /// Bind an alias to its target variable
+    /// Bind an alias to its target variable (unified from StoreParamAlias)
     BindAlias: struct {
         alias_name: []const u8,
         target_variable_name: []const u8,
@@ -276,18 +259,7 @@ pub const HIRInstruction = union(enum) {
         call_kind: CallKind, // Resolution context
         target_module: ?[]const u8, // For cross-module calls
         return_type: HIRType, // For stack type management and LLVM return handling
-    },
-
-    /// Tail call optimization - function call in tail position
-    /// VM: Reuse current stack frame, jump to function start
-    /// LLVM: Generate as optimized tail call
-    TailCall: struct {
-        function_index: u32, // VM: Direct function table index
-        qualified_name: []const u8, // LLVM: Full function name with module prefix
-        arg_count: u32, // Stack management for both targets
-        call_kind: CallKind, // Resolution context
-        target_module: ?[]const u8, // For cross-module calls
-        return_type: HIRType, // For stack type management and LLVM return handling
+        tail: bool = false, // Tail call optimization
     },
 
     /// Return from function
@@ -339,22 +311,6 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: No-op
     StoreFieldName: struct {
         field_name: []const u8,
-    },
-
-    /// Exception handling
-    /// VM: OP_TRY, OP_CATCH, OP_THROW
-    /// LLVM: Landing pads and exception tables
-    TryBegin: struct {
-        catch_label: []const u8,
-        vm_catch_offset: i32,
-    },
-
-    TryCatch: struct {
-        exception_type: ?HIRType,
-    },
-
-    Throw: struct {
-        exception_type: HIRType,
     },
 
     //==================================================================
@@ -571,46 +527,6 @@ pub const HIRInstruction = union(enum) {
         field_types: []HIRType,
         location: ?Reporting.Location,
         should_pop_after_peek: bool,
-    },
-
-    /// Print/peek value
-    /// VM: Complex printValue logic
-    /// LLVM: Generate printf calls with format strings
-    Print: struct {},
-
-    /// Streaming print: begin sequence
-    /// VM: no-op (placeholder for future buffered output)
-    /// LLVM: no-op
-    PrintBegin: struct {},
-
-    /// Streaming print: print a string literal by constant id
-    /// VM: write bytes to stdout
-    /// LLVM: emit printf("%s", str_ptr)
-    PrintStr: struct {
-        const_id: u32,
-    },
-
-    /// Streaming print: print top-of-stack value using ToString rules, then pop
-    /// VM: stringify and write; pop value
-    /// LLVM: type-specific printf
-    PrintVal: struct {},
-
-    /// Streaming print: explicit newline
-    /// VM/LLVM: emit "\n"
-    PrintNewline: struct {},
-
-    /// Streaming print: end sequence (no-op for now)
-    /// VM/LLVM: no-op
-    PrintEnd: struct {},
-
-    /// Print with string interpolation
-    /// VM: Format string with interpolated values
-    /// LLVM: Generate printf calls with format strings
-    PrintInterpolated: struct {
-        format_parts: []const []const u8,
-        placeholder_indices: []const u32,
-        argument_count: u32,
-        format_part_ids: []const u32,
     },
 
     /// Prints a struct

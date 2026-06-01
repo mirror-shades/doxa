@@ -107,6 +107,9 @@ pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
     }
     self.advance();
 
+    const args = try self.allocator.alloc(*ast.Expr, 1);
+    args[0] = format_expr;
+
     const print_expr = try self.allocator.create(ast.Expr);
     print_expr.* = .{
         .base = .{
@@ -114,8 +117,9 @@ pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
             .span = ast.SourceSpan.fromToken(method_tok),
         },
         .data = .{
-            .Print = .{
-                .expr = format_expr,
+            .BuiltinCall = .{
+                .function = method_tok,
+                .arguments = args,
             },
         },
     };

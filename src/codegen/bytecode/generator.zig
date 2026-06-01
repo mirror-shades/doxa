@@ -361,13 +361,6 @@ pub const BytecodeGenerator = struct {
                     };
                     try self.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = operand, .type_tag = try module.typeFromHIR(safe_hir_type) } });
                 },
-                .StoreConst => |payload| {
-                    const operand = try self.makeSlotOperand(payload.scope_kind, payload.var_index, payload.module_context);
-                    if (self.slot_cache.get(payload.var_index) == null) {
-                        try self.slot_cache.put(payload.var_index, operand);
-                    }
-                    try self.instructions.append(self.allocator, .{ .StoreConstSlot = operand });
-                },
                 .StoreDecl => |payload| {
                     const operand = try self.makeSlotOperand(payload.scope_kind, payload.var_index, payload.module_context);
                     if (self.slot_cache.get(payload.var_index) == null) {
@@ -382,11 +375,6 @@ pub const BytecodeGenerator = struct {
                 .PushStorageId => |payload| {
                     const operand = self.slotFromCache(payload.var_index) orelse try self.makeSlotOperand(payload.scope_kind, payload.var_index, null);
                     try self.instructions.append(self.allocator, .{ .PushStorageRef = operand });
-                },
-                .StoreParamAlias => |payload| {
-                    const alias_slot: module.SlotIndex = payload.var_index;
-                    try self.alias_slots.put(alias_slot, {});
-                    try self.instructions.append(self.allocator, .{ .BindAlias = .{ .alias_slot = alias_slot, .type_tag = try module.typeFromHIR(payload.param_type) } });
                 },
                 .UnionConstruct => |_| {
                     // Bytecode VM does not yet model unions as a distinct runtime
@@ -469,21 +457,7 @@ pub const BytecodeGenerator = struct {
                         .Unknown => .Nothing,
                         else => payload.return_type,
                     }),
-                } }),
-                .TailCall => |payload| try self.instructions.append(self.allocator, .{ .TailCall = .{
-                    .target = .{
-                        .function_index = payload.function_index,
-                        .qualified_name = payload.qualified_name,
-                        .call_kind = payload.call_kind,
-                        .target_module = payload.target_module,
-                        .target_module_id = try self.resolveCallModuleId(payload.call_kind, payload.target_module),
-                        .builtin_id = if (payload.call_kind == .BuiltinFunction) resolveBuiltinId(payload.qualified_name) else null,
-                    },
-                    .arg_count = payload.arg_count,
-                    .return_type = try module.typeFromHIR(switch (payload.return_type) {
-                        .Unknown => .Nothing,
-                        else => payload.return_type,
-                    }),
+                    .tail = payload.tail,
                 } }),
                 .Return => |payload| try self.instructions.append(self.allocator, .{ .Return = .{ .has_value = payload.has_value, .return_type = try module.typeFromHIR(switch (payload.return_type) {
                     .Unknown => .Nothing,
@@ -502,15 +476,6 @@ pub const BytecodeGenerator = struct {
                     else => payload.container_type,
                 }), .field_index = payload.field_index } }),
                 .StoreFieldName => |payload| try self.instructions.append(self.allocator, .{ .StoreFieldName = .{ .field_name = payload.field_name } }),
-                .TryBegin => |payload| {
-                    const id = try self.ensureLabelId(payload.catch_label);
-                    try self.instructions.append(self.allocator, .{ .TryBegin = .{ .label_id = id } });
-                },
-                .TryCatch => |payload| {
-                    const exc_type = if (payload.exception_type) |t| module.typeFromHIR(t) catch return error.UnknownType else null;
-                    try self.instructions.append(self.allocator, .{ .TryCatch = .{ .exception_type = exc_type } });
-                },
-                .Throw => |payload| try self.instructions.append(self.allocator, .{ .Throw = .{ .exception_type = try module.typeFromHIR(payload.exception_type) } }),
                 .EnterScope => |payload| try self.instructions.append(self.allocator, .{ .EnterScope = .{ .scope_id = payload.scope_id, .var_count = payload.var_count } }),
                 .ExitScope => |payload| try self.instructions.append(self.allocator, .{ .ExitScope = .{ .scope_id = payload.scope_id } }),
                 .ArrayNew => |payload| try self.instructions.append(self.allocator, .{ .ArrayNew = .{
@@ -556,18 +521,6 @@ pub const BytecodeGenerator = struct {
                     .enum_name = payload.enum_name,
                     .variant_name = payload.variant_name,
                     .variant_index = payload.variant_index,
-                } }),
-                .Print => try self.instructions.append(self.allocator, .Print),
-                .PrintBegin => try self.instructions.append(self.allocator, .PrintBegin),
-                .PrintStr => |payload| try self.instructions.append(self.allocator, .{ .PrintStr = .{ .const_id = payload.const_id } }),
-                .PrintVal => try self.instructions.append(self.allocator, .PrintVal),
-                .PrintNewline => try self.instructions.append(self.allocator, .PrintNewline),
-                .PrintEnd => try self.instructions.append(self.allocator, .PrintEnd),
-                .PrintInterpolated => |payload| try self.instructions.append(self.allocator, .{ .PrintInterpolated = .{
-                    .format_parts = payload.format_parts,
-                    .placeholder_indices = payload.placeholder_indices,
-                    .argument_count = payload.argument_count,
-                    .format_part_ids = payload.format_part_ids,
                 } }),
                 .Peek => |payload| try self.instructions.append(self.allocator, .{ .Peek = .{
                     .name = payload.name,

@@ -98,7 +98,6 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
             try writer.print("ip[{d}] StoreSlot type:{s}\n", .{ idx, @tagName(payload.type_tag) });
             try writeSlotOperandDetail("    target", payload.target, writer);
         },
-        .StoreConstSlot => |operand| try writeSlotOperand(idx, "StoreConst", operand, writer),
         .PushStorageRef => |operand| try writeSlotOperand(idx, "PushStorageRef", operand, writer),
         .BindAlias => |payload| try writer.print("ip[{d}] BindAlias slot:{} type:{s}\n", .{ idx, payload.alias_slot, @tagName(payload.type_tag) }),
         .LoadAlias => |payload| try writer.print("ip[{d}] LoadAlias slot:{}\n", .{ idx, payload.slot_index }),
@@ -119,17 +118,7 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .JumpIfTrue => |payload| try writer.print("ip[{d}] JumpIfTrue label:{} type:{s}\n", .{ idx, payload.label_id, @tagName(payload.condition_type) }),
         .Label => |payload| try writer.print("ip[{d}] Label {}\n", .{ idx, payload.id }),
         .Call => |payload| try writeCallInstruction(idx, "Call", payload, writer),
-        .TailCall => |payload| try writeCallInstruction(idx, "TailCall", payload, writer),
         .Return => |payload| try writer.print("ip[{d}] Return has_value:{} type:{s}\n", .{ idx, payload.has_value, @tagName(payload.return_type) }),
-        .TryBegin => |payload| try writer.print("ip[{d}] TryBegin label:{}\n", .{ idx, payload.label_id }),
-        .TryCatch => |payload| {
-            if (payload.exception_type) |et| {
-                try writer.print("ip[{d}] TryCatch type:{s}\n", .{ idx, @tagName(et) });
-            } else {
-                try writer.print("ip[{d}] TryCatch type:any\n", .{idx});
-            }
-        },
-        .Throw => |payload| try writer.print("ip[{d}] Throw type:{s}\n", .{ idx, @tagName(payload.exception_type) }),
         .EnterScope => |payload| try writer.print("ip[{d}] EnterScope id:{} vars:{}\n", .{ idx, payload.scope_id, payload.var_count }),
         .ExitScope => |payload| try writer.print("ip[{d}] ExitScope id:{}\n", .{ idx, payload.scope_id }),
         .ArrayNew => |payload| {
@@ -168,12 +157,6 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .SetField => |payload| try writer.print("ip[{d}] SetField {s} idx:{} container:{s}\n", .{ idx, payload.field_name, payload.field_index, @tagName(payload.container_type) }),
         .StoreFieldName => |payload| try writer.print("ip[{d}] StoreFieldName {s}\n", .{ idx, payload.field_name }),
         .Print => try writer.print("ip[{d}] Print\n", .{idx}),
-        .PrintInterpolated => |payload| {
-            try writer.print("ip[{d}] PrintInterpolated parts:{} placeholders:{} args:{}\n", .{ idx, payload.format_parts.len, payload.placeholder_indices.len, payload.argument_count });
-            try writeStringSlice("    format_parts", payload.format_parts, writer);
-            try writeU32Slice("    placeholder_indices", payload.placeholder_indices, writer);
-            try writeU32Slice("    format_part_ids", payload.format_part_ids, writer);
-        },
         .Peek => |payload| {
             const name = payload.name orelse "-";
             try writer.print("ip[{d}] Peek name:{s} type:{s}\n", .{ idx, name, @tagName(payload.value_type) });
