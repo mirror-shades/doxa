@@ -199,11 +199,12 @@ fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
-        var j = std.mem.indexOf(u8, line, "]") orelse 0;
-        if (j == 0) break;
+        const j = std.mem.indexOf(u8, line, "]") orelse continue;
+        if (j == 0) continue;
         const lineWithVar = line[j + 1 ..];
-        j = std.mem.indexOf(u8, lineWithVar, ":") orelse unreachable;
-        const lineWithoutVar = lineWithVar[j + 3 ..];
+        const colon_pos = std.mem.indexOf(u8, lineWithVar, ":") orelse continue;
+        if (colon_pos + 3 > lineWithVar.len) continue;
+        const lineWithoutVar = lineWithVar[colon_pos + 3 ..];
         const foundType = grabType(lineWithoutVar);
         const foundValue = grabValue(lineWithoutVar);
 

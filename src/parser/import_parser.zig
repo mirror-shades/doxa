@@ -21,6 +21,7 @@ pub const ImportedSymbol = struct {
     return_type_info: ?ast.TypeInfo = null,
     enum_role: ?EnumRole = null,
     enum_type_name: ?[]const u8 = null,
+    used: bool = false,
 };
 
 pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {

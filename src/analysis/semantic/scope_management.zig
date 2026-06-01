@@ -21,7 +21,10 @@ pub fn lookupVariable(
 ) ?*Variable {
     if (current_scope) |scope| {
         const result = scope.lookupVariable(name);
-        if (result != null) return result;
+        if (result != null) {
+            scope.markUsed(name);
+            return result;
+        }
     }
 
     // Check for imported symbols if not found in scope
@@ -33,9 +36,9 @@ pub fn lookupVariable(
         };
 
         if (p.imported_symbols) |imported_symbols| {
-            if (imported_symbols.get(name)) |imported_symbol| {
-                // Create a variable for the imported symbol
-                return createImportedSymbolVariable(allocator, name, imported_symbol);
+            if (imported_symbols.getPtr(name)) |imported_symbol| {
+                imported_symbol.used = true;
+                return createImportedSymbolVariable(allocator, name, imported_symbol.*);
             }
         }
 

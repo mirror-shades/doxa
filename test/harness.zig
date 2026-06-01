@@ -137,10 +137,10 @@ pub fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ar
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
-        const close_bracket = std.mem.indexOfScalar(u8, line, ']') orelse break;
+        const close_bracket = std.mem.indexOfScalar(u8, line, ']') orelse continue;
         const line_with_var = line[close_bracket + 1 ..];
-        const colon = std.mem.indexOfScalar(u8, line_with_var, ':') orelse break;
-        if (colon + 3 > line_with_var.len) break;
+        const colon = std.mem.indexOfScalar(u8, line_with_var, ':') orelse continue;
+        if (colon + 3 > line_with_var.len) continue;
         const line_without_var = line_with_var[colon + 3 ..];
 
         try outputs.append(.{

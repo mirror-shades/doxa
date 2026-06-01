@@ -589,7 +589,10 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
 pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
     if (self.current_scope) |scope| {
         const result = scope.lookupVariable(name);
-        if (result != null) return result;
+        if (result != null) {
+            scope.markUsed(name);
+            return result;
+        }
     }
     if (self.parser) |parser| {
         const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
@@ -599,8 +602,9 @@ pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
         };
 
         if (parser.imported_symbols) |imported_symbols| {
-            if (imported_symbols.get(name)) |imported_symbol| {
-                return createImportedSymbolVariable(self, name, imported_symbol);
+            if (imported_symbols.getPtr(name)) |imported_symbol| {
+                imported_symbol.used = true;
+                return createImportedSymbolVariable(self, name, imported_symbol.*);
             }
         }
         _ = parser_mut.ensureModuleNamespace(name) catch |err| {
@@ -809,7 +813,8 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
             };
             defer self.allocator.free(full_name);
 
-            if (imported_symbols.get(full_name)) |imported_symbol| {
+            if (imported_symbols.getPtr(full_name)) |imported_symbol| {
+                imported_symbol.used = true;
                 // Return appropriate type based on the imported symbol kind
                 switch (imported_symbol.kind) {
                     .Function => {
