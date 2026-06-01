@@ -6,12 +6,10 @@
 !src/**
 !std/**
 !test/**
-test/out/
+    test/out/**
+    test/advent2025/**
 !.github/**
 !.gitattributes
-doxa/**
-.doxa-cache/
-bin/
 !.gitignore
 !build.zig
 !build.zig.zon

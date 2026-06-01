@@ -671,7 +671,6 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
 
 /// Unify two types, checking compatibility
 pub fn unifyTypes(ctx: *TypeAnalysisContext, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
-    // Handle union types first - check if actual type is compatible with the expected union
     if (expected.base == .Union) {
         if (expected.union_type) |exp_union| {
             const is_compatible = try union_handling.isTypeCompatibleWithUnion(
@@ -683,12 +682,37 @@ pub fn unifyTypes(ctx: *TypeAnalysisContext, expected: *const ast.TypeInfo, actu
             );
             if (!is_compatible) {
                 ctx.fatal_error.* = true;
-                return;
             }
+            return;
         }
-    } else {
-        // Non-union expected type - use regular type unification
-        try unifyTypes(ctx, expected, actual, span);
+        return;
+    }
+
+    // Actual is Union, expected is not: require explicit narrowing with 'as' or 'match'
+    if (actual.base == .Union) {
+        ctx.reporter.reportCompileError(
+            span.location,
+            ErrorCode.TYPE_MISMATCH,
+            "{s} is not assignable to type {s}; use 'as' or 'match' to narrow the union",
+            .{ @tagName(actual.base), @tagName(expected.base) },
+        );
+        ctx.fatal_error.* = true;
+        return;
+    }
+
+    // Non-union comparison: base type equality + implicit numeric conversions
+    if (expected.base != actual.base) {
+        if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) return;
+        if (expected.base == .Byte and actual.base == .Int) return;
+        if (expected.base == .Int and actual.base == .Byte) return;
+
+        ctx.reporter.reportCompileError(
+            span.location,
+            ErrorCode.TYPE_MISMATCH,
+            "{s} is not assignable to type {s}",
+            .{ @tagName(actual.base), @tagName(expected.base) },
+        );
+        ctx.fatal_error.* = true;
     }
 }
 
