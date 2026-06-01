@@ -344,6 +344,47 @@ pub const SemanticAnalyzer = struct {
         //         }
         //     }
         // }
+
+        try self.reportUnused(root_scope);
+        try self.reportUnusedImports();
+    }
+
+    fn reportUnused(self: *SemanticAnalyzer, scope: *Scope) ErrorList!void {
+        if (scope.is_deinited) return;
+
+        var it = scope.variables.valueIterator();
+        while (it.next()) |variable_ptr| {
+            const variable = variable_ptr.*;
+            if (variable.used) continue;
+            if (variable.is_alias) continue;
+
+            if (variable.type == .FUNCTION) {
+                if (self.parser != null and self.parser.?.entry_point_name != null and std.mem.eql(u8, variable.name, self.parser.?.entry_point_name.?)) continue;
+                self.reporter.reportWarning(null, ErrorCode.UNUSED_FUNCTION, "unused function '{s}'", .{variable.name});
+            } else if (variable.is_param) {
+                self.reporter.reportWarning(null, ErrorCode.UNUSED_PARAMETER, "unused parameter '{s}'", .{variable.name});
+            } else {
+                self.reporter.reportWarning(null, ErrorCode.UNUSED_VARIABLE, "unused variable '{s}'", .{variable.name});
+            }
+        }
+
+        for (scope.children.items) |child| {
+            try self.reportUnused(child);
+        }
+    }
+
+    fn reportUnusedImports(self: *SemanticAnalyzer) ErrorList!void {
+        if (self.parser) |p| {
+            if (p.imported_symbols) |symbols| {
+                var it = symbols.iterator();
+                while (it.next()) |entry| {
+                    const sym = entry.value_ptr.*;
+                    if (!sym.used) {
+                        self.reporter.reportWarning(null, ErrorCode.UNUSED_IMPORT, "unused import '{s}'", .{sym.name});
+                    }
+                }
+            }
+        }
     }
 
     fn processImportedSymbols(self: *SemanticAnalyzer) ErrorList!void {
@@ -2335,7 +2376,7 @@ pub const SemanticAnalyzer = struct {
                 param_type_info.* = .{ .base = .Nothing }; // Default to nothing if no type specified
             }
 
-            _ = func_scope.createValueBinding(
+            const param_var = func_scope.createValueBinding(
                 param.name.lexeme,
                 TokenLiteral{ .nothing = {} }, // Parameters get their values at call time
                 helpers.convertTypeToTokenType(self, param_type_info.base),
@@ -2355,6 +2396,7 @@ pub const SemanticAnalyzer = struct {
                     return err;
                 }
             };
+            param_var.is_param = true;
         }
 
         // Temporarily set current scope to function scope

@@ -20,6 +20,8 @@ pub const Variable = struct {
     storage_id: u32,
     id: u32,
     is_alias: bool,
+    is_param: bool = false,
+    used: bool = false,
 };
 
 pub const ScopeKind = enum {
@@ -193,6 +195,14 @@ pub const Scope = struct {
         if (self.name_map.get(name)) |v| return v;
         if (self.parent) |p| return p.lookupVariable(name);
         return null;
+    }
+
+    pub fn markUsed(self: *Scope, name: []const u8) void {
+        if (self.name_map.get(name)) |v| {
+            v.used = true;
+            return;
+        }
+        if (self.parent) |p| p.markUsed(name);
     }
 };
 
