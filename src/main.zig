@@ -33,6 +33,7 @@ const inline_zig = @import("./parser/inline_zig.zig");
 const inline_zig_compiler = @import("./inline_zig/compiler.zig");
 const StructMethodInfo = @import("./analysis/semantic/semantic.zig").StructMethodInfo;
 const LspServer = @import("./lsp/server.zig");
+const Resolver = @import("./resolver/resolver.zig").Resolver;
 
 const constants = @import("common/constants.zig");
 const MAX_FILE_SIZE = constants.MAX_SOURCE_FILE_BYTES;
@@ -645,6 +646,13 @@ pub fn main() !void {
         reporter.report(.Debug, .Hint, null, "AST", "{s}", .{ast_dump.items});
     }
 
+    profiler.startPhase(Phase.RESOLVING);
+    var resolver = Resolver.init(memoryManager.getAnalysisAllocator(), &parser);
+    defer resolver.deinit();
+    try resolver.resolve(parsedStatements);
+    profiler.stopPhase();
+    exitIfCompileErrors(&reporter);
+
     profiler.startPhase(Phase.SEMANTIC_A);
     var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), &reporter, &memoryManager, &parser);
     defer semantic_analyzer.deinit();
@@ -660,7 +668,6 @@ pub fn main() !void {
 
     const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa", cli_options.cache_dir);
 
-    try parser.ensureReachableModuleDependencies();
     var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
     defer reachable_modules.deinit();
     const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, &reporter);

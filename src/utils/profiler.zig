@@ -4,6 +4,7 @@ pub const Phase = enum {
     NONE,
     LEXIC_A,
     PARSING,
+    RESOLVING,
     SEMANTIC_A,
     GENERATE_S,
     GENERATE_B,

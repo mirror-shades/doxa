@@ -78,8 +78,6 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
     }
     const name = self.peek();
 
-    try self.declared_types.put(name.lexeme, {});
-
     self.advance();
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
@@ -99,8 +97,6 @@ pub fn parseEnumDecl(self: *Parser) ErrorList!ast.Stmt {
         }
         const variant_token = self.peek();
         try variants.append(variant_token);
-
-        try self.declared_types.put(variant_token.lexeme, {});
 
         self.advance();
 
@@ -153,8 +149,6 @@ pub fn parseGroupDecl(self: *Parser) ErrorList!ast.Stmt {
         return error.ExpectedIdentifier;
     }
     const name = self.peek();
-
-    try self.declared_types.put(name.lexeme, {});
 
     self.advance();
     if (self.peek().type != .LEFT_BRACE) {
@@ -339,8 +333,6 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
         return error.ExpectedIdentifier;
     }
     const name = self.peek();
-
-    try self.declared_types.put(name.lexeme, {});
 
     self.advance();
 
