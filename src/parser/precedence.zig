@@ -21,7 +21,6 @@ const assignment = Parser.assignment;
 const fieldAccess = Parser.fieldAccess;
 const print = Parser.print;
 const braceExpr = expr_parser.braceExpr;
-const identifierOrStructLiteral = expr_parser.identifierOrStructLiteral;
 const structLiteralExpr = expr_parser.structLiteralExpr;
 
 const parseStructDecl = decl_parser.parseStructDecl;
@@ -32,7 +31,6 @@ const parseIfExpr = expr_parser.parseIfExpr;
 const whileExpr = expr_parser.whileExpr;
 const forExpr = expr_parser.forExpr;
 const parseMatchExpr = expr_parser.parseMatchExpr;
-const parseStructOrMatch = expr_parser.parseStructOrMatch;
 const returnExpr = expr_parser.returnExpr;
 const parseBreakExpr = expr_parser.parseBreakExpr;
 const unreachableExpr = expr_parser.unreachableExpr;
@@ -142,7 +140,7 @@ pub const rules = blk: {
     // Variables and assignment
     r.set(.VAR, .{ .prefix = variable });
     r.set(.CONST, .{ .prefix = variable });
-    r.set(.IDENTIFIER, .{ .prefix = identifierOrStructLiteral });
+    r.set(.IDENTIFIER, .{ .prefix = variable });
     r.set(.STRUCT_INSTANCE, .{ .prefix = structLiteralExpr });
     r.set(.THIS, .{ .prefix = variable });
     r.set(.ASSIGN, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
@@ -177,7 +175,7 @@ pub const rules = blk: {
     // Add struct declaration rule in the rules block
     r.set(.STRUCT_TYPE, .{ .prefix = parseStructDecl });
 
-    // Note: Struct/match lookahead is handled by identifierOrStructLiteral
+    // Add struct declaration rule in the rules block
     r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
 
     // Add quantifier operators
