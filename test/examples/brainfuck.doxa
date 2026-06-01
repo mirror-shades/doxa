@@ -69,7 +69,7 @@ function interpret(scan :: string) {
     }
 }
 
-entry function main() {
+public entry function main() {
     interpret("++.")
     interpret("++++.")
     interpret("++.>+++.")

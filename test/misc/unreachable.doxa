@@ -2,7 +2,7 @@ function hopeless() returns int {
     unreachable
 }
 
-entry function main() {
+public entry function main() {
     if (true) {
         unreachable
     }

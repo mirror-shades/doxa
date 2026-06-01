@@ -10,7 +10,7 @@ function bad() returns int[] | Error {
     return Error.FailedToShunt
 }
 
-entry function main() {
+public entry function main() {
     const a is ok()
     a?
     const b is bad()

@@ -1,9 +1,7 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
 const Parser = @import("./parser_types.zig").Parser;
-const expr_parser = @import("./expression_parser.zig");
 const Reporting = @import("../utils/reporting.zig");
-const Reporter = Reporting.Reporter;
 const Location = Reporting.Location;
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -12,7 +10,6 @@ const token = @import("../types/token.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const expression_parser = @import("./expression_parser.zig");
 const import_parser = @import("./import_parser.zig");
-const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
 
 pub fn parse(self: *Parser, reporter: *Reporter) ErrorList![]ast.Stmt {
     reporter.debug("Token stream:", .{});
