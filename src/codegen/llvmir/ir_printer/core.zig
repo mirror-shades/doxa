@@ -285,7 +285,13 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
         ) !StackVal {
             if (incoming.ty == target) return incoming;
-            if (target == .Nothing or incoming.ty == .Nothing) return incoming;
+            if (incoming.ty == .Nothing) {
+                if (target == .PTR) {
+                    return .{ .name = "null", .ty = .PTR, .array_type = incoming.array_type };
+                }
+                return incoming;
+            }
+            if (target == .Nothing) return incoming;
 
             if (incoming.ty == .Value or target == .Value) {
                 return self.coerceForMerge(incoming, target, id, w);
@@ -623,6 +629,7 @@ pub fn Methods(comptime Ctx: type) type {
             if (std.mem.eql(u8, name, "dice_roll")) return "doxa_dice_roll";
             if (std.mem.eql(u8, name, "find")) return "doxa_find";
             if (std.mem.eql(u8, name, "clear")) return "doxa_clear";
+            if (std.mem.eql(u8, name, "print")) return "doxa_write_cstr";
             return name;
         }
 

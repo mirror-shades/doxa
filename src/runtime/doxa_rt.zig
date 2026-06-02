@@ -746,6 +746,20 @@ pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callc
     return hdr_ptr;
 }
 
+pub export fn doxa_array_range(start: i64, end: i64) callconv(.c) *ArrayHeader {
+    const count: u64 = if (end >= start) @intCast(end - start + 1) else 0;
+    const hdr = doxa_array_new(8, 0, count);
+    if (count == 0) return hdr;
+
+    const data = hdr.data orelse return hdr;
+    const i64_data: [*]i64 = @ptrCast(@alignCast(data));
+    var i: u64 = 0;
+    while (i < count) : (i += 1) {
+        i64_data[i] = start + @as(i64, @intCast(i));
+    }
+    return hdr;
+}
+
 const ARRAY_TAG: u64 = 6;
 
 pub export fn doxa_array_new_nested(

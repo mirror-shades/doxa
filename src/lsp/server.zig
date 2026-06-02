@@ -1,4 +1,5 @@
 const std = @import("std");
+const source_cache = @import("../utils/source_cache.zig");
 const reporting = @import("../utils/reporting.zig");
 const Reporter = reporting.Reporter;
 const ReporterOptions = reporting.ReporterOptions;
@@ -99,7 +100,9 @@ const CaptureSink = struct {
 };
 
 pub fn run(allocator: std.mem.Allocator, options: RunOptions) !void {
-    var reporter = Reporter.init(allocator, options.reporter_options);
+    var cache = source_cache.SourceCache.init(allocator);
+    defer cache.deinit();
+    var reporter = Reporter.init(allocator, options.reporter_options, &cache);
     defer reporter.deinit();
 
     var sink = StdIoSink.init(allocator, options.trace_io);
@@ -113,7 +116,9 @@ pub fn runDebugHarness(allocator: std.mem.Allocator, options: DebugHarnessOption
     std.debug.print("=== Doxa LSP Debug Harness ===\n", .{});
     std.debug.print("Target file: {s}\n", .{options.script_path});
 
-    var reporter = Reporter.init(allocator, options.reporter_options);
+    var src_cache = source_cache.SourceCache.init(allocator);
+    defer src_cache.deinit();
+    var reporter = Reporter.init(allocator, options.reporter_options, &src_cache);
     defer reporter.deinit();
 
     const file_uri = try reporter.ensureFileUri(options.script_path);

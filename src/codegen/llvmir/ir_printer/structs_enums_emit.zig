@@ -1019,7 +1019,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         const field_types: ?[]HIR.HIRType = struct_val.struct_field_types;
-        const field_count: usize = if (field_types) |fts| fts.len else @intCast(gf.field_index + 1);
+        const field_count: usize = if (field_types != null and field_types.?.len > 0) field_types.?.len else @intCast(gf.field_index + 1);
         const field_index: u32 = resolveStructFieldIndex(gf.field_name, struct_val.struct_field_names, gf.field_index);
         if (field_index >= field_count) return error.StackUnderflow;
 
@@ -1027,8 +1027,8 @@ pub fn Methods(comptime Ctx: type) type {
         defer self.allocator.free(struct_type_llvm);
 
         // Get field type; prefer metadata from the struct value.
-        const field_type: HIR.HIRType = if (field_types) |fts|
-            fts[@intCast(field_index)]
+        const field_type: HIR.HIRType = if (field_types != null and field_types.?.len > 0)
+            field_types.?[@intCast(field_index)]
         else if (gf.field_type != .Unknown and gf.field_type != .Nothing)
             gf.field_type
         else switch (gf.container_type) {
@@ -1080,6 +1080,12 @@ pub fn Methods(comptime Ctx: type) type {
                 .Array => |elem_ptr| pushed.array_type = elem_ptr.*,
                 .Struct => |sid| {
                     if (self.struct_fields_by_id.get(sid)) |fts| pushed.struct_field_types = fts;
+                    if (self.struct_type_names_by_id.get(sid)) |tn| {
+                        pushed.struct_type_name = tn;
+                        if (self.struct_field_names_by_type.get(tn)) |names| {
+                            pushed.struct_field_names = names;
+                        }
+                    }
                 },
                 else => {},
             }

@@ -63,6 +63,10 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
         return err;
     };
 
+    if (self.reporter.source_cache) |sc| {
+        sc.load(module_data.resolved_path, module_data.source) catch {};
+    }
+
     var module_lexer = try LexicalAnalyzer.init(self.allocator, module_data.source, module_data.resolved_path, self.reporter);
     defer module_lexer.deinit();
 
