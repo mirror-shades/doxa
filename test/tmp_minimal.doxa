@@ -1,5 +1,0 @@
-module io from "std/io/io.doxa"
-
-public entry function main() {
-    @print("@io.input\n")
-}
