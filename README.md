@@ -1,6 +1,6 @@
 # Doxa Programming Language  
 [Documentation](https://mirror-shades.github.io/doxa/)  
-[![DeepWiki](https:#deepwiki.com/badge.svg)](https://deepwiki.com/mirror-shades/doxa)  
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/mirror-shades/doxa)
 
 Doxa is high level, statically typed, memory managed language. It has a highly readable and consistant syntax aimed at reducing cognative load, and producing code which is simple and aesthetic. It features a novel memory management system based on arena allocation. It eschews privleged error and optional channels in favor of robust type union and narrowing system. It interfaces with Zig, which brings along all of Zig's C interoperability.
 
