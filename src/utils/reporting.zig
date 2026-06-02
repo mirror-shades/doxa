@@ -2,6 +2,8 @@ const std = @import("std");
 const builtin = @import("builtin");
 const Errors = @import("errors.zig");
 const ErrorList = Errors.ErrorList;
+const source_cache = @import("source_cache.zig");
+const source_render = @import("source_render.zig");
 
 pub const MAX_DIAGNOSTIC_LOG_BYTES: usize = 2 * (1024 * 1024);
 
@@ -85,6 +87,8 @@ pub const Reporter = struct {
     allocator: std.mem.Allocator,
     file_uri_cache: std.StringHashMap([]const u8),
     published_state: std.StringHashMap(PublishedState),
+    source_cache: ?*source_cache.SourceCache,
+    use_ansi: bool,
 
     const FileNeedleContext = struct {
         treat_as_uri: bool,
@@ -120,13 +124,15 @@ pub const Reporter = struct {
         }
     };
 
-    pub fn init(allocator: std.mem.Allocator, options: ReporterOptions) Reporter {
+    pub fn init(allocator: std.mem.Allocator, options: ReporterOptions, source_cache_ptr: ?*source_cache.SourceCache) Reporter {
         return .{
             .diagnostics = std.array_list.Managed(Diagnostic).init(allocator),
             .options = options,
             .allocator = allocator,
             .file_uri_cache = std.StringHashMap([]const u8).init(allocator),
             .published_state = std.StringHashMap(PublishedState).init(allocator),
+            .source_cache = source_cache_ptr,
+            .use_ansi = checkAnsi(allocator),
         };
     }
 
@@ -146,6 +152,11 @@ pub const Reporter = struct {
             self.allocator.free(entry.value_ptr.*);
         }
         self.file_uri_cache.deinit();
+    }
+
+    fn checkAnsi(allocator: std.mem.Allocator) bool {
+        _ = allocator;
+        return false;
     }
 
     pub fn report(
@@ -653,53 +664,84 @@ pub const Reporter = struct {
     }
 
     fn logDiagnostic(self: *Reporter, diag: *const Diagnostic) void {
-        var line_buf = std.array_list.Managed(u8).init(self.allocator);
-        defer line_buf.deinit();
+        if (!self.options.log_to_stderr) return;
 
-        if (diag.loc) |l| {
-            const file = l.file;
-            const sl = l.range.start_line;
-            const sc = l.range.start_col;
-            if (diag.code) |c| {
-                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}][{s}] {s}:{d}:{d}: {s}", .{
-                    @tagName(diag.phase),
-                    @tagName(diag.severity),
-                    c,
-                    file,
-                    sl,
-                    sc,
-                    diag.message,
-                }) catch {};
-            } else {
-                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}] {s}:{d}:{d}: {s}", .{
-                    @tagName(diag.phase),
-                    @tagName(diag.severity),
-                    file,
-                    sl,
-                    sc,
-                    diag.message,
-                }) catch {};
+        if (self.source_cache) |sc| {
+            var arena = std.heap.ArenaAllocator.init(self.allocator);
+            defer arena.deinit();
+            const aa = arena.allocator();
+
+            var buf = std.array_list.Managed(u8).init(aa);
+
+            const renderer = source_render.DiagnosticRenderer{
+                .source_cache = sc,
+                .allocator = aa,
+                .use_ansi = self.use_ansi,
+            };
+
+            renderer.render(buf.writer(), diag) catch {
+                buf.clearRetainingCapacity();
+                logDiagnosticPlain(self, diag, &buf);
+            };
+
+            if (buf.items.len > 0) {
+                std.debug.print("{s}", .{buf.items});
             }
         } else {
-            if (diag.code) |c| {
-                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}][{s}] {s}", .{
-                    @tagName(diag.phase),
-                    @tagName(diag.severity),
-                    c,
-                    diag.message,
-                }) catch {};
-            } else {
-                _ = std.fmt.format(line_buf.writer(), "[{s}][{s}] {s}", .{
-                    @tagName(diag.phase),
-                    @tagName(diag.severity),
-                    diag.message,
-                }) catch {};
-            }
+            logDiagnosticPlain(self, diag, null);
         }
+    }
 
-        const line = line_buf.items;
-        if (self.options.log_to_stderr) {
-            std.debug.print("DoxVM: {s}\n", .{line});
+    fn logDiagnosticPlain(
+        self: *Reporter,
+        diag: *const Diagnostic,
+        line_buf: ?*std.array_list.Managed(u8),
+    ) void {
+        _ = self;
+        if (line_buf) |buf| {
+            if (diag.loc) |l| {
+                if (diag.code) |c| {
+                    std.fmt.format(buf.writer(), "DoxVM: [{s}][{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                        @tagName(diag.phase), @tagName(diag.severity), c, l.file, l.range.start_line, l.range.start_col, diag.message,
+                    }) catch {};
+                } else {
+                    std.fmt.format(buf.writer(), "DoxVM: [{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                        @tagName(diag.phase), @tagName(diag.severity), l.file, l.range.start_line, l.range.start_col, diag.message,
+                    }) catch {};
+                }
+            } else {
+                if (diag.code) |c| {
+                    std.fmt.format(buf.writer(), "DoxVM: [{s}][{s}][{s}] {s}\n", .{
+                        @tagName(diag.phase), @tagName(diag.severity), c, diag.message,
+                    }) catch {};
+                } else {
+                    std.fmt.format(buf.writer(), "DoxVM: [{s}][{s}] {s}\n", .{
+                        @tagName(diag.phase), @tagName(diag.severity), diag.message,
+                    }) catch {};
+                }
+            }
+        } else {
+            if (diag.loc) |l| {
+                if (diag.code) |c| {
+                    std.debug.print("DoxVM: [{s}][{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                        @tagName(diag.phase), @tagName(diag.severity), c, l.file, l.range.start_line, l.range.start_col, diag.message,
+                    });
+                } else {
+                    std.debug.print("DoxVM: [{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                        @tagName(diag.phase), @tagName(diag.severity), l.file, l.range.start_line, l.range.start_col, diag.message,
+                    });
+                }
+            } else {
+                if (diag.code) |c| {
+                    std.debug.print("DoxVM: [{s}][{s}][{s}] {s}\n", .{
+                        @tagName(diag.phase), @tagName(diag.severity), c, diag.message,
+                    });
+                } else {
+                    std.debug.print("DoxVM: [{s}][{s}] {s}\n", .{
+                        @tagName(diag.phase), @tagName(diag.severity), diag.message,
+                    });
+                }
+            }
         }
     }
 

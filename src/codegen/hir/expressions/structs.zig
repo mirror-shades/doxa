@@ -543,11 +543,13 @@ pub const StructsHandler = struct {
         const enum_type_value = HIRValue{ .string = enum_data.name.lexeme }; // Simple representation for now
         const const_idx = try self.generator.addConstant(enum_type_value);
         try self.generator.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
-        try self.generator.instructions.append(.{ .StoreConst = .{
+        try self.generator.instructions.append(.{ .StoreDecl = .{
             .var_index = var_idx,
             .var_name = enum_data.name.lexeme,
             .scope_kind = self.generator.symbol_table.determineVariableScope(enum_data.name.lexeme),
             .module_context = null,
+            .declared_type = HIRType{ .Enum = 0 },
+            .is_const = true,
         } });
     }
 

@@ -84,7 +84,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 ## TODO:
 
 
-- Enum ID is always 0 in sem analysis
+
 - flesh out standard lib
 - sandbox zig execution
 - add better bounding to lsp mode

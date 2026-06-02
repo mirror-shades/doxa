@@ -4,6 +4,7 @@ const HIRValue = SoxaValues.HIRValue;
 const nothing_value = @import("../../codegen/hir/soxa_values.zig").nothing_value;
 const HIRStructField = SoxaValues.HIRStructField;
 const HIRMapEntry = SoxaValues.HIRMapEntry;
+const ArithOp = @import("../../codegen/hir/soxa_instructions.zig").ArithOp;
 const HIRArray = SoxaValues.HIRArray;
 const SoxaTypes = @import("../../codegen/hir/soxa_types.zig");
 const HIRType = SoxaTypes.HIRType;
@@ -821,6 +822,18 @@ pub fn getDefaultValue(hir_type: HIRType) HIRValue {
 }
 
 const CompoundOp = enum { add, sub, mul, div, mod, pow };
+
+pub fn arrayCompoundAssign(vm: anytype, bounds_check: bool, op: ArithOp) !void {
+    _ = bounds_check;
+    switch (op) {
+        .Add => try execArrayGetAndCompound(vm, .add),
+        .Sub => try execArrayGetAndCompound(vm, .sub),
+        .Mul => try execArrayGetAndCompound(vm, .mul),
+        .Div, .IntDiv => try execArrayGetAndCompound(vm, .div),
+        .Mod => try execArrayGetAndCompound(vm, .mod),
+        .Pow => try execArrayGetAndCompound(vm, .pow),
+    }
+}
 
 fn extractCompoundIndex(index: HIRFrame, vm: anytype) !u32 {
     return switch (index.value) {

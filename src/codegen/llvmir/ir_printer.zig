@@ -47,7 +47,6 @@ pub const IRPrinter = struct {
     pub const findTopLevelInitEnd = ModuleLayoutMethods.findTopLevelInitEnd;
     pub const getFunctionRange = ModuleLayoutMethods.getFunctionRange;
     pub const collectFunctionStructReturnInfo = ModuleLayoutMethods.collectFunctionStructReturnInfo;
-    pub const collectStructFieldNames = ModuleLayoutMethods.collectStructFieldNames;
 
     const FunctionEmitMethods = @import("./ir_printer/function_emit.zig").Methods(Ctx);
     pub const writeFunction = FunctionEmitMethods.writeFunction;

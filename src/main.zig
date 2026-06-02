@@ -28,6 +28,7 @@ const Phase = ProfilerImport.Phase;
 const Profiler = ProfilerImport.Profiler;
 const BytecodeGenerator = @import("./codegen/bytecode/generator.zig").BytecodeGenerator;
 const BytecodeWriter = @import("./codegen/bytecode/writer.zig");
+const source_cache = @import("./utils/source_cache.zig");
 const BytecodeModule = @import("./codegen/bytecode/module.zig").BytecodeModule;
 const inline_zig = @import("./parser/inline_zig.zig");
 const inline_zig_compiler = @import("./inline_zig/compiler.zig");
@@ -591,11 +592,14 @@ pub fn main() !void {
         },
     }
 
-    var reporter = Reporter.init(gpa.allocator(), cli_options.reporter_options);
-    defer reporter.deinit();
-
     var memoryManager = try MemoryManager.init(gpa.allocator());
     defer memoryManager.deinit();
+
+    var sourceCache = source_cache.SourceCache.init(gpa.allocator());
+    defer sourceCache.deinit();
+
+    var reporter = Reporter.init(gpa.allocator(), cli_options.reporter_options, &sourceCache);
+    defer reporter.deinit();
 
     var profiler = Profiler.init(gpa.allocator(), cli_options.profile);
     defer profiler.deinit();
@@ -621,6 +625,7 @@ pub fn main() !void {
 
     const source = try std.fs.cwd().readFileAlloc(memoryManager.getAnalysisAllocator(), path, MAX_FILE_SIZE);
     defer memoryManager.getAnalysisAllocator().free(source);
+    try sourceCache.load(path, source);
 
     profiler.startPhase(Phase.LEXIC_A);
     const lexedTokens = try lexicAnalysis(&memoryManager, source, path, &reporter);

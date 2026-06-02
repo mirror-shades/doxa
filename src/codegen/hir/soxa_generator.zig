@@ -24,7 +24,6 @@ const LabelGenerator = ResourceManager.LabelGenerator;
 const ConstantManager = ResourceManager.ConstantManager;
 const SymbolTable = @import("symbol_table.zig").SymbolTable;
 const TypeSystem = @import("type_system.zig").TypeSystem;
-const AliasTracker = @import("alias_tracker.zig").AliasTracker;
 const SlotManager = @import("slot_manager.zig").SlotManager;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
@@ -187,7 +186,6 @@ pub const HIRGenerator = struct {
     type_system: TypeSystem,
     struct_methods: std.StringHashMap(std.StringHashMap(StructMethodInfo)),
 
-    alias_tracker: AliasTracker,
     slot_manager: SlotManager,
 
     function_signatures: std.StringHashMap(FunctionInfo),
@@ -279,7 +277,6 @@ pub const HIRGenerator = struct {
             .label_generator = LabelGenerator.init(allocator),
             .type_system = TypeSystem.init(allocator, reporter, semantic_analyzer),
             .struct_methods = std.StringHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
-            .alias_tracker = AliasTracker.init(allocator),
             .slot_manager = SlotManager.init(allocator),
             .function_signatures = std.StringHashMap(FunctionInfo).init(allocator),
             .function_bodies = std.array_list.Managed(FunctionBody).init(allocator),
@@ -308,7 +305,6 @@ pub const HIRGenerator = struct {
         var methods_it = self.struct_methods.valueIterator();
         while (methods_it.next()) |tbl| tbl.*.deinit();
         self.struct_methods.deinit();
-        self.alias_tracker.deinit();
         self.slot_manager.deinit();
         self.function_signatures.deinit();
         self.function_bodies.deinit();
@@ -756,10 +752,11 @@ pub const HIRGenerator = struct {
                     try self.symbol_table.trackAliasParameter(param.name.lexeme);
                     const alias_slot = try self.slot_manager.allocateAliasSlot(param.name.lexeme, param_type);
                     try self.instructions.append(.{
-                        .StoreParamAlias = .{
-                            .param_name = param.name.lexeme,
-                            .param_type = param_type,
-                            .var_index = alias_slot,
+                        .BindAlias = .{
+                            .alias_name = param.name.lexeme,
+                            .target_variable_name = param.name.lexeme,
+                            .alias_slot = alias_slot,
+                            .target_type = param_type,
                         },
                     });
                 } else {
@@ -789,10 +786,11 @@ pub const HIRGenerator = struct {
                             const alias_slot = try self.slot_manager.allocateAliasSlot("this", HIRType{ .Struct = 0 });
 
                             try self.instructions.append(.{
-                                .StoreParamAlias = .{
-                                    .param_name = "this",
-                                    .param_type = HIRType{ .Struct = 0 },
-                                    .var_index = alias_slot,
+                                .BindAlias = .{
+                                    .alias_name = "this",
+                                    .target_variable_name = "this",
+                                    .alias_slot = alias_slot,
+                                    .target_type = HIRType{ .Struct = 0 },
                                 },
                             });
                         }
@@ -924,11 +922,13 @@ pub const HIRGenerator = struct {
                     const group_type_value = HIRValue{ .string = binding_name };
                     const const_idx = try self.addConstant(group_type_value);
                     try self.instructions.append(.{ .Const = .{ .value = group_type_value, .constant_id = const_idx } });
-                    try self.instructions.append(.{ .StoreConst = .{
+                    try self.instructions.append(.{ .StoreDecl = .{
                         .var_index = var_idx,
                         .var_name = binding_name,
                         .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
                         .module_context = null,
+                        .declared_type = HIRType{ .Group = gid_import },
+                        .is_const = true,
                     } });
                     continue;
                 }
@@ -958,11 +958,13 @@ pub const HIRGenerator = struct {
                 const enum_type_value = HIRValue{ .string = binding_name };
                 const const_idx = try self.addConstant(enum_type_value);
                 try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
-                try self.instructions.append(.{ .StoreConst = .{
+                try self.instructions.append(.{ .StoreDecl = .{
                     .var_index = var_idx,
                     .var_name = binding_name,
                     .scope_kind = .GlobalLocal,
                     .module_context = null,
+                    .declared_type = HIRType{ .Enum = 0 },
+                    .is_const = true,
                 } });
             }
         }
@@ -1237,7 +1239,7 @@ pub const HIRGenerator = struct {
             .Assignment => |assign| try assignments_handler.generateAssignment(assign, preserve_result),
             .CompoundAssign => |compound| try assignments_handler.generateCompoundAssign(compound, preserve_result),
 
-            .Print => |print| try io_handler.generatePrint(print, preserve_result),
+            .Print => unreachable, // @print is now a BuiltinCall, handled by generateBuiltinCall
             .Peek => |peek| try io_handler.generatePeek(peek, preserve_result),
             .PeekStruct => try io_handler.generatePeekStruct(expr.data, preserve_result),
             .Input => try io_handler.generateInput(expr.data),
@@ -1963,49 +1965,6 @@ pub const HIRGenerator = struct {
             },
             else => return null,
         }
-    }
-
-    pub fn generateTryStmt(self: *HIRGenerator, try_stmt: ast.TryStmt) !void {
-        const catch_label = try self.generateLabel("catch");
-        const end_label = try self.generateLabel("try_end");
-
-        try self.instructions.append(.{
-            .TryBegin = .{
-                .catch_label = catch_label,
-                .vm_catch_offset = 0,
-            },
-        });
-
-        for (try_stmt.try_body) |stmt| {
-            try SoxaStatements.generateStatement(self, stmt);
-        }
-
-        try self.instructions.append(.{
-            .Jump = .{
-                .label = end_label,
-                .vm_offset = 0,
-            },
-        });
-
-        try self.instructions.append(.{ .Label = .{
-            .name = catch_label,
-            .vm_address = 0,
-        } });
-
-        try self.instructions.append(.{
-            .TryCatch = .{
-                .exception_type = null,
-            },
-        });
-
-        for (try_stmt.catch_body) |stmt| {
-            try SoxaStatements.generateStatement(self, stmt);
-        }
-
-        try self.instructions.append(.{ .Label = .{
-            .name = end_label,
-            .vm_address = 0,
-        } });
     }
 
     pub fn isModuleNamespace(self: *HIRGenerator, name: []const u8) bool {

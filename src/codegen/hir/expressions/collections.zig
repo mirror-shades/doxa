@@ -8,6 +8,7 @@ const SoxaTypes = @import("../soxa_types.zig");
 const HIRType = SoxaTypes.HIRType;
 const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 const HIRMapEntry = @import("../soxa_values.zig").HIRMapEntry;
+const ArithOp = @import("../soxa_instructions.zig").ArithOp;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
@@ -109,18 +110,21 @@ pub const CollectionsHandler = struct {
 
     /// Generate HIR for range expressions (e.g., 1 to 6)
     pub fn generateRange(self: *CollectionsHandler, range: struct { start: *ast.Expr, end: *ast.Expr }, preserve_result: bool) !void {
-        _ = preserve_result; // Unused parameter
+        _ = preserve_result;
 
-        // Generate the start value
         try self.generator.generateExpression(range.start, true, false);
-
-        // Generate the end value
         try self.generator.generateExpression(range.end, true, false);
 
-        // Generate Range instruction that creates an array from start to end
+        const int_type_ptr = try self.generator.allocator.create(HIRType);
+        int_type_ptr.* = .Int;
         try self.generator.instructions.append(.{
-            .Range = .{
-                .element_type = .Int, // Ranges always produce integer arrays
+            .Call = .{
+                .function_index = 0,
+                .qualified_name = "range",
+                .arg_count = 2,
+                .call_kind = .BuiltinFunction,
+                .target_module = null,
+                .return_type = HIRType{ .Array = int_type_ptr },
             },
         });
     }
@@ -278,7 +282,6 @@ pub const CollectionsHandler = struct {
 
         if (is_compound_assignment) {
             // Handle compound assignment: array[index] += value
-            // Generate: array, index, value, ArrayGetAndAdd (atomic operation)
 
             // Generate array expression
             try self.generator.generateExpression(assign_data.array, true, false);
@@ -293,30 +296,16 @@ pub const CollectionsHandler = struct {
             }
 
             // Generate the appropriate compound assignment instruction
-            switch (binary.operator.type) {
-                .PLUS => {
-                    try self.generator.instructions.append(.{ .ArrayGetAndAdd = .{ .bounds_check = true } });
-                },
-                .MINUS => {
-                    try self.generator.instructions.append(.{ .ArrayGetAndSub = .{ .bounds_check = true } });
-                },
-                .ASTERISK => {
-                    try self.generator.instructions.append(.{ .ArrayGetAndMul = .{ .bounds_check = true } });
-                },
-                .SLASH => {
-                    try self.generator.instructions.append(.{ .ArrayGetAndDiv = .{ .bounds_check = true } });
-                },
-                .MODULO => {
-                    try self.generator.instructions.append(.{ .ArrayGetAndMod = .{ .bounds_check = true } });
-                },
-                .POWER => {
-                    try self.generator.instructions.append(.{ .ArrayGetAndPow = .{ .bounds_check = true } });
-                },
-                else => {
-                    // Fallback to addition for unknown operators
-                    try self.generator.instructions.append(.{ .ArrayGetAndAdd = .{ .bounds_check = true } });
-                },
-            }
+            const arith_op = switch (binary.operator.type) {
+                .PLUS => ArithOp.Add,
+                .MINUS => ArithOp.Sub,
+                .ASTERISK => ArithOp.Mul,
+                .SLASH => ArithOp.Div,
+                .MODULO => ArithOp.Mod,
+                .POWER => ArithOp.Pow,
+                else => ArithOp.Add,
+            };
+            try self.generator.instructions.append(.{ .ArrayCompoundAssign = .{ .bounds_check = true, .op = arith_op } });
 
             // Keep stack balanced across control-flow merges for statement-style
             // compound assignments (the result value is unused).
