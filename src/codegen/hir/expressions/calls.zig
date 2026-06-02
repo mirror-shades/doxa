@@ -676,6 +676,27 @@ pub const CallsHandler = struct {
         {
             // Use centralized data structure for simple builtin calls
             _ = try self.generateSimpleBuiltinCall(name, builtin_data.arguments);
+        } else if (std.mem.eql(u8, name, "print")) {
+            // @print(string) - emits the string to stdout
+            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
+            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.generator.instructions.append(.{
+                .Call = .{
+                    .function_index = 0,
+                    .qualified_name = "print",
+                    .arg_count = 1,
+                    .call_kind = .BuiltinFunction,
+                    .target_module = null,
+                    .return_type = .Nothing,
+                },
+            });
+            // @print returns nothing
+            const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
+            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
+
+            if (!preserve_result) {
+                try self.generator.instructions.append(.Pop);
+            }
         } else if (std.mem.eql(u8, name, "std")) {
             const exe_dir = std.fs.selfExeDirPathAlloc(self.generator.allocator) catch return error.PermissionDenied;
             defer self.generator.allocator.free(exe_dir);
@@ -758,7 +779,16 @@ pub const CallsHandler = struct {
             }
         } else if (std.mem.eql(u8, name, "type")) {
             try self.generator.generateExpression(internal_data.receiver, true, false);
-            try self.generator.instructions.append(.{ .TypeOf = .{ .value_type = .Unknown } });
+            try self.generator.instructions.append(.{
+                .Call = .{
+                    .function_index = 0,
+                    .qualified_name = "type",
+                    .arg_count = 1,
+                    .call_kind = .BuiltinFunction,
+                    .target_module = null,
+                    .return_type = .String,
+                },
+            });
         } else {
             const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
@@ -834,10 +864,11 @@ pub const CallsHandler = struct {
 
             if (func_body.param_is_alias[i]) {
                 try self.generator.instructions.append(.{
-                    .StoreParamAlias = .{
-                        .param_name = param.name.lexeme,
-                        .param_type = expected_t,
-                        .var_index = @intCast(i + 1),
+                    .BindAlias = .{
+                        .alias_name = param.name.lexeme,
+                        .target_variable_name = param.name.lexeme,
+                        .alias_slot = @intCast(i + 1),
+                        .target_type = expected_t,
                     },
                 });
             } else {

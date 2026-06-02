@@ -268,7 +268,12 @@ fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType 
         },
 
         .Enum => blk: {
-            // TODO: Map to real enum ID if/when enum metadata table exists
+            if (ti.custom_type) |name| {
+                const resolved = self.resolveTypeAlias(name);
+                if (self.enum_table.getIdByName(resolved)) |eid| {
+                    break :blk HIRType{ .Enum = eid };
+                }
+            }
             break :blk HIRType{ .Enum = 0 };
         },
 
@@ -283,7 +288,7 @@ fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType 
                             }
                             break :blk HIRType{ .Struct = 0 };
                         },
-                        .Enum => break :blk HIRType{ .Enum = 0 },
+                        .Enum => break :blk HIRType{ .Enum = self.enum_table.getIdByName(resolved) orelse 0 },
                         .Group => break :blk HIRType{ .Group = self.group_table.getIdByName(resolved) orelse 0 },
                     }
                 }

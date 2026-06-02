@@ -6,8 +6,8 @@
 !src/**
 !std/**
 !test/**
-    test/out/**
-    test/advent2025/**
+test/out/**
+test/advent2025/**
 !.github/**
 !.gitattributes
 !.gitignore

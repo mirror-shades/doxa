@@ -89,16 +89,6 @@ pub const HIRInstruction = union(enum) {
         expected_type: HIRType, // Add expected type for coercion
     },
 
-    /// Store constant (one-time assignment)
-    /// VM: OP_SET_CONST
-    /// LLVM: LLVMAddGlobal with constant flag
-    StoreConst: struct {
-        var_index: u32,
-        var_name: []const u8,
-        scope_kind: ScopeKind,
-        module_context: ?[]const u8,
-    },
-
     /// Store variable declaration (var/const with initializer)
     /// VM: OP_SET_VAR with declaration context
     /// LLVM: LLVMAddGlobal with proper type inference
@@ -118,13 +108,6 @@ pub const HIRInstruction = union(enum) {
         scope_kind: ScopeKind,
     },
 
-    /// Consumes a storage_id_ref from stack and creates an alias variable
-    StoreParamAlias: struct {
-        param_name: []const u8,
-        param_type: HIRType, // For initial type info of the alias
-        var_index: u32, // Variable index for the alias parameter
-    },
-
     /// Load value from an alias parameter
     LoadAlias: struct {
         var_name: []const u8,
@@ -138,18 +121,11 @@ pub const HIRInstruction = union(enum) {
         expected_type: HIRType,
     },
 
-    /// Resolve an alias to its target slot dynamically
-    ResolveAlias: struct {
-        alias_name: []const u8,
-        target_slot: u32,
-    },
-
-    /// Bind an alias to its target variable
+    /// Bind an alias to its target variable (unified from StoreParamAlias)
     BindAlias: struct {
         alias_name: []const u8,
         target_variable_name: []const u8,
         alias_slot: u32,
-        target_slot: u32,
         target_type: HIRType,
     },
 
@@ -276,18 +252,7 @@ pub const HIRInstruction = union(enum) {
         call_kind: CallKind, // Resolution context
         target_module: ?[]const u8, // For cross-module calls
         return_type: HIRType, // For stack type management and LLVM return handling
-    },
-
-    /// Tail call optimization - function call in tail position
-    /// VM: Reuse current stack frame, jump to function start
-    /// LLVM: Generate as optimized tail call
-    TailCall: struct {
-        function_index: u32, // VM: Direct function table index
-        qualified_name: []const u8, // LLVM: Full function name with module prefix
-        arg_count: u32, // Stack management for both targets
-        call_kind: CallKind, // Resolution context
-        target_module: ?[]const u8, // For cross-module calls
-        return_type: HIRType, // For stack type management and LLVM return handling
+        tail: bool = false, // Tail call optimization
     },
 
     /// Return from function
@@ -301,13 +266,6 @@ pub const HIRInstruction = union(enum) {
     //==================================================================
     // COMPLEX OPERATIONS
     //==================================================================
-
-    /// Type reflection operation
-    /// VM: Returns type information for a value
-    /// LLVM: Generate type metadata
-    TypeOf: struct {
-        value_type: HIRType,
-    },
 
     /// Array/struct field access
     /// VM: OP_GET_FIELD
@@ -339,22 +297,6 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: No-op
     StoreFieldName: struct {
         field_name: []const u8,
-    },
-
-    /// Exception handling
-    /// VM: OP_TRY, OP_CATCH, OP_THROW
-    /// LLVM: Landing pads and exception tables
-    TryBegin: struct {
-        catch_label: []const u8,
-        vm_catch_offset: i32,
-    },
-
-    TryCatch: struct {
-        exception_type: ?HIRType,
-    },
-
-    Throw: struct {
-        exception_type: HIRType,
     },
 
     //==================================================================
@@ -443,71 +385,18 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: Complex allocation + memcpy
     ArrayConcat,
 
-    /// Create array from range (start to end)
-    /// VM: Create array with integers from start to end (inclusive)
-    /// LLVM: Generate loop to populate array
-    Range: struct {
-        element_type: HIRType,
-    },
-
-    /// Exists quantifier operation
-    /// VM: Check if any element satisfies predicate
-    /// LLVM: Generate loop with early exit
-    Exists: struct {
-        predicate_type: HIRType,
-    },
-
-    /// Forall quantifier operation
-    /// VM: Check if all elements satisfy predicate
-    /// LLVM: Generate loop with early exit
-    Forall: struct {
-        predicate_type: HIRType,
-    },
-
+    //==================================================================
+    // COMPOUND ASSIGNMENT OPERATIONS
     //==================================================================
     // COMPOUND ASSIGNMENT OPERATIONS (Long-term fix)
     //==================================================================
 
-    /// Compound assignment: array[index] += value
-    /// VM: Get element, add value, set element atomically
+    /// Compound assignment: array[index] +=, -=, *=, etc.
+    /// VM: Get element, perform operation, set element
     /// LLVM: Generate optimized compound assignment
-    ArrayGetAndAdd: struct {
+    ArrayCompoundAssign: struct {
         bounds_check: bool,
-    },
-
-    /// Compound assignment: array[index] -= value
-    /// VM: Get element, subtract value, set element atomically
-    /// LLVM: Generate optimized compound assignment
-    ArrayGetAndSub: struct {
-        bounds_check: bool,
-    },
-
-    /// Compound assignment: array[index] *= value
-    /// VM: Get element, multiply value, set element atomically
-    /// LLVM: Generate optimized compound assignment
-    ArrayGetAndMul: struct {
-        bounds_check: bool,
-    },
-
-    /// Compound assignment: array[index] /= value
-    /// VM: Get element, divide value, set element atomically
-    /// LLVM: Generate optimized compound assignment
-    ArrayGetAndDiv: struct {
-        bounds_check: bool,
-    },
-
-    /// Compound assignment: array[index] %= value
-    /// VM: Get element, modulo value, set element atomically
-    /// LLVM: Generate optimized compound assignment
-    ArrayGetAndMod: struct {
-        bounds_check: bool,
-    },
-
-    /// Compound assignment: array[index] **= value
-    /// VM: Get element, power value, set element atomically
-    /// LLVM: Generate optimized compound assignment
-    ArrayGetAndPow: struct {
-        bounds_check: bool,
+        op: ArithOp,
     },
 
     //==================================================================
@@ -533,15 +422,6 @@ pub const HIRInstruction = union(enum) {
     // ENUM OPERATIONS (Phase 1)
     //==================================================================
 
-    /// Create enum variant
-    /// VM: Store variant index and type info
-    /// LLVM: Tagged union representation
-    EnumNew: struct {
-        enum_name: []const u8,
-        variant_name: []const u8,
-        variant_index: u32,
-    },
-
     //==================================================================
     // DEBUG/INTROSPECTION
     //==================================================================
@@ -564,59 +444,6 @@ pub const HIRInstruction = union(enum) {
     /// VM: OP_PEEK_STRUCT
     /// LLVM: Generate constant string based on LLVM type
     PeekStruct: struct {
-        type_name: []const u8, // Changed from struct_name to type_name
-        struct_id: StructId,
-        field_count: u32,
-        field_names: [][]const u8,
-        field_types: []HIRType,
-        location: ?Reporting.Location,
-        should_pop_after_peek: bool,
-    },
-
-    /// Print/peek value
-    /// VM: Complex printValue logic
-    /// LLVM: Generate printf calls with format strings
-    Print: struct {},
-
-    /// Streaming print: begin sequence
-    /// VM: no-op (placeholder for future buffered output)
-    /// LLVM: no-op
-    PrintBegin: struct {},
-
-    /// Streaming print: print a string literal by constant id
-    /// VM: write bytes to stdout
-    /// LLVM: emit printf("%s", str_ptr)
-    PrintStr: struct {
-        const_id: u32,
-    },
-
-    /// Streaming print: print top-of-stack value using ToString rules, then pop
-    /// VM: stringify and write; pop value
-    /// LLVM: type-specific printf
-    PrintVal: struct {},
-
-    /// Streaming print: explicit newline
-    /// VM/LLVM: emit "\n"
-    PrintNewline: struct {},
-
-    /// Streaming print: end sequence (no-op for now)
-    /// VM/LLVM: no-op
-    PrintEnd: struct {},
-
-    /// Print with string interpolation
-    /// VM: Format string with interpolated values
-    /// LLVM: Generate printf calls with format strings
-    PrintInterpolated: struct {
-        format_parts: []const []const u8,
-        placeholder_indices: []const u32,
-        argument_count: u32,
-        format_part_ids: []const u32,
-    },
-
-    /// Prints a struct
-    /// VM: OP_PEEK_STRUCT
-    /// LLVM: Generate constant string based on LLVM type
-    PrintStruct: struct {
         type_name: []const u8, // Changed from struct_name to type_name
         struct_id: StructId,
         field_count: u32,

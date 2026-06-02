@@ -98,7 +98,6 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
             try writer.print("ip[{d}] StoreSlot type:{s}\n", .{ idx, @tagName(payload.type_tag) });
             try writeSlotOperandDetail("    target", payload.target, writer);
         },
-        .StoreConstSlot => |operand| try writeSlotOperand(idx, "StoreConst", operand, writer),
         .PushStorageRef => |operand| try writeSlotOperand(idx, "PushStorageRef", operand, writer),
         .BindAlias => |payload| try writer.print("ip[{d}] BindAlias slot:{} type:{s}\n", .{ idx, payload.alias_slot, @tagName(payload.type_tag) }),
         .LoadAlias => |payload| try writer.print("ip[{d}] LoadAlias slot:{}\n", .{ idx, payload.slot_index }),
@@ -107,29 +106,13 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .Compare => |payload| try writer.print("ip[{d}] Compare op:{s} type:{s}\n", .{ idx, @tagName(payload.op), @tagName(payload.type_tag) }),
         .LogicalOp => |payload| try writer.print("ip[{d}] LogicalOp op:{s}\n", .{ idx, @tagName(payload.op) }),
         .StringOp => |payload| try writer.print("ip[{d}] StringOp op:{s}\n", .{ idx, @tagName(payload.op) }),
-        .TypeOf => |payload| try writer.print("ip[{d}] TypeOf value_type:{s}\n", .{ idx, @tagName(payload.value_type) }),
         .TypeCheck => |payload| try writer.print("ip[{d}] TypeCheck type:{s}\n", .{ idx, payload.type_name }),
         .Jump => |payload| try writer.print("ip[{d}] Jump label:{}\n", .{ idx, payload.label_id }),
         .JumpIfFalse => |payload| try writer.print("ip[{d}] JumpIfFalse label:{} type:{s}\n", .{ idx, payload.label_id, @tagName(payload.condition_type) }),
-        .PrintBegin => try writer.print("ip[{d}] PrintBegin\n", .{idx}),
-        .PrintStr => |payload| try writer.print("ip[{d}] PrintStr const:{}\n", .{ idx, payload.const_id }),
-        .PrintVal => try writer.print("ip[{d}] PrintVal\n", .{idx}),
-        .PrintNewline => try writer.print("ip[{d}] PrintNewline\n", .{idx}),
-        .PrintEnd => try writer.print("ip[{d}] PrintEnd\n", .{idx}),
         .JumpIfTrue => |payload| try writer.print("ip[{d}] JumpIfTrue label:{} type:{s}\n", .{ idx, payload.label_id, @tagName(payload.condition_type) }),
         .Label => |payload| try writer.print("ip[{d}] Label {}\n", .{ idx, payload.id }),
         .Call => |payload| try writeCallInstruction(idx, "Call", payload, writer),
-        .TailCall => |payload| try writeCallInstruction(idx, "TailCall", payload, writer),
         .Return => |payload| try writer.print("ip[{d}] Return has_value:{} type:{s}\n", .{ idx, payload.has_value, @tagName(payload.return_type) }),
-        .TryBegin => |payload| try writer.print("ip[{d}] TryBegin label:{}\n", .{ idx, payload.label_id }),
-        .TryCatch => |payload| {
-            if (payload.exception_type) |et| {
-                try writer.print("ip[{d}] TryCatch type:{s}\n", .{ idx, @tagName(et) });
-            } else {
-                try writer.print("ip[{d}] TryCatch type:any\n", .{idx});
-            }
-        },
-        .Throw => |payload| try writer.print("ip[{d}] Throw type:{s}\n", .{ idx, @tagName(payload.exception_type) }),
         .EnterScope => |payload| try writer.print("ip[{d}] EnterScope id:{} vars:{}\n", .{ idx, payload.scope_id, payload.var_count }),
         .ExitScope => |payload| try writer.print("ip[{d}] ExitScope id:{}\n", .{ idx, payload.scope_id }),
         .ArrayNew => |payload| {
@@ -159,27 +142,15 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .ArraySlice => try writer.print("ip[{d}] ArraySlice\n", .{idx}),
         .ArrayLen => try writer.print("ip[{d}] ArrayLen\n", .{idx}),
         .ArrayConcat => try writer.print("ip[{d}] ArrayConcat\n", .{idx}),
-        .Range => |payload| try writer.print("ip[{d}] Range elem:{s}\n", .{ idx, @tagName(payload.element_type) }),
-        .Exists => |payload| try writer.print("ip[{d}] Exists predicate:{s}\n", .{ idx, @tagName(payload.predicate_type) }),
-        .Forall => |payload| try writer.print("ip[{d}] Forall predicate:{s}\n", .{ idx, @tagName(payload.predicate_type) }),
         .StructNew => |payload| try writer.print("ip[{d}] StructNew {s} fields:{} bytes:{}\n", .{ idx, payload.type_name, payload.field_count, payload.size_bytes }),
-        .EnumNew => |payload| try writer.print("ip[{d}] EnumNew {s}.{s} idx:{}\n", .{ idx, payload.enum_name, payload.variant_name, payload.variant_index }),
         .GetField => |payload| try writer.print("ip[{d}] GetField {s} idx:{} container:{s}\n", .{ idx, payload.field_name, payload.field_index, @tagName(payload.container_type) }),
         .SetField => |payload| try writer.print("ip[{d}] SetField {s} idx:{} container:{s}\n", .{ idx, payload.field_name, payload.field_index, @tagName(payload.container_type) }),
         .StoreFieldName => |payload| try writer.print("ip[{d}] StoreFieldName {s}\n", .{ idx, payload.field_name }),
-        .Print => try writer.print("ip[{d}] Print\n", .{idx}),
-        .PrintInterpolated => |payload| {
-            try writer.print("ip[{d}] PrintInterpolated parts:{} placeholders:{} args:{}\n", .{ idx, payload.format_parts.len, payload.placeholder_indices.len, payload.argument_count });
-            try writeStringSlice("    format_parts", payload.format_parts, writer);
-            try writeU32Slice("    placeholder_indices", payload.placeholder_indices, writer);
-            try writeU32Slice("    format_part_ids", payload.format_part_ids, writer);
-        },
         .Peek => |payload| {
             const name = payload.name orelse "-";
             try writer.print("ip[{d}] Peek name:{s} type:{s}\n", .{ idx, name, @tagName(payload.value_type) });
         },
         .PeekStruct => |payload| try writer.print("ip[{d}] PeekStruct {s} fields:{}\n", .{ idx, payload.type_name, payload.field_count }),
-        .PrintStruct => |payload| try writer.print("ip[{d}] PrintStruct {s} fields:{}\n", .{ idx, payload.type_name, payload.field_count }),
         .Map => |payload| try writer.print("ip[{d}] Map entries:{} key:{s} value:{s} else:{}\n", .{ idx, payload.entries.len, @tagName(payload.key_type), @tagName(payload.value_type), payload.has_else_value }),
         .MapGet => |payload| try writer.print("ip[{d}] MapGet key:{s}\n", .{ idx, @tagName(payload.key_type) }),
         .MapSet => |payload| try writer.print("ip[{d}] MapSet key:{s}\n", .{ idx, @tagName(payload.key_type) }),

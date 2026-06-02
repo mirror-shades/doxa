@@ -33,7 +33,7 @@ test "lazy modules: aggregator children load only when referenced" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false });
+    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module bundle from \"./bundle.doxa\"\n", "test/misc/lazy/main.doxa");
     defer parsed.deinit();
@@ -58,7 +58,7 @@ test "lazy modules: standard-library aggregator stays shallow until child use" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false });
+    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module std from \"std/std.doxa\"\n", "test/misc/lazy/std_user.doxa");
     defer parsed.deinit();
@@ -82,7 +82,7 @@ test "lazy modules: direct imports materialize without transitive siblings" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false });
+    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module direct from \"./direct.doxa\"\n", "test/misc/lazy/direct_user.doxa");
     defer parsed.deinit();
@@ -98,7 +98,7 @@ test "lazy modules: reachable dependencies follow body references" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false });
+    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module parent from \"./uses_a_only.doxa\"\n", "test/misc/lazy/uses_a_only_user.doxa");
     defer parsed.deinit();
@@ -119,7 +119,7 @@ test "lazy modules: duplicate specific symbol names keep distinct import entries
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false });
+    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(
         allocator,
@@ -140,7 +140,7 @@ test "lazy modules: circular imports are detected when reached" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false });
+    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module cycle from \"./cycle_a.doxa\"\n", "test/misc/lazy/cycle_user.doxa");
     defer parsed.deinit();

@@ -49,7 +49,6 @@ const ArrayTypeKey = struct {
     id: u32,
     var_count: u32,
     alias_slots: Managed(module.SlotIndex),
-    catch_target: ?usize = null,
     defer_actions: Managed(DeferAction),
     scope: *Memory.Scope,
 
@@ -58,7 +57,6 @@ const ArrayTypeKey = struct {
             .id = id,
             .var_count = var_count,
             .alias_slots = Managed(module.SlotIndex).init(allocator),
-            .catch_target = null,
             .defer_actions = Managed(DeferAction).init(allocator),
             .scope = scope,
         };
@@ -103,7 +101,6 @@ pub const VM = struct {
     skip_increment: bool = false,
     custom_type_registry: std.StringHashMap(CustomTypeInfo),
     scope_stack: Managed(ScopeRecord),
-    try_stack: Managed(usize),
     skip_next_enter_scope: bool = false,
     array_type_cache: std.AutoHashMap(ArrayTypeKey, *hir_types.HIRType),
     array_type_nodes: Managed(*hir_types.HIRType),
@@ -206,7 +203,6 @@ pub const VM = struct {
             .running = false,
             .custom_type_registry = std.StringHashMap(CustomTypeInfo).init(allocator),
             .scope_stack = Managed(ScopeRecord).init(allocator),
-            .try_stack = Managed(usize).init(allocator),
             .skip_next_enter_scope = false,
             .array_type_cache = std.AutoHashMap(ArrayTypeKey, *hir_types.HIRType).init(allocator),
             .array_type_nodes = Managed(*hir_types.HIRType).init(allocator),
@@ -228,7 +224,6 @@ pub const VM = struct {
 
         self.clearScopeStack();
         self.scope_stack.deinit();
-        self.try_stack.deinit();
 
         self.custom_type_registry.deinit();
         while (self.array_type_nodes.pop()) |ptr| {
@@ -270,7 +265,6 @@ pub const VM = struct {
         }
         self.clearScopeStack();
         self.scope_stack.clearRetainingCapacity();
-        self.try_stack.clearRetainingCapacity();
         self.skip_next_enter_scope = false;
     }
 
@@ -339,22 +333,8 @@ pub const VM = struct {
             .GroupExtractPayload => {
                 try ops_type.TypeOps.execGroupExtractPayload(self, {});
             },
-            .TypeOf => |payload| {
-                try ops_type.TypeOps.execTypeOf(self, .{ .value_type = toHIRType(payload.value_type) });
-            },
-            .Exists => |payload| {
-                _ = payload;
-                try self.execQuantifier(true);
-            },
-            .Forall => |payload| {
-                _ = payload;
-                try self.execQuantifier(false);
-            },
             .StructNew => |payload| {
                 try self.execStructNew(payload);
-            },
-            .EnumNew => |payload| {
-                try self.execEnumNew(payload);
             },
             .StoreFieldName => |payload| {
                 try self.execStoreFieldName(payload);
@@ -371,7 +351,6 @@ pub const VM = struct {
                 try self.stack.pushValue(value);
             },
             .StoreSlot => |payload| try self.storeSlotImpl(payload.target),
-            .StoreConstSlot => |operand| try self.storeSlotImpl(operand),
             .PushStorageRef => |operand| {
                 const ptr = try self.resolveSlot(operand);
                 const ref_id = try self.cacheSlotPointer(ptr);
@@ -401,12 +380,6 @@ pub const VM = struct {
                 const ptr = frame.pointer(payload.slot_index);
                 const owner = self.ownerForPointer(ptr);
                 try self.storeValueAtPtr(value, ptr, owner, null);
-            },
-            .ResolveAlias => |payload| {
-                const frame = try self.currentFrame();
-                const ptr = frame.pointer(payload.target_slot);
-                const value = ptr.load();
-                try self.stack.pushValue(value);
             },
             .Dup => {
                 if (self.stack.sp == 0) {
@@ -463,28 +436,8 @@ pub const VM = struct {
             .ArrayConcat => {
                 try ops_array.arrayConcat(self);
             },
-            .Range => |payload| {
-                try ops_array.arrayRange(self, .{
-                    .element_type = toHIRType(payload.element_type),
-                });
-            },
-            .ArrayGetAndAdd => |payload| {
-                try ops_array.arrayGetAndAdd(self, payload);
-            },
-            .ArrayGetAndSub => |payload| {
-                try ops_array.arrayGetAndSub(self, payload);
-            },
-            .ArrayGetAndMul => |payload| {
-                try ops_array.arrayGetAndMul(self, payload);
-            },
-            .ArrayGetAndDiv => |payload| {
-                try ops_array.arrayGetAndDiv(self, payload);
-            },
-            .ArrayGetAndMod => |payload| {
-                try ops_array.arrayGetAndMod(self, payload);
-            },
-            .ArrayGetAndPow => |payload| {
-                try ops_array.arrayGetAndPow(self, payload);
+            .ArrayCompoundAssign => |payload| {
+                try ops_array.arrayCompoundAssign(self, payload.bounds_check, payload.op);
             },
             .Map => |payload| {
                 try self.execMap(payload);
@@ -516,45 +469,14 @@ pub const VM = struct {
                 }
             },
             .Call => |payload| {
-                try self.handleCall(payload);
-            },
-            .TailCall => |payload| {
-                try self.execTailCall(payload);
+                if (payload.tail) {
+                    try self.execTailCall(payload);
+                } else {
+                    try self.handleCall(payload);
+                }
             },
             .Return => |payload| {
                 try self.handleReturn(payload);
-            },
-            .Print => {
-                try PrintOps.execPrint(self);
-            },
-            .PrintBegin => {
-                // no-op for now (future: buffering)
-            },
-            .PrintStr => |payload| {
-                if (payload.const_id >= self.bytecode.constants.len) return error.UnimplementedInstruction;
-                const val = self.bytecode.constants[payload.const_id];
-                switch (val) {
-                    .string => |s| try PrintOps.printRaw(self, s),
-                    else => {},
-                }
-            },
-            .PrintVal => {
-                const top = try self.popValue();
-                try PrintOps.formatHIRValueRaw(self, top, .stdout);
-            },
-            .PrintNewline => {
-                try PrintOps.printRaw(self, "\n");
-            },
-            .PrintEnd => {
-                // no-op for now (future: flush)
-            },
-            .PrintInterpolated => |payload| {
-                try PrintOps.execPrintInterpolated(self, .{
-                    .format_parts = payload.format_parts,
-                    .placeholder_indices = payload.placeholder_indices,
-                    .argument_count = payload.argument_count,
-                    .format_part_ids = payload.format_part_ids,
-                });
             },
             .Peek => |payload| {
                 try PrintOps.execPeek(self, .{
@@ -566,16 +488,6 @@ pub const VM = struct {
             },
             .PeekStruct => |payload| {
                 try PrintOps.execPeekStruct(self, .{
-                    .type_name = payload.type_name,
-                    .field_count = payload.field_count,
-                    .field_names = payload.field_names,
-                    .field_types = payload.field_types,
-                    .location = payload.location,
-                    .should_pop_after_peek = payload.should_pop_after_peek,
-                });
-            },
-            .PrintStruct => |payload| {
-                try PrintOps.execPrintStruct(self, .{
                     .type_name = payload.type_name,
                     .field_count = payload.field_count,
                     .field_names = payload.field_names,
@@ -629,15 +541,6 @@ pub const VM = struct {
 
                 self.running = false;
                 return VmError.RuntimeTrap;
-            },
-            .TryBegin => |payload| {
-                try self.execTryBegin(payload);
-            },
-            .TryCatch => |payload| {
-                try self.execTryCatch(payload);
-            },
-            .Throw => |payload| {
-                try self.execThrow(payload);
             },
             .EnterScope => |payload| {
                 try self.execEnterScope(payload);
@@ -992,50 +895,6 @@ pub const VM = struct {
                 } else break;
             }
         }
-    }
-
-    fn unwindScopesForCatch(self: *VM, target: usize) VmError!void {
-        while (self.scope_stack.pop()) |record_val| {
-            var record = record_val;
-            defer record.deinit();
-            try self.runScopeCleanup(&record);
-            if (record.catch_target) |stored| {
-                if (stored == target) break;
-            }
-        }
-    }
-
-    fn execTryBegin(self: *VM, payload: anytype) VmError!void {
-        if (payload.label_id >= self.label_cache.len) return error.UnimplementedInstruction;
-        const target = self.label_cache[payload.label_id];
-        self.try_stack.append(target) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-        };
-        if (self.currentScope()) |scope| {
-            scope.catch_target = target;
-        }
-    }
-
-    fn execTryCatch(self: *VM, payload: anytype) VmError!void {
-        _ = payload;
-        _ = self.try_stack.pop();
-        if (self.currentScope()) |scope| {
-            scope.catch_target = null;
-        }
-    }
-
-    fn execThrow(self: *VM, payload: anytype) VmError!void {
-        _ = payload;
-        try self.stack.push(HIRFrame.initNothing());
-
-        if (self.try_stack.items.len == 0) {
-            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "No catch block found for throw", .{});
-            return ErrorList.TypeError;
-        }
-
-        const target = self.try_stack.pop() orelse unreachable;
-        try self.unwindScopesForCatch(target);
-        self.jumpTo(target);
     }
 
     fn execQuantifier(self: *VM, is_exists: bool) VmError!void {
@@ -1470,7 +1329,33 @@ pub const VM = struct {
                     try self.stack.push(HIRFrame.initNothing());
                     return;
                 },
-                .pop, .insert, .remove, .slice, .string, .int, .float, .type_, .print, .println, .panic, .std, .dice_roll => {
+                .print => {
+                    const val_frame = try self.stack.pop();
+                    switch (val_frame.value) {
+                        .string => |s| {
+                            try PrintOps.printRaw(self, s);
+                        },
+                        else => {
+                            try PrintOps.printRaw(self, @tagName(val_frame.value));
+                        },
+                    }
+                    try self.stack.push(HIRFrame.initNothing());
+                    return;
+                },
+                .type_ => {
+                    var val = try self.stack.pop();
+                    const type_str = try self.valueToString(self.scopeAllocator(), &val.value);
+                    defer self.scopeAllocator().free(type_str);
+                    try self.stack.push(HIRFrame.initString(type_str));
+                    return;
+                },
+                .range => {
+                    try ops_array.arrayRange(self, .{
+                        .element_type = .Int,
+                    });
+                    return;
+                },
+                .pop, .insert, .remove, .slice, .string, .int, .float, .println, .panic, .std, .dice_roll => {
                     self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Builtin '{s}' should not arrive as a VM call (handled at bytecode level)", .{name});
                     return ErrorList.TypeError;
                 },
@@ -2419,7 +2304,14 @@ pub const VM = struct {
                     if (!first) try result.appendSlice(", ");
                     const elem_str = try self.valueToString(allocator, elem);
                     defer allocator.free(elem_str);
-                    try result.appendSlice(elem_str);
+                    switch (elem.*) {
+                        .string => {
+                            try result.append('"');
+                            try result.appendSlice(elem_str);
+                            try result.append('"');
+                        },
+                        else => try result.appendSlice(elem_str),
+                    }
                     first = false;
                 }
                 try result.append(']');

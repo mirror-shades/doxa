@@ -78,6 +78,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare i8 @doxa_forall_quantifier_gt(ptr, i64)\n");
             try w.writeAll("declare i8 @doxa_forall_quantifier_eq(ptr, i64)\n");
             try w.writeAll("declare void @doxa_clear(ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_range(i64, i64)\n");
 
             // Inline zig module functions (external): declare them as varargs so we don't need full type info here.
             // We only declare calls that are NOT backed by a HIR function_table entry.
@@ -207,6 +208,17 @@ pub fn Methods(comptime Ctx: type) type {
                     }
                     if (!self.struct_type_names_by_id.contains(sn.struct_id)) {
                         _ = try self.struct_type_names_by_id.put(sn.struct_id, sn.type_name);
+                    }
+                }
+                if (inst == .LoadModule) {
+                    const lm = inst.LoadModule;
+                    if (!self.global_struct_field_types.contains(lm.module_name)) {
+                        const fcount = lm.field_names.len;
+                        const field_types = try self.allocator.alloc(HIR.HIRType, fcount);
+                        @memset(field_types, HIR.HIRType{ .String = {} });
+                        _ = try self.global_struct_field_types.put(lm.module_name, field_types);
+                        _ = try self.global_struct_field_names.put(lm.module_name, try self.allocator.dupe([]const u8, lm.field_names));
+                        _ = try self.global_struct_type_names.put(lm.module_name, lm.module_name);
                     }
                 }
             }
@@ -477,12 +489,7 @@ pub fn Methods(comptime Ctx: type) type {
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
                     .ArraySet => |_| try self.emitArraySet(w, &stack, &id),
                     .ArrayGet => |_| try self.emitArrayGet(w, &stack, &id),
-                    .ArrayGetAndAdd => |_| try self.emitArrayGetAndArith(w, &stack, &id, .Add),
-                    .ArrayGetAndSub => |_| try self.emitArrayGetAndArith(w, &stack, &id, .Sub),
-                    .ArrayGetAndMul => |_| try self.emitArrayGetAndArith(w, &stack, &id, .Mul),
-                    .ArrayGetAndDiv => |_| try self.emitArrayGetAndArith(w, &stack, &id, .Div),
-                    .ArrayGetAndMod => |_| try self.emitArrayGetAndArith(w, &stack, &id, .Mod),
-                    .ArrayGetAndPow => |_| try self.emitArrayGetAndArith(w, &stack, &id, .Pow),
+                    .ArrayCompoundAssign => |a| try self.emitArrayGetAndArith(w, &stack, &id, a.op),
                     .ArrayLen => try self.emitArrayLen(w, &stack, &id),
                     .ArrayPush => |_| try self.emitArrayPush(w, &stack, &id),
                     .ArrayPop => try self.emitArrayPop(w, &stack, &id),
@@ -492,7 +499,6 @@ pub fn Methods(comptime Ctx: type) type {
                     .Map => |m| try self.emitMap(w, &stack, &id, m),
                     .MapGet => |mg| try self.emitMapGet(w, &stack, &id, mg),
                     .MapSet => |ms| try self.emitMapSet(w, &stack, &id, ms),
-                    .Range => |r| try self.emitRange(w, &stack, &id, r),
                     .StructNew => |sn| try self.emitStructNew(w, &stack, &id, sn, peek_state),
                     .GetField => |gf| try self.emitGetField(w, &stack, &id, gf),
                     .SetField => |sf| try self.emitSetField(w, &stack, &id, sf),
@@ -875,165 +881,80 @@ pub fn Methods(comptime Ctx: type) type {
 
                                 try stack.append(.{ .name = result_i2, .ty = .I2 });
                             } else {
-                                // Boolean operations - use regular LLVM logical operations
+                                // Boolean operations
                                 const lhs_bool = try self.ensureBool(w, lhs, &id);
                                 const rhs_bool = try self.ensureBool(w, rhs, &id);
 
-                                const result = try self.nextTemp(&id);
-                                const op_str = switch (lop.op) {
-                                    .And => "and",
-                                    .Or => "or",
-                                    .Xor => "xor",
-                                    else => blk: {
-                                        // For complex boolean operations, convert to i2 and use tetra logic
-                                        // First convert booleans to i2 (false=0, true=1)
-                                        const lhs_i2 = try self.nextTemp(&id);
-                                        const lhs_zext = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ lhs_i2, lhs_bool.name });
-                                        defer self.allocator.free(lhs_zext);
-                                        try w.writeAll(lhs_zext);
+                                if (lop.op == .And or lop.op == .Or or lop.op == .Xor) {
+                                    const result = try self.nextTemp(&id);
+                                    const op_str = switch (lop.op) {
+                                        .And => "and",
+                                        .Or => "or",
+                                        .Xor => "xor",
+                                        else => unreachable,
+                                    };
+                                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = {s} i1 {s}, {s}\n", .{ result, op_str, lhs_bool.name, rhs_bool.name });
+                                    defer self.allocator.free(line);
+                                    try w.writeAll(line);
+                                    try stack.append(.{ .name = result, .ty = .I1 });
+                                } else {
+                                    // Complex boolean ops (Nand, Nor, Iff, Implies):
+                                    // convert to i2 and use tetra LUTs
+                                    const lhs_i2 = try self.nextTemp(&id);
+                                    const lhs_zext = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ lhs_i2, lhs_bool.name });
+                                    defer self.allocator.free(lhs_zext);
+                                    try w.writeAll(lhs_zext);
 
-                                        const rhs_i2 = try self.nextTemp(&id);
-                                        const rhs_zext = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ rhs_i2, rhs_bool.name });
-                                        defer self.allocator.free(rhs_zext);
-                                        try w.writeAll(rhs_zext);
+                                    const rhs_i2 = try self.nextTemp(&id);
+                                    const rhs_zext = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ rhs_i2, rhs_bool.name });
+                                    defer self.allocator.free(rhs_zext);
+                                    try w.writeAll(rhs_zext);
 
-                                        // Push them back to stack and recurse (this will use tetra logic)
-                                        try stack.append(.{ .name = lhs_i2, .ty = .I2 });
-                                        try stack.append(.{ .name = rhs_i2, .ty = .I2 });
+                                    const lhs_i64 = try self.nextTemp(&id);
+                                    const lhs_zext_i64 = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i64\n", .{ lhs_i64, lhs_i2 });
+                                    defer self.allocator.free(lhs_zext_i64);
+                                    try w.writeAll(lhs_zext_i64);
 
-                                        // Re-process this instruction with tetra operands
-                                        stack.items.len -= 2; // Remove what we just added
-                                        // This is a bit hacky - we'd need to re-emit the instruction
-                                        // For now, just handle the complex cases by falling through
+                                    const rhs_i64 = try self.nextTemp(&id);
+                                    const rhs_zext_i64 = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i64\n", .{ rhs_i64, rhs_i2 });
+                                    defer self.allocator.free(rhs_zext_i64);
+                                    try w.writeAll(rhs_zext_i64);
 
-                                        // Default to AND for unknown operations
-                                        break :blk "and";
-                                    },
-                                };
+                                    const lut_name = switch (lop.op) {
+                                        .Nand => "@tetra_nand_lut",
+                                        .Nor => "@tetra_nor_lut",
+                                        .Iff => "@tetra_iff_lut",
+                                        .Implies => "@tetra_implies_lut",
+                                        else => unreachable,
+                                    };
 
-                                const line = try std.fmt.allocPrint(self.allocator, "  {s} = {s} i1 {s}, {s}\n", .{ result, op_str, lhs_bool.name, rhs_bool.name });
-                                defer self.allocator.free(line);
-                                try w.writeAll(line);
+                                    const row_ptr = try self.nextTemp(&id);
+                                    const row_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [4 x [4 x i8]], ptr {s}, i64 0, i64 {s}\n", .{ row_ptr, lut_name, lhs_i64 });
+                                    defer self.allocator.free(row_gep);
+                                    try w.writeAll(row_gep);
 
-                                try stack.append(.{ .name = result, .ty = .I1 });
+                                    const elem_ptr = try self.nextTemp(&id);
+                                    const elem_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [4 x i8], ptr {s}, i64 0, i64 {s}\n", .{ elem_ptr, row_ptr, rhs_i64 });
+                                    defer self.allocator.free(elem_gep);
+                                    try w.writeAll(elem_gep);
+
+                                    const result_i8 = try self.nextTemp(&id);
+                                    const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i8, ptr {s}\n", .{ result_i8, elem_ptr });
+                                    defer self.allocator.free(load_line);
+                                    try w.writeAll(load_line);
+
+                                    const result_i2 = try self.nextTemp(&id);
+                                    const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i8 {s} to i2\n", .{ result_i2, result_i8 });
+                                    defer self.allocator.free(trunc_line);
+                                    try w.writeAll(trunc_line);
+
+                                    try stack.append(.{ .name = result_i2, .ty = .I2 });
+                                }
                             }
                         }
-                    },
-                    .Print => {
-                        if (stack.items.len < 1) continue;
-                        const v = stack.items[stack.items.len - 1];
-                        stack.items.len -= 1;
-                        switch (v.ty) {
-                            .PTR => {
-                                if (v.array_type) |_| {
-                                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
-                                    defer self.allocator.free(call_line);
-                                    try w.writeAll(call_line);
-                                } else {
-                                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
-                                    defer self.allocator.free(call_line);
-                                    try w.writeAll(call_line);
-                                }
-                            },
-                            .I64 => {
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
-                                try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
-                            },
-                            .F64 => {
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
-                                try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
-                            },
-                            .I8 => {
-                                const byte_i64 = try self.nextTemp(&id);
-                                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i8 {s} to i64\n", .{ byte_i64, v.name });
-                                defer self.allocator.free(zext_line);
-                                try w.writeAll(zext_line);
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_byte(i64 {s})\n", .{byte_i64});
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
-                                try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
-                            },
-                            else => {},
-                        }
-                    },
-                    .PrintNewline => {
-                        try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
-                    },
-                    .PrintBegin => |_| {
-                        // no-op for now
-                    },
-                    .PrintStr => |ps| {
-                        // Emit write of string literal by const id; guard against out-of-range
-                        const idx: usize = @intCast(ps.const_id);
-                        if (idx < hir.constant_pool.len) {
-                            const hv = hir.constant_pool[idx];
-                            if (hv == .string) {
-                                const s = hv.string;
-                                const tmp = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
-                                id += 1;
-                                // Offset by string_pool.len to match the constant pool string index
-                                const str_idx = hir.string_pool.len + idx;
-                                const gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr @.str.{d}, i64 0, i64 0\n", .{ tmp, s.len + 1, str_idx });
-                                defer self.allocator.free(gep);
-                                try w.writeAll(gep);
-                                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{tmp});
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
-                            }
-                        }
-                    },
-                    .PrintVal => |_| {
-                        if (stack.items.len < 1) continue;
-                        const v = stack.items[stack.items.len - 1];
-                        stack.items.len -= 1;
-                        switch (v.ty) {
-                            .I64 => {
-                                // Check if this is an enum value
-                                if (v.enum_type_name) |type_name| {
-                                    try self.emitEnumPrint(peek_state, w, &id, type_name, v.name);
-                                } else {
-                                    // Regular integer print
-                                    const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_i64(i64 {s})\n", .{v.name});
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                }
-                            },
-                            .F64 => {
-                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_f64(double {s})\n", .{v.name});
-                                defer self.allocator.free(line);
-                                try w.writeAll(line);
-                            },
-                            .I8 => {
-                                const byte_i64 = try self.nextTemp(&id);
-                                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i8 {s} to i64\n", .{ byte_i64, v.name });
-                                defer self.allocator.free(zext_line);
-                                try w.writeAll(zext_line);
-                                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_byte(i64 {s})\n", .{byte_i64});
-                                defer self.allocator.free(line);
-                                try w.writeAll(line);
-                            },
-                            .PTR => {
-                                if (v.array_type) |_| {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{v.name});
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                } else {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{v.name});
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                }
-                            },
-                            else => {},
-                        }
-                    },
-                    .PrintEnd => |_| {
-                        // no-op for now (newlines are explicit constants in program)
-                    },
-                    .Peek => |pk| {
+                },
+
+                .Peek => |pk| {
                         if (stack.items.len < 1) continue;
                         var v = stack.items[stack.items.len - 1];
                         self.hydrateStructMetadata(&v, pk.name);
@@ -1628,6 +1549,21 @@ pub fn Methods(comptime Ctx: type) type {
                             continue;
                         }
 
+                        if (c.call_kind == .BuiltinFunction and std.mem.eql(u8, c.qualified_name, "range") and raw_args.items.len == 2) {
+                            const start = raw_args.items[0];
+                            const end = raw_args.items[1];
+                            const start_i64 = if (start.ty == .I64) start else try self.ensureI64(w, start, &id);
+                            const end_i64 = if (end.ty == .I64) end else try self.ensureI64(w, end, &id);
+                            const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                            id += 1;
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_range(i64 {s}, i64 {s})\n", .{ result_name, start_i64.name, end_i64.name });
+                            defer self.allocator.free(line);
+                            try w.writeAll(line);
+                            try stack.append(.{ .name = result_name, .ty = .PTR, .array_type = HIR.HIRType.Int });
+                            last_instruction_was_terminator = false;
+                            continue;
+                        }
+
                         var arg_strings = std.array_list.Managed([]const u8).init(self.allocator);
                         defer {
                             for (arg_strings.items) |s| self.allocator.free(s);
@@ -1660,6 +1596,10 @@ pub fn Methods(comptime Ctx: type) type {
                                 if (declared_type) |decl| {
                                     if (arg.ty == .Value and decl != .Union) {
                                         arg = try self.unwrapDoxaValueToType(w, arg, decl, &id);
+                                        arg_ptr.* = arg;
+                                    }
+                                    if (arg.ty != .Value and decl == .Union) {
+                                        arg = try self.buildDoxaValue(w, arg, decl, &id);
                                         arg_ptr.* = arg;
                                     }
                                 }
@@ -2117,19 +2057,78 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .LoadModule => |lm| {
                         const gname = lm.module_name;
-                        const st = self.global_types.get(gname) orelse .PTR;
+                        const fcount = lm.field_names.len;
 
-                        // Ensure the global is declared
-                        if (!self.defined_globals.contains(gname)) {
-                            _ = try self.global_types.put(gname, st);
-                            _ = try self.defined_globals.put(gname, true);
-                        }
-
-                        const gptr = try self.mangleGlobalName(gname);
+                        // Look up struct metadata (pre-populated by writeModule scan)
                         const struct_fields = self.global_struct_field_types.get(gname);
                         const struct_names = self.global_struct_field_names.get(gname);
                         const struct_type_name = self.global_struct_type_names.get(gname);
-                        try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+
+                        if (fcount == 0) {
+                            // Empty module struct — push a non-null sentinel pointer
+                            const sentinel = try self.nextTemp(&id);
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 1 to ptr\n", .{sentinel});
+                            defer self.allocator.free(line);
+                            try w.writeAll(line);
+                            try stack.append(.{ .name = sentinel, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                            last_instruction_was_terminator = false;
+                            continue;
+                        }
+
+                        const struct_type_llvm = try self.buildI64StructType(fcount);
+                        defer self.allocator.free(struct_type_llvm);
+
+                        // Allocate struct on heap
+                        const struct_size = fcount * @sizeOf(i64);
+                        const size_reg = try self.nextTemp(&id);
+                        const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_reg, struct_size });
+                        defer self.allocator.free(size_line);
+                        try w.writeAll(size_line);
+
+                        const malloc_reg = try self.nextTemp(&id);
+                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @malloc(i64 {s})\n", .{ malloc_reg, size_reg });
+                        defer self.allocator.free(malloc_line);
+                        try w.writeAll(malloc_line);
+
+                        // Cast to struct pointer
+                        const struct_ptr = try self.nextTemp(&id);
+                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast ptr {s} to ptr\n", .{ struct_ptr, malloc_reg });
+                        defer self.allocator.free(cast_line);
+                        try w.writeAll(cast_line);
+
+                        // Populate each field from module globals
+                        var fi: usize = 0;
+                        while (fi < fcount) : (fi += 1) {
+                            const field_name = lm.field_names[fi];
+                            const field_gptr = try self.mangleGlobalName(field_name);
+                            defer self.allocator.free(field_gptr);
+
+                            // Determine the module global's type and load accordingly
+                            const field_st = self.global_types.get(field_name) orelse .PTR;
+                            const field_llty = self.stackTypeToLLVMType(field_st);
+
+                            const loaded_val = try self.nextTemp(&id);
+                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ loaded_val, field_llty, field_gptr });
+                            defer self.allocator.free(load_line);
+                            try w.writeAll(load_line);
+
+                            // Convert value to i64 storage representation
+                            const loaded_sv = StackVal{ .name = loaded_val, .ty = field_st };
+                            const loaded_storage = try self.convertValueToArrayStorage(w, loaded_sv, HIR.HIRType{ .String = {} }, &id);
+
+                            // GEP to field position
+                            const field_gep = try self.nextTemp(&id);
+                            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds {s}, ptr {s}, i32 0, i32 {d}\n", .{ field_gep, struct_type_llvm, struct_ptr, @as(i32, @intCast(fi)) });
+                            defer self.allocator.free(gep_line);
+                            try w.writeAll(gep_line);
+
+                            // Store into struct field
+                            const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ loaded_storage.name, field_gep });
+                            defer self.allocator.free(store_line);
+                            try w.writeAll(store_line);
+                        }
+
+                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
@@ -2475,78 +2474,6 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                         last_instruction_was_terminator = false;
                     },
-                    .StoreConst => |sc| {
-                        if (stack.items.len < 1) continue;
-                        const value = stack.items[stack.items.len - 1];
-                        // If name looks corrupted/huge, fall back to last enum value (when available)
-                        if (value.name.len > IRPrinter.MAX_SANE_NAME_LEN and sc.scope_kind == .GlobalLocal) {
-                            if (self.last_emitted_enum_value) |enum_idx| {
-                                _ = try self.global_types.put(sc.var_name, .I64);
-                                _ = try self.defined_globals.put(sc.var_name, true);
-                                const gptr = try self.mangleGlobalName(sc.var_name);
-                                defer self.allocator.free(gptr);
-                                const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ enum_idx, gptr });
-                                defer self.allocator.free(store_line);
-                                try w.writeAll(store_line);
-                                stack.items.len -= 1;
-                                continue;
-                            }
-                        }
-
-                        stack.items.len -= 1;
-                        const llvm_ty = self.stackTypeToLLVMType(value.ty);
-                        const is_global = switch (sc.scope_kind) {
-                            .GlobalLocal, .ModuleGlobal => true,
-                            else => false,
-                        };
-                        if (is_global) {
-                            _ = try self.global_types.put(sc.var_name, value.ty);
-                            if (value.array_type) |array_type| {
-                                _ = try self.global_array_types.put(sc.var_name, array_type);
-                            }
-                            if (value.enum_type_name) |enum_type_name| {
-                                _ = try self.global_enum_types.put(sc.var_name, enum_type_name);
-                            }
-                            if (value.struct_field_types) |fts| {
-                                _ = try self.global_struct_field_types.put(sc.var_name, fts);
-                            }
-                            const stored_names = if (value.struct_field_names) |names|
-                                names
-                            else if (value.struct_type_name) |tname|
-                                self.struct_field_names_by_type.get(tname)
-                            else
-                                null;
-                            if (stored_names) |names| {
-                                _ = try self.global_struct_field_names.put(sc.var_name, names);
-                            }
-                            if (value.struct_type_name) |tname| {
-                                _ = try self.global_struct_type_names.put(sc.var_name, tname);
-                            }
-                            _ = try self.defined_globals.put(sc.var_name, true);
-                            const gptr = try self.mangleGlobalName(sc.var_name);
-                            defer self.allocator.free(gptr);
-                            const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, gptr });
-                            defer self.allocator.free(store_line);
-                            try w.writeAll(store_line);
-                        } else {
-                            var info_ptr = variables.getPtr(sc.var_name);
-                            if (info_ptr == null) {
-                                // Variable should have been allocated at function entry
-                                // This is an error condition - variable not found
-                                continue;
-                            } else {
-                                info_ptr.?.stack_type = value.ty;
-                                info_ptr.?.array_type = value.array_type;
-                                info_ptr.?.enum_type_name = value.enum_type_name;
-                                info_ptr.?.struct_field_types = value.struct_field_types;
-                                info_ptr.?.struct_field_names = value.struct_field_names;
-                                info_ptr.?.struct_type_name = value.struct_type_name;
-                            }
-                            const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info_ptr.?.ptr_name });
-                            defer self.allocator.free(store_line);
-                            try w.writeAll(store_line);
-                        }
-                    },
                     .Return => |ret| {
                         if (ret.has_value) {
                             if (stack.items.len < 1) continue;
@@ -2576,36 +2503,167 @@ pub fn Methods(comptime Ctx: type) type {
                         stack.items.len = 0;
                         last_instruction_was_terminator = true;
                     },
-                    else => {
-                        // Handle ArrayConcat instruction (fallback since switch case doesn't work)
-                        const tag_name = @tagName(inst);
-                        if (std.mem.eql(u8, tag_name, "ArrayConcat")) {
-                            // Pop the two arrays from stack (they should be loaded by previous LoadVar instructions)
-                            if (stack.items.len >= 2) {
-                                const rhs = stack.items[stack.items.len - 1];
-                                const lhs = stack.items[stack.items.len - 2];
-                                stack.items.len -= 2;
+                    .EnterScope => |_| {
+                        // EnterScope is a no-op in LLVM IR generation
+                        last_instruction_was_terminator = false;
+                    },
+                    .ExitScope => |_| {
+                        // ExitScope is a no-op in LLVM IR generation
+                        last_instruction_was_terminator = false;
+                    },
+                    .StoreFieldName => |_| {
+                        // No-op: field names are captured at StructNew time
+                        last_instruction_was_terminator = false;
+                    },
+                    .LoadAlias => |la| {
+                        // Alias loads in global init — load from the global variable
+                        const field_name = la.var_name;
+                        const field_gptr = try self.mangleGlobalName(field_name);
+                        defer self.allocator.free(field_gptr);
+                        const field_st = self.global_types.get(field_name) orelse .PTR;
+                        const field_llty = self.stackTypeToLLVMType(field_st);
+                        const result = try self.nextTemp(&id);
+                        const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ result, field_llty, field_gptr });
+                        defer self.allocator.free(load_line);
+                        try w.writeAll(load_line);
+                        try stack.append(.{ .name = result, .ty = field_st });
+                        last_instruction_was_terminator = false;
+                    },
+                    .BindAlias => |_| {
+                        if (stack.items.len < 1) continue;
+                        _ = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        // BindAlias is a no-op in global init — the alias target
+                        // is already a global that can be accessed directly.
+                        last_instruction_was_terminator = false;
+                    },
+                    .GroupCheck => |gc| {
+                        if (stack.items.len < 1) continue;
+                        const value = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
 
-                                // Determine element type
-                                const elem_type = lhs.array_type orelse rhs.array_type orelse HIR.HIRType{ .Int = {} };
-                                const elem_size = self.arrayElementSize(elem_type);
-                                const elem_tag = self.arrayElementTag(elem_type);
+                        if (value.ty == .Value) {
+                            const reserved_i32 = try self.nextTemp(&id);
+                            const extract_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 1\n", .{ reserved_i32, value.name });
+                            defer self.allocator.free(extract_line);
+                            try w.writeAll(extract_line);
 
-                                // Generate array concatenation call
-                                const concat_reg = try self.nextTemp(&id);
-                                const call_line = try std.fmt.allocPrint(
-                                    self.allocator,
-                                    "  {s} = call ptr @doxa_array_concat(ptr {s}, ptr {s}, i64 {d}, i64 {d})\n",
-                                    .{ concat_reg, lhs.name, rhs.name, elem_size, elem_tag },
-                                );
-                                defer self.allocator.free(call_line);
-                                try w.writeAll(call_line);
+                            const member_i32 = try self.nextTemp(&id);
+                            const shift_line = try std.fmt.allocPrint(self.allocator, "  {s} = lshr i32 {s}, 16\n", .{ member_i32, reserved_i32 });
+                            defer self.allocator.free(shift_line);
+                            try w.writeAll(shift_line);
 
-                                // Push result to stack
-                                try stack.append(.{ .name = concat_reg, .ty = .PTR, .array_type = elem_type });
-                            }
-                            last_instruction_was_terminator = false;
+                            const expected = try self.nextTemp(&id);
+                            const expected_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ expected, gc.member_index });
+                            defer self.allocator.free(expected_line);
+                            try w.writeAll(expected_line);
+
+                            const eq_i1 = try self.nextTemp(&id);
+                            const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, {s}\n", .{ eq_i1, member_i32, expected });
+                            defer self.allocator.free(cmp_line);
+                            try w.writeAll(cmp_line);
+
+                            const result = try self.nextTemp(&id);
+                            const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ result, eq_i1 });
+                            defer self.allocator.free(zext_line);
+                            try w.writeAll(zext_line);
+
+                            try stack.append(.{ .name = result, .ty = .I2 });
+                        } else {
+                            const result = try self.nextTemp(&id);
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i2 0, 0\n", .{result});
+                            defer self.allocator.free(line);
+                            try w.writeAll(line);
+                            try stack.append(.{ .name = result, .ty = .I2 });
                         }
+                        last_instruction_was_terminator = false;
+                    },
+                    .GroupExtractPayload => |_| {
+                        if (stack.items.len < 1) continue;
+                        const value = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+
+                        if (value.ty == .Value) {
+                            const payload = try self.nextTemp(&id);
+                            const extract_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload, value.name });
+                            defer self.allocator.free(extract_line);
+                            try w.writeAll(extract_line);
+
+                            try stack.append(.{ .name = payload, .ty = .I64 });
+                        } else {
+                            try stack.append(value);
+                        }
+                        last_instruction_was_terminator = false;
+                    },
+                    .UnionConstruct => |uc| {
+                        if (stack.items.len < 1) continue;
+                        const value = stack.items[stack.items.len - 1];
+                        stack.items.len -= 1;
+                        // Build a %DoxaValue for the union — same as buildDoxaValue
+                        const dv = try self.buildDoxaValue(w, value, uc.union_type, &id);
+                        try stack.append(dv);
+                        last_instruction_was_terminator = false;
+                    },
+                    .AssertFail => |af| {
+                        const msg = if (af.has_message)
+                            (if (stack.items.len > 0) blk: {
+                                const v = stack.items[stack.items.len - 1];
+                                stack.items.len -= 1;
+                                break :blk v;
+                            } else null)
+                        else
+                            null;
+                        if (msg) |m| {
+                            const ptr = if (m.ty == .PTR) m else try self.ensurePointer(w, m, &id);
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{ptr.name});
+                            defer self.allocator.free(call_line);
+                            try w.writeAll(call_line);
+                        }
+                        const location_msg = try std.fmt.allocPrint(self.allocator, "Assertion failed", .{});
+                        defer self.allocator.free(location_msg);
+                        const info = try internPeekString(
+                            self.allocator,
+                            &peek_state.*.string_map,
+                            &peek_state.*.strings,
+                            peek_state.*.next_id_ptr,
+                            &peek_state.*.globals,
+                            location_msg,
+                        );
+                        const loc_ptr = try self.nextTemp(&id);
+                        const loc_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ loc_ptr, info.length, info.name });
+                        defer self.allocator.free(loc_gep);
+                        try w.writeAll(loc_gep);
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{loc_ptr});
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                        try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0))\n");
+                        try w.writeAll("  ret i32 1\n");
+                        had_return = true;
+                        last_instruction_was_terminator = true;
+                    },
+                    .ArrayConcat => {
+                        // Pop the two arrays from stack
+                        if (stack.items.len >= 2) {
+                            const rhs = stack.items[stack.items.len - 1];
+                            const lhs = stack.items[stack.items.len - 2];
+                            stack.items.len -= 2;
+
+                            const elem_type = lhs.array_type orelse rhs.array_type orelse HIR.HIRType{ .Int = {} };
+                            const elem_size = self.arrayElementSize(elem_type);
+                            const elem_tag = self.arrayElementTag(elem_type);
+
+                            const concat_reg = try self.nextTemp(&id);
+                            const call_line = try std.fmt.allocPrint(
+                                self.allocator,
+                                "  {s} = call ptr @doxa_array_concat(ptr {s}, ptr {s}, i64 {d}, i64 {d})\n",
+                                .{ concat_reg, lhs.name, rhs.name, elem_size, elem_tag },
+                            );
+                            defer self.allocator.free(call_line);
+                            try w.writeAll(call_line);
+
+                            try stack.append(.{ .name = concat_reg, .ty = .PTR, .array_type = elem_type });
+                        }
+                        last_instruction_was_terminator = false;
                     },
                 }
             }
@@ -2694,46 +2752,6 @@ pub fn Methods(comptime Ctx: type) type {
                 self.allocator.free(fields);
             }
             pending_type_name = null;
-        }
-
-        pub fn collectStructFieldNames(self: *IRPrinter, hir: *const HIR.HIRProgram) !void {
-            for (hir.instructions, 0..) |inst, idx| {
-                if (inst != .StructNew) continue;
-                const sn = inst.StructNew;
-
-                if (self.struct_field_names_by_type.contains(sn.type_name)) {
-                    continue;
-                }
-
-                const field_count: usize = @intCast(sn.field_count);
-                if (field_count == 0) {
-                    const empty = try self.allocator.alloc([]const u8, 0);
-                    try self.struct_field_names_by_type.put(sn.type_name, empty);
-                    continue;
-                }
-
-                var names = try self.allocator.alloc([]const u8, field_count);
-                var found: usize = 0;
-                var search_idx = idx;
-                while (search_idx > 0 and found < field_count) {
-                    search_idx -= 1;
-                    const prev = hir.instructions[search_idx];
-                    if (prev == .Const) {
-                        const payload = prev.Const;
-                        if (payload.value == .string) {
-                            const slot = found;
-                            names[slot] = payload.value.string;
-                            found += 1;
-                        }
-                    }
-                }
-
-                if (found == field_count) {
-                    try self.struct_field_names_by_type.put(sn.type_name, names);
-                } else {
-                    self.allocator.free(names);
-                }
-            }
         }
     };
 }

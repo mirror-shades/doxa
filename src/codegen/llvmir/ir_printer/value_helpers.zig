@@ -407,11 +407,13 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(line);
                 // Preserve concrete struct metadata so downstream GetField can
                 // load the right storage type for each field.
+                const type_name = self.struct_type_names_by_id.get(sid);
                 break :blk_struct_ptr StackVal{
                     .name = tmp,
                     .ty = .PTR,
                     .struct_field_types = self.struct_fields_by_id.get(sid),
-                    .struct_type_name = self.struct_type_names_by_id.get(sid) orelse "struct",
+                    .struct_field_names = if (type_name) |tn| self.struct_field_names_by_type.get(tn) else null,
+                    .struct_type_name = type_name orelse "struct",
                 };
             },
             .Array => |inner| blk_arr: {
