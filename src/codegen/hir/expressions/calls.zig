@@ -359,7 +359,7 @@ pub const CallsHandler = struct {
                 // For enum members, we need to find the parent enum type
                 // This is a bit tricky because we don't have direct access to the parent enum name
                 // We'll need to infer it from the context or use a different approach
-                // For now, let's try to infer it from the inferred type
+                // TODO: infer parent enum name from context rather than inferred type
                 if (inferred_type == .Enum) {
                     // Try to find the enum type that contains this variant
                     var enum_type_iter = self.generator.type_system.custom_types.iterator();
@@ -621,7 +621,6 @@ pub const CallsHandler = struct {
             const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
 
             if (target_type == .String) {
-                // Strings are immutable - replace with empty string
                 if (builtin_data.arguments[0].data == .Variable) {
                     const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                     const expected_type = self.generator.getTrackedVariableType(var_name) orelse .String;
@@ -650,7 +649,6 @@ pub const CallsHandler = struct {
                     try self.generator.instructions.append(.Pop);
                 }
             }
-            // @clear returns nothing
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
 
@@ -690,10 +688,7 @@ pub const CallsHandler = struct {
                     .return_type = .Nothing,
                 },
             });
-            // @print returns nothing
-            const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
-            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
-
+            // @print returns nothing (already pushed by the VM)
             if (!preserve_result) {
                 try self.generator.instructions.append(.Pop);
             }

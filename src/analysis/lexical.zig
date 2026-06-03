@@ -142,7 +142,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("↑", .NAND);
         try self.keywords.put("↓", .NOR);
         try self.keywords.put("→", .IMPLIES);
-        //try self.keywords.put("⊞", .AND_PARADOXICAL); // TODO: let you add true and false to get both
         try self.keywords.put("⊟", .NOT_PARADOXICAL);
     }
 

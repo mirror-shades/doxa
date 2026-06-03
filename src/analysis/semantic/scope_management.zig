@@ -10,6 +10,7 @@ const Reporting = @import("../../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const Errors = @import("../../utils/errors.zig");
 const ErrorCode = Errors.ErrorCode;
+const eval = @import("eval_utils.zig");
 
 /// Look up a variable in the current scope and imported symbols
 pub fn lookupVariable(
@@ -69,7 +70,7 @@ pub fn createModuleNamespaceVariable(
     type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = name };
 
     // Convert TypeInfo to TokenType
-    const token_type = convertTypeToTokenType(type_info.base);
+    const token_type = eval.convertTypeToTokenType(type_info.base);
 
     // Create a Variable object for the module namespace using the scope's createValueBinding
     if (current_scope) |scope| {
@@ -285,7 +286,7 @@ fn createImportedSymbolVariable(
     name: []const u8,
     imported_symbol: @import("../../parser/import_parser.zig").ImportedSymbol,
 ) ?*Variable {
-    _ = name; // May be used in the future
+    _ = name; // TODO: validate symbol name or use for reporting
 
     // Create appropriate TypeInfo based on symbol kind
     const type_info = ast.TypeInfo.createDefault(allocator) catch return null;
@@ -321,22 +322,22 @@ fn createImportedSymbolVariable(
             type_info.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
         },
         .Enum => {
-            // Assume imported enums are custom types for now
+            // TODO: resolve imported enums to full type info rather than Custom
             type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false };
         },
         .Struct => {
-            // Assume imported structs are custom types for now
+            // TODO: resolve imported structs to full type info rather than Custom
             type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false };
         },
         .Type => {
-            // Assume imported types are custom types for now
+            // TODO: resolve imported types to full type info rather than Custom
             type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false };
         },
         .Group => {
             type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false };
         },
         .Import => {
-            // Assume imported modules are custom types for now
+            // TODO: resolve imported modules to full type info rather than Custom
             type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false };
         },
     }
@@ -346,23 +347,48 @@ fn createImportedSymbolVariable(
     return null;
 }
 
-/// Convert TypeInfo base type to TokenType
-fn convertTypeToTokenType(base_type: ast.Type) TokenType {
-    return switch (base_type) {
-        .Int => .INT,
-        .Float => .FLOAT,
-        .String => .STRING,
-        .Tetra => .TETRA,
-        .Byte => .BYTE,
-        .Nothing => .NOTHING,
-        .Array => .ARRAY,
-        .Struct => .STRUCT,
-        .Map => .MAP,
-        .Enum => .ENUM,
-        .Function => .FUNCTION,
-        .Union => .UNION,
-        .Custom => .CUSTOM,
-    };
+pub fn suggestVariableName(
+    current_scope: ?*Memory.Scope,
+    parser: ?*const Parser,
+    name: []const u8,
+) ?[]const u8 {
+    var best: ?[]const u8 = null;
+    var best_score: usize = std.math.maxInt(usize);
+
+    var scope = current_scope;
+    while (scope) |s| {
+        var it = s.name_map.iterator();
+        while (it.next()) |entry| {
+            const candidate = entry.key_ptr.*;
+            eval.updateBestSuggestion(name, candidate, &best, &best_score);
+        }
+        scope = s.parent;
+    }
+
+    if (parser) |p| {
+        if (p.imported_symbols) |imported_symbols| {
+            var import_it = imported_symbols.iterator();
+            while (import_it.next()) |entry| {
+                const candidate = entry.key_ptr.*;
+                eval.updateBestSuggestion(name, candidate, &best, &best_score);
+            }
+        }
+
+        var module_it = p.module_namespaces.iterator();
+        while (module_it.next()) |entry| {
+            const candidate = entry.key_ptr.*;
+            eval.updateBestSuggestion(name, candidate, &best, &best_score);
+        }
+    }
+
+    if (best) |suggested| {
+        const max_acceptable = @max(@as(usize, 2), name.len / 3);
+        if (best_score <= max_acceptable) {
+            return suggested;
+        }
+    }
+
+    return null;
 }
 
 fn findModuleVariableTypeInfo(

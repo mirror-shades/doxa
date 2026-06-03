@@ -508,6 +508,9 @@ pub const VM = struct {
             .LoadModule => |payload| {
                 try self.execLoadModule(payload);
             },
+            .UnionConstruct => |payload| {
+                try self.execUnionConstruct(payload);
+            },
             .Nop => {},
             .AssertFail => |payload| {
                 const location_str = try std.fmt.allocPrint(self.runtimeAllocator(), "{s}:{}:{}", .{ payload.location.file, payload.location.range.start_line, payload.location.range.start_col });
@@ -591,6 +594,7 @@ pub const VM = struct {
             .map => |m| m.scope_id,
             .enum_variant => |e| e.scope_id,
             .group_instance => |g| g.scope_id,
+            .union_instance => |u| u.scope_id,
             else => 0,
         };
     }
@@ -602,6 +606,7 @@ pub const VM = struct {
             .map => |*m| m.scope_id = id,
             .enum_variant => |*e| e.scope_id = id,
             .group_instance => |*g| g.scope_id = id,
+            .union_instance => |*u| u.scope_id = id,
             else => {},
         }
     }
@@ -1070,6 +1075,12 @@ pub const VM = struct {
                 .array => |bv| av.elements.ptr == bv.elements.ptr, // Reference equality for arrays
                 else => false,
             },
+            .union_instance => |av| switch (b) {
+                .union_instance => |bv| av.union_type_id == bv.union_type_id and
+                    av.member_index == bv.member_index and
+                    valuesEqual(av.payload.*, bv.payload.*),
+                else => false,
+            },
             .nothing => switch (b) {
                 .nothing => true,
                 else => false,
@@ -1424,6 +1435,25 @@ pub const VM = struct {
         } };
 
         try self.stack.push(HIRFrame.initFromHIRValue(enum_value));
+    }
+
+    fn execUnionConstruct(self: *VM, payload: anytype) VmError!void {
+        const frame = try self.stack.pop();
+        const alloc = self.scopeAllocator();
+
+        const wrapped = try alloc.create(HIRValue);
+        errdefer alloc.destroy(wrapped);
+        wrapped.* = frame.value;
+
+        const union_value = HIRValue{ .union_instance = .{
+            .union_type_id = payload.union_type_id,
+            .member_index = payload.member_index,
+            .payload = wrapped,
+            .owner = ValueOwner.Scope,
+            .scope_id = self.currentScopeId(),
+        } };
+
+        try self.stack.push(HIRFrame.initFromHIRValue(union_value));
     }
 
     fn execStoreFieldName(self: *VM, payload: anytype) VmError!void {
@@ -2269,6 +2299,7 @@ pub const VM = struct {
                 .float => |f| HIRValue{ .tetra = if (f != 0.0) 1 else 0 },
                 else => value,
             },
+            .Union => return value,
             else => value,
         };
     }
@@ -2347,6 +2378,11 @@ pub const VM = struct {
             .map => try allocator.dupe(u8, "{map}"),
             .enum_variant => |e| try std.fmt.allocPrint(allocator, ".{s}", .{e.variant_name}),
             .group_instance => |g| try std.fmt.allocPrint(allocator, "{s}.#{}", .{ g.type_name, g.member_index }),
+            .union_instance => |u| {
+                const inner = try self.valueToString(allocator, u.payload);
+                defer allocator.free(inner);
+                return try std.fmt.allocPrint(allocator, "<<union #{d}>> {s}", .{ u.member_index, inner });
+            },
             .storage_id_ref => |storage_id| try std.fmt.allocPrint(allocator, "storage_id_ref({})", .{storage_id}),
         };
     }
@@ -2436,6 +2472,10 @@ pub const VM = struct {
                     },
                 }
             },
+            .union_instance => |u| {
+                self.freeValueFromAllocator(allocator, u.payload);
+                allocator.destroy(u.payload);
+            },
         }
         value.* = hir_values.nothing_value;
     }
@@ -2519,6 +2559,9 @@ pub const VM = struct {
                         allocator.free(s.fields);
                     },
                 }
+            },
+            .union_instance => |u| {
+                self.freeValueContents(allocator, u.payload);
             },
         }
         value.* = hir_values.nothing_value;
@@ -2624,6 +2667,18 @@ pub const VM = struct {
                     .member_index = g.member_index,
                     .payload = payload,
                     .path = null,
+                    .scope_id = 0,
+                }};
+            },
+            .union_instance => |u| blk: {
+                const payload_copy = try self.deepCopyValueToAllocator(allocator, u.payload, owner);
+                const payload_ptr = try allocator.create(HIRValue);
+                payload_ptr.* = payload_copy;
+                break :blk HIRValue{ .union_instance = .{
+                    .union_type_id = u.union_type_id,
+                    .member_index = u.member_index,
+                    .payload = payload_ptr,
+                    .owner = owner,
                     .scope_id = 0,
                 }};
             },

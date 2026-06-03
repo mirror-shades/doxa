@@ -306,7 +306,7 @@ fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!Zi
         const ti = try parseAllowedType(ts, .param);
         try param_types.append(ti);
 
-        // Disallow defaults / extra param modifiers for now.
+        // TODO: support defaults and extra param modifiers
         const after = (try ts.peek()) orelse return error.InlineZigNotValid;
         if (tokenIs(after, .symbol, "=")) return error.InlineZigNotValid;
 

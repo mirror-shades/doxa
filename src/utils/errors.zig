@@ -454,6 +454,7 @@ pub const ErrorCode = struct {
     pub const EXPECTED_IMPORT_SYMBOL = "E7007";
     pub const MISSING_FROM_KEYWORD = "E7008";
     pub const INVALID_PRINT_EXPRESSION = "E7009";
+    pub const INVALID_IMPORT = "E7010";
 
     // 8xxx - Internal Errors
     pub const INTERNAL_ERROR = "E8001";

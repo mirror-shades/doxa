@@ -13,6 +13,7 @@ pub const HIRValue = union(enum) {
     map: HIRMap,
     enum_variant: HIREnum,
     group_instance: HIRGroup,
+    union_instance: HIRUnion,
     nothing: struct {},
     storage_id_ref: u32, // Represents a storage ID for aliases
 };
@@ -91,4 +92,12 @@ pub const HIRGroup = struct {
         enum_variant: HIREnum,
         struct_instance: HIRStruct,
     };
+};
+
+pub const HIRUnion = struct {
+    union_type_id: u32,
+    member_index: u32,
+    payload: *HIRValue,
+    owner: ValueOwner = .Runtime,
+    scope_id: u32 = 0,
 };

@@ -52,7 +52,7 @@ pub fn Methods(comptime Ctx: type) type {
                     .StoreVar => |sv| {
                         if (variables_to_allocate.get(sv.var_name) == null) {
                             // We need to determine the type from the HIR context
-                            // For now, prefer the expected type from HIR when available
+                            // TODO: determine type from full HIR context rather than expected type alone
                             const declared_stack_type = if (sv.expected_type != .Unknown)
                                 self.hirTypeToStackType(sv.expected_type)
                             else

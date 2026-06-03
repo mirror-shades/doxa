@@ -8,8 +8,8 @@ const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
 const helpers = @import("./helpers.zig");
 const unifyTypes = helpers.unifyTypes;
 const getLocationFromBase = helpers.getLocationFromBase;
+const eval = @import("eval_utils.zig");
 const lookupVariable = helpers.lookupVariable;
-const infer_type = @import("./infer_type.zig");
 const builtin_methods = @import("../../runtime/builtin_methods.zig");
 
 const SemanticError = std.mem.Allocator.Error || ErrorList;
@@ -257,13 +257,13 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             }
         },
         .Unary => |unary| {
-            const operand_type = try infer_type.inferTypeFromExpr(self, unary.right.?);
+            const operand_type = try inferTypeFromExpr(self, unary.right.?);
             type_info.* = operand_type.*;
         },
         .FunctionCall => |function_call| {
             if (function_call.callee.data == .FieldAccess) {
                 const field_access = function_call.callee.data.FieldAccess;
-                const object_type = try infer_type.inferTypeFromExpr(self, field_access.object);
+                const object_type = try inferTypeFromExpr(self, field_access.object);
                 const method_name = field_access.field.lexeme;
 
                 if (field_access.object.data == .Variable) {
@@ -428,7 +428,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     },
                 }
             } else {
-                const callee_type = try infer_type.inferTypeFromExpr(self, function_call.callee);
+                const callee_type = try inferTypeFromExpr(self, function_call.callee);
                 if (callee_type.base == .Function) {
                     if (callee_type.function_type) |func_type| {
                         const expected_arg_count: usize = func_type.params.len;
@@ -498,7 +498,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 return type_info;
                             }
 
-                            const arg_type = try infer_type.inferTypeFromExpr(self, arg_expr_it.expr);
+                            const arg_type = try inferTypeFromExpr(self, arg_expr_it.expr);
                             if (func_type.params[param_index].base != .Nothing) {
                                 try helpers.unifyTypes(self, &func_type.params[param_index], arg_type, .{ .location = getLocationFromBase(expr.base) });
                             }
@@ -529,8 +529,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             }
         },
         .Index => |index| {
-            const array_type = try infer_type.inferTypeFromExpr(self, index.array);
-            const index_type = try infer_type.inferTypeFromExpr(self, index.index);
+            const array_type = try inferTypeFromExpr(self, index.array);
+            const index_type = try inferTypeFromExpr(self, index.index);
 
             if (array_type.base == .Array) {
                 if (index_type.base != .Int) {
@@ -565,7 +565,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     } else if (index.array.data == .FieldAccess) {
                         // Handle field access like this.FileToContext[file].line_breaks
                         const field_access = index.array.data.FieldAccess;
-                        const object_type = try infer_type.inferTypeFromExpr(self, field_access.object);
+                        const object_type = try inferTypeFromExpr(self, field_access.object);
 
                         if (object_type.base == .Struct) {
                             if (object_type.struct_fields) |fields| {
@@ -616,7 +616,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 } else {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
-                        ErrorCode.INVALID_MAP_KEY_TYPE, // reuse for now; dedicated code can be added later
+                        ErrorCode.INVALID_MAP_KEY_TYPE, // TODO: dedicated error code
                         "Map value type not inferred; declare explicit 'returns <Type>' or add a first entry to infer",
                         .{},
                     );
@@ -651,7 +651,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             }
         },
         .FieldAccess => |field| {
-            const object_type = try infer_type.inferTypeFromExpr(self, field.object);
+            const object_type = try inferTypeFromExpr(self, field.object);
 
             if (object_type.base == .Union) {
                 self.reporter.reportCompileError(
@@ -904,9 +904,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             if (elements.len == 0) {
                 type_info.* = .{ .base = .Array, .array_type = null };
             } else {
-                const first_type = try infer_type.inferTypeFromExpr(self, elements[0]);
+                const first_type = try inferTypeFromExpr(self, elements[0]);
                 for (elements[1..]) |element| {
-                    const element_type = try infer_type.inferTypeFromExpr(self, element);
+                    const element_type = try inferTypeFromExpr(self, element);
                     try helpers.unifyTypes(self, first_type, element_type, .{ .location = getLocationFromBase(expr.base) });
                 }
                 const array_type = try ast.TypeInfo.createDefault(self.allocator);
@@ -917,7 +917,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         .Struct => |fields| {
             const struct_fields = try self.allocator.alloc(ast.StructFieldType, fields.len);
             for (fields, struct_fields) |field, *struct_field| {
-                const field_type = try infer_type.inferTypeFromExpr(self, field.value);
+                const field_type = try inferTypeFromExpr(self, field.value);
                 struct_field.* = .{
                     .name = field.name.lexeme,
                     .type_info = field_type,
@@ -927,7 +927,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Struct, .struct_fields = struct_fields };
         },
         .If => |if_expr| {
-            var condition_type = try infer_type.inferTypeFromExpr(self, if_expr.condition.?);
+            var condition_type = try inferTypeFromExpr(self, if_expr.condition.?);
 
             // If condition is a function, automatically infer its return type as if it were called
             if (condition_type.base == .Function) {
@@ -962,9 +962,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 );
             }
 
-            const then_type = try infer_type.inferTypeFromExpr(self, if_expr.then_branch.?);
+            const then_type = try inferTypeFromExpr(self, if_expr.then_branch.?);
             if (if_expr.else_branch) |else_branch| {
-                const else_type = try infer_type.inferTypeFromExpr(self, else_branch);
+                const else_type = try inferTypeFromExpr(self, else_branch);
 
                 // If the parser produced an implicit else that is a Nothing literal,
                 // treat this as if there is no else-branch to avoid forcing unification
@@ -1003,8 +1003,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             }
         },
         .Logical => |logical| {
-            const left_type = try infer_type.inferTypeFromExpr(self, logical.left);
-            const right_type = try infer_type.inferTypeFromExpr(self, logical.right);
+            const left_type = try inferTypeFromExpr(self, logical.left);
+            const right_type = try inferTypeFromExpr(self, logical.right);
 
             if (left_type.base != .Tetra or right_type.base != .Tetra) {
                 self.reporter.reportCompileError(
@@ -1021,7 +1021,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Tetra };
         },
         .Match => |match_expr| {
-            _ = try infer_type.inferTypeFromExpr(self, match_expr.value);
+            _ = try inferTypeFromExpr(self, match_expr.value);
 
             if (match_expr.cases.len > 0) {
                 var matched_var_name: ?[]const u8 = null;
@@ -1070,14 +1070,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .Grouping => |grouped_expr| {
             if (grouped_expr) |expr_in_parens| {
-                type_info.* = (try infer_type.inferTypeFromExpr(self, expr_in_parens)).*;
+                type_info.* = (try inferTypeFromExpr(self, expr_in_parens)).*;
             } else {
                 type_info.* = .{ .base = .Nothing };
             }
         },
         .Assignment => |assign| {
             if (assign.value) |value| {
-                const value_type = try infer_type.inferTypeFromExpr(self, value);
+                const value_type = try inferTypeFromExpr(self, value);
                 if (lookupVariable(self, assign.name.lexeme)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         if (storage.constant) {
@@ -1109,7 +1109,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .CompoundAssign => |compound_assign| {
             if (compound_assign.value) |value| {
-                const value_type = try infer_type.inferTypeFromExpr(self, value);
+                const value_type = try inferTypeFromExpr(self, value);
                 if (lookupVariable(self, compound_assign.name.lexeme)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         if (storage.constant) {
@@ -1141,7 +1141,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .ReturnExpr => |return_expr| {
             if (return_expr.value) |value| {
-                type_info.* = (try infer_type.inferTypeFromExpr(self, value)).*;
+                type_info.* = (try inferTypeFromExpr(self, value)).*;
             } else {
                 type_info.* = .{ .base = .Nothing };
             }
@@ -1186,7 +1186,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
             if (std.mem.eql(u8, fname, "length")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const t0 = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                const t0 = try inferTypeFromExpr(self, bc.arguments[0]);
                 if (t0.base != .Array and t0.base != .String) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(bc.arguments[0].base),
@@ -1201,8 +1201,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             } else if (std.mem.eql(u8, fname, "push")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
-                const val_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
+                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
+                const val_t = try inferTypeFromExpr(self, bc.arguments[1]);
                 if (coll_t.base == .Array) {
                     if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@push")) return type_info;
                     if (coll_t.array_type) |elem| {
@@ -1223,7 +1223,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             } else if (std.mem.eql(u8, fname, "pop")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
                 if (bc.arguments[0].data == .Variable and std.mem.eql(u8, bc.arguments[0].data.Variable.lexeme, "list")) {
                     if (coll_t.base == .Array) {
                         if (coll_t.array_type) |elem| type_info.* = elem.*;
@@ -1249,8 +1249,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
             } else if (std.mem.eql(u8, fname, "insert")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
-                const idx_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
+                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
+                const idx_t = try inferTypeFromExpr(self, bc.arguments[1]);
                 if (idx_t.base != .Int) {
                     self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@insert index must be int, got {s}", .{@tagName(idx_t.base)});
                     self.fatal_error = true;
@@ -1258,7 +1258,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
                 if (coll_t.base == .Array) {
                     if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@insert")) return type_info;
-                    const val_t = try infer_type.inferTypeFromExpr(self, bc.arguments[2]);
+                    const val_t = try inferTypeFromExpr(self, bc.arguments[2]);
                     if (coll_t.array_type) |elem| try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(bc.arguments[2].base) });
                 } else if (coll_t.base != .String) {
                     self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@insert requires array or string, got {s}", .{@tagName(coll_t.base)});
@@ -1268,8 +1268,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             } else if (std.mem.eql(u8, fname, "remove")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
-                const idx_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
+                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
+                const idx_t = try inferTypeFromExpr(self, bc.arguments[1]);
                 if (idx_t.base != .Int) {
                     self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@remove index must be int, got {s}", .{@tagName(idx_t.base)});
                     self.fatal_error = true;
@@ -1292,9 +1292,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             } else if (std.mem.eql(u8, fname, "slice")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
-                const start_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
-                const len_t = try infer_type.inferTypeFromExpr(self, bc.arguments[2]);
+                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
+                const start_t = try inferTypeFromExpr(self, bc.arguments[1]);
+                const len_t = try inferTypeFromExpr(self, bc.arguments[2]);
                 if (start_t.base != .Int or len_t.base != .Int) {
                     self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.INVALID_ARGUMENT_TYPE, "@slice start/length must be ints", .{});
                     self.fatal_error = true;
@@ -1335,7 +1335,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 // Validate argument type (int | byte)
                 if (bc.arguments.len > 0) {
-                    const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                    const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
                     if (arg_type.base != .Int and arg_type.base != .Byte) {
                         self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
                         self.fatal_error = true;
@@ -1350,7 +1350,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             } else if (std.mem.eql(u8, fname, "spawn")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
                 if (arg_type.base != .Array) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(bc.arguments[0].base),
@@ -1374,7 +1374,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             } else if (std.mem.eql(u8, fname, "kill")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
                 if (arg_type.base != .Int) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(bc.arguments[0].base),
@@ -1388,7 +1388,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             } else if (std.mem.eql(u8, fname, "wait")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const arg_type = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
                 if (arg_type.base != .Int) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(bc.arguments[0].base),
@@ -1402,7 +1402,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             } else if (std.mem.eql(u8, fname, "clear")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
                 if (coll_t.base != .Array and coll_t.base != .String) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(bc.arguments[0].base),
@@ -1418,7 +1418,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             } else if (std.mem.eql(u8, fname, "find")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
                 if (coll_t.base != .Array and coll_t.base != .String) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(bc.arguments[0].base),
@@ -1434,14 +1434,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             } else if (std.mem.eql(u8, fname, "assert")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 if (bc.arguments.len >= 1) {
-                    const cond_t = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                    const cond_t = try inferTypeFromExpr(self, bc.arguments[0]);
                     if (cond_t.base != .Tetra) {
                         self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@assert condition must be tetra", .{});
                         self.fatal_error = true;
                     }
                 }
                 if (bc.arguments.len >= 2) {
-                    const msg_t = try infer_type.inferTypeFromExpr(self, bc.arguments[1]);
+                    const msg_t = try inferTypeFromExpr(self, bc.arguments[1]);
                     if (msg_t.base != .String) {
                         self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.TYPE_MISMATCH, "@assert message must be string", .{});
                         self.fatal_error = true;
@@ -1456,7 +1456,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             } else if (std.mem.eql(u8, fname, "print")) {
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
                 if (bc.arguments.len >= 1) {
-                    _ = try infer_type.inferTypeFromExpr(self, bc.arguments[0]);
+                    _ = try inferTypeFromExpr(self, bc.arguments[0]);
                 }
                 type_info.* = .{ .base = .Nothing };
                 return type_info;
@@ -1467,7 +1467,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             return type_info;
         },
         .InternalCall => |method_call| {
-            var receiver_type = try infer_type.inferTypeFromExpr(self, method_call.receiver);
+            var receiver_type = try inferTypeFromExpr(self, method_call.receiver);
             const method_name = method_call.method.lexeme;
 
             switch (method_call.method.type) {
@@ -1514,7 +1514,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 return type_info;
                             }
 
-                            const value_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[0]);
+                            const value_type = try inferTypeFromExpr(self, method_call.arguments[0]);
                             if (receiver_type.base == .Array) {
                                 if (receiver_type.array_type) |elem_type| {
                                     try helpers.unifyTypes(self, elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[0].base) });
@@ -1537,7 +1537,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             args[0] = method_call.receiver;
                             args[1] = method_call.arguments[0];
                             expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try infer_type.inferTypeFromExpr(self, expr);
+                            return try inferTypeFromExpr(self, expr);
                         },
                         .POP => {
                             if (method_call.arguments.len != 0) {
@@ -1555,7 +1555,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             var args = try self.allocator.alloc(*ast.Expr, 1);
                             args[0] = method_call.receiver;
                             expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try infer_type.inferTypeFromExpr(self, expr);
+                            return try inferTypeFromExpr(self, expr);
                         },
                         .INSERT => {
                             if (method_call.arguments.len != 2) {
@@ -1570,7 +1570,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 return type_info;
                             }
 
-                            const index_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[0]);
+                            const index_type = try inferTypeFromExpr(self, method_call.arguments[0]);
                             if (index_type.base != .Int) {
                                 self.reporter.reportCompileError(
                                     getLocationFromBase(method_call.arguments[0].base),
@@ -1583,7 +1583,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 return type_info;
                             }
 
-                            const value_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[1]);
+                            const value_type = try inferTypeFromExpr(self, method_call.arguments[1]);
                             if (receiver_type.array_type) |elem_type| {
                                 try helpers.unifyTypes(self, elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[1].base) });
                             }
@@ -1593,7 +1593,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             args[1] = method_call.arguments[0];
                             args[2] = method_call.arguments[1];
                             expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try infer_type.inferTypeFromExpr(self, expr);
+                            return try inferTypeFromExpr(self, expr);
                         },
                         .REMOVE => {
                             if (method_call.arguments.len != 1) {
@@ -1608,7 +1608,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 return type_info;
                             }
 
-                            const index_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[0]);
+                            const index_type = try inferTypeFromExpr(self, method_call.arguments[0]);
                             if (index_type.base != .Int) {
                                 self.reporter.reportCompileError(
                                     getLocationFromBase(method_call.arguments[0].base),
@@ -1625,7 +1625,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             args[0] = method_call.receiver;
                             args[1] = method_call.arguments[0];
                             expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try infer_type.inferTypeFromExpr(self, expr);
+                            return try inferTypeFromExpr(self, expr);
                         },
                         .SLICE => {
                             if (method_call.arguments.len != 2) {
@@ -1640,8 +1640,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 return type_info;
                             }
 
-                            const start_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[0]);
-                            const length_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[1]);
+                            const start_type = try inferTypeFromExpr(self, method_call.arguments[0]);
+                            const length_type = try inferTypeFromExpr(self, method_call.arguments[1]);
                             if (start_type.base != .Int) {
                                 self.reporter.reportCompileError(
                                     getLocationFromBase(method_call.arguments[0].base),
@@ -1676,7 +1676,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             args[1] = method_call.arguments[0];
                             args[2] = method_call.arguments[1];
                             expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try infer_type.inferTypeFromExpr(self, expr);
+                            return try inferTypeFromExpr(self, expr);
                         },
                         .CLEAR => {
                             if (method_call.arguments.len != 0) {
@@ -1706,7 +1706,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             var args = try self.allocator.alloc(*ast.Expr, 1);
                             args[0] = method_call.receiver;
                             expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try infer_type.inferTypeFromExpr(self, expr);
+                            return try inferTypeFromExpr(self, expr);
                         },
                         .FIND => {
                             if (method_call.arguments.len != 1) {
@@ -1737,7 +1737,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             args[0] = method_call.receiver;
                             args[1] = method_call.arguments[0];
                             expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try infer_type.inferTypeFromExpr(self, expr);
+                            return try inferTypeFromExpr(self, expr);
                         },
 
                         else => {
@@ -1757,14 +1757,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     var args = try self.allocator.alloc(*ast.Expr, 1);
                     args[0] = method_call.receiver;
                     expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                    return try infer_type.inferTypeFromExpr(self, expr);
+                    return try inferTypeFromExpr(self, expr);
                 },
 
                 .LENGTH => {
                     var args = try self.allocator.alloc(*ast.Expr, 1);
                     args[0] = method_call.receiver;
                     expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                    return try infer_type.inferTypeFromExpr(self, expr);
+                    return try inferTypeFromExpr(self, expr);
                 },
 
                 .TOSTRING, .TOINT, .TOFLOAT, .TOBYTE => {
@@ -1808,7 +1808,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         return type_info;
                     }
 
-                    const cond_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[0]);
+                    const cond_type = try inferTypeFromExpr(self, method_call.arguments[0]);
                     if (cond_type.base != .Tetra) {
                         self.reporter.reportCompileError(
                             getLocationFromBase(method_call.arguments[0].base),
@@ -1822,7 +1822,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     }
 
                     if (argc == 2) {
-                        const msg_type = try infer_type.inferTypeFromExpr(self, method_call.arguments[1]);
+                        const msg_type = try inferTypeFromExpr(self, method_call.arguments[1]);
                         if (msg_type.base != .String) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(method_call.arguments[1].base),
@@ -1837,7 +1837,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     }
 
                     expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = method_call.arguments } };
-                    return try infer_type.inferTypeFromExpr(self, expr);
+                    return try inferTypeFromExpr(self, expr);
                 },
 
                 else => {
@@ -1869,18 +1869,18 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .String };
         },
         .Peek => |_peek| {
-            const expr_type = try infer_type.inferTypeFromExpr(self, _peek.expr);
+            const expr_type = try inferTypeFromExpr(self, _peek.expr);
             type_info.* = expr_type.*;
         },
         .PeekStruct => |_peek_struct| {
-            const expr_type = try infer_type.inferTypeFromExpr(self, _peek_struct.expr);
+            const expr_type = try inferTypeFromExpr(self, _peek_struct.expr);
             type_info.* = expr_type.*;
         },
         .InterpolatedString => |template| {
             for (template.parts) |part| {
                 switch (part) {
                     .Expression => |part_expr| {
-                        _ = try infer_type.inferTypeFromExpr(self, part_expr);
+                        _ = try inferTypeFromExpr(self, part_expr);
                     },
                     .String => {},
                 }
@@ -1888,13 +1888,13 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .String };
         },
         .Print => |print_expr| {
-            _ = try infer_type.inferTypeFromExpr(self, print_expr.expr);
+            _ = try inferTypeFromExpr(self, print_expr.expr);
             type_info.* = .{ .base = .Nothing };
         },
         .IndexAssign => |index_assign| {
-            const array_type = try infer_type.inferTypeFromExpr(self, index_assign.array);
-            const index_type = try infer_type.inferTypeFromExpr(self, index_assign.index);
-            const value_type = try infer_type.inferTypeFromExpr(self, index_assign.value);
+            const array_type = try inferTypeFromExpr(self, index_assign.array);
+            const index_type = try inferTypeFromExpr(self, index_assign.index);
+            const value_type = try inferTypeFromExpr(self, index_assign.value);
 
             if (array_type.base != .Array and array_type.base != .Map) {
                 self.reporter.reportCompileError(
@@ -1946,8 +1946,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Nothing };
         },
         .FieldAssignment => |field_assign| {
-            const object_type = try infer_type.inferTypeFromExpr(self, field_assign.object);
-            const value_type = try infer_type.inferTypeFromExpr(self, field_assign.value);
+            const object_type = try inferTypeFromExpr(self, field_assign.object);
+            const value_type = try inferTypeFromExpr(self, field_assign.value);
 
             if (object_type.base != .Struct and object_type.base != .Custom) {
                 self.reporter.reportCompileError(
@@ -2028,7 +2028,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Nothing };
         },
         .Exists => |exists| {
-            const array_type = try infer_type.inferTypeFromExpr(self, exists.array);
+            const array_type = try inferTypeFromExpr(self, exists.array);
 
             const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
@@ -2040,7 +2040,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             _ = quantifier_scope.createValueBinding(
                 exists.variable.lexeme,
                 TokenLiteral{ .nothing = {} },
-                helpers.convertTypeToTokenType(self, bound_var_type.base),
+                eval.convertTypeToTokenType(bound_var_type.base),
                 &bound_var_type,
                 true,
             ) catch |err| {
@@ -2064,7 +2064,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             const prev_scope = self.current_scope;
             self.current_scope = quantifier_scope;
 
-            const condition_type = try infer_type.inferTypeFromExpr(self, exists.condition);
+            const condition_type = try inferTypeFromExpr(self, exists.condition);
 
             self.current_scope = prev_scope;
 
@@ -2097,7 +2097,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Tetra };
         },
         .ForAll => |for_all| {
-            const array_type = try infer_type.inferTypeFromExpr(self, for_all.array);
+            const array_type = try inferTypeFromExpr(self, for_all.array);
 
             const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
@@ -2109,7 +2109,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             _ = quantifier_scope.createValueBinding(
                 for_all.variable.lexeme,
                 TokenLiteral{ .nothing = {} },
-                helpers.convertTypeToTokenType(self, bound_var_type.base),
+                eval.convertTypeToTokenType(bound_var_type.base),
                 &bound_var_type,
                 true,
             ) catch |err| {
@@ -2133,7 +2133,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             const prev_scope = self.current_scope;
             self.current_scope = quantifier_scope;
 
-            const condition_type = try infer_type.inferTypeFromExpr(self, for_all.condition);
+            const condition_type = try inferTypeFromExpr(self, for_all.condition);
 
             self.current_scope = prev_scope;
 
@@ -2166,7 +2166,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Tetra };
         },
         .Assert => |assert| {
-            const condition_type = try infer_type.inferTypeFromExpr(self, assert.condition);
+            const condition_type = try inferTypeFromExpr(self, assert.condition);
             if (condition_type.base != .Tetra) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),
@@ -2206,7 +2206,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                 for (decl_fields) |decl_field| {
                                     if (std.mem.eql(u8, decl_field.name, lit_field.name.lexeme)) {
                                         found = true;
-                                        const lit_type = try infer_type.inferTypeFromExpr(self, lit_field.value);
+                                        const lit_type = try inferTypeFromExpr(self, lit_field.value);
                                         try helpers.unifyTypes(
                                             self,
                                             decl_field.type_info,
@@ -2261,7 +2261,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
             var value_type_ptr: ?*ast.TypeInfo = null;
             if (block.value) |value_expr| {
-                value_type_ptr = try infer_type.inferTypeFromExpr(self, value_expr);
+                value_type_ptr = try inferTypeFromExpr(self, value_expr);
             }
 
             if (self.in_loop_scope) {
@@ -2296,7 +2296,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             const target_type_info = try self.typeExprToTypeInfo(cast.target_type);
             type_info.* = target_type_info.*;
 
-            const value_type = try infer_type.inferTypeFromExpr(self, cast.value);
+            const value_type = try inferTypeFromExpr(self, cast.value);
             if (value_type.base != .Union) {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),
@@ -2320,14 +2320,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                 if (cast.value.data == .Variable) {
                     const var_name = cast.value.data.Variable.lexeme;
-                    const token_type = helpers.convertTypeToTokenType(self, target_type_info.base);
+                    const token_type = eval.convertTypeToTokenType(target_type_info.base);
                     _ = then_scope.createValueBinding(
                         var_name,
                         TokenLiteral{ .nothing = {} },
                         token_type,
                         target_type_info,
                         false,
-                    ) catch {};
+                    ) catch {}; // fresh narrowed scope binding, duplicate cannot occur
                 } else if (cast.value.data == .FieldAccess) {
                     const field_access = cast.value.data.FieldAccess;
                     if (field_access.object.data == .Variable) {
@@ -2368,18 +2368,18 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                         .STRUCT,
                                         narrowed_struct,
                                         false,
-                                    ) catch {};
+                                    ) catch {}; // fresh narrowed scope binding, duplicate cannot occur
                                 }
                             }
                         }
                     }
                 }
-                then_type = try infer_type.inferTypeFromExpr(self, then_expr);
+                then_type = try inferTypeFromExpr(self, then_expr);
             }
 
             var else_type: ?*ast.TypeInfo = null;
             if (cast.else_branch) |else_expr| {
-                else_type = try infer_type.inferTypeFromExpr(self, else_expr);
+                else_type = try inferTypeFromExpr(self, else_expr);
                 if (else_expr.data == .ReturnExpr) {
                     const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                     nothing_type.* = .{ .base = .Nothing };
@@ -2464,7 +2464,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             }
 
             if (loop.condition) |cond| {
-                _ = try infer_type.inferTypeFromExpr(self, cond);
+                _ = try inferTypeFromExpr(self, cond);
                 if (cond.data == .Literal) {
                     const literal = cond.data.Literal;
                     const tag = @tagName(literal.tetra);
@@ -2487,11 +2487,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 self.current_scope = iteration_scope;
                 defer self.current_scope = saved_scope;
 
-                _ = try infer_type.inferTypeFromExpr(self, loop.body);
+                _ = try inferTypeFromExpr(self, loop.body);
             }
 
             if (loop.step) |stp| {
-                _ = try infer_type.inferTypeFromExpr(self, stp);
+                _ = try inferTypeFromExpr(self, stp);
             }
 
             type_info.* = .{ .base = .Nothing };
@@ -2612,7 +2612,7 @@ fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, argum
             return false;
         }
 
-        const arg_type = try infer_type.inferTypeFromExpr(self, arg_expr_it.expr);
+        const arg_type = try inferTypeFromExpr(self, arg_expr_it.expr);
         if (func_type.params[param_index].base != .Nothing) {
             var expected_type = func_type.params[param_index];
             try helpers.unifyTypes(self, &expected_type, arg_type, .{ .location = getLocationFromBase(expr.base) });

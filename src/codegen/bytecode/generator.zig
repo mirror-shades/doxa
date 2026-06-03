@@ -377,9 +377,12 @@ pub const BytecodeGenerator = struct {
                     const operand = self.slotFromCache(payload.var_index) orelse try self.makeSlotOperand(payload.scope_kind, payload.var_index, null);
                     try self.instructions.append(self.allocator, .{ .PushStorageRef = operand });
                 },
-                .UnionConstruct => |_| {
-                    // Bytecode VM does not yet model unions as a distinct runtime
-                    // representation; treat this as a no-op.
+                .UnionConstruct => |payload| {
+                    try self.instructions.append(self.allocator, .{ .UnionConstruct = .{
+                        .union_type_id = payload.union_type.Union.id,
+                        .member_index = payload.member_index,
+                        .member_type = payload.union_type,
+                    } });
                 },
                 .LoadAlias => |payload| {
                     // For alias parameters, we need to load from the alias slot

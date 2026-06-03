@@ -1165,8 +1165,7 @@ pub fn Methods(comptime Ctx: type) type {
                     return .{ .name = name, .ty = .I1 };
                 },
                 .Value => {
-                    // For now, treat Value as truthy if its payload is non-zero when
-                    // viewed as i64. This path is not yet used, but keeps the switch
+                    // TODO: treat Value as truthy when payload is non-zero as i64
                     // exhaustive as we start introducing Value-typed stack entries.
                     const as_i64 = try self.ensureI64(w, value, id);
                     const name = try self.nextTemp(id);

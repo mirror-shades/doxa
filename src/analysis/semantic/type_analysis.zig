@@ -11,31 +11,13 @@ const Reporter = Reporting.Reporter;
 const Location = Reporting.Location;
 const Errors = @import("../../utils/errors.zig");
 const ErrorCode = Errors.ErrorCode;
-const HIRType = @import("../../codegen/hir/soxa_types.zig").HIRType;
-const TypeSystem = @import("../../codegen/hir/type_system.zig").TypeSystem;
 
 const types = @import("types.zig");
 const union_handling = @import("union_handling.zig");
 const scope_management = @import("scope_management.zig");
 const helpers = @import("helpers.zig");
 
-/// Helper function to get location from AST Base, handling optional spans
-fn getLocationFromBase(base: ast.Base) Location {
-    if (base.span) |span| {
-        return span.location;
-    } else {
-        return .{
-            .file = "",
-            .file_uri = null,
-            .range = .{
-                .start_line = 0,
-                .start_col = 0,
-                .end_line = 0,
-                .end_col = 0,
-            },
-        };
-    }
-}
+const getLocationFromBase = helpers.getLocationFromBase;
 
 fn promoteNumericTypes(left_base: ast.Type, right_base: ast.Type) ast.Type {
     if (left_base == .Float or right_base == .Float) return .Float;
@@ -520,7 +502,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
             // Infer type from the matched expression
             const matched_type = try inferTypeFromExpr(ctx, match_expr.value);
 
-            // For now, assume match expressions return the same type as the matched expression
+            // TODO: match expressions should infer unified type from all branches
             // In a more sophisticated implementation, this would depend on the case types
             type_info.* = matched_type.*;
         },
@@ -602,7 +584,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
                 return type_info;
             } else if (object_type.base == .Enum) {
                 // Allow enum variant access: Color.Red
-                // You may want to check if the variant exists, but for now just return Enum type
+                // TODO: verify variant exists; return Enum type for now
                 type_info.* = .{ .base = .Enum };
             } else {
                 ctx.reporter.reportCompileError(

@@ -87,6 +87,7 @@ fn writeConstant(idx: usize, value: module.ConstantValue, writer: anytype) !void
         .map => |m| try writer.print("const[{d}]: map entries:{}\n", .{ idx, m.entries.len }),
         .enum_variant => |ev| try writer.print("const[{d}]: enum {s}.{s} (idx {})\n", .{ idx, ev.type_name, ev.variant_name, ev.variant_index }),
         .group_instance => |g| try writer.print("const[{d}]: group {s} member#{}\n", .{ idx, g.type_name, g.member_index }),
+        .union_instance => |u| try writer.print("const[{d}]: union type_id:{} member#{}\n", .{ idx, u.union_type_id, u.member_index }),
     }
 }
 
@@ -156,6 +157,7 @@ fn writeInstruction(idx: usize, inst: module.Instruction, writer: anytype) !void
         .MapSet => |payload| try writer.print("ip[{d}] MapSet key:{s}\n", .{ idx, @tagName(payload.key_type) }),
         .AssertFail => |payload| try writer.print("ip[{d}] AssertFail file:{s} line:{} col:{} message:{}\n", .{ idx, payload.location.file, payload.location.range.start_line, payload.location.range.start_col, payload.has_message }),
         .Unreachable => |payload| try writer.print("ip[{d}] Unreachable file:{s} line:{} col:{}\n", .{ idx, payload.location.file, payload.location.range.start_line, payload.location.range.start_col }),
+        .UnionConstruct => |payload| try writer.print("ip[{d}] UnionConstruct type_id:{} member:{}\n", .{ idx, payload.union_type_id, payload.member_index }),
         else => try writer.print("ip[{d}] {s}\n", .{ idx, @tagName(inst) }),
     }
 }

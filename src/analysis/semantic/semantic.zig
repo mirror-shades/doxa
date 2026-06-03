@@ -37,14 +37,17 @@ const Token = TokenImport.Token;
 const Environment = @import("../../interpreter/environment.zig");
 
 const helpers = @import("./helpers.zig");
+const scope_management = @import("./scope_management.zig");
 const getLocationFromBase = helpers.getLocationFromBase;
+const eval = @import("eval_utils.zig");
+const union_handling = @import("union_handling.zig");
 const infer_type = @import("./infer_type.zig");
 
 pub const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
 
 //======================================================================
 
-const NodeId = u32; // Or whatever your AST uses
+const NodeId = u32;
 
 pub const SemanticAnalyzer = struct {
     in_loop_scope: bool = false,
@@ -150,13 +153,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn isEnumTypeRequiringInitializer(self: *const SemanticAnalyzer, type_info: *const ast.TypeInfo) bool {
-        if (type_info.base == .Enum) return true;
-        if (type_info.base == .Custom and type_info.custom_type != null) {
-            if (self.custom_types.get(type_info.custom_type.?)) |custom_type| {
-                return custom_type.kind == .Enum;
-            }
-        }
-        return false;
+        return eval.isEnumTypeRequiringInitializer(type_info, self.custom_types);
     }
 
     fn registerTypeAlias(self: *SemanticAnalyzer, alias_name: []const u8, target_type: []const u8) !void {
@@ -326,24 +323,9 @@ pub const SemanticAnalyzer = struct {
             return error.SemanticError;
         }
 
-        try self.validateStatements(statements);
+        self.type_cache.clearRetainingCapacity();
 
-        // Debug: Print all custom types
-        // std.debug.print("Custom types in semantic analyzer:\n", .{});
-        // var custom_types_iter = self.custom_types.iterator();
-        // while (custom_types_iter.next()) |entry| {
-        //     std.debug.print("  '{s}': kind={s}\n", .{ entry.key_ptr.*, @tagName(entry.value_ptr.kind) });
-        //     if (entry.value_ptr.kind == .Struct and entry.value_ptr.struct_fields != null) {
-        //         std.debug.print("    Fields:\n", .{});
-        //         for (entry.value_ptr.struct_fields.?) |field| {
-        //             std.debug.print("      '{s}': type={s}", .{ field.name, @tagName(field.field_type) });
-        //             if (field.custom_type_name) |custom_name| {
-        //                 std.debug.print(", custom_type='{s}'", .{custom_name});
-        //             }
-        //             std.debug.print("\n", .{});
-        //         }
-        //     }
-        // }
+        try self.validateStatements(statements);
 
         try self.reportUnused(root_scope);
         try self.reportUnusedImports();
@@ -433,7 +415,7 @@ pub const SemanticAnalyzer = struct {
                             type_info.* = .{ .base = .Function, .function_type = func_type, .is_mutable = false };
 
                             const placeholder = @import("../../types/types.zig").TokenLiteral{ .nothing = {} };
-                            _ = self.current_scope.?.createValueBinding(sym.name, placeholder, .FUNCTION, type_info, true) catch {};
+                            _ = self.current_scope.?.createValueBinding(sym.name, placeholder, .FUNCTION, type_info, true) catch {}; // duplicate is benign on circular/repeat import
                         },
                         .Struct => {
                             // Fetch module info to locate the struct declaration
@@ -441,7 +423,7 @@ pub const SemanticAnalyzer = struct {
                             if (p.module_cache.get(sym.original_module)) |mi| {
                                 mod_info = mi;
                             } else {
-                                // Module not in cache, skip for now
+                                // TODO: handle uncached module lookup
                                 continue;
                             }
                             if (mod_info) |mi| {
@@ -471,7 +453,7 @@ pub const SemanticAnalyzer = struct {
                                                                 const struct_type_info = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
                                                                 struct_type_info.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
                                                                 const placeholder = @import("../../types/types.zig").TokenLiteral{ .string = sd.name.lexeme };
-                                                                _ = self.current_scope.?.createValueBinding(sd.name.lexeme, placeholder, .STRUCT, struct_type_info, true) catch {};
+                                                                _ = self.current_scope.?.createValueBinding(sd.name.lexeme, placeholder, .STRUCT, struct_type_info, true) catch {}; // duplicate is benign on circular/repeat import
 
                                                                 // Register public methods
                                                                 var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
@@ -527,7 +509,7 @@ pub const SemanticAnalyzer = struct {
                             if (p.module_cache.get(sym.original_module)) |mi| {
                                 mod_info = mi;
                             } else {
-                                // Module not in cache, skip for now
+                                // TODO: handle uncached module lookup
                                 continue;
                             }
                             if (mod_info) |mi| {
@@ -822,7 +804,7 @@ pub const SemanticAnalyzer = struct {
                     }
 
                     // Convert TypeInfo to TokenType
-                    const token_type = helpers.convertTypeToTokenType(self, type_info.base);
+                    const token_type = eval.convertTypeToTokenType(type_info.base);
 
                     // Get the actual value from initializer or use default for uninitialized variables
                     var value: TokenLiteral = undefined;
@@ -847,14 +829,14 @@ pub const SemanticAnalyzer = struct {
                             .String => TokenLiteral{ .string = "" },
                             .Tetra => TokenLiteral{ .tetra = .false },
                             .Byte => TokenLiteral{ .byte = 0 },
-                            .Array => try self.defaultTypeLiteral(type_info),
-                            .Union => if (type_info.union_type) |ut| self.getUnionDefaultValue(ut) else TokenLiteral{ .nothing = {} },
+                            .Array => try eval.defaultTypeLiteral(self.allocator, type_info),
+                            .Union => if (type_info.union_type) |ut| union_handling.getUnionDefaultValue(ut) else TokenLiteral{ .nothing = {} },
                             else => TokenLiteral{ .nothing = {} },
                         };
                     }
 
                     // Convert value to match the declared type
-                    value = try self.convertValueToType(value, type_info.base);
+                    value = try eval.convertValueToType(value, type_info.base);
 
                     // ENFORCE: nothing types must be const (unless they have an initializer)
                     if (type_info.base == .Nothing and type_info.is_mutable and decl.initializer == null) {
@@ -1033,8 +1015,9 @@ pub const SemanticAnalyzer = struct {
                     // NEW: Validate import
                     try self.validateImport(import_info, .{ .location = getLocationFromBase(stmt.base) });
                 },
-                // TODO: Handle other declarations...
-                else => {},
+                .ZigDecl, .Module, .Path => {},
+                .GroupDecl, .MapLiteral => {},
+                .Return, .Continue, .Break, .Assert, .Cast => {},
             }
         }
 
@@ -1135,7 +1118,7 @@ pub const SemanticAnalyzer = struct {
                                 continue;
                             }
 
-                            const token_type = helpers.convertTypeToTokenType(self, type_info.base);
+                            const token_type = eval.convertTypeToTokenType(type_info.base);
 
                             var value: TokenLiteral = undefined;
 
@@ -1165,9 +1148,9 @@ pub const SemanticAnalyzer = struct {
                                     .String => TokenLiteral{ .string = "" },
                                     .Tetra => TokenLiteral{ .tetra = .false },
                                     .Byte => TokenLiteral{ .byte = 0 },
-                                    .Array => blk: { break :blk try self.defaultTypeLiteral(type_info); },
+                                    .Array => blk: { break :blk try eval.defaultTypeLiteral(self.allocator, type_info); },
                                     .Union => if (type_info.union_type) |ut|
-                                        self.getUnionDefaultValue(ut)
+                                        union_handling.getUnionDefaultValue(ut)
                                     else
                                         TokenLiteral{ .nothing = {} },
                                     else => TokenLiteral{ .nothing = {} },
@@ -1175,7 +1158,7 @@ pub const SemanticAnalyzer = struct {
                             }
 
                             // Convert value to match the declared type
-                            value = try self.convertValueToType(value, type_info.base);
+                            value = try eval.convertValueToType(value, type_info.base);
 
                             _ = scope.createValueBinding(
                                 decl.name.lexeme,
@@ -1268,29 +1251,9 @@ pub const SemanticAnalyzer = struct {
                 .Break, .Continue => {
                     prev_was_terminator = true;
                 },
-                // TODO: Handle other statements...
-                else => {},
+                .ZigDecl, .EnumDecl, .GroupDecl, .Module, .Path, .Import, .Assert, .Cast => {},
             }
         }
-    }
-
-    // Default value for unions: use the first member's default
-    fn getUnionDefaultValue(self: *SemanticAnalyzer, union_type: *ast.UnionType) TokenLiteral {
-        _ = self;
-        if (union_type.types.len == 0) {
-            return TokenLiteral{ .nothing = {} };
-        }
-
-        const first_type = union_type.types[0];
-        return switch (first_type.base) {
-            .Int => TokenLiteral{ .int = 0 },
-            .Float => TokenLiteral{ .float = 0.0 },
-            .String => TokenLiteral{ .string = "" },
-            .Tetra => TokenLiteral{ .tetra = .false },
-            .Byte => TokenLiteral{ .byte = 0 },
-            .Nothing => TokenLiteral{ .nothing = {} },
-            else => TokenLiteral{ .nothing = {} },
-        };
     }
 
     fn deepCopyTypeInfo(self: *SemanticAnalyzer, type_info: ast.TypeInfo) !ast.TypeInfo {
@@ -1403,14 +1366,14 @@ pub const SemanticAnalyzer = struct {
                         .custom_type = member_token.lexeme,
                         .is_mutable = false,
                     };
-                    const token_type: TokenType = helpers.convertTypeToTokenType(self, narrow_info.base);
-                    _ = case_scope.createValueBinding(
+                    const token_type: TokenType = eval.convertTypeToTokenType(narrow_info.base);
+                    _ = try case_scope.createValueBinding(
                         name,
                         TokenLiteral{ .nothing = {} },
                         token_type,
                         narrow_info,
                         false,
-                    ) catch {};
+                    );
 
                     // Struct destructuring: bind each field name as a local variable
                     if (path.field_names.len > 0) {
@@ -1422,13 +1385,13 @@ pub const SemanticAnalyzer = struct {
                                         if (std.mem.eql(u8, fld.name, field_token.lexeme)) {
                                             const field_info = try ast.TypeInfo.createDefault(self.allocator);
                                             field_info.* = fld.type_info.*;
-                                            _ = case_scope.createValueBinding(
+                                            _ = try case_scope.createValueBinding(
                                                 field_token.lexeme,
                                                 TokenLiteral{ .nothing = {} },
-                                                helpers.convertTypeToTokenType(self, field_info.base),
+                                                eval.convertTypeToTokenType(field_info.base),
                                                 field_info,
                                                 false,
-                                            ) catch {};
+                                            );
                                             break;
                                         }
                                     }
@@ -1463,16 +1426,16 @@ pub const SemanticAnalyzer = struct {
                     };
                 }
 
-                const token_type: TokenType = helpers.convertTypeToTokenType(self, narrow_info.base);
+                const token_type: TokenType = eval.convertTypeToTokenType(narrow_info.base);
 
                 // Shadow the variable in this case scope with the narrowed type
-                _ = case_scope.createValueBinding(
+                _ = try case_scope.createValueBinding(
                     name,
                     TokenLiteral{ .nothing = {} },
                     token_type,
                     narrow_info,
                     false,
-                ) catch {};
+                );
             }
         }
 
@@ -1606,6 +1569,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn literalArrayLength(_: *SemanticAnalyzer, expr: *ast.Expr) usize {
+        // TODO: move to eval_utils.zig as standalone utility; self unused due to method call convention
         return switch (expr.data) {
             .Array => |elements| elements.len,
             else => 0,
@@ -1887,11 +1851,11 @@ pub const SemanticAnalyzer = struct {
                 const left_value = try self.evaluateExpression(bin.left.?);
                 const right_value = try self.evaluateExpression(bin.right.?);
 
-                return self.evaluateBinaryOp(left_value, bin.operator, right_value);
+                return eval.evaluateBinaryOp(left_value, bin.operator, right_value);
             },
             .Unary => |unary| {
                 const operand_value = try self.evaluateExpression(unary.right.?);
-                return self.evaluateUnaryOp(unary.operator, operand_value);
+                return eval.evaluateUnaryOp(unary.operator, operand_value);
             },
             .Grouping => |grouped_expr| {
                 if (grouped_expr) |expr_in_parens| {
@@ -1921,7 +1885,7 @@ pub const SemanticAnalyzer = struct {
                     }
                 }
 
-                if (helpers.suggestVariableName(self, var_token.lexeme)) |suggested| {
+                if (scope_management.suggestVariableName(self.current_scope, self.parser, var_token.lexeme)) |suggested| {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
                         ErrorCode.UNDEFINED_VARIABLE,
@@ -2105,239 +2069,6 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
-    fn evaluateBinaryOp(self: *SemanticAnalyzer, left: TokenLiteral, operator: Token, right: TokenLiteral) TokenLiteral {
-        _ = self; // Unused parameter
-
-        return switch (operator.type) {
-            .PLUS => switch (left) {
-                .int => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = l + r },
-                    .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) + r },
-                    .byte => |r| TokenLiteral{ .int = l + r },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .float => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .float = l + @as(f64, @floatFromInt(r)) },
-                    .float => |r| TokenLiteral{ .float = l + r },
-                    .byte => |r| TokenLiteral{ .float = l + @as(f64, @floatFromInt(r)) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .byte => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = l + r },
-                    .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) + r },
-                    .byte => |r| TokenLiteral{ .byte = l + r },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                else => TokenLiteral{ .nothing = {} },
-            },
-            .MINUS => switch (left) {
-                .int => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = l - r },
-                    .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) - r },
-                    .byte => |r| TokenLiteral{ .int = l - r },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .float => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .float = l - @as(f64, @floatFromInt(r)) },
-                    .float => |r| TokenLiteral{ .float = l - r },
-                    .byte => |r| TokenLiteral{ .float = l - @as(f64, @floatFromInt(r)) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .byte => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = l - r },
-                    .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) - r },
-                    .byte => |r| TokenLiteral{ .byte = l - r },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                else => TokenLiteral{ .nothing = {} },
-            },
-            .ASTERISK => switch (left) {
-                .int => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = l * r },
-                    .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) * r },
-                    .byte => |r| TokenLiteral{ .int = l * r },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .float => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .float = l * @as(f64, @floatFromInt(r)) },
-                    .float => |r| TokenLiteral{ .float = l * r },
-                    .byte => |r| TokenLiteral{ .float = l * @as(f64, @floatFromInt(r)) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .byte => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = l * r },
-                    .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) * r },
-                    .byte => |r| TokenLiteral{ .byte = l * r },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                else => TokenLiteral{ .nothing = {} },
-            },
-            .SLASH => switch (left) {
-                .int => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) },
-                    .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / r },
-                    .byte => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .float => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .float = l / @as(f64, @floatFromInt(r)) },
-                    .float => |r| TokenLiteral{ .float = l / r },
-                    .byte => |r| TokenLiteral{ .float = l / @as(f64, @floatFromInt(r)) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .byte => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) },
-                    .float => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / r },
-                    .byte => |r| TokenLiteral{ .float = @as(f64, @floatFromInt(l)) / @as(f64, @floatFromInt(r)) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                else => TokenLiteral{ .nothing = {} },
-            },
-            .MODULO => switch (left) {
-                .int => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = @mod(l, r) }, // Fixed: use @mod for signed integers
-                    .byte => |r| TokenLiteral{ .int = @mod(l, r) }, // Fixed: use @mod for signed integers
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .byte => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = @mod(l, r) }, // Fixed: use @mod for signed integers
-                    .byte => |r| TokenLiteral{ .byte = l % r }, // This is fine since bytes are unsigned
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                else => TokenLiteral{ .nothing = {} },
-            },
-            .DOUBLE_SLASH => switch (left) {
-                .int => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = @divTrunc(l, r) },
-                    .byte => |r| TokenLiteral{ .int = @divTrunc(l, @as(i64, r)) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .byte => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .int = @divTrunc(@as(i64, l), r) },
-                    .byte => |r| TokenLiteral{ .byte = l / r },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                else => TokenLiteral{ .nothing = {} },
-            },
-            .POWER => switch (left) {
-                .int => |l| switch (right) {
-                    .int => |r| blk: {
-                        // If both operands are integers and the exponent is non-negative, return an integer
-                        if (r >= 0) {
-                            break :blk TokenLiteral{ .int = std.math.pow(i64, l, @as(i64, @intCast(r))) };
-                        }
-                        // Fall back to float for negative exponents
-                        break :blk TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) };
-                    },
-                    .float => |r| TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), r) },
-                    .byte => |r| TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .float => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .float = std.math.pow(f64, l, @as(f64, @floatFromInt(r))) },
-                    .float => |r| TokenLiteral{ .float = std.math.pow(f64, l, r) },
-                    .byte => |r| TokenLiteral{ .float = std.math.pow(f64, l, @as(f64, @floatFromInt(r))) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                .byte => |l| switch (right) {
-                    .int => |r| TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) },
-                    .float => |r| TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), r) },
-                    .byte => |r| TokenLiteral{ .float = std.math.pow(f64, @as(f64, @floatFromInt(l)), @as(f64, @floatFromInt(r))) },
-                    else => TokenLiteral{ .nothing = {} },
-                },
-                else => TokenLiteral{ .nothing = {} },
-            },
-            else => TokenLiteral{ .nothing = {} },
-        };
-    }
-
-    fn evaluateUnaryOp(self: *SemanticAnalyzer, operator: Token, operand: TokenLiteral) TokenLiteral {
-        _ = self; // Unused parameter
-
-        return switch (operator.type) {
-            .MINUS => switch (operand) {
-                .int => |i| TokenLiteral{ .int = -i },
-                .float => |f| TokenLiteral{ .float = -f },
-                .byte => |b| TokenLiteral{ .int = -@as(i32, b) },
-                else => TokenLiteral{ .nothing = {} },
-            },
-            .BANG => switch (operand) {
-                .tetra => |t| TokenLiteral{ .tetra = switch (t) {
-                    .true => .false,
-                    .false => .true,
-                    .both => .neither,
-                    .neither => .both,
-                } },
-                else => TokenLiteral{ .nothing = {} },
-            },
-            else => TokenLiteral{ .nothing = {} },
-        };
-    }
-
-    fn defaultTypeLiteral(self: *SemanticAnalyzer, type_info: *const ast.TypeInfo) !TokenLiteral {
-        return switch (type_info.base) {
-            .Int => TokenLiteral{ .int = 0 },
-            .Float => TokenLiteral{ .float = 0.0 },
-            .String => TokenLiteral{ .string = "" },
-            .Tetra => TokenLiteral{ .tetra = .false },
-            .Byte => TokenLiteral{ .byte = 0 },
-            .Array => blk: {
-                if (type_info.array_type) |element_type| {
-                    if (type_info.array_size) |size| {
-                        const elements = try self.allocator.alloc(TokenLiteral, size);
-                        for (0..size) |i| {
-                            elements[i] = try self.defaultTypeLiteral(element_type);
-                        }
-                        break :blk TokenLiteral{ .array = elements };
-                    }
-                }
-                break :blk TokenLiteral{ .array = &.{} };
-            },
-            else => TokenLiteral{ .nothing = {} },
-        };
-    }
-
-    // Add this function to convert values to the expected type
-    fn convertValueToType(self: *SemanticAnalyzer, value: TokenLiteral, expected_type: ast.Type) !TokenLiteral {
-        _ = self; // Unused parameter
-
-        return switch (expected_type) {
-            .Int => switch (value) {
-                .int => value,
-                .byte => |b| TokenLiteral{ .int = b },
-                .float => |f| TokenLiteral{ .int = @intFromFloat(f) },
-                else => value, // Keep as is for other types
-            },
-            .Byte => switch (value) {
-                .int => |i| {
-                    if (i >= 0 and i <= 255) {
-                        return TokenLiteral{ .byte = @intCast(i) };
-                    } else {
-                        // This should be caught by type checking, but handle gracefully
-                        return TokenLiteral{ .byte = 0 };
-                    }
-                },
-                .byte => value,
-                .float => |f| {
-                    const int_val = @as(i32, @intFromFloat(f)); // Fixed: use @intFromFloat instead of @as
-                    if (int_val >= 0 and int_val <= 255) {
-                        return TokenLiteral{ .byte = @intCast(int_val) };
-                    } else {
-                        return TokenLiteral{ .byte = 0 };
-                    }
-                },
-                else => value, // Keep as is for other types
-            },
-            .Float => switch (value) {
-                .int => |i| TokenLiteral{ .float = @floatFromInt(i) },
-                .byte => |b| TokenLiteral{ .float = @floatFromInt(b) },
-                .float => value,
-                else => value, // Keep as is for other types
-            },
-            else => value, // No conversion needed for other types
-        };
-    }
-
     fn handleTypeOf(self: *SemanticAnalyzer, expr: *ast.Expr) !TokenLiteral {
         const type_info = try infer_type.inferTypeFromExpr(self, expr);
         defer self.allocator.destroy(type_info);
@@ -2396,7 +2127,7 @@ pub const SemanticAnalyzer = struct {
             const param_var = func_scope.createValueBinding(
                 param.name.lexeme,
                 TokenLiteral{ .nothing = {} }, // Parameters get their values at call time
-                helpers.convertTypeToTokenType(self, param_type_info.base),
+                eval.convertTypeToTokenType(param_type_info.base),
                 param_type_info,
                 false, // Parameters are mutable
             ) catch |err| {
@@ -2452,7 +2183,7 @@ pub const SemanticAnalyzer = struct {
                             actual_return_type = return_type;
                         } else {
                             // Multiple return statements - check if types are compatible
-                            // For now, just validate against expected type
+                            // TODO: validate against expected type (multi-return compat check)
                             try self.validateReturnTypeCompatibility(&expected_return_type, return_type, .{ .location = getLocationFromBase(stmt.base) });
                         }
                     } else {
@@ -2849,7 +2580,7 @@ pub const SemanticAnalyzer = struct {
             _ = func_scope.createValueBinding(
                 param.name.lexeme,
                 TokenLiteral{ .nothing = {} }, // Parameters get their values at call time
-                helpers.convertTypeToTokenType(self, param_type_info.base),
+                eval.convertTypeToTokenType(param_type_info.base),
                 param_type_info,
                 false, // Parameters are mutable
             ) catch |err| {

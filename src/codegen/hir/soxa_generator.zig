@@ -832,7 +832,8 @@ pub const HIRGenerator = struct {
             }
 
             if (needs_implicit_return) {
-                try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
+                const has_value = self.current_function_return_type != .Nothing;
+                try self.instructions.append(.{ .Return = .{ .has_value = has_value, .return_type = self.current_function_return_type } });
             }
 
             if (self.function_signatures.getPtr(function_body.function_info.name)) |func_info| {

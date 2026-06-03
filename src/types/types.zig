@@ -102,16 +102,15 @@ pub const Environment = struct {
                 .Byte => TokenType.BYTE,
                 .Float => TokenType.FLOAT,
                 .String => TokenType.STRING,
+                .Tetra => TokenType.TETRA,
                 .Array => TokenType.ARRAY,
                 .Function => TokenType.FUNCTION,
                 .Struct => TokenType.STRUCT,
                 .Enum => TokenType.ENUM,
                 .Map => TokenType.MAP,
                 .Nothing => TokenType.NOTHING,
-                .Custom => TokenType.ENUM_TYPE,
-                .Tetra => TokenType.TETRA,
+                .Custom => TokenType.CUSTOM,
                 .Union => TokenType.UNION,
-                else => unreachable,
             };
 
             _ = try root_scope.createValueBinding(key, value, token_type, type_info, is_constant);
