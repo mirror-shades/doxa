@@ -334,7 +334,7 @@ pub fn Methods(comptime Ctx: type) type {
 
         /// Index in `hir.instructions` of the synthetic `Call` to the entry function at the end of
         /// the top-level program section (global init + main statements). Used to omit that call,
-        /// trailing `Pop`, and `Halt` when `@main` invokes the entry function directly.
+        /// trailing `Pop`, and `Halt` when `@doxa_program_main` invokes the entry function directly.
         pub fn findTopLevelInitEnd(self: *IRPrinter, hir: *const HIR.HIRProgram, limit: usize) ?usize {
             _ = self;
             for (hir.instructions[0..limit], 0..) |inst, idx| {
@@ -355,9 +355,8 @@ pub fn Methods(comptime Ctx: type) type {
             peek_state: *PeekEmitState,
             entry_mangled_name: ?[]const u8,
         ) !void {
-            try w.writeAll("define i32 @main(i32 %argc, ptr %argv_raw) {\n");
+            try w.writeAll("define void @doxa_program_main() {\n");
             try w.writeAll("entry:\n");
-            try w.writeAll("  call void @doxa_set_args(i32 %argc, ptr %argv_raw)\n");
 
             var id: usize = 0;
             var stack = std.array_list.Managed(StackVal).init(self.allocator);
@@ -521,7 +520,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = true;
                     },
                     .Halt => {
-                        try w.writeAll("  ret i32 0\n");
+                        try w.writeAll("  ret void\n");
                         had_return = true;
                         last_instruction_was_terminator = true;
                     },
@@ -632,25 +631,11 @@ pub fn Methods(comptime Ctx: type) type {
                     .Return => |ret| {
                         if (ret.has_value) {
                             if (stack.items.len < 1) continue;
-                            const v = stack.items[stack.items.len - 1];
+                            _ = stack.items[stack.items.len - 1];
                             stack.items.len -= 1;
-                            switch (ret.return_type) {
-                                .Int => {
-                                    const line = try std.fmt.allocPrint(self.allocator, "  ret i32 {s}\n", .{v.name});
-                                    defer self.allocator.free(line);
-                                    try w.writeAll(line);
-                                    had_return = true;
-                                },
-                                else => {
-                                    // Non-int returns at top-level: fall back to success exit code
-                                    try w.writeAll("  ret i32 0\n");
-                                    had_return = true;
-                                },
-                            }
-                        } else {
-                            try w.writeAll("  ret i32 0\n");
-                            had_return = true;
                         }
+                        try w.writeAll("  ret void\n");
+                        had_return = true;
                         last_instruction_was_terminator = true;
                     },
                     .Unreachable => |_| {
@@ -723,7 +708,7 @@ pub fn Methods(comptime Ctx: type) type {
 
             // Ensure a valid exit if control falls through
             if (!had_return) {
-                try w.writeAll("  ret i32 0\n");
+                try w.writeAll("  ret void\n");
             }
 
             try w.writeAll("}\n");

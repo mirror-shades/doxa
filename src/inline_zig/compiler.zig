@@ -17,7 +17,7 @@ const ZigDeclInfo = struct {
     location: Reporting.Location,
 };
 
-fn collectInlineZigDecls(
+pub fn collectInlineZigDecls(
     allocator: std.mem.Allocator,
     statements: []ast.Stmt,
     parser: *Parser,
@@ -601,12 +601,6 @@ pub fn compileInlineZigObjects(
     defer memoryManager.getAllocator().free(zig_cache_path);
     try std.fs.cwd().makePath(zig_cache_path);
 
-    var out_paths = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
-    errdefer {
-        for (out_paths.items) |p| memoryManager.getAllocator().free(@constCast(p));
-        out_paths.deinit();
-    }
-
     var maybe_modules = std.StringHashMap(VM.ZigRuntimeModule).init(memoryManager.getAllocator());
     defer {
         var it = maybe_modules.iterator();
@@ -622,10 +616,13 @@ pub fn compileInlineZigObjects(
         try compileOneInlineModule(memoryManager, reporter, zig_exe_path, zig_cache_path, decl, &maybe_modules);
     }
 
-    for (zig_decls) |decl| {
-        const sigs = try inline_zig.sanitizeAndExtract(memoryManager.getAllocator(), decl.zig_source);
-        defer inline_zig.deinitSigs(memoryManager.getAllocator(), sigs);
+    var out_paths = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
+    errdefer {
+        for (out_paths.items) |p| memoryManager.getAllocator().free(@constCast(p));
+        out_paths.deinit();
+    }
 
+    for (zig_decls) |decl| {
         var h: [Sha256.digest_length]u8 = undefined;
         var hasher = Sha256.init(.{});
         hasher.update("__doxa_inlinezig_v5__\n");
@@ -639,42 +636,7 @@ pub fn compileInlineZigObjects(
         var zig_path_buf: [512]u8 = undefined;
         const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/{s}-{s}.zig", .{ zig_cache_path, decl.module_name, short_hex });
 
-        var obj_path_buf: [512]u8 = undefined;
-        const obj_ext = if (builtin.os.tag == .windows) "obj" else "o";
-        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}-{s}.{s}", .{ zig_cache_path, decl.module_name, short_hex, obj_ext });
-
-        const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{obj_path});
-        defer std.heap.page_allocator.free(emit_flag);
-
-        const obj_already_compiled = blk: {
-            const f = std.fs.cwd().openFile(obj_path, .{}) catch break :blk false;
-            f.close();
-            break :blk true;
-        };
-
-        if (!obj_already_compiled) {
-            var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
-            defer args_list.deinit();
-            try args_list.appendSlice(&[_][]const u8{
-                zig_exe_path,
-                "build-obj",
-                zig_path,
-                emit_flag,
-                "-OReleaseSafe",
-            });
-
-            var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
-            child.cwd = ".";
-            child.stdout_behavior = .Inherit;
-            child.stderr_behavior = .Inherit;
-            const term = try child.spawnAndWait();
-            switch (term) {
-                .Exited => |code| if (code != 0) return error.Unexpected,
-                else => return error.Unexpected,
-            }
-        }
-
-        try out_paths.append(try memoryManager.getAllocator().dupe(u8, obj_path));
+        try out_paths.append(try memoryManager.getAllocator().dupe(u8, zig_path));
     }
 
     return try out_paths.toOwnedSlice();

@@ -264,6 +264,45 @@ fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt
     return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir);
 }
 
+fn generateZigRoot(
+    allocator: std.mem.Allocator,
+    cache_dir: []const u8,
+    inline_zig_paths: []const []const u8,
+) ![]const u8 {
+    const rt_path = try std.fs.path.relative(allocator, cache_dir, RUNTIME_SOURCE_PATH);
+    defer allocator.free(rt_path);
+
+    var content = std.array_list.Managed(u8).init(allocator);
+    try content.appendSlice("const std = @import(\"std\");\n");
+    try content.appendSlice("const doxa_rt = @import(\"");
+    try content.appendSlice(rt_path);
+    try content.appendSlice("\");\n");
+
+    for (inline_zig_paths, 0..) |zig_path, i| {
+        const rel = try std.fs.path.relative(allocator, cache_dir, zig_path);
+        defer allocator.free(rel);
+        var idx_buf: [10]u8 = undefined;
+        const idx_str = try std.fmt.bufPrint(&idx_buf, "{d}", .{i});
+        try content.appendSlice("const __doxa_zig_");
+        try content.appendSlice(idx_str);
+        try content.appendSlice(" = @import(\"");
+        try content.appendSlice(rel);
+        try content.appendSlice("\");\n");
+    }
+
+    try content.appendSlice("\nextern fn doxa_program_main() callconv(.c) void;\n");
+    try content.appendSlice("\npub fn main() void {\n");
+    try content.appendSlice("    doxa_rt.doxa_set_args(@as(i32, @intCast(std.os.argv.len)), @ptrCast(std.os.argv.ptr));\n");
+    try content.appendSlice("    doxa_program_main();\n");
+    try content.appendSlice("}\n");
+
+    var root_path_buf: [512]u8 = undefined;
+    const root_path = try std.fmt.bufPrint(&root_path_buf, "{s}/doxa_main.zig", .{cache_dir});
+
+    try std.fs.cwd().writeFile(.{ .sub_path = root_path, .data = content.items });
+    return try allocator.dupe(u8, root_path);
+}
+
 fn resolveBundledZigExecutable(allocator: std.mem.Allocator) ![]u8 {
     const exe_dir = try std.fs.selfExeDirPathAlloc(allocator);
     defer allocator.free(exe_dir);
@@ -831,78 +870,31 @@ pub fn main() !void {
             }
         }
 
-        var rt_obj_buf: [256]u8 = undefined;
-        const rt_obj = try std.fmt.bufPrint(&rt_obj_buf, "{s}/doxa_rt.o", .{cli_options.cache_dir});
-        {
-            std.fs.cwd().makeDir(cli_options.cache_dir) catch |err| switch (err) {
-                error.PathAlreadyExists => {},
-                else => return err,
-            };
-            const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{rt_obj});
-            defer std.heap.page_allocator.free(emit_flag);
-
-            var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
-            defer args_list.deinit();
-            try args_list.appendSlice(&[_][]const u8{ zig_exe_path, "build-obj", RUNTIME_SOURCE_PATH, emit_flag });
-            if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
-                try args_list.append("-target");
-                const arch = cli_options.target_arch orelse "";
-                const os = cli_options.target_os orelse "";
-                const abi = cli_options.target_abi orelse "";
-                var triple_buf: [128]u8 = undefined;
-                const triple = try std.fmt.bufPrint(&triple_buf, "{s}{s}{s}{s}{s}", .{
-                    arch,
-                    if (os.len > 0) "-" else "",
-                    os,
-                    if (abi.len > 0) "-" else "",
-                    abi,
-                });
-                try args_list.append(triple);
-            }
-
-            var child_rt = std.process.Child.init(args_list.items, std.heap.page_allocator);
-            child_rt.cwd = ".";
-            child_rt.stdout_behavior = .Inherit;
-            child_rt.stderr_behavior = .Inherit;
-            const term = try child_rt.spawnAndWait();
-            switch (term) {
-                .Exited => |code| if (code != 0) {
-                    std.debug.print("runtime build failed\n", .{});
-                    return;
-                },
-                else => {
-                    std.debug.print("runtime build failed\n", .{});
-                    return;
-                },
-            }
-        }
-
-        const inline_zig_objs = try compileInlineZigObjects(&memoryManager, parsedStatements, &parser, &reporter, cli_options.cache_dir);
+        const inline_zig_wrapper_paths = try compileInlineZigObjects(&memoryManager, parsedStatements, &parser, &reporter, cli_options.cache_dir);
         defer {
-            for (inline_zig_objs) |p| memoryManager.getAllocator().free(@constCast(p));
-            memoryManager.getAllocator().free(inline_zig_objs);
+            for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
+            memoryManager.getAllocator().free(inline_zig_wrapper_paths);
         }
+
+        // Generate a Zig root file that imports the Doxa runtime and inline Zig
+        // wrappers, then provides `pub fn main()` to own the platform entry point.
+        const root_path = try generateZigRoot(
+            memoryManager.getAllocator(),
+            cli_options.cache_dir,
+            inline_zig_wrapper_paths,
+        );
+        defer memoryManager.getAllocator().free(root_path);
 
         {
             var args_ln = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
             defer args_ln.deinit();
             try args_ln.append(zig_exe_path);
-            try args_ln.append("cc");
+            try args_ln.append("build-exe");
+            try args_ln.append(root_path);
             try args_ln.append(obj_path);
-            try args_ln.append(rt_obj);
-            for (inline_zig_objs) |p| {
-                try args_ln.append(p);
-            }
-            try args_ln.append("-o");
-            try args_ln.append(exe_path);
-            if (builtin.os.tag == .windows) {
-                // Ensure the resulting binary is a console subsystem app so stdout is visible
-                if (builtin.abi == .msvc) {
-                    try args_ln.append("-Wl,/SUBSYSTEM:CONSOLE");
-                } else {
-                    try args_ln.append("-Wl,--subsystem,console");
-                }
-            }
+            const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{exe_path});
+            defer std.heap.page_allocator.free(emit_flag);
+            try args_ln.append(emit_flag);
             if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
                 try args_ln.append("-target");
                 const arch = cli_options.target_arch orelse "";
@@ -918,6 +910,14 @@ pub fn main() !void {
                 });
                 try args_ln.append(triple2);
             }
+            const olvl = cli_options.opt_level;
+            const omode = if (olvl <= -1) "-O0" else if (olvl >= 3) "-OReleaseFast" else switch (olvl) {
+                0 => "-O0",
+                1 => "-OReleaseSafe",
+                2 => "-OReleaseFast",
+                else => "-O0",
+            };
+            try args_ln.append(omode);
 
             var child_ln = std.process.Child.init(args_ln.items, std.heap.page_allocator);
             child_ln.cwd = ".";
@@ -943,9 +943,7 @@ pub fn main() !void {
 
         std.fs.cwd().rename(pdb_filename, pdb_out_path) catch |err| switch (err) {
             error.FileNotFound => {},
-            else => {
-                // Some other error occurred, but we'll continue
-            },
+            else => {},
         };
 
         profiler.stopPhase();
