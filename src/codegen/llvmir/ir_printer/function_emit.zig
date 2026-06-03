@@ -119,7 +119,7 @@ pub fn Methods(comptime Ctx: type) type {
             const params_str = if (param_strs.items.len == 0) "" else try std.mem.join(self.allocator, ", ", param_strs.items);
             defer if (param_strs.items.len > 0) self.allocator.free(params_str);
 
-            // Rename user entry function so we can emit a proper C wrapper `@main`
+            // Rename user entry function so the generated Zig root can provide `main`
             const emitted_name_owned = if (func.is_entry and !std.mem.eql(u8, func.qualified_name, "main"))
                 try std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{func.qualified_name})
             else

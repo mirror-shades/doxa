@@ -151,3 +151,34 @@ test "lazy modules: circular imports are detected when reached" {
     try testing.expectError(error.CircularImport, parser.ensureNestedModuleNamespace("cycle.b", "a"));
 }
 
+test "lazy modules: std.process usage does not expose std.http in module_namespaces" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var parsed = try parseSource(allocator, &reporter, "module std from \"std/std.doxa\"\n", "test/misc/lazy/std_user.doxa");
+    defer parsed.deinit();
+    const parser = &parsed.parser;
+
+    _ = try parser.ensureModuleNamespace("std");
+    _ = try parser.ensureNestedModuleNamespace("std", "process");
+
+    try testing.expect(parser.module_namespaces.contains("std"));
+    try testing.expect(parser.module_namespaces.contains("std.process"));
+    try testing.expect(!parser.module_namespaces.contains("std.http"));
+
+    // after ensureReachableModuleDependencies, http should still be absent
+    // because std/std.doxa body doesn't reference http, and process/process.doxa
+    // doesn't either
+    try parser.ensureReachableModuleDependencies();
+    try testing.expect(!parser.module_namespaces.contains("std.http"));
+    try testing.expect(!parser.module_cache.contains("http/http.doxa"));
+
+    // now load http and confirm it appears
+    _ = try parser.ensureNestedModuleNamespace("std", "http");
+    try testing.expect(parser.module_namespaces.contains("std.http"));
+    try testing.expect(parser.module_cache.contains("http/http.doxa"));
+}
+
