@@ -12,38 +12,15 @@ const Location = Reporting.Location;
 const Errors = @import("../../utils/errors.zig");
 const ErrorCode = Errors.ErrorCode;
 const ErrorList = Errors.ErrorList;
-const Environment = @import("../../interpreter/environment.zig");
-
 const types = @import("types.zig");
+const eval = @import("eval_utils.zig");
 const union_handling = @import("union_handling.zig");
 const type_analysis = @import("type_analysis.zig");
+const scope_management = @import("scope_management.zig");
 
-/// Helper function to get location from AST Base, handling optional spans
-fn getLocationFromBase(base: ast.Base) Location {
-    if (base.span) |span| {
-        return span.location;
-    } else {
-        // Synthetic node - return default location
-        return .{
-            .file = "",
-            .file_uri = null,
-            .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
-        };
-    }
-}
-
-fn isEnumTypeRequiringInitializer(
-    type_info: *const TypeInfo,
-    custom_types: std.StringHashMap(types.CustomTypeInfo),
-) bool {
-    if (type_info.base == .Enum) return true;
-    if (type_info.base == .Custom and type_info.custom_type != null) {
-        if (custom_types.get(type_info.custom_type.?)) |custom_type| {
-            return custom_type.kind == .Enum;
-        }
-    }
-    return false;
-}
+const getLocationFromBase = @import("helpers.zig").getLocationFromBase;
+const isEnumTypeRequiringInitializer = eval.isEnumTypeRequiringInitializer;
+const convertTypeToTokenType = eval.convertTypeToTokenType;
 
 /// Context for declaration collection operations
 pub const DeclarationCollectionContext = struct {
@@ -59,6 +36,7 @@ pub const DeclarationCollectionContext = struct {
     parser: ?*const Parser,
     fatal_error: *bool,
     current_struct_type: ?[]const u8,
+    current_initializing_var: ?[]const u8,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -87,6 +65,7 @@ pub const DeclarationCollectionContext = struct {
             .parser = parser,
             .fatal_error = fatal_error,
             .current_struct_type = current_struct_type,
+            .current_initializing_var = null,
         };
     }
 };
@@ -157,13 +136,6 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                 if (scope.lookupVariable(func.name.lexeme) == null) {
                     const func_type_info = try ast.TypeInfo.createDefault(ctx.allocator);
                     func_type_info.* = .{ .base = .Function, .function_type = func_type };
-
-                    _ = Environment.init(
-                        ctx.allocator,
-                        null,
-                        false,
-                        ctx.memory,
-                    );
 
                     _ = scope.createValueBinding(
                         func.name.lexeme,
@@ -280,21 +252,26 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                 var value: TokenLiteral = undefined;
 
                 if (decl.initializer) |init_expr| {
-                    _ = init_expr; // May be used for evaluation in the future
-                    // For now, just use a placeholder value
-                    // In a full implementation, this would evaluate the expression
-                    value = switch (type_info.base) {
-                        .Int => TokenLiteral{ .int = 0 },
-                        .Float => TokenLiteral{ .float = 0.0 },
-                        .String => TokenLiteral{ .string = "" },
-                        .Tetra => TokenLiteral{ .tetra = .false },
-                        .Byte => TokenLiteral{ .byte = 0 },
-                        .Union => if (type_info.union_type) |ut|
-                            union_handling.getUnionDefaultValue(ut)
-                        else
-                            TokenLiteral{ .nothing = {} },
-                        else => TokenLiteral{ .nothing = {} },
-                    };
+                    ctx.current_initializing_var = decl.name.lexeme;
+                    defer ctx.current_initializing_var = null;
+
+                    value = evaluateExpression(ctx, init_expr);
+
+                    // Fall back to default if evaluation produced nothing
+                    if (value == .nothing) {
+                        value = switch (type_info.base) {
+                            .Int => TokenLiteral{ .int = 0 },
+                            .Float => TokenLiteral{ .float = 0.0 },
+                            .String => TokenLiteral{ .string = "" },
+                            .Tetra => TokenLiteral{ .tetra = .false },
+                            .Byte => TokenLiteral{ .byte = 0 },
+                            .Union => if (type_info.union_type) |ut|
+                                union_handling.getUnionDefaultValue(ut)
+                            else
+                                TokenLiteral{ .nothing = {} },
+                            else => TokenLiteral{ .nothing = {} },
+                        };
+                    }
                 } else {
                     if (isEnumTypeRequiringInitializer(type_info, ctx.custom_types)) {
                         ctx.reporter.reportCompileError(
@@ -324,7 +301,7 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
                 }
 
                 // Convert value to match the declared type
-                value = try convertValueToType(value, type_info.base);
+                value = try eval.convertValueToType(value, type_info.base);
 
                 _ = scope.createValueBinding(
                     decl.name.lexeme,
@@ -358,45 +335,118 @@ pub fn collectDeclarations(ctx: *DeclarationCollectionContext, statements: []ast
     }
 }
 
-/// Infer function return type from function body
-fn inferFunctionReturnType(ctx: *type_analysis.TypeAnalysisContext, _func: anytype) !*ast.TypeInfo {
-    _ = _func;
-    // This is a simplified implementation
-    // In a full implementation, this would analyze the function body to determine return type
+/// Infer function return type from function body.
+/// Walks top-level statements and nested Block statements to find returns.
+/// Returns .Nothing if no return-with-value is found.
+fn inferFunctionReturnType(ctx: *type_analysis.TypeAnalysisContext, func: anytype) !*ast.TypeInfo {
     const return_type = try ast.TypeInfo.createDefault(ctx.allocator);
     return_type.* = .{ .base = .Nothing };
+
+    if (findFirstReturnType(ctx, func.body)) |rtt| {
+        defer ctx.allocator.destroy(rtt);
+        return_type.* = try type_analysis.deepCopyTypeInfo(ctx, rtt.*);
+    }
     return return_type;
+}
+
+fn findFirstReturnType(ctx: *type_analysis.TypeAnalysisContext, stmts: []const ast.Stmt) ErrorList!?*ast.TypeInfo {
+    for (stmts) |stmt| {
+        switch (stmt.data) {
+            .Return => |ret| {
+                if (ret.value) |value_expr| {
+                    return try type_analysis.inferTypeFromExpr(ctx, value_expr);
+                }
+            },
+            .Block => |block_stmts| {
+                if (try findFirstReturnType(ctx, block_stmts)) |t| return t;
+            },
+            else => {
+                // TODO: walk Expression statements (if/for/while/match) to find nested returns
+            },
+        }
+    }
+    return null;
 }
 
 /// Validate import statement
 fn validateImport(ctx: *DeclarationCollectionContext, import_info: ast.ImportInfo, span: ast.SourceSpan) !void {
-    _ = ctx;
-    _ = import_info;
-    _ = span;
-    // Import validation would be implemented here
+    if (import_info.module_path.len == 0) {
+        ctx.reporter.reportCompileError(
+            span.location,
+            ErrorCode.INVALID_IMPORT,
+            "Import path cannot be empty",
+            .{},
+        );
+        ctx.fatal_error.* = true;
+        return;
+    }
+
+    // Validate specific symbol names are non-empty identifiers
+    // TODO: deeper validation — verify module exists in cache and requested symbols are exported
+    if (import_info.specific_symbols) |symbols| {
+        for (symbols) |sym| {
+            if (sym.len == 0) {
+                ctx.reporter.reportCompileError(
+                    span.location,
+                    ErrorCode.INVALID_IMPORT,
+                    "Imported symbol name cannot be empty",
+                    .{},
+                );
+                ctx.fatal_error.* = true;
+                return;
+            }
+        }
+    }
+
+    if (import_info.specific_symbol) |sym| {
+        if (sym.len == 0) {
+            ctx.reporter.reportCompileError(
+                span.location,
+                ErrorCode.INVALID_IMPORT,
+                "Imported symbol name cannot be empty",
+                .{},
+            );
+            ctx.fatal_error.* = true;
+            return;
+        }
+    }
 }
 
-/// Convert TypeInfo base type to TokenType
-fn convertTypeToTokenType(base_type: ast.Type) TokenType {
-    return switch (base_type) {
-        .Int => .INT,
-        .Float => .FLOAT,
-        .String => .STRING,
-        .Tetra => .TETRA,
-        .Byte => .BYTE,
-        .Nothing => .NOTHING,
-        .Array => .ARRAY,
-        .Struct => .STRUCT,
-        .Map => .MAP,
-        .Enum => .ENUM,
-        .Function => .FUNCTION,
-        .Union => .UNION,
-        .Custom => .CUSTOM,
+/// Recursively evaluate constant expressions during declaration collection.
+/// Returns .nothing for expressions that cannot be statically resolved
+/// (forward references, runtime values, unsupported expression types).
+fn evaluateExpression(ctx: *DeclarationCollectionContext, expr: *ast.Expr) TokenLiteral {
+    return switch (expr.data) {
+        .Literal => |lit| lit,
+        .Binary => |bin| {
+            const left = evaluateExpression(ctx, bin.left.?);
+            if (left == .nothing) return TokenLiteral{ .nothing = {} };
+            const right = evaluateExpression(ctx, bin.right.?);
+            if (right == .nothing) return TokenLiteral{ .nothing = {} };
+            return eval.evaluateBinaryOp(left, bin.operator, right);
+        },
+        .Unary => |unary| {
+            const operand = evaluateExpression(ctx, unary.right.?);
+            if (operand == .nothing) return TokenLiteral{ .nothing = {} };
+            return eval.evaluateUnaryOp(unary.operator, operand);
+        },
+        .Grouping => |grouped_expr| {
+            if (grouped_expr) |inner| return evaluateExpression(ctx, inner);
+            return TokenLiteral{ .nothing = {} };
+        },
+        .Variable => |var_token| {
+            if (ctx.current_initializing_var) |current_var| {
+                if (std.mem.eql(u8, var_token.lexeme, current_var)) {
+                    return TokenLiteral{ .nothing = {} };
+                }
+            }
+            if (scope_management.lookupVariable(ctx.current_scope, ctx.parser, ctx.allocator, ctx.reporter, var_token.lexeme)) |variable| {
+                if (ctx.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                    return storage.value;
+                }
+            }
+            return TokenLiteral{ .nothing = {} };
+        },
+        else => TokenLiteral{ .nothing = {} },
     };
-}
-
-/// Convert value to match the declared type
-fn convertValueToType(value: TokenLiteral, target_type: ast.Type) !TokenLiteral {
-    _ = target_type; // May be used for type conversion in the future
-    return value;
 }

@@ -51,19 +51,18 @@ pub fn define(self: *Environment, key: []const u8, value: TokenLiteral, type_inf
 
         const token_type = switch (type_info.base) {
             .Int => TokenType.INT,
-            .U8 => TokenType.U8,
+            .Byte => TokenType.BYTE,
             .Float => TokenType.FLOAT,
             .String => TokenType.STRING,
+            .Tetra => TokenType.TETRA,
             .Array => TokenType.ARRAY,
             .Function => TokenType.FUNCTION,
             .Struct => TokenType.STRUCT,
             .Enum => TokenType.ENUM,
             .Map => TokenType.MAP,
             .Nothing => TokenType.NOTHING,
-            .Auto => TokenType.AUTO,
-            .Custom => TokenType.ENUM_TYPE,
-            .Tetra => TokenType.TETRA,
-            else => unreachable,
+            .Custom => TokenType.CUSTOM,
+            .Union => TokenType.UNION,
         };
 
         _ = try root_scope.createValueBinding(key, value, token_type, type_info, is_constant);

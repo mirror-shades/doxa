@@ -20,6 +20,7 @@ const HIRType = HIRTypeModule.HIRType;
 const UnionId = HIRTypeModule.UnionId;
 const StructId = HIRTypeModule.StructId;
 const HIREnum = @import("../../codegen/hir/soxa_values.zig").HIREnum;
+const eval = @import("eval_utils.zig");
 
 /// Helper: structural equality for TypeInfo (avoid collapsing by .base only)
 pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
@@ -29,7 +30,7 @@ pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *con
         .Int, .Byte, .Float, .String, .Tetra, .Nothing => return true,
 
         .Enum => {
-            // For now, just compare custom type names if available
+            // TODO: implement full enum type comparison beyond name matching
             if (a.custom_type == null or b.custom_type == null) return false;
             const a_name = self.resolveTypeAlias(a.custom_type.?);
             const b_name = self.resolveTypeAlias(b.custom_type.?);
@@ -37,7 +38,7 @@ pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *con
         },
 
         .Struct => {
-            // For now, just compare custom type names if available
+            // TODO: implement full struct type comparison beyond name matching
             if (a.custom_type == null or b.custom_type == null) return false;
             const a_name = self.resolveTypeAlias(a.custom_type.?);
             const b_name = self.resolveTypeAlias(b.custom_type.?);
@@ -461,7 +462,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
                             var list = std.ArrayListUnmanaged(u8){};
                             defer list.deinit(self.allocator);
                             for (exp_u.types, 0..) |m, i| {
-                                if (i > 0) list.appendSlice(self.allocator, " | ") catch {};
+                                if (i > 0) list.appendSlice(self.allocator, " | ") catch {}; // building error message; partial output ok on OOM
                                 list.appendSlice(self.allocator, typeLabel(m)) catch {};
                             }
                             self.reporter.reportCompileError(
@@ -611,84 +612,12 @@ pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
     return null;
 }
 
-pub fn suggestVariableName(self: *SemanticAnalyzer, name: []const u8) ?[]const u8 {
-    var best: ?[]const u8 = null;
-    var best_score: usize = std.math.maxInt(usize);
-
-    var scope = self.current_scope;
-    while (scope) |s| {
-        var it = s.name_map.iterator();
-        while (it.next()) |entry| {
-            const candidate = entry.key_ptr.*;
-            updateBestSuggestion(name, candidate, &best, &best_score);
-        }
-        scope = s.parent;
-    }
-
-    if (self.parser) |parser| {
-        if (parser.imported_symbols) |imported_symbols| {
-            var import_it = imported_symbols.iterator();
-            while (import_it.next()) |entry| {
-                const candidate = entry.key_ptr.*;
-                updateBestSuggestion(name, candidate, &best, &best_score);
-            }
-        }
-
-        var module_it = parser.module_namespaces.iterator();
-        while (module_it.next()) |entry| {
-            const candidate = entry.key_ptr.*;
-            updateBestSuggestion(name, candidate, &best, &best_score);
-        }
-    }
-
-    if (best) |suggested| {
-        const max_acceptable = @max(@as(usize, 2), name.len / 3);
-        if (best_score <= max_acceptable) {
-            return suggested;
-        }
-    }
-
-    return null;
-}
-
-fn updateBestSuggestion(name: []const u8, candidate: []const u8, best: *?[]const u8, best_score: *usize) void {
-    if (candidate.len == 0) return;
-    if (std.mem.eql(u8, name, candidate)) return;
-
-    const score = nameDistanceScore(name, candidate);
-    if (score < best_score.*) {
-        best_score.* = score;
-        best.* = candidate;
-        return;
-    }
-
-    if (score == best_score.* and best.* != null) {
-        if (std.mem.lessThan(u8, candidate, best.*.?)) {
-            best.* = candidate;
-        }
-    }
-}
-
-fn nameDistanceScore(a: []const u8, b: []const u8) usize {
-    const min_len = @min(a.len, b.len);
-    var mismatches: usize = 0;
-    var i: usize = 0;
-    while (i < min_len) : (i += 1) {
-        const ac = std.ascii.toLower(a[i]);
-        const bc = std.ascii.toLower(b[i]);
-        if (ac != bc) mismatches += 1;
-    }
-
-    const len_penalty = if (a.len > b.len) a.len - b.len else b.len - a.len;
-    return mismatches + (len_penalty * 2);
-}
-
 pub fn createModuleNamespaceVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
     const type_info = ast.TypeInfo.createDefault(self.allocator) catch return null;
     errdefer self.allocator.destroy(type_info);
 
     type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = name };
-    const token_type = convertTypeToTokenType(self, type_info.base);
+    const token_type = eval.convertTypeToTokenType(type_info.base);
 
     if (self.current_scope) |scope| {
         const placeholder_value = TokenLiteral{ .nothing = {} };
@@ -1041,7 +970,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
     type_info.* = ti;
 
     // Convert TypeInfo to TokenType
-    const token_type = convertTypeToTokenType(self, type_info.base);
+    const token_type = eval.convertTypeToTokenType(type_info.base);
 
     // Create a Variable object for the imported symbol using the scope's createValueBinding
     if (self.current_scope) |scope| {
@@ -1053,25 +982,6 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
     }
 
     return null;
-}
-
-pub fn convertTypeToTokenType(self: *SemanticAnalyzer, base_type: ast.Type) TokenType {
-    _ = self;
-    return switch (base_type) {
-        .Int => .INT,
-        .Float => .FLOAT,
-        .String => .STRING,
-        .Tetra => .TETRA,
-        .Byte => .BYTE,
-        .Array => .ARRAY,
-        .Function => .FUNCTION,
-        .Struct => .STRUCT,
-        .Nothing => .NOTHING,
-        .Map => .MAP,
-        .Custom => .CUSTOM,
-        .Enum => .ENUM,
-        .Union => .UNION,
-    };
 }
 
 pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fields: []const ast.StructFieldType) !void {
@@ -1194,8 +1104,8 @@ pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants
     // Also mirror into the global EnumTable so later stages (HIR/LLVM/VM)
     // can refer to enums by ID in a uniform way, just like structs.
     if (@hasField(@TypeOf(self.*), "enum_table")) {
-        // Ignore errors here; the semantic analyzer already has the
-        // authoritative variant list, and EnumTable is just a helper.
+        // EnumTable is a best-effort mirror; the semantic analyzer owns the
+        // authoritative variant list. Silently discard registration errors.
         _ = self.enum_table.registerEnum(enum_name, variants) catch {};
     }
 }
@@ -1428,9 +1338,9 @@ fn buildQualifiedName(allocator: std.mem.Allocator, path: []const Token) ![]cons
     return result;
 }
 
-/// Helper function to get location from AST base
 pub fn getLocationFromBase(base: ast.Base) Reporting.Location {
     return base.location();
 }
+
 
 

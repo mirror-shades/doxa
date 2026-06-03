@@ -322,7 +322,10 @@ fn compileOneInlineModule(
                     try sig_buf.appendSlice("        break :blk __doxa_p[0..__doxa_n];\n");
                     try sig_buf.appendSlice("    };\n");
                 },
-                else => unreachable,
+                else => {
+                    reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                    return error.NotImplemented;
+                },
             }
         }
 
@@ -394,7 +397,10 @@ fn compileOneInlineModule(
                 try sig_buf.appendSlice("    out_ret.* = .{ .tag = .String, .flags = 0, .payload0 = @intFromPtr(__doxa_buf.ptr), .payload1 = __doxa_buf.len };\n");
                 try sig_buf.appendSlice("    return .ok;\n");
             },
-            else => unreachable,
+            .Array, .Struct, .Map, .Enum, .Function, .Union, .Custom => {
+                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                return error.NotImplemented;
+            },
         }
         try sig_buf.appendSlice("}\n\n");
 

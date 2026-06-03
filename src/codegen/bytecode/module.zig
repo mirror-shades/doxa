@@ -199,6 +199,11 @@ pub const Instruction = union(enum) {
         field_names: []const []const u8 = &[_][]const u8{},
         field_slots: []const u32 = &[_]u32{},
     },
+    UnionConstruct: struct {
+        union_type_id: u32,
+        member_index: u32,
+        member_type: hir_types.HIRType,
+    },
     Nop,
 };
 

@@ -616,6 +616,7 @@ var struct_registry: std.AutoHashMapUnmanaged(usize, *const StructDesc) = .{};
 pub export fn doxa_struct_register(instance: ?*anyopaque, desc: ?*const StructDesc) callconv(.c) void {
     const inst = instance orelse return;
     const sd = desc orelse return;
+    // Best-effort registration; OOM in a runtime struct registry is non-recoverable
     struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), sd) catch {};
 }
 
@@ -630,6 +631,7 @@ var enum_registry: std.AutoHashMapUnmanaged(usize, *const EnumDesc) = .{};
 pub export fn doxa_enum_register(desc: ?*const EnumDesc) callconv(.c) void {
     const ed = desc orelse return;
     const tn = ed.type_name orelse return;
+    // Best-effort registration; OOM in a runtime enum registry is non-recoverable
     enum_registry.put(std.heap.page_allocator, @intFromPtr(tn), ed) catch {};
 }
 
@@ -1413,7 +1415,7 @@ pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
             doxaWrite(name);
         },
         .Nothing => {
-            // Nothing has no textual payload; render as "nothing" for now.
+            // TODO: render Nothing with proper textual payload
             doxaWrite("nothing");
         },
         .Function => {

@@ -206,6 +206,7 @@ fn writeHIRValueText(writer: anytype, value: HIRValue) !void {
         .map => try writer.print("map", .{}),
         .enum_variant => |variant| try writer.print("enum {s}.{s} (idx {})", .{ variant.type_name, variant.variant_name, variant.variant_index }),
         .group_instance => |group| try writer.print("group {s} member#{}", .{ group.type_name, group.member_index }),
+        .union_instance => |u| try writer.print("union type_id:{} member#{}", .{ u.union_type_id, u.member_index }),
         .storage_id_ref => |storage_id| try writer.print("storage_id_ref {}", .{storage_id}),
     }
 }

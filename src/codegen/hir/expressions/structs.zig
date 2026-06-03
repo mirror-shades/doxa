@@ -540,7 +540,7 @@ pub const StructsHandler = struct {
         try self.generator.trackVariableType(enum_data.name.lexeme, HIRType{ .Enum = 0 });
 
         // Create a special enum type value and store it
-        const enum_type_value = HIRValue{ .string = enum_data.name.lexeme }; // Simple representation for now
+        const enum_type_value = HIRValue{ .string = enum_data.name.lexeme }; // TODO: richer enum type representation
         const const_idx = try self.generator.addConstant(enum_type_value);
         try self.generator.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
         try self.generator.instructions.append(.{ .StoreDecl = .{

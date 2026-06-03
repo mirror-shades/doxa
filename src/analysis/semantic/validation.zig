@@ -14,36 +14,14 @@ const ErrorCode = Errors.ErrorCode;
 const ErrorList = Errors.ErrorList;
 
 const types = @import("types.zig");
+const eval = @import("eval_utils.zig");
 const union_handling = @import("union_handling.zig");
 const type_analysis = @import("type_analysis.zig");
 const scope_management = @import("scope_management.zig");
 
-/// Helper function to get location from AST Base, handling optional spans
-fn getLocationFromBase(base: ast.Base) Location {
-    if (base.span) |span| {
-        return span.location;
-    } else {
-        // Synthetic node - return default location
-        return .{
-            .file = "",
-            .file_uri = null,
-            .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
-        };
-    }
-}
-
-fn isEnumTypeRequiringInitializer(
-    type_info: *const TypeInfo,
-    custom_types: std.StringHashMap(types.CustomTypeInfo),
-) bool {
-    if (type_info.base == .Enum) return true;
-    if (type_info.base == .Custom and type_info.custom_type != null) {
-        if (custom_types.get(type_info.custom_type.?)) |custom_type| {
-            return custom_type.kind == .Enum;
-        }
-    }
-    return false;
-}
+const getLocationFromBase = @import("helpers.zig").getLocationFromBase;
+const isEnumTypeRequiringInitializer = eval.isEnumTypeRequiringInitializer;
+const convertTypeToTokenType = eval.convertTypeToTokenType;
 
 /// Context for validation operations
 pub const ValidationContext = struct {
@@ -222,7 +200,7 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                         }
 
                         // Convert value to match the declared type
-                        value = try convertValueToType(value, type_info.base);
+                        value = try eval.convertValueToType(value, type_info.base);
 
                         _ = scope.createValueBinding(
                             decl.name.lexeme,
@@ -312,29 +290,39 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                 }
             },
             .FunctionDecl => |func| {
-                _ = func; // May be used for function validation in the future
-                // Function declarations are already validated in collectDeclarations
-                // Just validate the body here with the stored return type
-                // This would need to be implemented based on how function return types are stored
-                // For now, just validate the body
-                var type_ctx = type_analysis.TypeAnalysisContext.init(
-                    ctx.allocator,
-                    ctx.reporter,
-                    ctx.memory,
-                    ctx.current_scope,
-                    ctx.type_cache,
-                    ctx.custom_types,
-                    ctx.struct_methods,
-                    ctx.parser,
-                    ctx.fatal_error,
-                    ctx.current_struct_type,
-                );
-                var dummy_expr = ast.Expr{
-                    .data = .{ .Literal = .{ .nothing = {} } },
-                    .base = .{ .id = 0, .span = .{ .location = .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } } } },
-                };
+                // Validate function body by creating a function scope and processing its statements
+                // TODO: validate return statements against func.return_type_info
+                const prev_scope = ctx.current_scope;
+                ctx.current_scope = try ctx.memory.scope_manager.createScope(ctx.current_scope, ctx.memory);
+                defer {
+                    ctx.current_scope = prev_scope;
+                }
 
-                _ = try type_analysis.inferTypeFromExpr(&type_ctx, &dummy_expr);
+                // Register function parameters in the function scope
+                for (func.params) |param| {
+                    const param_type_info = try ast.TypeInfo.createDefault(ctx.allocator);
+                    errdefer ctx.allocator.destroy(param_type_info);
+
+                    if (param.type_expr) |type_expr| {
+                        const resolved = try ast.typeInfoFromExpr(ctx.allocator, type_expr);
+                        param_type_info.* = resolved.*;
+                    } else {
+                        param_type_info.* = .{ .base = .Nothing };
+                    }
+
+                    _ = ctx.current_scope.?.createValueBinding(
+                        param.name.lexeme,
+                        TokenLiteral{ .nothing = {} },
+                        convertTypeToTokenType(param_type_info.base),
+                        param_type_info,
+                        !param_type_info.is_mutable,
+                    ) catch |err| {
+                        // Parameters may shadow outer variables; this is handled by the scope
+                        return err;
+                    };
+                }
+
+                try validateStatements(ctx, func.body);
             },
             .MapLiteral => |*map_literal| {
                 // Validate map literal entries
@@ -361,40 +349,103 @@ pub fn validateStatements(ctx: *ValidationContext, statements: []const ast.Stmt)
                     // Type compatibility check would be done during unification if needed
                 }
             },
-            // TODO: Handle other statements...
-            else => {},
+            .ZigDecl, .EnumDecl, .GroupDecl, .Module, .Path, .Import, .Continue, .Break, .Assert, .Cast => {},
         }
     }
 }
 
-/// Convert TypeInfo base type to TokenType
-fn convertTypeToTokenType(base_type: ast.Type) TokenType {
-    return switch (base_type) {
-        .Int => .INT,
-        .Float => .FLOAT,
-        .String => .STRING,
-        .Tetra => .TETRA,
-        .Byte => .BYTE,
-        .Nothing => .NOTHING,
-        .Array => .ARRAY,
-        .Struct => .STRUCT,
-        .Map => .MAP,
-        .Enum => .ENUM,
-        .Function => .FUNCTION,
-        .Union => .UNION,
-        .Custom => .CUSTOM,
-    };
-}
-
-/// Convert value to match the declared type
-fn convertValueToType(value: TokenLiteral, target_type: ast.Type) !TokenLiteral {
-    _ = target_type; // May be used for type conversion in the future
-    return value;
-}
-
 /// Evaluate expression to get its value
 fn evaluateExpression(ctx: *ValidationContext, expr: *ast.Expr) !TokenLiteral {
-    _ = ctx; // May be used for more complex evaluation in the future
-    _ = expr;
-    return TokenLiteral{ .nothing = {} };
+    switch (expr.data) {
+        .Literal => |lit| {
+            return lit;
+        },
+        .Binary => |bin| {
+            const left_value = try evaluateExpression(ctx, bin.left.?);
+            const right_value = try evaluateExpression(ctx, bin.right.?);
+            return eval.evaluateBinaryOp(left_value, bin.operator, right_value);
+        },
+        .Unary => |unary| {
+            const operand_value = try evaluateExpression(ctx, unary.right.?);
+            return eval.evaluateUnaryOp(unary.operator, operand_value);
+        },
+        .Grouping => |grouped_expr| {
+            if (grouped_expr) |expr_in_parens| {
+                return evaluateExpression(ctx, expr_in_parens);
+            } else {
+                return TokenLiteral{ .nothing = {} };
+            }
+        },
+        .Variable => |var_token| {
+            if (ctx.current_initializing_var) |current_var| {
+                if (std.mem.eql(u8, var_token.lexeme, current_var)) {
+                    ctx.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.SELF_REFERENTIAL_INITIALIZER,
+                        "Variable '{s}' cannot reference itself in its own initializer",
+                        .{current_var},
+                    );
+                    ctx.fatal_error.* = true;
+                    return TokenLiteral{ .nothing = {} };
+                }
+            }
+
+            if (scope_management.lookupVariable(ctx.current_scope, ctx.parser, ctx.allocator, ctx.reporter, var_token.lexeme)) |variable| {
+                if (ctx.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                    return storage.value;
+                }
+            }
+
+            if (scope_management.suggestVariableName(ctx.current_scope, ctx.parser, var_token.lexeme)) |suggested| {
+                ctx.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.UNDEFINED_VARIABLE,
+                    "Undefined variable: '{s}'. Did you mean '{s}'?",
+                    .{ var_token.lexeme, suggested },
+                );
+            } else {
+                ctx.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.UNDEFINED_VARIABLE,
+                    "Undefined variable: '{s}'",
+                    .{var_token.lexeme},
+                );
+            }
+            ctx.fatal_error.* = true;
+            return TokenLiteral{ .nothing = {} };
+        },
+        .Cast => |cast| {
+            const value_literal = try evaluateExpression(ctx, cast.value);
+            const target_type_info = try ast.typeInfoFromExpr(ctx.allocator, cast.target_type);
+            defer ctx.allocator.destroy(target_type_info);
+
+            const matches_target: bool = switch (target_type_info.base) {
+                .Int => value_literal == .int,
+                .Float => value_literal == .float,
+                .Byte => value_literal == .byte,
+                .String => value_literal == .string,
+                .Tetra => value_literal == .tetra,
+                .Nothing => value_literal == .nothing,
+                else => false,
+            };
+
+            if (cast.then_branch != null or cast.else_branch != null) {
+                if (matches_target) {
+                    if (cast.then_branch) |then_expr| {
+                        return evaluateExpression(ctx, then_expr);
+                    }
+                } else {
+                    if (cast.else_branch) |else_expr| {
+                        return evaluateExpression(ctx, else_expr);
+                    }
+                }
+                return TokenLiteral{ .nothing = {} };
+            }
+
+            return value_literal;
+        },
+        else => {
+            return TokenLiteral{ .nothing = {} };
+        },
+    }
 }

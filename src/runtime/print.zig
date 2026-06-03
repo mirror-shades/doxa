@@ -33,7 +33,7 @@ fn printFormatted(sink: PrintSink, comptime format: []const u8, args: anytype) !
 
 pub const PrintOps = struct {
     pub fn printRaw(vm: anytype, s: []const u8) !void {
-        _ = vm; // unused for now
+        _ = vm; // TODO: vm integration
         try printToStdout("{s}", .{s});
     }
 
@@ -229,6 +229,7 @@ pub const PrintOps = struct {
             .map => try printFormatted(sink, "{{map}}", .{}),
             .enum_variant => |e| try printFormatted(sink, ".{s}", .{e.variant_name}),
             .group_instance => |g| try printFormatted(sink, "{s}#{}", .{ g.type_name, g.member_index }),
+            .union_instance => |u| try printFormatted(sink, "<<union#{d}>>", .{u.member_index}),
             .storage_id_ref => |storage_id| {
                 if (vm.memory_manager.scope_manager.value_storage.get(storage_id)) |storage| {
                     try PrintOps.formatTokenLiteral(vm, storage.value, sink);
@@ -254,7 +255,10 @@ pub const PrintOps = struct {
             .Enum => "enum",
             .Function => "function",
             .Union => "union",
-            else => "unknown",
+            .Array => "array",
+            .Group => "group",
+            .Unknown => "unknown",
+            .Poison => "poison",
         };
     }
 
@@ -268,8 +272,11 @@ pub const PrintOps = struct {
             .nothing => "nothing",
             .struct_instance => |s| if (s.type_name.len == 0) "struct" else s.type_name,
             .map => "map",
+            .array => "array",
             .enum_variant => "enum",
-            else => "unknown",
+            .union_instance => "union",
+            .group_instance => "group",
+            .storage_id_ref => "reference",
         };
     }
 
@@ -335,7 +342,7 @@ pub const PrintOps = struct {
     }
 
     pub fn getTypeString(vm: anytype, value: HIRValue) []const u8 {
-        _ = vm;
+        _ = vm; // TODO: vm integration for custom type name lookups
         return switch (value) {
             .int => "int",
             .byte => "byte",
@@ -354,6 +361,7 @@ pub const PrintOps = struct {
             .map => "map",
             .enum_variant => |e| e.type_name,
             .group_instance => |g| g.type_name,
+            .union_instance => "union",
             .storage_id_ref => "storage_id_ref",
         };
     }

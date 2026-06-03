@@ -10,8 +10,6 @@ pub fn exec(vm: anytype, c: anytype) !void {
     const b = try vm.stack.pop();
     const a_val = try vm.stack.pop();
 
-    // debug print removed
-
     const result = switch (c.op) {
         .Eq => try compareEqual(vm, a_val, b),
         .Ne => !(try compareEqual(vm, a_val, b)),
@@ -25,7 +23,7 @@ pub fn exec(vm: anytype, c: anytype) !void {
 }
 
 fn compareEqual(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
-    _ = vm;
+    _ = vm; // TODO: vm access not needed for pure comparison
     return switch (a.value) {
         .int => |a_val| switch (b.value) {
             .int => |b_val| a_val == b_val,
@@ -68,7 +66,7 @@ fn compareEqual(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
             },
             else => false,
         },
-        .array, .struct_instance, .map, .group_instance => false,
+        .array, .struct_instance, .map, .group_instance, .union_instance => false,
         .storage_id_ref => |a_storage_id| switch (b.value) {
             .storage_id_ref => |b_storage_id| a_storage_id == b_storage_id,
             else => false,
@@ -77,7 +75,7 @@ fn compareEqual(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
 }
 
 fn compareLess(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
-    _ = vm;
+    _ = vm; // TODO: vm access not needed for pure comparison
     return switch (a.value) {
         .int => |a_val| switch (b.value) {
             .int => |b_val| a_val < b_val,
@@ -106,12 +104,12 @@ fn compareLess(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
         },
         // compareLess: complex types
         .nothing => ErrorList.TypeError,
-        .tetra, .array, .struct_instance, .map, .enum_variant, .group_instance, .storage_id_ref => ErrorList.TypeError,
+        .tetra, .array, .struct_instance, .map, .enum_variant, .group_instance, .union_instance, .storage_id_ref => ErrorList.TypeError,
     };
 }
 
 fn compareGreater(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
-    _ = vm;
+    _ = vm; // TODO: vm access not needed for pure comparison
     return switch (a.value) {
         .int => |a_int| switch (b.value) {
             .int => |b_int| a_int > b_int,
@@ -137,6 +135,6 @@ fn compareGreater(vm: anytype, a: HIRFrame, b: HIRFrame) !bool {
         },
         // compareGreater: complex types
         .nothing => ErrorList.TypeError,
-        .tetra, .array, .struct_instance, .map, .enum_variant, .group_instance, .storage_id_ref => ErrorList.TypeError,
+        .tetra, .array, .struct_instance, .map, .enum_variant, .group_instance, .union_instance, .storage_id_ref => ErrorList.TypeError,
     };
 }

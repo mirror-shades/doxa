@@ -10,7 +10,7 @@ pub fn Methods(comptime Ctx: type) type {
 
     return struct {
     pub fn createEnumTypeNameGlobal(self: *IRPrinter, type_name: []const u8, _: *usize) ![]const u8 {
-        // For now, just return the type name directly
+        // TODO: emit proper global constant for enum type name
         // In a full implementation, we'd create proper global string constants
         return try self.allocator.dupe(u8, type_name);
     }

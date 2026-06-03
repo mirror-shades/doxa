@@ -12,8 +12,6 @@ const Reporter = Reporting.Reporter;
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
-const printTemp = std.debug.print;
-
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
     if (self.peek().type == .ARRAY_TYPE) {
         self.advance();
