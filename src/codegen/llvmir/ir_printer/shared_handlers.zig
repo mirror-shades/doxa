@@ -1600,13 +1600,14 @@ pub fn Methods(comptime Ctx: type) type {
                 const needle = raw_args.items[1];
 
                 const coll_ptr = if (collection.ty == .PTR) collection else try self.ensurePointer(w, collection, id);
-                const result_name = try self.nextTemp(id);
 
                 if (collection.array_type != null) {
                     const needle_i64 = if (needle.ty == .I64) needle else try self.ensureI64(w, needle, id);
+                    const result_name = try self.nextTemp(id);
                     const line = try std.fmt.allocPrint(self.allocator, "  {s} = call i64 @doxa_find_array(ptr {s}, i64 {s})\n", .{ result_name, coll_ptr.name, needle_i64.name });
                     defer self.allocator.free(line);
                     try w.writeAll(line);
+                    try stack.append(.{ .name = result_name, .ty = .I64 });
                 } else {
                     const needle_str = if (needle.ty == .STRING) needle else try self.ensureString(w, needle, id);
                     const coll_str = if (collection.ty == .STRING) collection else try self.ensureString(w, collection, id);
@@ -1626,12 +1627,13 @@ pub fn Methods(comptime Ctx: type) type {
                     const n_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ n_len, needle_str.name });
                     defer self.allocator.free(n_len_line);
                     try w.writeAll(n_len_line);
+                    const result_name = try self.nextTemp(id);
                     const line = try std.fmt.allocPrint(self.allocator, "  {s} = call i64 @doxa_find_str(ptr {s}, i64 {s}, ptr {s}, i64 {s})\n", .{ result_name, c_ptr, c_len, n_ptr, n_len });
                     defer self.allocator.free(line);
                     try w.writeAll(line);
+                    try stack.append(.{ .name = result_name, .ty = .I64 });
                 }
 
-                try stack.append(.{ .name = result_name, .ty = .I64 });
                 return;
             }
 

@@ -261,9 +261,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
 
     harness.printSection("COMPILE");
 
-    // Remove stale test binaries so build failures are not masked.
-    std.fs.cwd().deleteTree("test/out") catch {};
-
     _ = runDoxaCommand(allocator, "./test/test_build.doxa") catch |err| {
         std.debug.print("Build step failed: {}\n", .{err});
         return err;
