@@ -59,6 +59,7 @@ pub const IRPrinter = struct {
 
     const ValueHelperMethods = @import("./ir_printer/value_helpers.zig").Methods(Ctx);
     pub const createEnumTypeNameGlobal = ValueHelperMethods.createEnumTypeNameGlobal;
+    pub const emitRTCallReturningString = ValueHelperMethods.emitRTCallReturningString;
     pub const ensurePointer = ValueHelperMethods.ensurePointer;
     pub const ensureI64 = ValueHelperMethods.ensureI64;
     pub const unwrapDoxaValueToType = ValueHelperMethods.unwrapDoxaValueToType;
@@ -68,6 +69,7 @@ pub const IRPrinter = struct {
     pub const arrayElementTag = ValueHelperMethods.arrayElementTag;
     pub const convertValueToArrayStorage = ValueHelperMethods.convertValueToArrayStorage;
     pub const convertArrayStorageToValue = ValueHelperMethods.convertArrayStorageToValue;
+    pub const ensureString = ValueHelperMethods.ensureString;
     pub const loadArrayLength = ValueHelperMethods.loadArrayLength;
 
     const CollectionsEmitMethods = @import("./ir_printer/collections_emit.zig").Methods(Ctx);
@@ -132,6 +134,7 @@ pub const IRPrinter = struct {
 
     allocator: std.mem.Allocator,
     peek_string_counter: usize,
+    string_pool_len: usize = 0,
 
     global_types: std.StringHashMap(StackType),
     global_array_types: std.StringHashMap(HIR.HIRType),
@@ -161,7 +164,7 @@ pub const IRPrinter = struct {
     /// are handled defensively (e.g. by emitting a safe fallback).
     pub const MAX_SANE_NAME_LEN: usize = 1000;
 
-    pub const StackType = enum { I64, F64, I8, I1, I2, PTR, Value, Nothing };
+    pub const StackType = enum { I64, F64, I8, I1, I2, PTR, STRING, Value, Nothing };
 
     pub const StackVal = struct {
         name: []const u8,

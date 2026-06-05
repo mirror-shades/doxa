@@ -529,6 +529,21 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
             return;
         }
 
+        if (expected.base == .Custom) {
+            if (expected.custom_type) |ct_name| {
+                if (!self.custom_types.contains(ct_name)) {
+                    self.reporter.reportCompileError(
+                        span.location,
+                        ErrorCode.TYPE_MISMATCH,
+                        "no type '{s}'",
+                        .{ct_name},
+                    );
+                    self.fatal_error = true;
+                    return;
+                }
+            }
+        }
+
         self.reporter.reportCompileError(
             span.location,
             ErrorCode.TYPE_MISMATCH,

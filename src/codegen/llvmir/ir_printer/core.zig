@@ -36,7 +36,11 @@ pub fn Methods(comptime Ctx: type) type {
                 .I8 => param_type == .Byte,
                 .I2 => param_type == .Tetra,
                 .PTR => switch (param_type) {
-                    .String, .Struct, .Array, .Map => true,
+                    .Struct, .Array, .Map => true,
+                    else => false,
+                },
+                .STRING => switch (param_type) {
+                    .String => true,
                     else => false,
                 },
                 else => false,
@@ -109,6 +113,7 @@ pub fn Methods(comptime Ctx: type) type {
                     .F64 => 1,
                     .I8 => 2,
                     .PTR => 3,
+                    .STRING => 3,
                     .I2, .I1 => 7,
                     else => 8,
                 };
@@ -256,12 +261,30 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(line);
                         return .{ .name = as_i64, .ty = .I64 };
                     },
+                    .STRING => {
+                        const ptr_ext = try self.nextTemp(id);
+                        const ext_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ ptr_ext, incoming.name });
+                        defer self.allocator.free(ext_line);
+                        try w.writeAll(ext_line);
+                        const as_i64 = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ as_i64, ptr_ext });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = as_i64, .ty = .I64 };
+                    },
                     else => {},
                 },
                 .PTR => switch (incoming.ty) {
                     .I64 => {
                         const as_ptr = try self.nextTemp(id);
                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = as_ptr, .ty = .PTR };
+                    },
+                    .STRING => {
+                        const as_ptr = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ as_ptr, incoming.name });
                         defer self.allocator.free(line);
                         try w.writeAll(line);
                         return .{ .name = as_ptr, .ty = .PTR };
@@ -399,12 +422,30 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(line);
                         return .{ .name = as_i64, .ty = .I64 };
                     },
+                    .STRING => {
+                        const ptr_ext = try self.nextTemp(id);
+                        const ext_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ ptr_ext, incoming.name });
+                        defer self.allocator.free(ext_line);
+                        try w.writeAll(ext_line);
+                        const as_i64 = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ as_i64, ptr_ext });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = as_i64, .ty = .I64 };
+                    },
                     else => {},
                 },
                 .PTR => switch (incoming.ty) {
                     .I64 => {
                         const as_ptr = try self.nextTemp(id);
                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = as_ptr, .ty = .PTR };
+                    },
+                    .STRING => {
+                        const as_ptr = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ as_ptr, incoming.name });
                         defer self.allocator.free(line);
                         try w.writeAll(line);
                         return .{ .name = as_ptr, .ty = .PTR };

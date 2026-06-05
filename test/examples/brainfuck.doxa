@@ -1,4 +1,4 @@
-module io from "std/io/io.doxa"
+module std from @std()
 
 # a brainfuck interpreter implemented in doxa
 # mirror-shades
@@ -6,8 +6,9 @@ module io from "std/io/io.doxa"
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
 
 function getInput() returns byte {
-    @print("Input: ")
-    return 0x00
+    const input is std.io.input() as string else return 0
+    const inputByte is @byte(input[0])
+    return inputByte
 }
 
 function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {

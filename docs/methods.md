@@ -1,65 +1,67 @@
-# Method Calls
+# Intrinsic Methods
 
-Doxa supports two method-call families:
+Doxa clearly distinguishes between compiler level "builtin" methods, and user space methods. All methods and functions provided by the compiler are prefixed with the @ symbol. A couple advantages, take this line for example, imagine you are reading some code in a programming language you have never read before: 
 
-- Core intrinsics: `@...` calls implemented in core/compiler runtime.
-- Standard library calls: module functions such as `std.io.input()`.
+`pet_snake.length()`
 
-`std.io.println` and `std.io.eprintln` append the **native** text line terminator for the OS (`\r\n` on Windows, `\n` on POSIX-style targets), similar to the newline part of C++ `std::endl`. They still **flush** the stream after each call (like `std::endl`), via the underlying Zig stdout/stderr writers.
+Is this a user level method defining the length of the snake, or a compiler level method on a particular type like a string or array? We cannot know without more context about the language syntax. The same ambiguity goes for built in functions as well, consider:
 
-## Core Intrinsics
+`length(pet_snake)`
 
-These are the minimal core intrinsics intended to remain as the stable base.
-Prefer `std.*` wrappers where available.
+Mixing compiler level syntax and user level syntax is too ambigious. Doxa solves this by prefixing all compiler level methods with `@`
+
+`@length(pet_snake)`
+
+Wherever you see and @ you know this is not a user space functions. This also allows for a second advantage, that of method collision. If you want to define a length method for your pet snake struct, you can do so without risk of collision with the builtin length method. 
+
+All methods are function level, including ones you may not be used to seeing at the function level:
+
+```
+@push(my_array, 42)
+const my_value is @pop(my_array)
+```
+
+If you would prefer using an intrinsic method post fix, you can do so using `.` and the value will be passed as the first argument:
+
+```
+my_array.@push(42)
+const my_value is my_array.@pop()
+```
+
+Intrinsic methods can be considered inherently considered unsafe, and they may error. If an error occurs, there may be undefined behavior, panics, and other potentially unrecoverable errors. If you want bounds checking, and other safe wrappings, you must either define them yourself, or use the standard library which provides safe versions under the `method` sublibrary.
+
+## List of Methods
+
+Here is a list of our intrinsic methods and an explaination of what they do. 
 
 ### Collection
 
-- `@length(value)` -> `int`
-- `@push(collection, value)` -> `nothing`
-- `@pop(collection)` -> `any`
-- `@insert(collection, index, value)` -> `nothing`
-- `@remove(collection, index)` -> `any`
-- `@clear(collection)` -> `nothing`
-- `@find(collection, value)` -> `int`
-- `@slice(collection, start, length)` -> `string | array`
+- `@length(value :: string | array)` -> `int`
+- `@push(collection :: string | array, value :: any)` -> `nothing`
+- `@pop(collection :: string | array)` -> `any`
+- `@insert(collection :: string | array, index :: int, value :: any)` -> `nothing`
+- `@remove(collection :: string | array, index :: int)` -> `any`
+- `@clear(collection :: string | array)` -> `nothing`
+- `@find(collection :: string | array, value :: any)` -> `int`
+- `@slice(collection :: string | array, start :: int, length :: int)` -> `string | array`
 
 ### Type / Conversion
 
-- `@string(value)` -> `string`
-- `@int(value)` -> `int`
-- `@float(value)` -> `float`
-- `@byte(value)` -> `byte`
-- `@type(value)` -> `string`
+- `@string(value :: any)` -> `string`
+- `@int(value :: float | byte | string)` -> `int`
+- `@float(value :: int | byte | string)` -> `float`
+- `@byte(value :: int | float | string)` -> `byte`
+- `@type(value :: any)` -> `string`
 
 ### Diagnostics / Output
 
-- `@print("text")` -> `nothing`
-- `@assert(condition, "message"?)` -> `nothing`
-- `@panic(message)` -> `nothing`
-- `@exit(code)` -> `nothing`
+- `@print(format :: string)` -> `nothing`
+- `@assert(condition :: tetra, message :: string?)` -> `nothing`
+- `@panic(message :: string)` -> `nothing`
+- `@exit(code :: int | byte)` -> `nothing`
 
-## Removed Core Intrinsics
 
-These intrinsics were transitional and are now removed from core/runtime.
-Use std-library modules instead:
-
-- `@random()`
-- `@os()`
-- `@arch()`
-- `@abi()`
-- `@time()`
-- `@tick()`
-- `@input()`
-- `@sleep(ms)`
-- `@build(src, out, arch, os, abi, debug)`
-- `@read(path)`
-- `@argc()`
-- `@argv(index)`
-
-Use std-library modules (`std.io`, `std.time`, `std.process`, `std.file`, etc.)
-instead of adding new dependencies on these intrinsics.
-
-## Failure Behavior (Current Runtime)
+## Failure Behavior 
 
 Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument failures are accepted behavior and should be treated as runtime traps unless noted otherwise.
 
@@ -106,52 +108,11 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
 
 ### Diagnostics / Output
 
-- `@print("text")`
-  - Prints any expression. Double-quoted strings interpolate `{...}` expressions before printing, so `@print("value is {value}")` prints the current value.
-- `@assert(condition, "message"?)`
+- `@print(format :: string)`
+  - Argument must be a `string`. `@print` writes that string as-is; it does not interpolate or interpret `{...}`. Interpolation happens when a string value is produced (for example, in a double-quoted literal), so `@print("value is {value}")` still prints the current value because the literal is evaluated to a `string` before `@print` runs.
+- `@assert(condition :: tetra, message :: string?)`
   - False condition halts execution and reports assertion failure location/message.
 - `@panic(message)`
   - Always terminates execution with a runtime panic.
 - `@exit(code)`
   - Terminates process with the provided status code (`int | byte`).
-
-## Safe Standard Library Wrappers
-
-Use `std.methods` for guarded wrappers around intrinsic operations that can fail/trap. Non-failing intrinsics are not wrapped.
-
-### Import
-
-- `module std from "std"`
-
-### Collection Wrappers
-
-Collection wrappers are type-specific so mismatched element types are rejected at compile time.
-
-- Push:
-  - `std.methods.pushString(^string, string)` -> `nothing`
-  - `std.methods.pushInt(^int[], int)` -> `nothing`
-  - `std.methods.pushFloat(^float[], float)` -> `nothing`
-  - `std.methods.pushByte(^byte[], byte)` -> `nothing`
-  - `std.methods.pushTetra(^tetra[], tetra)` -> `nothing`
-  - `std.methods.pushStringArray(^string[], string)` -> `nothing`
-- Pop:
-  - `std.methods.popString(^string)` -> `string | error.Method`
-  - `std.methods.popInt(^int[])` -> `int | error.Method`
-  - `std.methods.popFloat(^float[])` -> `float | error.Method`
-  - `std.methods.popByte(^byte[])` -> `byte | error.Method`
-  - `std.methods.popTetra(^tetra[])` -> `tetra | error.Method`
-  - `std.methods.popStringArray(^string[])` -> `string | error.Method`
-- Insert / Remove / Slice:
-  - `insert*`, `remove*`, and `slice*` wrappers exist for each type above and return `error.Method.OutOfBounds` on invalid ranges/indexes.
-- Clear:
-  - `clear*` wrappers exist for each type above and return `nothing`.
-- Find:
-  - `find*` wrappers exist for each type above and return `int` (`-1` if not found).
-
-### Conversion Wrappers
-
-- `std.methods.toInt(value)` where `value :: int | float | byte | string` -> `int | error.Method`
-- `std.methods.toFloat(value)` where `value :: int | float | byte | string` -> `float | error.Method`
-- `std.methods.toByte(value)` where `value :: int | float | byte | string` -> `byte | error.Method`
-
-String parsing and range checks are guarded, returning `error.Method.InvalidNumber` or `error.Method.Overflow` instead of trapping.
