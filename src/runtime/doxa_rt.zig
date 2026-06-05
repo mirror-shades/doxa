@@ -74,9 +74,6 @@ pub export fn doxa_peek_string(ptr: ?[*]const u8, len: usize) callconv(.c) void 
     if (ptr) |p| {
         if (len > 0) {
             doxaWrite(p[0..len]);
-        } else {
-            const sentinel: [*:0]const u8 = @ptrCast(p);
-            doxaWrite(std.mem.span(sentinel));
         }
     }
     doxaWrite("\"");
@@ -344,11 +341,37 @@ pub export fn doxa_str_concat(a_ptr: ?[*]const u8, a_len: usize, b_ptr: ?[*]cons
     out_len.* = total_len;
 }
 
+/// Recover a DoxaString from a legacy null-terminated C-string pointer.
+/// Used when reading struct fields that store only a raw pointer.
+pub export fn doxa_str_from_cstr(ptr: ?[*:0]const u8, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+    if (ptr) |p| {
+        const slice = std.mem.span(p);
+        const ds = allocDoxaString(slice);
+        out_ptr.* = @constCast(ds.ptr);
+        out_len.* = ds.len;
+    } else {
+        out_ptr.* = null;
+        out_len.* = 0;
+    }
+}
+
 pub export fn doxa_str_clone(ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
-    const bytes = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
+    const bytes: []const u8 = if (ptr) |p| p[0..len] else "";
     const ds = allocDoxaString(bytes);
     out_ptr.* = @constCast(ds.ptr);
     out_len.* = ds.len;
+}
+
+/// Clone with a null terminator, returning the raw C-string pointer.
+/// Used for struct field storage where only an 8-byte pointer slot is available.
+pub export fn doxa_str_clone_raw(ptr: ?[*]const u8, len: usize) callconv(.c) ?[*:0]u8 {
+    if (ptr) |p| {
+        const slice: []const u8 = p[0..len];
+        const out = std.heap.page_allocator.allocSentinel(u8, slice.len, 0) catch return null;
+        @memcpy(out[0..slice.len], slice);
+        return out.ptr;
+    }
+    return null;
 }
 
 pub export fn doxa_char_to_string(ch: u8, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
