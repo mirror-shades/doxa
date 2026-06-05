@@ -103,6 +103,21 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(line);
                         break :blk .{ .name = as_ptr, .ty = .PTR };
                     },
+                    .STRING => blk: {
+                        const as_ptr = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        const tmp_name = try self.nextTemp(id);
+                        const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_name, as_ptr });
+                        defer self.allocator.free(ins0);
+                        try w.writeAll(ins0);
+                        const str_name = try self.nextTemp(id);
+                        const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 0, 1\n", .{ str_name, tmp_name });
+                        defer self.allocator.free(ins1);
+                        try w.writeAll(ins1);
+                        break :blk .{ .name = str_name, .ty = .STRING };
+                    },
                     else => incoming,
                 };
             }
@@ -294,6 +309,12 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     else => {},
                 },
+                .STRING => {
+                    if (incoming.ty == .STRING) return incoming;
+                    if (incoming.ty == .PTR) return self.ensureString(w, incoming, id);
+                    const ptr = try self.ensurePointer(w, incoming, id);
+                    return self.ensureString(w, ptr, id);
+                },
                 else => {},
             }
 
@@ -454,6 +475,12 @@ pub fn Methods(comptime Ctx: type) type {
                         return self.ensurePointer(w, incoming, id);
                     },
                     else => {},
+                },
+                .STRING => {
+                    if (incoming.ty == .STRING) return incoming;
+                    if (incoming.ty == .PTR) return self.ensureString(w, incoming, id);
+                    const ptr = try self.ensurePointer(w, incoming, id);
+                    return self.ensureString(w, ptr, id);
                 },
                 else => {},
             }

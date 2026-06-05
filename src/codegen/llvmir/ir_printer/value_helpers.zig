@@ -36,7 +36,10 @@ pub fn Methods(comptime Ctx: type) type {
         try w.writeAll(init_ptr_line);
         try w.writeAll(init_len_line);
 
-        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s}, ptr {s}, ptr {s})\n", .{ fn_name, args_line, out_ptr_slot, out_len_slot });
+        const call_line = if (args_line.len > 0)
+            try std.fmt.allocPrint(self.allocator, "  call void @{s}({s}, ptr {s}, ptr {s})\n", .{ fn_name, args_line, out_ptr_slot, out_len_slot })
+        else
+            try std.fmt.allocPrint(self.allocator, "  call void @{s}(ptr {s}, ptr {s})\n", .{ fn_name, out_ptr_slot, out_len_slot });
         defer self.allocator.free(call_line);
         try w.writeAll(call_line);
 
