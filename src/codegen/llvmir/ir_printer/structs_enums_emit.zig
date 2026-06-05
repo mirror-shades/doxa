@@ -108,6 +108,7 @@ pub fn Methods(comptime Ctx: type) type {
 
                     break :blk "string";
                 },
+                .STRING => "string",
                 .I8 => "value",
                 .I1 => "value",
                 .I2 => "tetra",
@@ -604,7 +605,7 @@ pub fn Methods(comptime Ctx: type) type {
         );
         defer self.allocator.free(open_brace_gep);
         try w.writeAll(open_brace_gep);
-        const open_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{open_brace_ptr});
+        const open_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{open_brace_ptr});
         defer self.allocator.free(open_brace_call);
         try w.writeAll(open_brace_call);
 
@@ -634,7 +635,7 @@ pub fn Methods(comptime Ctx: type) type {
                     );
                     defer self.allocator.free(name_gep);
                     try w.writeAll(name_gep);
-                    const name_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{name_ptr});
+                    const name_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{name_ptr});
                     defer self.allocator.free(name_call);
                     try w.writeAll(name_call);
                 }
@@ -686,7 +687,7 @@ pub fn Methods(comptime Ctx: type) type {
                             const nested_names = self.struct_field_names_by_type.get(nm);
                             try self.emitStructValuePeek(w, field_val, nts, nested_names, id, peek_state, nm);
                         } else {
-                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s})\n", .{field_val});
+                            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s}, i64 0)\n", .{field_val});
                             defer self.allocator.free(call_line);
                             try w.writeAll(call_line);
                         }
@@ -695,7 +696,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(call_line);
                         try w.writeAll(call_line);
                     } else {
-                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s})\n", .{field_val});
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s}, i64 0)\n", .{field_val});
                         defer self.allocator.free(call_line);
                         try w.writeAll(call_line);
                     }
@@ -790,7 +791,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const sel_final_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel_final, eq2, sel23, sel01 });
                     defer self.allocator.free(sel_final_line);
                     try w.writeAll(sel_final_line);
-                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{sel_final});
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{sel_final});
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
                 },
@@ -814,7 +815,7 @@ pub fn Methods(comptime Ctx: type) type {
                 );
                 defer self.allocator.free(comma_gep);
                 try w.writeAll(comma_gep);
-                const comma_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{comma_ptr});
+                const comma_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{comma_ptr});
                 defer self.allocator.free(comma_call);
                 try w.writeAll(comma_call);
             }
@@ -836,7 +837,7 @@ pub fn Methods(comptime Ctx: type) type {
         );
         defer self.allocator.free(close_brace_gep);
         try w.writeAll(close_brace_gep);
-        const close_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{close_brace_ptr});
+        const close_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{close_brace_ptr});
         defer self.allocator.free(close_brace_call);
         try w.writeAll(close_brace_call);
     }
@@ -1499,7 +1500,7 @@ pub fn Methods(comptime Ctx: type) type {
             .Float => .F64,
             .Byte => .I8,
             .Tetra => .I2,
-            .String => .PTR,
+            .String => .STRING,
             .Array => .PTR,
             .Map => .PTR,
             .Struct => .PTR,
@@ -1548,6 +1549,7 @@ pub fn Methods(comptime Ctx: type) type {
             .I1 => "i1",
             .I2 => "i2",
             .PTR => "ptr",
+            .STRING => "%DoxaString",
             .Value => "%DoxaValue",
             .Nothing => "{}", // Zero-sized type
         };
@@ -1561,11 +1563,11 @@ pub fn Methods(comptime Ctx: type) type {
             .Float => "double",
             .Byte => "i8",
             .Tetra => "i2",
-            .String => "ptr",
+            .String => "%DoxaString",
             .Array => "ptr",
             .Map => "ptr",
             .Struct => "ptr",
-            .Enum => "ptr",
+            .Enum => "i64",
             .Function => "ptr",
             .Union => "%DoxaValue",
             .Nothing => "void",

@@ -688,6 +688,21 @@ pub fn unifyTypes(ctx: *TypeAnalysisContext, expected: *const ast.TypeInfo, actu
         if (expected.base == .Byte and actual.base == .Int) return;
         if (expected.base == .Int and actual.base == .Byte) return;
 
+        if (expected.base == .Custom) {
+            if (expected.custom_type) |ct_name| {
+                if (!ctx.custom_types.contains(ct_name)) {
+                    ctx.reporter.reportCompileError(
+                        span.location,
+                        ErrorCode.TYPE_MISMATCH,
+                        "no type '{s}'",
+                        .{ct_name},
+                    );
+                    ctx.fatal_error.* = true;
+                    return;
+                }
+            }
+        }
+
         ctx.reporter.reportCompileError(
             span.location,
             ErrorCode.TYPE_MISMATCH,

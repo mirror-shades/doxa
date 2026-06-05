@@ -1,8 +1,15 @@
 # Strings
 
-Doxa strings are UTF-8 encoded and backed by a contiguous `u8` array under the hood. The
-underlying runtime representation is a null-terminated byte sequence, which means strings
-interop naturally with both Zig's `[:0]const u8` and C's `const char*`.
+Doxa strings are UTF-8 encoded and backed by a contiguous `u8` buffer. The **byte length**
+is explicit: it is not inferred from a terminating NUL, and embedded `U+0000` bytes are
+valid. In the interpreter, values are Zig `[]const u8` slices; at the inline Zig module
+boundary, strings use the tagged `DoxaAbiValue` encoding (`payload0` = pointer,
+`payload1` = length) documented in [zig.md](zig.md).
+
+The LLVM backend still declares many string builtins (`@doxa_str_*`, etc.) as `ptr` into
+NUL-terminated allocations for C-style helpers—so compiled programs may still touch
+null-terminated buffers **inside** those runtime calls, even though the language model is
+pointer + length.
 
 ## Quote semantics
 
@@ -71,6 +78,10 @@ processing.
 
 ## Interop with Zig
 
-Doxa strings map directly to Zig's `?[*:0]const u8` (a nullable null-terminated pointer).
-When calling into Zig from Doxa — or embedding a `zig {}` block — strings are passed and
-returned as this C-compatible pointer type without any conversion overhead.
+For **inline Zig modules** (`zig { … }` compiled as a shared library), the VM and
+generated wrappers use `DoxaAbiValue`: strings are **pointer + byte length**, not C
+strings. See [zig.md](zig.md) for the full ABI.
+
+The **LLVM runtime** (`doxa_rt`) still exposes several helpers that take or return
+`?[*:0]const u8` so those entry points stay C-compatible; that is an implementation detail
+of those helpers, not the definition of the `string` type at the Zig module boundary.

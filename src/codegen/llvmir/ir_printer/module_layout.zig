@@ -11,43 +11,45 @@ pub fn Methods(comptime Ctx: type) type {
 
     return struct {
         pub fn writeModule(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype) !void {
-            try w.writeAll("declare void @doxa_write_cstr(ptr)\n");
+            try w.writeAll("declare void @doxa_write_cstr(ptr, i64)\n");
+            try w.writeAll("declare void @doxa_write_raw(ptr)\n");
             try w.writeAll("");
             try w.writeAll("declare void @doxa_print_i64(i64)\n");
             try w.writeAll("declare void @doxa_print_u64(i64)\n");
             try w.writeAll("declare void @doxa_print_f64(double)\n");
             try w.writeAll("declare void @doxa_print_byte(i64)\n");
-            try w.writeAll("declare i64 @doxa_str_len(ptr)\n");
-            try w.writeAll("declare ptr @doxa_str_concat(ptr, ptr)\n");
-            try w.writeAll("declare ptr @doxa_str_clone(ptr)\n");
-            try w.writeAll("declare ptr @doxa_substring(ptr, i64, i64)\n");
-            try w.writeAll("declare i8 @doxa_str_pop(ptr, ptr, ptr)\n");
-            try w.writeAll("declare ptr @doxa_str_insert(ptr, i64, ptr)\n");
-            try w.writeAll("declare i8 @doxa_str_remove(ptr, i64, ptr, ptr)\n");
-            try w.writeAll("declare ptr @doxa_char_to_string(i8)\n");
-            try w.writeAll("declare i64 @doxa_int_from_cstr(ptr)\n");
-            try w.writeAll("declare double @doxa_float_from_cstr(ptr)\n");
-            try w.writeAll("declare i64 @doxa_byte_from_cstr(ptr)\n");
+            try w.writeAll("declare i64 @doxa_str_len(ptr, i64)\n");
+            try w.writeAll("declare void @doxa_str_concat(ptr, i64, ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_clone(ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_substring(ptr, i64, i64, i64, ptr, ptr)\n");
+            try w.writeAll("declare i8 @doxa_str_pop(ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_insert(ptr, i64, i64, ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare i8 @doxa_str_remove(ptr, i64, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_char_to_string(i8, ptr, ptr)\n");
+            try w.writeAll("declare i64 @doxa_int_from_string(ptr, i64)\n");
+            try w.writeAll("declare double @doxa_float_from_string(ptr, i64)\n");
+            try w.writeAll("declare i64 @doxa_byte_from_string(ptr, i64)\n");
             try w.writeAll("declare i64 @doxa_byte_from_f64(double)\n");
-            try w.writeAll("declare ptr @doxa_int_to_string(i64)\n");
-            try w.writeAll("declare ptr @doxa_float_to_string(double)\n");
-            try w.writeAll("declare ptr @doxa_byte_to_string(i64)\n");
-            try w.writeAll("declare ptr @doxa_tetra_to_string(i64)\n");
-            try w.writeAll("declare ptr @doxa_nothing_to_string()\n");
-            try w.writeAll("declare ptr @doxa_enum_to_string(ptr, i64)\n");
-            try w.writeAll("declare ptr @doxa_struct_to_string(ptr)\n");
-            try w.writeAll("declare ptr @doxa_array_to_string(ptr)\n");
-            try w.writeAll("declare ptr @doxa_pack_bytes(ptr)\n");
-            try w.writeAll("declare ptr @doxa_unpack_bytes(ptr)\n");
-            try w.writeAll("declare void @doxa_debug_peek(ptr)\ndeclare void @doxa_peek_string(ptr)\n");
+            try w.writeAll("declare void @doxa_int_to_string(i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_float_to_string(double, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_byte_to_string(i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_tetra_to_string(i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_nothing_to_string(ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_enum_to_string(ptr, i64, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_struct_to_string(ptr, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_array_to_string(ptr, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_pack_bytes(ptr, ptr, ptr)\n");
+            try w.writeAll("declare ptr @doxa_unpack_bytes(ptr, i64)\n");
+            try w.writeAll("declare void @doxa_debug_peek(ptr)\ndeclare void @doxa_peek_string(ptr, i64)\n");
             try w.writeAll("declare void @doxa_print_array_hdr(ptr)\n");
-            try w.writeAll("declare i1 @doxa_str_eq(ptr, ptr)\n");
+            try w.writeAll("declare i1 @doxa_str_eq(ptr, i64, ptr, i64)\n");
             try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_new_nested(i64, i64, i64, ptr, i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_clone(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_get_i64(ptr, i64)\n");
             try w.writeAll("declare void @doxa_array_set_i64(ptr, i64, i64)\n");
+            try w.writeAll("declare void @doxa_array_set_str(ptr, i64, ptr, i64)\n");
             try w.writeAll("declare ptr @doxa_array_concat(ptr, ptr, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_insert(ptr, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_remove(ptr, i64, ptr)\n");
@@ -67,7 +69,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_print_value(ptr)\n");
             try w.writeAll("declare i64 @doxa_find(ptr, i64)\n");
             try w.writeAll("declare i64 @doxa_find_array(ptr, i64)\n");
-            try w.writeAll("declare i64 @doxa_find_str(ptr, ptr)\n");
+            try w.writeAll("declare i64 @doxa_find_str(ptr, i64, ptr, i64)\n");
             try w.writeAll("declare void @doxa_struct_register(ptr, ptr)\n");
             try w.writeAll("declare void @doxa_enum_register(ptr)\n");
             try w.writeAll("declare ptr @malloc(i64)\n");
@@ -101,7 +103,7 @@ pub fn Methods(comptime Ctx: type) type {
                 if (declared_inline.contains(c.qualified_name)) continue;
                 try declared_inline.put(c.qualified_name, {});
 
-                const ret_ty = self.hirTypeToLLVMType(c.return_type, false);
+                const ret_ty = if (c.call_kind == .ModuleFunction and c.return_type == .String) "void" else self.hirTypeToLLVMType(c.return_type, false);
                 const decl = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}(...)\n", .{ ret_ty, c.qualified_name });
                 defer self.allocator.free(decl);
                 try w.writeAll(decl);
@@ -112,8 +114,10 @@ pub fn Methods(comptime Ctx: type) type {
             // during codegen; the old backward-scan heuristic was brittle and could
             // associate unrelated string constants (like "name") with a struct type.
 
+            self.string_pool_len = hir.string_pool.len;
+
             for (hir.string_pool, 0..) |s, idx| {
-                const str_line = try std.fmt.allocPrint(self.allocator, "@.str.{d} = private constant [{d} x i8] c\"{s}\\00\"\n", .{ idx, s.len + 1, s });
+                const str_line = try std.fmt.allocPrint(self.allocator, "@.str.{d} = private constant [{d} x i8] c\"{s}\"\n", .{ idx, s.len, s });
                 defer self.allocator.free(str_line);
                 try w.writeAll(str_line);
             }
@@ -125,7 +129,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const escaped = try escapeLLVMString(self.allocator, s);
                     defer self.allocator.free(escaped);
                     const str_idx = hir.string_pool.len + idx;
-                    const str_line = try std.fmt.allocPrint(self.allocator, "@.str.{d} = private constant [{d} x i8] c\"{s}\\00\"\n", .{ str_idx, s.len + 1, escaped });
+                    const str_line = try std.fmt.allocPrint(self.allocator, "@.str.{d} = private constant [{d} x i8] c\"{s}\"\n", .{ str_idx, s.len, escaped });
                     defer self.allocator.free(str_line);
                     try w.writeAll(str_line);
                 }
@@ -135,6 +139,7 @@ pub fn Methods(comptime Ctx: type) type {
             // Canonical value representation shared with the runtime. The layout
             // must stay in sync with `DoxaValue` in `src/runtime/doxa_rt.zig`.
             try w.writeAll("%DoxaValue = type { i32, i32, i64 }\n");
+            try w.writeAll("%DoxaString = type { ptr, i64 }\n");
             try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64 }\n\n");
             try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n");
 
@@ -551,6 +556,14 @@ pub fn Methods(comptime Ctx: type) type {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 1 to ptr\n", .{sentinel});
                             defer self.allocator.free(line);
                             try w.writeAll(line);
+
+                            // Store the sentinel to the global so functions can load it
+                            const module_gptr = try self.mangleGlobalName(gname);
+                            defer self.allocator.free(module_gptr);
+                            const store_module_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ sentinel, module_gptr });
+                            defer self.allocator.free(store_module_line);
+                            try w.writeAll(store_module_line);
+
                             try stack.append(.{ .name = sentinel, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                             last_instruction_was_terminator = false;
                             continue;
@@ -608,6 +621,15 @@ pub fn Methods(comptime Ctx: type) type {
                             defer self.allocator.free(store_line);
                             try w.writeAll(store_line);
                         }
+
+                        // Store the module struct pointer to the global so functions
+                        // can load it when they encounter LoadModule for this module
+                        // (critical for lazy-loaded modules accessed inside function bodies).
+                        const module_gptr = try self.mangleGlobalName(gname);
+                        defer self.allocator.free(module_gptr);
+                        const store_module_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ struct_ptr, module_gptr });
+                        defer self.allocator.free(store_module_line);
+                        try w.writeAll(store_module_line);
 
                         try stack.append(.{ .name = struct_ptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         last_instruction_was_terminator = false;

@@ -1,10 +1,4 @@
-/*
-step 1 discovery
-step 2 
-*/
 
-
-module Lexer from "./lexer/lexer.doxa"
 module std from @std()
 
 enum Error {
@@ -19,11 +13,6 @@ public entry function main() {
     if argc? < 2 then return Error.TOO_FEW_ARGS
 
     var program_src is "
-    ...var hello is \"hello... world\"\n
-    ...\n
-    ...public entry function main() {\n
-    ...    hello?\n
-    ...}\n"
+    ...var"
 
-    var result is Lexer.lex(program_src)
 }
