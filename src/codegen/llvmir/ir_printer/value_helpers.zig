@@ -397,7 +397,31 @@ pub fn Methods(comptime Ctx: type) type {
         defer self.allocator.free(reserved_line);
         try w.writeAll(reserved_line);
 
-        const payload = try self.ensureI64(w, value, id);
+        // For string values, clone with null termination so doxa_print_value
+        // can recover the length via std.mem.span. The DoxaValue payload only
+        // holds an 8-byte pointer with no length field.
+        var payload: StackVal = undefined;
+        if (value.ty == .STRING) {
+            const s_ptr = try self.nextTemp(id);
+            const s_len = try self.nextTemp(id);
+            const ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ s_ptr, value.name });
+            const ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ s_len, value.name });
+            defer self.allocator.free(ext0);
+            defer self.allocator.free(ext1);
+            try w.writeAll(ext0);
+            try w.writeAll(ext1);
+            const clone = try self.nextTemp(id);
+            const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_str_clone_raw(ptr {s}, i64 {s})\n", .{ clone, s_ptr, s_len });
+            defer self.allocator.free(clone_line);
+            try w.writeAll(clone_line);
+            const as_i64 = try self.nextTemp(id);
+            const pi = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ as_i64, clone });
+            defer self.allocator.free(pi);
+            try w.writeAll(pi);
+            payload = StackVal{ .name = as_i64, .ty = .I64 };
+        } else {
+            payload = try self.ensureI64(w, value, id);
+        }
 
         const dv0 = try self.nextTemp(id);
         const dv0_line = try std.fmt.allocPrint(
@@ -584,7 +608,7 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(init_len_line);
                 try w.writeAll(init_ptr_line);
                 try w.writeAll(init_len_line);
-                const clone_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone(ptr {s}, i64 0, ptr {s}, ptr {s})\n", .{ tmp, out_ptr_slot, out_len_slot });
+                const clone_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_from_cstr(ptr {s}, ptr {s}, ptr {s})\n", .{ tmp, out_ptr_slot, out_len_slot });
                 defer self.allocator.free(clone_call);
                 try w.writeAll(clone_call);
                 const loaded_ptr = try self.nextTemp(id);

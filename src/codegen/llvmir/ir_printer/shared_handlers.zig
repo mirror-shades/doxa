@@ -50,29 +50,50 @@ pub fn Methods(comptime Ctx: type) type {
                     try stack.append(.{ .name = name, .ty = .I2 });
                 },
                 .string => |s| {
-                    const str_idx = self.string_pool_len + constant_id;
-                    const global_name = try std.fmt.allocPrint(self.allocator, "@.str.{d}", .{str_idx});
-                    defer self.allocator.free(global_name);
+                    if (s.len == 0) {
+                        // Empty strings: GEP into the sentinel null byte so indexing
+                        // (e.g. `""[0]`) doesn't dereference null.
+                        const ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                        id.* += 1;
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [1 x i8], ptr @.doxa.empty, i64 0, i64 0\n", .{ptr_name});
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        const tmp_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                        id.* += 1;
+                        const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{tmp_name, ptr_name});
+                        defer self.allocator.free(ins0);
+                        try w.writeAll(ins0);
+                        const str_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                        id.* += 1;
+                        const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 0, 1\n", .{ str_name, tmp_name });
+                        defer self.allocator.free(ins1);
+                        try w.writeAll(ins1);
+                        try stack.append(.{ .name = str_name, .ty = .STRING, .string_literal_value = s });
+                    } else {
+                        const str_idx = self.string_pool_len + constant_id;
+                        const global_name = try std.fmt.allocPrint(self.allocator, "@.str.{d}", .{str_idx});
+                        defer self.allocator.free(global_name);
 
-                    const ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                    id.* += 1;
-                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ ptr_name, s.len, global_name });
-                    defer self.allocator.free(line);
-                    try w.writeAll(line);
+                        const ptr_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                        id.* += 1;
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ ptr_name, s.len, global_name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
 
-                    const tmp_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                    id.* += 1;
-                    const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_name, ptr_name });
-                    defer self.allocator.free(ins0);
-                    try w.writeAll(ins0);
+                        const tmp_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                        id.* += 1;
+                        const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_name, ptr_name });
+                        defer self.allocator.free(ins0);
+                        try w.writeAll(ins0);
 
-                    const str_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                    id.* += 1;
-                    const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {d}, 1\n", .{ str_name, tmp_name, s.len });
-                    defer self.allocator.free(ins1);
-                    try w.writeAll(ins1);
+                        const str_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                        id.* += 1;
+                        const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {d}, 1\n", .{ str_name, tmp_name, s.len });
+                        defer self.allocator.free(ins1);
+                        try w.writeAll(ins1);
 
-                    try stack.append(.{ .name = str_name, .ty = .STRING, .string_literal_value = s });
+                        try stack.append(.{ .name = str_name, .ty = .STRING, .string_literal_value = s });
+                    }
                 },
                 .enum_variant => |ev| {
                     const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});

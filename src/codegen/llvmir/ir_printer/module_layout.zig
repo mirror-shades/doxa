@@ -21,6 +21,8 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare i64 @doxa_str_len(ptr, i64)\n");
             try w.writeAll("declare void @doxa_str_concat(ptr, i64, ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_str_clone(ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_from_cstr(ptr, ptr, ptr)\n");
+            try w.writeAll("declare ptr @doxa_str_clone_raw(ptr, i64)\n");
             try w.writeAll("declare void @doxa_substring(ptr, i64, i64, i64, ptr, ptr)\n");
             try w.writeAll("declare i8 @doxa_str_pop(ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_str_insert(ptr, i64, i64, ptr, i64, ptr, ptr)\n");
@@ -142,6 +144,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("%DoxaString = type { ptr, i64 }\n");
             try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64 }\n\n");
             try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n");
+            try w.writeAll("@.doxa.empty = private constant [1 x i8] c\"\\00\"\n");
 
             try w.writeAll("@tetra_not_lut = private constant [4 x i8] [i8 1, i8 0, i8 2, i8 3]\n");
             try w.writeAll("@tetra_and_lut = private constant [4 x [4 x i8]] [\n");

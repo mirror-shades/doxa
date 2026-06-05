@@ -142,7 +142,28 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(reserved_line);
                 try w.writeAll(reserved_line);
 
-                const payload = try self.ensureI64(w, incoming, id);
+                var payload: StackVal = undefined;
+                if (incoming.ty == .STRING) {
+                    const s_ptr = try self.nextTemp(id);
+                    const s_len = try self.nextTemp(id);
+                    const ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ s_ptr, incoming.name });
+                    const ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ s_len, incoming.name });
+                    defer self.allocator.free(ext0);
+                    defer self.allocator.free(ext1);
+                    try w.writeAll(ext0);
+                    try w.writeAll(ext1);
+                    const clone = try self.nextTemp(id);
+                    const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_str_clone_raw(ptr {s}, i64 {s})\n", .{ clone, s_ptr, s_len });
+                    defer self.allocator.free(clone_line);
+                    try w.writeAll(clone_line);
+                    const as_i64 = try self.nextTemp(id);
+                    const pi = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ as_i64, clone });
+                    defer self.allocator.free(pi);
+                    try w.writeAll(pi);
+                    payload = StackVal{ .name = as_i64, .ty = .I64 };
+                } else {
+                    payload = try self.ensureI64(w, incoming, id);
+                }
 
                 const dv0 = try self.nextTemp(id);
                 const dv0_line = try std.fmt.allocPrint(
