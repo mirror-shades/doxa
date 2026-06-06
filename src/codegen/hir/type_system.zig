@@ -791,6 +791,7 @@ pub const TypeSystem = struct {
                 if (std.mem.eql(u8, name, "byte")) {
                     return .Byte;
                 }
+                if (std.mem.eql(u8, name, "type")) return .String;
                 if (std.mem.eql(u8, name, "push")) return .Nothing;
                 if (std.mem.eql(u8, name, "pop")) {
                     if (bc.arguments.len > 0) {

@@ -50,11 +50,14 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare ptr @doxa_array_clone(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_get_i64(ptr, i64)\n");
+            try w.writeAll("declare void @doxa_array_get_str(ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_array_set_i64(ptr, i64, i64)\n");
             try w.writeAll("declare void @doxa_array_set_str(ptr, i64, ptr, i64)\n");
             try w.writeAll("declare ptr @doxa_array_concat(ptr, ptr, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_insert(ptr, i64, i64)\n");
+            try w.writeAll("declare ptr @doxa_array_insert_str(ptr, i64, ptr, i64)\n");
             try w.writeAll("declare ptr @doxa_array_remove(ptr, i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_remove_str(ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_array_slice(ptr, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_map_new(i64, i64, i64)\n");
             try w.writeAll("declare void @doxa_map_set_i64(ptr, i64, i64)\n");

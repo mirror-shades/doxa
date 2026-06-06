@@ -265,6 +265,10 @@ pub const IRPrinter = struct {
         return buffer.toOwnedSlice(allocator);
     }
 
+    /// TODO: Migrate peek globals from null-terminated (@.peek.str.N) to
+    /// the string pool format (ptr + len). This requires changing all callers
+    /// from @doxa_write_raw(ptr) to @doxa_write_cstr(ptr, len) and updating
+    /// internPeekString to track explicit lengths.
     pub fn internPeekString(
         allocator: std.mem.Allocator,
         map: *std.StringHashMap(usize),

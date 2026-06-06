@@ -939,8 +939,10 @@ pub export fn doxa_array_clone(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
     if (src.elem_tag == 3 and src.elem_size >= 16) {
         var idx: u64 = 0;
         while (idx < src.len) : (idx += 1) {
-            const s = doxa_array_get_str(src, idx);
-            doxa_array_set_str(result, idx, s.ptr, s.len);
+            var str_ptr: ?[*]u8 = undefined;
+            var str_len: usize = undefined;
+            doxa_array_get_str(src, idx, &str_ptr, &str_len);
+            doxa_array_set_str(result, idx, str_ptr, str_len);
         }
     } else {
         var idx: u64 = 0;
@@ -1025,19 +1027,8 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
             const f: f64 = @bitCast(value);
             fp.* = f;
         },
-        3 => { // string: elem_size 8 = legacy C-string pointer; 16 = DoxaString
-            if (hdr.elem_size >= 16) {
-                // 16-byte strings handled by doxa_array_set_str
-                return;
-            }
-            const sp: *?[*:0]const u8 = @ptrCast(@alignCast(p));
-            const addr: u64 = @bitCast(value);
-            if (addr == 0) {
-                sp.* = null;
-            } else {
-                const src: ?[*:0]const u8 = @ptrFromInt(@as(usize, addr));
-                sp.* = cloneLegacyCStr(src);
-            }
+         3 => { // string: handled by doxa_array_set_str
+            return;
         },
         4 => { // tetra (2-bit stored in u8)
             const tp: *u8 = @ptrCast(p);
@@ -1059,15 +1050,12 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
     }
 }
 
-fn cloneLegacyCStr(ptr: ?[*:0]const u8) ?[*:0]u8 {
-    const s = if (ptr) |p| std.mem.span(p) else return null;
-    const out = std.heap.page_allocator.allocSentinel(u8, s.len, 0) catch return null;
-    @memcpy(out[0..s.len], s);
-    return out.ptr;
-}
-
-pub export fn doxa_array_get_str(hdr: *ArrayHeader, idx: u64) callconv(.c) DoxaString {
-    if (hdr.data == null or idx >= hdr.len) return .{ .ptr = null, .len = 0 };
+pub export fn doxa_array_get_str(hdr: *ArrayHeader, idx: u64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+    if (hdr.data == null or idx >= hdr.len) {
+        out_ptr.* = null;
+        out_len.* = 0;
+        return;
+    }
     const base: [*]const u8 = @ptrCast(hdr.data.?);
     const off: usize = @intCast(idx * hdr.elem_size);
     const p = base + off;
@@ -1078,13 +1066,13 @@ pub export fn doxa_array_get_str(hdr: *ArrayHeader, idx: u64) callconv(.c) DoxaS
             const addr: u64 = @bitCast(ptr_slot.*);
             const ptr: ?[*]const u8 = if (addr == 0) null else @ptrFromInt(@as(usize, addr));
             const len_u64: u64 = @bitCast(len_slot.*);
-            return .{ .ptr = ptr, .len = @intCast(len_u64) };
+            out_ptr.* = @constCast(ptr);
+            out_len.* = @intCast(len_u64);
+            return;
         }
-        // Legacy 8-byte
-        const sp: *const i64 = @ptrCast(@alignCast(p));
-        return doxaStringFromBits(sp.*);
     }
-    return .{ .ptr = null, .len = 0 };
+    out_ptr.* = null;
+    out_len.* = 0;
 }
 
 pub export fn doxa_array_set_str(hdr: *ArrayHeader, idx: u64, str_ptr: ?[*]const u8, str_len: usize) callconv(.c) void {
@@ -1112,15 +1100,19 @@ pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u
         if (a) |hdr_a| {
             var idx: u64 = 0;
             while (idx < len_a) : (idx += 1) {
-                const s = doxa_array_get_str(hdr_a, idx);
-                doxa_array_set_str(result, idx, s.ptr, s.len);
+                var str_ptr: ?[*]u8 = undefined;
+                var str_len: usize = undefined;
+                doxa_array_get_str(hdr_a, idx, &str_ptr, &str_len);
+                doxa_array_set_str(result, idx, str_ptr, str_len);
             }
         }
         if (b) |hdr_b| {
             var idx: u64 = 0;
             while (idx < len_b) : (idx += 1) {
-                const s = doxa_array_get_str(hdr_b, idx);
-                doxa_array_set_str(result, len_a + idx, s.ptr, s.len);
+                var str_ptr: ?[*]u8 = undefined;
+                var str_len: usize = undefined;
+                doxa_array_get_str(hdr_b, idx, &str_ptr, &str_len);
+                doxa_array_set_str(result, len_a + idx, str_ptr, str_len);
             }
         }
     } else {
@@ -1152,10 +1144,20 @@ pub export fn doxa_array_insert(hdr: ?*ArrayHeader, idx: i64, value: i64) callco
     const old_len = h.len;
     if (!ensureArrayCapacity(h, old_len + 1)) return h;
     h.len = old_len + 1;
-    var i: u64 = old_len;
-    while (i > pos) : (i -= 1) {
-        const prev = doxa_array_get_i64(h, i - 1);
-        doxa_array_set_i64(h, i, prev);
+    if (h.elem_tag == 3 and h.elem_size >= 16) {
+        var i: u64 = old_len;
+        while (i > pos) : (i -= 1) {
+            var str_ptr: ?[*]u8 = undefined;
+            var str_len: usize = undefined;
+            doxa_array_get_str(h, i - 1, &str_ptr, &str_len);
+            doxa_array_set_str(h, i, str_ptr, str_len);
+        }
+    } else {
+        var i: u64 = old_len;
+        while (i > pos) : (i -= 1) {
+            const prev = doxa_array_get_i64(h, i - 1);
+            doxa_array_set_i64(h, i, prev);
+        }
     }
     doxa_array_set_i64(h, pos, value);
     return h;
@@ -1169,10 +1171,64 @@ pub export fn doxa_array_remove(hdr: ?*ArrayHeader, idx: i64, out_removed: *i64)
     if (pos >= h.len) return h;
 
     out_removed.* = doxa_array_get_i64(h, pos);
-    var i: u64 = pos;
-    while (i + 1 < h.len) : (i += 1) {
-        const next = doxa_array_get_i64(h, i + 1);
-        doxa_array_set_i64(h, i, next);
+    if (h.elem_tag == 3 and h.elem_size >= 16) {
+        var i: u64 = pos;
+        while (i + 1 < h.len) : (i += 1) {
+            var str_ptr: ?[*]u8 = undefined;
+            var str_len: usize = undefined;
+            doxa_array_get_str(h, i + 1, &str_ptr, &str_len);
+            doxa_array_set_str(h, i, str_ptr, str_len);
+        }
+    } else {
+        var i: u64 = pos;
+        while (i + 1 < h.len) : (i += 1) {
+            const next = doxa_array_get_i64(h, i + 1);
+            doxa_array_set_i64(h, i, next);
+        }
+    }
+    if (h.len > 0) h.len -= 1;
+    return h;
+}
+
+pub export fn doxa_array_insert_str(hdr: ?*ArrayHeader, idx: i64, str_ptr: ?[*]const u8, str_len: usize) callconv(.c) *ArrayHeader {
+    const h = hdr orelse return doxa_array_new(16, 3, 0);
+    if (idx < 0) return h;
+    const pos: u64 = @intCast(@as(u64, @intCast(idx)));
+    if (pos > h.len) return h;
+
+    const old_len = h.len;
+    if (!ensureArrayCapacity(h, old_len + 1)) return h;
+    h.len = old_len + 1;
+    if (h.elem_tag == 3 and h.elem_size >= 16) {
+        var i: u64 = old_len;
+        while (i > pos) : (i -= 1) {
+            var prev_ptr: ?[*]u8 = undefined;
+            var prev_len: usize = undefined;
+            doxa_array_get_str(h, i - 1, &prev_ptr, &prev_len);
+            doxa_array_set_str(h, i, prev_ptr, prev_len);
+        }
+        doxa_array_set_str(h, pos, str_ptr, str_len);
+    }
+    return h;
+}
+
+pub export fn doxa_array_remove_str(hdr: ?*ArrayHeader, idx: i64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) *ArrayHeader {
+    const h = hdr orelse return doxa_array_new(16, 3, 0);
+    out_ptr.* = null;
+    out_len.* = 0;
+    if (idx < 0) return h;
+    const pos: u64 = @intCast(@as(u64, @intCast(idx)));
+    if (pos >= h.len) return h;
+
+    doxa_array_get_str(h, pos, out_ptr, out_len);
+    if (h.elem_tag == 3 and h.elem_size >= 16) {
+        var i: u64 = pos;
+        while (i + 1 < h.len) : (i += 1) {
+            var next_ptr: ?[*]u8 = undefined;
+            var next_len: usize = undefined;
+            doxa_array_get_str(h, i + 1, &next_ptr, &next_len);
+            doxa_array_set_str(h, i, next_ptr, next_len);
+        }
     }
     if (h.len > 0) h.len -= 1;
     return h;
@@ -1187,10 +1243,20 @@ pub export fn doxa_array_slice(hdr: ?*ArrayHeader, start: i64, length: i64) call
     const max_len = h.len - s;
     const out_len: u64 = if (n > max_len) max_len else n;
     const out = doxa_array_new(h.elem_size, h.elem_tag, out_len);
-    var i: u64 = 0;
-    while (i < out_len) : (i += 1) {
-        const v = doxa_array_get_i64(h, s + i);
-        doxa_array_set_i64(out, i, v);
+    if (h.elem_tag == 3 and h.elem_size >= 16) {
+        var i: u64 = 0;
+        while (i < out_len) : (i += 1) {
+            var str_ptr: ?[*]u8 = undefined;
+            var str_len: usize = undefined;
+            doxa_array_get_str(h, s + i, &str_ptr, &str_len);
+            doxa_array_set_str(out, i, str_ptr, str_len);
+        }
+    } else {
+        var i: u64 = 0;
+        while (i < out_len) : (i += 1) {
+            const v = doxa_array_get_i64(h, s + i);
+            doxa_array_set_i64(out, i, v);
+        }
     }
     return out;
 }
@@ -1377,8 +1443,16 @@ fn printArrayHdrImpl(out: anytype, hdr: *ArrayHeader) anyerror!void {
     var i: u64 = 0;
     while (i < hdr.len) : (i += 1) {
         if (i != 0) try out.print(", ", .{});
-        const elem_bits = doxa_array_get_i64(hdr, i);
-        try printTaggedBitsImpl(out, hdr.elem_tag, elem_bits);
+        if (hdr.elem_tag == 3 and hdr.elem_size >= 16) {
+            var str_ptr: ?[*]u8 = undefined;
+            var str_len: usize = undefined;
+            doxa_array_get_str(hdr, i, &str_ptr, &str_len);
+            const s = if (str_ptr) |p| p[0..str_len] else "";
+            try out.print("\"{s}\"", .{s});
+        } else {
+            const elem_bits = doxa_array_get_i64(hdr, i);
+            try printTaggedBitsImpl(out, hdr.elem_tag, elem_bits);
+        }
     }
 
     try out.print("]", .{});
@@ -1430,6 +1504,20 @@ fn satisfiesQuantifier(tag: u64, elem_bits: i64, comparison_bits: i64, mode: Qua
 
 fn existsQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: QuantifierMode) u8 {
     const hdr = hdr_opt orelse return 0;
+    if (hdr.elem_tag == 3 and hdr.elem_size >= 16) {
+        const cs = sliceFromDoxaString(doxaStringFromBits(comparison_bits));
+        var idx: u64 = 0;
+        while (idx < hdr.len) : (idx += 1) {
+            var str_ptr: ?[*]u8 = undefined;
+            var str_len: usize = undefined;
+            doxa_array_get_str(hdr, idx, &str_ptr, &str_len);
+            const lhs = if (str_ptr) |p| p[0..str_len] else "";
+            if (if (mode == .Equal) std.mem.eql(u8, lhs, cs) else lhs.len > cs.len) {
+                return 1;
+            }
+        }
+        return 0;
+    }
     var idx: u64 = 0;
     while (idx < hdr.len) : (idx += 1) {
         const elem_bits = doxa_array_get_i64(hdr, idx);
@@ -1450,6 +1538,21 @@ pub export fn doxa_exists_quantifier_eq(hdr: ?*ArrayHeader, comparison_bits: i64
 
 fn forallQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: QuantifierMode) u8 {
     const hdr = hdr_opt orelse return 1;
+    if (hdr.elem_tag == 3 and hdr.elem_size >= 16) {
+        const cs = sliceFromDoxaString(doxaStringFromBits(comparison_bits));
+        var idx: u64 = 0;
+        while (idx < hdr.len) : (idx += 1) {
+            var str_ptr: ?[*]u8 = undefined;
+            var str_len: usize = undefined;
+            doxa_array_get_str(hdr, idx, &str_ptr, &str_len);
+            const lhs = if (str_ptr) |p| p[0..str_len] else "";
+            const ok = if (mode == .Equal) std.mem.eql(u8, lhs, cs) else lhs.len > cs.len;
+            if (!ok) {
+                return 0;
+            }
+        }
+        return 1;
+    }
     var idx: u64 = 0;
     while (idx < hdr.len) : (idx += 1) {
         const elem_bits = doxa_array_get_i64(hdr, idx);

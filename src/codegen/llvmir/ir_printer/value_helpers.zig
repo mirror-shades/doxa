@@ -302,7 +302,48 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(trunc_line);
                 break :blk StackVal{ .name = narrowed, .ty = .I2 };
             },
-            .String, .Array, .Map, .Struct, .Function => blk: {
+            .String => blk: {
+                const as_ptr = try self.nextTemp(id);
+                const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
+                defer self.allocator.free(cast_line);
+                try w.writeAll(cast_line);
+
+                const out_ptr_slot = try self.nextTemp(id);
+                const out_len_slot = try self.nextTemp(id);
+                const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
+                const alloca_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
+                defer self.allocator.free(alloca_ptr_line);
+                defer self.allocator.free(alloca_len_line);
+                try w.writeAll(alloca_ptr_line);
+                try w.writeAll(alloca_len_line);
+                const init_ptr_line = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
+                const init_len_line = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
+                defer self.allocator.free(init_ptr_line);
+                defer self.allocator.free(init_len_line);
+                try w.writeAll(init_ptr_line);
+                try w.writeAll(init_len_line);
+                const from_cstr_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_from_cstr(ptr {s}, ptr {s}, ptr {s})\n", .{ as_ptr, out_ptr_slot, out_len_slot });
+                defer self.allocator.free(from_cstr_call);
+                try w.writeAll(from_cstr_call);
+                const loaded_ptr = try self.nextTemp(id);
+                const loaded_len = try self.nextTemp(id);
+                const load_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ loaded_ptr, out_ptr_slot });
+                const load_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ loaded_len, out_len_slot });
+                defer self.allocator.free(load_ptr_line);
+                defer self.allocator.free(load_len_line);
+                try w.writeAll(load_ptr_line);
+                try w.writeAll(load_len_line);
+                const tmp_ds = try self.nextTemp(id);
+                const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_ds, loaded_ptr });
+                defer self.allocator.free(ins0);
+                try w.writeAll(ins0);
+                const str_name = try self.nextTemp(id);
+                const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {s}, 1\n", .{ str_name, tmp_ds, loaded_len });
+                defer self.allocator.free(ins1);
+                try w.writeAll(ins1);
+                break :blk StackVal{ .name = str_name, .ty = .STRING, .array_type = value.array_type, .enum_type_name = value.enum_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names, .struct_type_name = value.struct_type_name };
+            },
+            .Array, .Map, .Struct, .Function => blk: {
                 const as_ptr = try self.nextTemp(id);
                 const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
                 defer self.allocator.free(cast_line);

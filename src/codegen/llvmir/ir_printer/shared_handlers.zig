@@ -1429,6 +1429,19 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
                 },
+                .STRING => {
+                    const s_ptr = try self.nextTemp(id);
+                    const s_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ s_ptr, val.name });
+                    defer self.allocator.free(s_ptr_line);
+                    try w.writeAll(s_ptr_line);
+                    const s_len = try self.nextTemp(id);
+                    const s_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ s_len, val.name });
+                    defer self.allocator.free(s_len_line);
+                    try w.writeAll(s_len_line);
+                    const call_val = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s}, i64 {s})\n", .{ s_ptr, s_len });
+                    defer self.allocator.free(call_val);
+                    try w.writeAll(call_val);
+                },
                 else => {},
             }
             try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
@@ -1948,6 +1961,8 @@ pub fn Methods(comptime Ctx: type) type {
                 const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ runtime_name, args_str });
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
+                const nothing_name = try self.nextTemp(id);
+                try stack.append(.{ .name = nothing_name, .ty = .Nothing });
             }
         }
 
