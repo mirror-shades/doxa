@@ -6,7 +6,7 @@ module std from @std()
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
 
 function getInput() returns byte {
-    const input is std.io.input() as string else return 0
+    const input is std.io.input() as string else "0"
     const inputByte is @byte(input[0])
     return inputByte
 }
