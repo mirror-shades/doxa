@@ -12,7 +12,7 @@ test "inline zig: accepts import consts and function bodies" {
     const src =
         \\const std = @import("std");
         \\
-        \\fn add(a: i64, b: i64) i64 {
+        \\pub fn add(a: i64, b: i64) i64 {
         \\    return a + b;
         \\}
     ;
@@ -21,6 +21,7 @@ test "inline zig: accepts import consts and function bodies" {
     defer inline_zig.deinitSigs(testing.allocator, sigs);
 
     try testing.expectEqual(@as(usize, 1), sigs.len);
+    try testing.expect(sigs[0].is_pub);
     try testing.expectEqualStrings("add", sigs[0].name);
     try testing.expectEqual(ast.Type.Int, sigs[0].return_type.base);
     try testing.expectEqual(@as(usize, 2), sigs[0].param_types.len);
@@ -30,7 +31,7 @@ test "inline zig: accepts import consts and function bodies" {
 
 test "inline zig: accepts multiline signatures" {
     const src =
-        \\fn foo(
+        \\pub fn foo(
         \\    a: i64,
         \\    b: f64,
         \\) f64 {
@@ -43,6 +44,7 @@ test "inline zig: accepts multiline signatures" {
     defer inline_zig.deinitSigs(testing.allocator, sigs);
 
     try testing.expectEqual(@as(usize, 1), sigs.len);
+    try testing.expect(sigs[0].is_pub);
     try testing.expectEqualStrings("foo", sigs[0].name);
     try testing.expectEqual(ast.Type.Float, sigs[0].return_type.base);
     try testing.expectEqual(@as(usize, 2), sigs[0].param_types.len);
@@ -55,14 +57,22 @@ test "inline zig: rejects non-import const at top level" {
     try testing.expectError(error.InlineZigNotValid, inline_zig.sanitizeAndExtract(testing.allocator, src));
 }
 
-test "inline zig: rejects invalid parameter type" {
-    const src = "fn bad(x: i32) i64 { _ = x; return 0; }";
+test "inline zig: rejects invalid parameter type on pub fn" {
+    const src = "pub fn bad(x: i32) i64 { _ = x; return 0; }";
     try testing.expectError(error.InvalidParamType, inline_zig.sanitizeAndExtract(testing.allocator, src));
 }
 
-test "inline zig: rejects invalid return type" {
-    const src = "fn bad(x: i64) i32 { _ = x; return 0; }";
+test "inline zig: rejects invalid return type on pub fn" {
+    const src = "pub fn bad(x: i64) i32 { _ = x; return 0; }";
     try testing.expectError(error.InvalidReturnType, inline_zig.sanitizeAndExtract(testing.allocator, src));
+}
+
+test "inline zig: rejects pub const struct at top level" {
+    const src =
+        \\pub const S = struct { x: i64 };
+        \\pub fn f() i64 { return 1; }
+    ;
+    try testing.expectError(error.InlineZigNotValid, inline_zig.sanitizeAndExtract(testing.allocator, src));
 }
 
 test "inline zig: rejects extern declarations without bodies" {
