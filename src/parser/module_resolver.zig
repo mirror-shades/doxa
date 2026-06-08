@@ -114,6 +114,18 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
 
     const info = try extractModuleInfoWithParser(self, module_block, module_data.resolved_path, null, &new_parser);
 
+    // Propagate child parser's module_namespaces to the parent so that
+    // dependencies discovered during parsing (e.g. `module error from "..."`)
+    // are visible to the parent parser and can be lazy-loaded later.
+    {
+        var child_ns_it = new_parser.module_namespaces.iterator();
+        while (child_ns_it.next()) |child_ns| {
+            if (!self.module_namespaces.contains(child_ns.key_ptr.*)) {
+                try self.module_namespaces.put(child_ns.key_ptr.*, child_ns.value_ptr.*);
+            }
+        }
+    }
+
     if (self.module_resolution_status.getPtr(normalized_path)) |status_ptr| {
         status_ptr.* = .COMPLETED;
     } else {

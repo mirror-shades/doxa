@@ -1190,6 +1190,7 @@ pub const ModuleInfo = struct {
     imports: []const ImportInfo,
     ast: ?*Expr = null,
     file_path: []const u8,
+    importer_path: []const u8 = "",
     symbols: ?std.StringHashMap(ModuleSymbol) = null,
 
     pub fn hasPublicSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {

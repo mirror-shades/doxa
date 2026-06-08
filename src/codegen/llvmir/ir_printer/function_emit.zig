@@ -336,19 +336,86 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .LoadModule => |lm| {
                         const gname = lm.module_name;
-                        const gptr = try self.mangleGlobalName(gname);
-                        defer self.allocator.free(gptr);
+                        const fcount = lm.field_names.len;
 
-                        // Load the struct pointer that was stored during global init
-                        const loaded = try self.nextTemp(&id);
-                        const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ loaded, gptr });
-                        defer self.allocator.free(load_line);
-                        try w.writeAll(load_line);
-
+                        // Look up struct metadata (pre-populated by writeModule scan)
                         const struct_fields = self.global_struct_field_types.get(gname);
                         const struct_names = self.global_struct_field_names.get(gname);
                         const struct_type_name = self.global_struct_type_names.get(gname);
-                        try stack.append(.{ .name = loaded, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+
+                        if (fcount == 0) {
+                            // Empty module struct — push a non-null sentinel pointer
+                            const sentinel = try self.nextTemp(&id);
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 1 to ptr\n", .{sentinel});
+                            defer self.allocator.free(line);
+                            try w.writeAll(line);
+                            try stack.append(.{ .name = sentinel, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                            last_instruction_was_terminator = false;
+                            continue;
+                        }
+
+                        const struct_type_llvm = try self.buildI64StructType(fcount);
+                        defer self.allocator.free(struct_type_llvm);
+
+                        // Allocate struct on heap
+                        const struct_size = fcount * @sizeOf(i64);
+                        const size_reg = try self.nextTemp(&id);
+                        const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_reg, struct_size });
+                        defer self.allocator.free(size_line);
+                        try w.writeAll(size_line);
+
+                        const malloc_reg = try self.nextTemp(&id);
+                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @malloc(i64 {s})\n", .{ malloc_reg, size_reg });
+                        defer self.allocator.free(malloc_line);
+                        try w.writeAll(malloc_line);
+
+                        // Cast to struct pointer
+                        const struct_ptr = try self.nextTemp(&id);
+                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast ptr {s} to ptr\n", .{ struct_ptr, malloc_reg });
+                        defer self.allocator.free(cast_line);
+                        try w.writeAll(cast_line);
+
+                        // Populate each field from module globals
+                        var fi: usize = 0;
+                        while (fi < fcount) : (fi += 1) {
+                            const field_name = lm.field_names[fi];
+                            const field_gptr = try self.mangleGlobalName(field_name);
+                            defer self.allocator.free(field_gptr);
+
+                            // Determine the module global's type and load accordingly
+                            const field_st = self.global_types.get(field_name) orelse .PTR;
+                            const field_llty = self.stackTypeToLLVMType(field_st);
+
+                            const loaded_val = try self.nextTemp(&id);
+                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ loaded_val, field_llty, field_gptr });
+                            defer self.allocator.free(load_line);
+                            try w.writeAll(load_line);
+
+                            // Convert value to i64 storage representation
+                            const loaded_sv = StackVal{ .name = loaded_val, .ty = field_st };
+                            const loaded_storage = try self.convertValueToArrayStorage(w, loaded_sv, HIR.HIRType{ .String = {} }, &id);
+
+                            // GEP to field position
+                            const field_gep = try self.nextTemp(&id);
+                            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds {s}, ptr {s}, i32 0, i32 {d}\n", .{ field_gep, struct_type_llvm, struct_ptr, @as(i32, @intCast(fi)) });
+                            defer self.allocator.free(gep_line);
+                            try w.writeAll(gep_line);
+
+                            // Store into struct field
+                            const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ loaded_storage.name, field_gep });
+                            defer self.allocator.free(store_line);
+                            try w.writeAll(store_line);
+                        }
+
+                        // Store the module struct pointer to the global so subsequent
+                        // LoadModule instructions (in other functions) can reuse it.
+                        const module_gptr = try self.mangleGlobalName(gname);
+                        defer self.allocator.free(module_gptr);
+                        const store_module_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ struct_ptr, module_gptr });
+                        defer self.allocator.free(store_module_line);
+                        try w.writeAll(store_module_line);
+
+                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
@@ -897,7 +964,7 @@ pub fn Methods(comptime Ctx: type) type {
                     current_ptr = sel_name;
                 }
 
-                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s})\n", .{current_ptr});
+                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{current_ptr});
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
             }
