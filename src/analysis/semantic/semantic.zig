@@ -362,6 +362,10 @@ pub const SemanticAnalyzer = struct {
                 while (it.next()) |entry| {
                     const sym = entry.value_ptr.*;
                     if (!sym.used) {
+                        // Module sub-symbols and zig-block functions use dotted keys
+                        // (e.g. "std.println", "io.hello"). Skip those so only bare
+                        // direct-import names produce a warning.
+                        if (std.mem.indexOf(u8, entry.key_ptr.*, ".")) |_| continue;
                         self.reporter.reportWarning(null, ErrorCode.UNUSED_IMPORT, "unused import '{s}'", .{sym.name});
                     }
                 }

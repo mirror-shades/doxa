@@ -3,7 +3,7 @@ module error from "../error.doxa"
 zig HTTP {
     const std = @import("std");
 
-    fn errorState(mode: i64, value: i64) i64 {
+    pub fn errorState(mode: i64, value: i64) i64 {
         const State = struct {
             var last_error_code: i64 = 0;
         };
@@ -22,19 +22,19 @@ zig HTTP {
         return 0;
     }
 
-    fn clearLastError() void {
+    pub fn clearLastError() void {
         _ = errorState(0, 0);
     }
 
-    fn setLastError(code: i64) void {
+    pub fn setLastError(code: i64) void {
         _ = errorState(0, code);
     }
 
-    fn takeLastErrorCode() i64 {
+    pub fn takeLastErrorCode() i64 {
         return errorState(2, 0);
     }
 
-    fn mapCommon(err_name: []const u8) i64 {
+    pub fn mapCommon(err_name: []const u8) i64 {
         if (std.mem.eql(u8, err_name, "InvalidArgument")) return 1;
         if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
         if (std.mem.eql(u8, err_name, "AccessDenied")) return 3;
@@ -44,7 +44,7 @@ zig HTTP {
         return -1;
     }
 
-    fn filenameFromUrl(url: []const u8) []const u8 {
+    pub fn filenameFromUrl(url: []const u8) []const u8 {
         const query_idx = std.mem.indexOfScalar(u8, url, '?');
         const without_query = if (query_idx) |idx| url[0..idx] else url;
         const fragment_idx = std.mem.indexOfScalar(u8, without_query, '#');
@@ -123,13 +123,13 @@ zig HTTP {
         }
     }
 
-    fn download(url: []const u8) void {
+    pub fn download(url: []const u8) void {
         clearLastError();
         const name = filenameFromUrl(url);
         downloadUrl(url, name);
     }
 
-    fn getText(_: []const u8) []const u8 {
+    pub fn getText(_: []const u8) []const u8 {
         clearLastError();
         setLastError(4);
         return "";

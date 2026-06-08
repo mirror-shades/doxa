@@ -3,29 +3,29 @@ module error from "../error.doxa"
 zig Parse {
     const std = @import("std");
 
-    fn parseIntSafe(text: []const u8) i64 {
+    pub fn parseIntSafe(text: []const u8) i64 {
         return std.fmt.parseInt(i64, text, 0) catch 0;
     }
 
-    fn isInt(text: []const u8) bool {
+    pub fn isInt(text: []const u8) bool {
         _ = std.fmt.parseInt(i64, text, 0) catch return false;
         return true;
     }
 
-    fn parseFloatSafe(text: []const u8) f64 {
+    pub fn parseFloatSafe(text: []const u8) f64 {
         return std.fmt.parseFloat(f64, text) catch 0.0;
     }
 
-    fn isFloat(text: []const u8) bool {
+    pub fn isFloat(text: []const u8) bool {
         _ = std.fmt.parseFloat(f64, text) catch return false;
         return true;
     }
 
-    fn parseByteSafe(text: []const u8) u8 {
+    pub fn parseByteSafe(text: []const u8) u8 {
         return std.fmt.parseInt(u8, text, 0) catch 0;
     }
 
-    fn isByte(text: []const u8) bool {
+    pub fn isByte(text: []const u8) bool {
         _ = std.fmt.parseInt(u8, text, 0) catch return false;
         return true;
     }

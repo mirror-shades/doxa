@@ -1,9 +1,9 @@
 zig ZigStr {
-    fn echo(s: []const u8) []const u8 {
+    pub fn echo(s: []const u8) []const u8 {
         return s;
     }
 
-    fn hi() []const u8 {
+    pub fn hi() []const u8 {
         return "hi";
     }
 }

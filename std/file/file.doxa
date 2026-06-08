@@ -3,7 +3,7 @@ module error from "../error.doxa"
 zig File {
     const std = @import("std");
 
-    fn errorState(mode: i64, value: i64) i64 {
+    pub fn errorState(mode: i64, value: i64) i64 {
         const State = struct {
             var last_error_code: i64 = 0;
         };
@@ -22,19 +22,19 @@ zig File {
         return 0;
     }
 
-    fn clearLastError() void {
+    pub fn clearLastError() void {
         _ = errorState(0, 0);
     }
 
-    fn setLastError(code: i64) void {
+    pub fn setLastError(code: i64) void {
         _ = errorState(0, code);
     }
 
-    fn takeLastErrorCode() i64 {
+    pub fn takeLastErrorCode() i64 {
         return errorState(2, 0);
     }
 
-    fn mapCommon(err_name: []const u8) i64 {
+    pub fn mapCommon(err_name: []const u8) i64 {
         if (std.mem.eql(u8, err_name, "InvalidArgument")) return 1;
         if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
         if (std.mem.eql(u8, err_name, "AccessDenied")) return 3;
@@ -44,7 +44,7 @@ zig File {
         return -1;
     }
 
-    fn mapPath(err_name: []const u8) i64 {
+    pub fn mapPath(err_name: []const u8) i64 {
         const common = mapCommon(err_name);
         if (common >= 0) return common;
         if (std.mem.eql(u8, err_name, "FileNotFound")) return 100;
@@ -57,7 +57,7 @@ zig File {
         return 117;
     }
 
-    fn makeDir(path: []const u8) void {
+    pub fn makeDir(path: []const u8) void {
         clearLastError();
         if (path.len == 0) {
             setLastError(1);
@@ -69,7 +69,7 @@ zig File {
         };
     }
 
-    fn makePath(path: []const u8) void {
+    pub fn makePath(path: []const u8) void {
         clearLastError();
         if (path.len == 0) {
             setLastError(1);
@@ -81,7 +81,7 @@ zig File {
         };
     }
 
-    fn copyFile(source: []const u8, destination: []const u8) void {
+    pub fn copyFile(source: []const u8, destination: []const u8) void {
         clearLastError();
         if (source.len == 0 or destination.len == 0) {
             setLastError(1);
@@ -107,7 +107,7 @@ zig File {
         };
     }
 
-    fn delete(path: []const u8, recursive: bool) void {
+    pub fn delete(path: []const u8, recursive: bool) void {
         clearLastError();
         if (path.len == 0) {
             setLastError(1);
@@ -156,7 +156,7 @@ zig File {
         };
     }
 
-    fn copyDir(source: []const u8, destination: []const u8) void {
+    pub fn copyDir(source: []const u8, destination: []const u8) void {
         clearLastError();
         if (source.len == 0 or destination.len == 0) {
             setLastError(1);
@@ -326,7 +326,7 @@ zig File {
         }
     }
 
-    fn unzipFile(zip_path: []const u8, out_dir_path: []const u8) void {
+    pub fn unzipFile(zip_path: []const u8, out_dir_path: []const u8) void {
         clearLastError();
         if (zip_path.len == 0 or out_dir_path.len == 0) {
             setLastError(1);
@@ -381,7 +381,7 @@ zig File {
         };
     }
 
-    fn IsDir(path: []const u8) bool {
+    pub fn IsDir(path: []const u8) bool {
         const _cwd = std.fs.cwd();
         var dir = _cwd.openDir(path, .{}) catch {
             return false;
@@ -390,7 +390,7 @@ zig File {
         return true;
     }
 
-    fn renameDir(old_folder: []const u8, new_folder: []const u8) void {
+    pub fn renameDir(old_folder: []const u8, new_folder: []const u8) void {
         clearLastError();
         if (old_folder.len == 0 or new_folder.len == 0) {
             setLastError(1);
@@ -416,7 +416,7 @@ zig File {
         };
     }
 
-    fn rename(old_path: []const u8, new_path: []const u8) void {
+    pub fn rename(old_path: []const u8, new_path: []const u8) void {
         clearLastError();
         if (old_path.len == 0 or new_path.len == 0) {
             setLastError(1);
@@ -442,7 +442,7 @@ zig File {
         };
     }
 
-    fn read(path: []const u8) []const u8 {
+    pub fn read(path: []const u8) []const u8 {
         clearLastError();
         if (path.len == 0) {
             setLastError(1);
@@ -487,7 +487,7 @@ zig File {
         return content;
     }
 
-    fn write(path: []const u8, content: []const u8) void {
+    pub fn write(path: []const u8, content: []const u8) void {
         clearLastError();
         if (path.len == 0) {
             setLastError(1);
@@ -509,7 +509,7 @@ zig File {
         };
     }
 
-    fn append(path: []const u8, content: []const u8) void {
+    pub fn append(path: []const u8, content: []const u8) void {
         clearLastError();
         if (path.len == 0) {
             setLastError(1);
@@ -552,18 +552,18 @@ zig File {
         };
     }
 
-    fn exists(path: []const u8) bool {
+    pub fn exists(path: []const u8) bool {
         std.fs.cwd().access(path, .{}) catch return false;
         return true;
     }
 
-    fn isFile(path: []const u8) bool {
+    pub fn isFile(path: []const u8) bool {
         var file = std.fs.cwd().openFile(path, .{}) catch return false;
         file.close();
         return true;
     }
 
-    fn cwd() []const u8 {
+    pub fn cwd() []const u8 {
         clearLastError();
         const content = std.process.getCwdAlloc(std.heap.page_allocator) catch |err| {
             const mc = mapCommon(@errorName(err));
@@ -586,7 +586,7 @@ zig File {
         return content;
     }
 
-    fn touch(path: []const u8) void {
+    pub fn touch(path: []const u8) void {
         clearLastError();
         if (path.len == 0) {
             setLastError(1);

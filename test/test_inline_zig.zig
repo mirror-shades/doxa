@@ -21,7 +21,6 @@ test "inline zig: accepts import consts and function bodies" {
     defer inline_zig.deinitSigs(testing.allocator, sigs);
 
     try testing.expectEqual(@as(usize, 1), sigs.len);
-    try testing.expect(sigs[0].is_pub);
     try testing.expectEqualStrings("add", sigs[0].name);
     try testing.expectEqual(ast.Type.Int, sigs[0].return_type.base);
     try testing.expectEqual(@as(usize, 2), sigs[0].param_types.len);
@@ -44,7 +43,6 @@ test "inline zig: accepts multiline signatures" {
     defer inline_zig.deinitSigs(testing.allocator, sigs);
 
     try testing.expectEqual(@as(usize, 1), sigs.len);
-    try testing.expect(sigs[0].is_pub);
     try testing.expectEqualStrings("foo", sigs[0].name);
     try testing.expectEqual(ast.Type.Float, sigs[0].return_type.base);
     try testing.expectEqual(@as(usize, 2), sigs[0].param_types.len);
