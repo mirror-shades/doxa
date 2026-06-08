@@ -53,10 +53,9 @@ pub export fn doxa_write_cstr(ptr: ?[*]const u8, len: usize) callconv(.c) void {
     }
 }
 
-/// Transitional output path for peek / debug internals that still carry
-/// null-terminated globals (`internPeekString`). Call sites should be
-/// migrated to `doxa_write_cstr(ptr, len)` with explicit length.
-/// Once all `@.peek.str.*` globals are retired this function can be removed.
+/// Write a null-terminated string to the active output sink. Used for
+/// user-provided error messages and legacy pointer values where the
+/// length is not known statically.
 pub export fn doxa_write_raw(ptr: ?[*:0]const u8) callconv(.c) void {
     if (ptr) |p| {
         doxaWrite(std.mem.span(p));

@@ -605,7 +605,7 @@ pub fn Methods(comptime Ctx: type) type {
         );
         defer self.allocator.free(open_brace_gep);
         try w.writeAll(open_brace_gep);
-        const open_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{open_brace_ptr});
+        const open_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ open_brace_ptr, open_brace_info.len_name });
         defer self.allocator.free(open_brace_call);
         try w.writeAll(open_brace_call);
 
@@ -635,7 +635,7 @@ pub fn Methods(comptime Ctx: type) type {
                     );
                     defer self.allocator.free(name_gep);
                     try w.writeAll(name_gep);
-                    const name_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{name_ptr});
+                    const name_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ name_ptr, name_info.len_name });
                     defer self.allocator.free(name_call);
                     try w.writeAll(name_call);
                 }
@@ -763,6 +763,22 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(icmp1);
                     try w.writeAll(icmp2);
                     try w.writeAll(icmp3);
+                    const flen = try self.nextTemp(id);
+                    const tlen = try self.nextTemp(id);
+                    const blen = try self.nextTemp(id);
+                    const nlen = try self.nextTemp(id);
+                    const flen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ flen, false_info.len_name });
+                    const tlen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ tlen, true_info.len_name });
+                    const blen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ blen, both_info.len_name });
+                    const nlen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ nlen, neither_info.len_name });
+                    defer self.allocator.free(flen_line);
+                    defer self.allocator.free(tlen_line);
+                    defer self.allocator.free(blen_line);
+                    defer self.allocator.free(nlen_line);
+                    try w.writeAll(flen_line);
+                    try w.writeAll(tlen_line);
+                    try w.writeAll(blen_line);
+                    try w.writeAll(nlen_line);
                     const fptr = try self.nextTemp(id);
                     const tptr = try self.nextTemp(id);
                     const bptr = try self.nextTemp(id);
@@ -783,15 +799,27 @@ pub fn Methods(comptime Ctx: type) type {
                     const sel23_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel23, eq3, nptr, bptr });
                     defer self.allocator.free(sel23_line);
                     try w.writeAll(sel23_line);
+                    const sel23_len = try self.nextTemp(id);
+                    const sel23_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ sel23_len, eq3, nlen, blen });
+                    defer self.allocator.free(sel23_len_line);
+                    try w.writeAll(sel23_len_line);
                     const sel01 = try self.nextTemp(id);
                     const sel01_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel01, eq1, tptr, fptr });
                     defer self.allocator.free(sel01_line);
                     try w.writeAll(sel01_line);
+                    const sel01_len = try self.nextTemp(id);
+                    const sel01_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ sel01_len, eq1, tlen, flen });
+                    defer self.allocator.free(sel01_len_line);
+                    try w.writeAll(sel01_len_line);
                     const sel_final = try self.nextTemp(id);
                     const sel_final_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel_final, eq2, sel23, sel01 });
                     defer self.allocator.free(sel_final_line);
                     try w.writeAll(sel_final_line);
-                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{sel_final});
+                    const sel_final_len = try self.nextTemp(id);
+                    const sel_final_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ sel_final_len, eq2, sel23_len, sel01_len });
+                    defer self.allocator.free(sel_final_len_line);
+                    try w.writeAll(sel_final_len_line);
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ sel_final, sel_final_len });
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
                 },
@@ -815,7 +843,7 @@ pub fn Methods(comptime Ctx: type) type {
                 );
                 defer self.allocator.free(comma_gep);
                 try w.writeAll(comma_gep);
-                const comma_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{comma_ptr});
+                const comma_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ comma_ptr, comma_info.len_name });
                 defer self.allocator.free(comma_call);
                 try w.writeAll(comma_call);
             }
@@ -837,7 +865,7 @@ pub fn Methods(comptime Ctx: type) type {
         );
         defer self.allocator.free(close_brace_gep);
         try w.writeAll(close_brace_gep);
-        const close_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{close_brace_ptr});
+        const close_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ close_brace_ptr, close_brace_info.len_name });
         defer self.allocator.free(close_brace_call);
         try w.writeAll(close_brace_call);
     }

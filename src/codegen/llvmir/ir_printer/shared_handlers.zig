@@ -887,14 +887,15 @@ pub fn Methods(comptime Ctx: type) type {
                                 defer self.allocator.free(args_line);
                                 try self.emitRTCallReturningString(w, stack, id, "doxa_struct_to_string", args_line);
                             } else {
-                                // Unknown PTR without metadata: pass through as STRING (legacy compat)
-                                const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const ptr_extract = try self.nextTemp(id);
-                                const ext_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ ptr_extract, arg.name });
-                                defer self.allocator.free(ext_line);
-                                try w.writeAll(ext_line);
-                                try stack.append(.{ .name = result_name, .ty = .STRING });
+                                const tmp_name = try self.nextTemp(id);
+                                const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_name, arg.name });
+                                defer self.allocator.free(ins0);
+                                try w.writeAll(ins0);
+                                const str_name = try self.nextTemp(id);
+                                const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 0, 1\n", .{ str_name, tmp_name });
+                                defer self.allocator.free(ins1);
+                                try w.writeAll(ins1);
+                                try stack.append(.{ .name = str_name, .ty = .STRING });
                             }
                         },
                         .I64 => {
@@ -1106,7 +1107,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const nothing_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ nothing_ptr, nothing_info.length, nothing_info.name });
                 defer self.allocator.free(nothing_gep);
                 try w.writeAll(nothing_gep);
-                const nothing_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{nothing_ptr});
+                const nothing_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ nothing_ptr, nothing_info.len_name });
                 defer self.allocator.free(nothing_call);
                 try w.writeAll(nothing_call);
                 try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
@@ -1406,6 +1407,24 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(bgep);
                     try w.writeAll(ngep);
 
+                    // Get length constants for tetra strings
+                    const flen = try self.nextTemp(id);
+                    const tlen = try self.nextTemp(id);
+                    const blen = try self.nextTemp(id);
+                    const nlen = try self.nextTemp(id);
+                    const flen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ flen, false_info.len_name });
+                    const tlen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ tlen, true_info.len_name });
+                    const blen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ blen, both_info.len_name });
+                    const nlen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ nlen, neither_info.len_name });
+                    defer self.allocator.free(flen_line);
+                    defer self.allocator.free(tlen_line);
+                    defer self.allocator.free(blen_line);
+                    defer self.allocator.free(nlen_line);
+                    try w.writeAll(flen_line);
+                    try w.writeAll(tlen_line);
+                    try w.writeAll(blen_line);
+                    try w.writeAll(nlen_line);
+
                     // Select: if eq3 then neither, else if eq2 then both, else if eq1 then true, else false
                     // First: if eq1 then true, else false
                     const sel01 = try self.nextTemp(id);
@@ -1413,11 +1432,21 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(sel01_line);
                     try w.writeAll(sel01_line);
 
+                    const sel01_len = try self.nextTemp(id);
+                    const sel01_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ sel01_len, eq1, tlen, flen });
+                    defer self.allocator.free(sel01_len_line);
+                    try w.writeAll(sel01_len_line);
+
                     // Second: if eq2 then both, else sel01 (true/false)
                     const sel012 = try self.nextTemp(id);
                     const sel012_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel012, eq2, bptr, sel01 });
                     defer self.allocator.free(sel012_line);
                     try w.writeAll(sel012_line);
+
+                    const sel012_len = try self.nextTemp(id);
+                    const sel012_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ sel012_len, eq2, blen, sel01_len });
+                    defer self.allocator.free(sel012_len_line);
+                    try w.writeAll(sel012_len_line);
 
                     // Final: if eq3 then neither, else sel012 (both/true/false)
                     const sel_final = try self.nextTemp(id);
@@ -1425,7 +1454,12 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(sel_final_line);
                     try w.writeAll(sel_final_line);
 
-                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{sel_final});
+                    const sel_final_len = try self.nextTemp(id);
+                    const sel_final_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ sel_final_len, eq3, nlen, sel012_len });
+                    defer self.allocator.free(sel_final_len_line);
+                    try w.writeAll(sel_final_len_line);
+
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ sel_final, sel_final_len });
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
                 },
@@ -1583,7 +1617,7 @@ pub fn Methods(comptime Ctx: type) type {
             const loc_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ loc_ptr, info.length, info.name });
             defer self.allocator.free(loc_gep);
             try w.writeAll(loc_gep);
-            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{loc_ptr});
+            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ loc_ptr, info.len_name });
             defer self.allocator.free(call_line);
             try w.writeAll(call_line);
             try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
