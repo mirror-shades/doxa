@@ -8,6 +8,7 @@ const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const Location = @import("../../../utils/reporting.zig").Location;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
+const import_parser = @import("../../../parser/import_parser.zig");
 
 
 /// Handle struct operations, field access, and type declarations
@@ -182,6 +183,15 @@ pub const StructsHandler = struct {
     /// Generate HIR for field access expressions
     pub fn generateFieldAccess(self: *StructsHandler, field: ast.FieldAccess) !void {
         var handled_as_enum_member: bool = false;
+
+        // Resolve module-scoped chained accesses at compile time
+        // (e.g. error.Common.InvalidArgument -> enum variant const)
+        if (try self.resolveModuleChainedType(field)) |hir_value| {
+            const const_idx = try self.generator.addConstant(hir_value);
+            try self.generator.instructions.append(.{ .Const = .{ .value = hir_value, .constant_id = const_idx } });
+            return;
+        }
+
         // Check the type of the object being accessed first
         const obj_type = self.generator.inferTypeFromExpression(field.object);
 
@@ -316,6 +326,138 @@ pub const StructsHandler = struct {
             .{enum_type_name},
         );
         return ErrorList.UnknownCustomType;
+    }
+
+    /// Walk a FieldAccess chain rooted at a module namespace (e.g. error.Common.InvalidArgument)
+    /// and resolve the whole chain at compile time to either an enum variant value or a type
+    /// reference. Returns null when the chain cannot be resolved this way and the standard
+    /// LoadModule + GetField path should be used instead.
+    fn resolveModuleChainedType(self: *StructsHandler, root_access: ast.FieldAccess) !?HIRValue {
+        const allocator = self.generator.allocator;
+
+        // Collect the field access chain from root to leaf (outermost to innermost)
+        var chain = std.array_list.Managed([]const u8).init(allocator);
+        defer chain.deinit();
+
+        var current: *ast.Expr = root_access.object;
+        try chain.append(root_access.field.lexeme); // leaf field
+
+        while (current.data == .FieldAccess) {
+            const inner_fa = current.data.FieldAccess;
+            try chain.append(inner_fa.field.lexeme);
+            current = inner_fa.object;
+        }
+
+        if (current.data != .Variable) return null;
+        const module_name = current.data.Variable.lexeme;
+        if (!self.generator.isModuleNamespace(module_name)) return null;
+
+        // Reverse so we go from outermost to leaf: module_name -> field1 -> field2 ...
+        std.mem.reverse([]const u8, chain.items);
+
+        // Try to resolve using imported_symbols first
+        if (self.generator.imported_symbols) |imported_symbols| {
+            if (try self.resolveViaImportedSymbols(module_name, chain.items, imported_symbols)) |hv| {
+                return hv;
+            }
+        }
+
+        // Fallback: use custom_types (types registered by name, e.g. "Common", "IO")
+        // This handles the case where the module's types were registered directly.
+        if (chain.items.len >= 2) {
+            const type_name = chain.items[0];
+            if (self.generator.type_system.custom_types.get(type_name)) |ct| {
+                if (ct.kind == .Enum) {
+                    const variant_name = chain.items[1];
+                    if (ct.getEnumVariantIndex(variant_name)) |variant_idx| {
+                        return HIRValue{
+                            .enum_variant = HIREnum{
+                                .type_name = type_name,
+                                .variant_name = variant_name,
+                                .variant_index = variant_idx,
+                                .path = null,
+                            },
+                        };
+                    }
+                }
+            }
+        } else if (chain.items.len == 1) {
+            const type_name = chain.items[0];
+            if (self.generator.type_system.custom_types.get(type_name)) |_| {
+                return HIRValue{ .string = type_name };
+            }
+        }
+
+        return null;
+    }
+
+    fn resolveViaImportedSymbols(self: *StructsHandler, module_name: []const u8, chain: []const []const u8, imported_symbols: std.StringHashMap(import_parser.ImportedSymbol)) !?HIRValue {
+        const allocator = self.generator.allocator;
+
+        var accumulated = try std.array_list.Managed(u8).initCapacity(allocator, module_name.len + 128);
+        defer accumulated.deinit();
+        try accumulated.appendSlice(module_name);
+
+        for (chain, 0..) |step, i| {
+            try accumulated.appendSlice(".");
+            try accumulated.appendSlice(step);
+            const qualified = accumulated.items;
+
+            if (i == chain.len - 1) {
+                // Final step: could be a variant of the parent type
+                if (chain.len >= 2) {
+                    const last_dot = std.mem.lastIndexOfScalar(u8, qualified, '.') orelse continue;
+                    const parent_qualified = qualified[0..last_dot];
+                    if (imported_symbols.get(parent_qualified)) |parent_sym| {
+                        if (parent_sym.kind == .Enum and parent_sym.enum_role == .Type) {
+                            const etn = parent_sym.enum_type_name orelse continue;
+                            if (self.generator.type_system.custom_types.get(etn)) |ct| {
+                                if (ct.kind == .Enum) {
+                                    if (ct.getEnumVariantIndex(step)) |variant_idx| {
+                                        return HIRValue{
+                                            .enum_variant = HIREnum{
+                                                .type_name = etn,
+                                                .variant_name = step,
+                                                .variant_index = variant_idx,
+                                                .path = null,
+                                            },
+                                        };
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Check if the final step itself is a known type
+                if (imported_symbols.get(qualified)) |sym| {
+                    if (sym.enum_role == .Type) {
+                        if (sym.kind == .Enum) {
+                            return HIRValue{ .string = sym.enum_type_name orelse step };
+                        } else if (sym.kind == .Group) {
+                            return HIRValue{ .string = sym.name };
+                        }
+                    }
+                }
+            }
+        }
+
+        // Shortcut for single-level access: "module.field"
+        if (chain.len == 1) {
+            const leaf = chain[0];
+            const qualified = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ module_name, leaf });
+            defer allocator.free(qualified);
+            if (imported_symbols.get(qualified)) |sym| {
+                if (sym.enum_role == .Type) {
+                    if (sym.kind == .Enum) {
+                        return HIRValue{ .string = sym.enum_type_name orelse leaf };
+                    } else if (sym.kind == .Group) {
+                        return HIRValue{ .string = sym.name };
+                    }
+                }
+            }
+        }
+
+        return null;
     }
 
     /// Generate HIR for field assignment expressions

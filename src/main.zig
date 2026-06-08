@@ -177,6 +177,16 @@ fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
         }
     };
 
+    // Ensure all lazy module namespaces are loaded so their enum/group
+    // declarations are available in the module cache.
+    var ns_it = parser.module_namespaces.iterator();
+    while (ns_it.next()) |entry| {
+        const mi = entry.value_ptr.*;
+        if (mi.ast == null) {
+            _ = parser.ensureModuleNamespace(entry.key_ptr.*) catch continue;
+        }
+    }
+
     var cache_it = parser.module_cache.iterator();
     while (cache_it.next()) |entry| {
         const module_info = entry.value_ptr.*;
@@ -266,41 +276,35 @@ fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt
 
 fn generateZigRoot(
     allocator: std.mem.Allocator,
-    cache_dir: []const u8,
-    inline_zig_paths: []const []const u8,
 ) ![]const u8 {
-    const rt_path = try std.fs.path.relative(allocator, cache_dir, RUNTIME_SOURCE_PATH);
-    defer allocator.free(rt_path);
+    const root_path = "__doxa_main.zig";
 
     var content = std.array_list.Managed(u8).init(allocator);
     try content.appendSlice("const std = @import(\"std\");\n");
     try content.appendSlice("const doxa_rt = @import(\"");
-    try content.appendSlice(rt_path);
+    try appendZigPath(&content, RUNTIME_SOURCE_PATH);
     try content.appendSlice("\");\n");
-
-    for (inline_zig_paths, 0..) |zig_path, i| {
-        const rel = try std.fs.path.relative(allocator, cache_dir, zig_path);
-        defer allocator.free(rel);
-        var idx_buf: [10]u8 = undefined;
-        const idx_str = try std.fmt.bufPrint(&idx_buf, "{d}", .{i});
-        try content.appendSlice("const __doxa_zig_");
-        try content.appendSlice(idx_str);
-        try content.appendSlice(" = @import(\"");
-        try content.appendSlice(rel);
-        try content.appendSlice("\");\n");
-    }
 
     try content.appendSlice("\nextern fn doxa_program_main() callconv(.c) void;\n");
     try content.appendSlice("\npub fn main() void {\n");
-    try content.appendSlice("    doxa_rt.doxa_set_args(@as(i32, @intCast(std.os.argv.len)), @ptrCast(std.os.argv.ptr));\n");
+    try content.appendSlice("    const argv = std.process.argsAlloc(std.heap.page_allocator) catch {\n");
+    try content.appendSlice("        doxa_program_main();\n");
+    try content.appendSlice("        return;\n");
+    try content.appendSlice("    };\n");
+    try content.appendSlice("    defer std.process.argsFree(std.heap.page_allocator, argv);\n");
+    try content.appendSlice("    doxa_rt.doxa_set_args(@as(i32, @intCast(argv.len)), @ptrCast(argv.ptr));\n");
     try content.appendSlice("    doxa_program_main();\n");
     try content.appendSlice("}\n");
 
-    var root_path_buf: [512]u8 = undefined;
-    const root_path = try std.fmt.bufPrint(&root_path_buf, "{s}/doxa_main.zig", .{cache_dir});
-
     try std.fs.cwd().writeFile(.{ .sub_path = root_path, .data = content.items });
     return try allocator.dupe(u8, root_path);
+}
+
+fn appendZigPath(content: *std.array_list.Managed(u8), path: []const u8) !void {
+    // Zig string literals treat \ as escape — normalize to forward slashes
+    for (path) |c| {
+        try content.append(if (c == '\\') '/' else c);
+    }
 }
 
 fn resolveBundledZigExecutable(allocator: std.mem.Allocator) ![]u8 {
@@ -880,8 +884,6 @@ pub fn main() !void {
         // wrappers, then provides `pub fn main()` to own the platform entry point.
         const root_path = try generateZigRoot(
             memoryManager.getAllocator(),
-            cli_options.cache_dir,
-            inline_zig_wrapper_paths,
         );
         defer memoryManager.getAllocator().free(root_path);
 
@@ -892,6 +894,9 @@ pub fn main() !void {
             try args_ln.append("build-exe");
             try args_ln.append(root_path);
             try args_ln.append(obj_path);
+            for (inline_zig_wrapper_paths) |p| {
+                try args_ln.append(p);
+            }
             const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{exe_path});
             defer std.heap.page_allocator.free(emit_flag);
             try args_ln.append(emit_flag);
@@ -911,13 +916,20 @@ pub fn main() !void {
                 try args_ln.append(triple2);
             }
             const olvl = cli_options.opt_level;
-            const omode = if (olvl <= -1) "-O0" else if (olvl >= 3) "-OReleaseFast" else switch (olvl) {
-                0 => "-O0",
-                1 => "-OReleaseSafe",
-                2 => "-OReleaseFast",
-                else => "-O0",
-            };
-            try args_ln.append(omode);
+            if (olvl >= 1) {
+                const omode = if (olvl >= 3) "-OReleaseFast" else switch (olvl) {
+                    1 => "-OReleaseSafe",
+                    2 => "-OReleaseFast",
+                    else => "-OReleaseSafe",
+                };
+                try args_ln.append(omode);
+            }
+            // LLVM IR references malloc and other C runtime symbols.
+            try args_ln.append("-lc");
+            // Inline zig wrappers compiled to .o may pull in Windows platform libs.
+            if (builtin.os.tag == .windows) {
+                try args_ln.appendSlice(&.{ "-lws2_32", "-lcrypt32" });
+            }
 
             var child_ln = std.process.Child.init(args_ln.items, std.heap.page_allocator);
             child_ln.cwd = ".";

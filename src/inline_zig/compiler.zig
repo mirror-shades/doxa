@@ -15,7 +15,29 @@ const ZigDeclInfo = struct {
     module_name: []const u8,
     zig_source: []const u8,
     location: Reporting.Location,
+    /// When the zig block is inside an imported module, this is the Doxa
+    /// namespace path (e.g. "std.http").  Otherwise null (local zig block).
+    namespace_path: ?[]const u8 = null,
 };
+
+fn appendZigSourceSanitized(buf: *std.array_list.Managed(u8), source: []const u8) !void {
+    var i: usize = 0;
+    while (i < source.len) {
+        if (std.mem.startsWith(u8, source[i..], "public ")) {
+            i += "public ".len;
+            continue;
+        }
+        if (std.mem.startsWith(u8, source[i..], "export ") and
+            (i + "export ".len < source.len) and
+            std.mem.startsWith(u8, source[i + "export ".len ..], "fn "))
+        {
+            i += "export ".len;
+            continue;
+        }
+        try buf.append(source[i]);
+        i += 1;
+    }
+}
 
 pub fn collectInlineZigDecls(
     allocator: std.mem.Allocator,
@@ -54,6 +76,7 @@ pub fn collectInlineZigDecls(
                     .module_name = decl.name.lexeme,
                     .zig_source = decl.source,
                     .location = s.base.location(),
+                    .namespace_path = entry.key_ptr.*,
                 });
             }
         }
@@ -112,7 +135,10 @@ fn compileOneInlineModule(
 
     var file_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
     defer file_buf.deinit();
-    try file_buf.appendSlice(decl.zig_source);
+    // The Doxa zig-block syntax allows `public fn` and `export fn` as visibility
+    // qualifiers. Strip them before writing to the wrapper .zig file so the
+    // resulting source is valid Zig.
+    try appendZigSourceSanitized(&file_buf, decl.zig_source);
     try file_buf.appendSlice("\n\n");
 
     const zigTypeName = struct {
@@ -123,7 +149,7 @@ fn compileOneInlineModule(
                 .Byte => "u8",
                 .Tetra => "bool",
                 .Nothing => "void",
-                .String => "?[*:0]const u8",
+                .String => "?[*]const u8",
                 else => null,
             };
         }
@@ -135,7 +161,7 @@ fn compileOneInlineModule(
                 .Byte => "u8",
                 .Tetra => "bool",
                 .Nothing => "void",
-                .String => "?[*:0]u8",
+                .String => "void",
                 else => null,
             };
         }
@@ -456,30 +482,44 @@ fn compileOneInlineModule(
                 defer memoryManager.getAllocator().free(s_name);
                 try native_prelude.appendSlice("    const ");
                 try native_prelude.appendSlice(s_name);
-                try native_prelude.appendSlice(" = if (");
+                try native_prelude.appendSlice(": []const u8 = if (");
                 try native_prelude.appendSlice(arg_name);
-                try native_prelude.appendSlice(") |p| __doxa_std.mem.span(p) else \"\";\n");
+                try native_prelude.appendSlice(") |p| p[0..");
+                try native_prelude.appendSlice(arg_name);
+                try native_prelude.appendSlice("_len] else \"\";\n");
                 try native_call.appendSlice(s_name);
+
+                try native_buf.appendSlice(", ");
+                try native_buf.appendSlice(arg_name);
+                try native_buf.appendSlice("_len: usize");
             } else {
                 try native_call.appendSlice(arg_name);
             }
         }
 
+        if (sig.return_type.base == .String) {
+            if (sig.param_types.len > 0) try native_buf.appendSlice(", ");
+            try native_buf.appendSlice("out_ptr: *?[*]u8, out_len: *usize");
+        }
         try native_buf.appendSlice(") callconv(.c) ");
         try native_buf.appendSlice(native_ret_zig);
         try native_buf.appendSlice(" {\n");
         if (native_prelude.items.len > 0) try native_buf.appendSlice(native_prelude.items);
         try native_call.appendSlice(")");
 
-        if (std.mem.eql(u8, native_ret_zig, "void")) {
-            try native_buf.appendSlice("    ");
-            try native_buf.appendSlice(native_call.items);
-            try native_buf.appendSlice(";\n");
-        } else if (sig.return_type.base == .String) {
+        if (sig.return_type.base == .String) {
             try native_buf.appendSlice("    const __doxa_out = ");
             try native_buf.appendSlice(native_call.items);
             try native_buf.appendSlice(";\n");
-            try native_buf.appendSlice("    return __doxa_to_cstr(__doxa_out);\n");
+            try native_buf.appendSlice("    if (__doxa_out.len == 0) { out_ptr.* = null; out_len.* = 0; return; }\n");
+            try native_buf.appendSlice("    const __doxa_buf = __doxa_std.heap.page_allocator.alloc(u8, __doxa_out.len) catch { out_ptr.* = null; out_len.* = 0; return; };\n");
+            try native_buf.appendSlice("    @memcpy(__doxa_buf, __doxa_out);\n");
+            try native_buf.appendSlice("    out_ptr.* = __doxa_buf.ptr;\n");
+            try native_buf.appendSlice("    out_len.* = __doxa_out.len;\n");
+        } else if (std.mem.eql(u8, native_ret_zig, "void")) {
+            try native_buf.appendSlice("    ");
+            try native_buf.appendSlice(native_call.items);
+            try native_buf.appendSlice(";\n");
         } else {
             try native_buf.appendSlice("    return ");
             try native_buf.appendSlice(native_call.items);
@@ -636,7 +676,41 @@ pub fn compileInlineZigObjects(
         var zig_path_buf: [512]u8 = undefined;
         const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/{s}-{s}.zig", .{ zig_cache_path, decl.module_name, short_hex });
 
-        try out_paths.append(try memoryManager.getAllocator().dupe(u8, zig_path));
+        var obj_path_buf: [512]u8 = undefined;
+        const obj_ext = if (builtin.os.tag == .windows) "obj" else "o";
+        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}-{s}.{s}", .{ zig_cache_path, decl.module_name, short_hex, obj_ext });
+
+        const obj_already_compiled = blk: {
+            const f = std.fs.cwd().openFile(obj_path, .{}) catch break :blk false;
+            f.close();
+            break :blk true;
+        };
+
+        if (!obj_already_compiled) {
+            const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{obj_path});
+            defer std.heap.page_allocator.free(emit_flag);
+            var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+            defer args_list.deinit();
+            try args_list.appendSlice(&[_][]const u8{
+                zig_exe_path,
+                "build-obj",
+                zig_path,
+                emit_flag,
+                "-OReleaseSafe",
+            });
+
+            var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
+            child.cwd = ".";
+            child.stdout_behavior = .Inherit;
+            child.stderr_behavior = .Inherit;
+            const term = try child.spawnAndWait();
+            switch (term) {
+                .Exited => |code| if (code != 0) return error.Unexpected,
+                else => return error.Unexpected,
+            }
+        }
+
+        try out_paths.append(try memoryManager.getAllocator().dupe(u8, obj_path));
     }
 
     return try out_paths.toOwnedSlice();

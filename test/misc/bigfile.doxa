@@ -328,6 +328,104 @@ function return_test() returns string {
 
 return_test()? # return
 
+# early returns then fall-through
+function return_clamp_int(n :: int) returns int {
+    if n < 0 then return 0
+    if n > 100 then return 100
+    return n
+}
+
+return_clamp_int(-5)?
+return_clamp_int(50)?
+return_clamp_int(500)?
+
+# mutually exclusive branches, each returns
+function return_sign_label(n :: int) returns string {
+    if n < 0 then return "neg"
+    if n == 0 then return "zero"
+    return "pos"
+}
+
+return_sign_label(-3)?
+return_sign_label(0)?
+return_sign_label(7)?
+
+# return match on enum (uses Color from above)
+function return_color_tag(c :: Color) returns string {
+    return match c {
+        .Red then "R",
+        .Green then "G",
+        .Blue then "B",
+        else "?",
+    }
+}
+
+return_color_tag(.Red)?
+return_color_tag(.Green)?
+return_color_tag(.Blue)?
+
+# union with nothing — early exit vs fall-through
+function return_maybe_double(n :: int) returns int | nothing {
+    if n < 0 then return nothing
+    return n * 2
+}
+
+return_maybe_double(21)?
+return_maybe_double(-1)?
+
+# union int | string — distinct return paths
+function return_sum_or_message(a :: int, b :: int) returns int | string {
+    if a < 0 or b < 0 then return "non_negative_only"
+    return a + b
+}
+
+return_sum_or_message(10, 20)?
+return_sum_or_message(-1, 5)?
+
+# return match on union tags (distinct from UNION TYPES helpers below)
+function return_number_kind_tagged(u :: int | float) returns string {
+    return match u {
+        int then "int_arm",
+        float then "float_arm",
+    }
+}
+
+return_number_kind_tagged(9)?
+return_number_kind_tagged(2.5)?
+
+function return_float_sum() returns float {
+    return 0.125 + 0.875
+}
+
+return_float_sum()?
+
+function return_byte_lit() returns byte {
+    return 0xAB
+}
+
+return_byte_lit()?
+
+function return_parity_byte(n :: int) returns byte {
+    if n % 2 == 0 then return 0x00
+    return 0x01
+}
+
+return_parity_byte(4)?
+return_parity_byte(5)?
+
+# while + early return (dynamic int[] indexing uses a union type; use a scalar walk here)
+function return_when_i_equals(cap :: int) returns int | nothing {
+    var i is 0
+    while i < 10 {
+        if i == cap then return i
+        i += 1
+    }
+    return nothing
+}
+
+return_when_i_equals(3)?
+return_when_i_equals(12)?
+
 ##
 # STRUCTS
 ##
@@ -470,7 +568,7 @@ arr?
 arr[3]? # 444444
 arr[3] is 666666
 arr[3]? # 666666
-@push(arr, 420000) # TODO: all array methods should use the @ syntax
+@push(arr, 420000)
 arr[5]? # 420000
 @pop(arr)? #42000
 arr? #
@@ -619,6 +717,17 @@ zoo[1].name?
 zoo[1].animal_type?
 zoo[2].name?
 zoo[2].animal_type?
+
+const new_zoo_animal is $Animal {
+    animal_type is Species.FROG,
+    name is "Larry",
+}
+
+@push(zoo, new_zoo_animal)
+zoo[@length(zoo)-1]?
+const popped_animal is @pop(zoo)
+popped_animal.name?
+@length(zoo)?
 
 
 ##
@@ -769,6 +878,11 @@ range3?
 
 var range4 is 10 to 10
 range4?
+
+
+each i in 5 to 10 {
+    i?
+}
 
 
 ##   

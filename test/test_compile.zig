@@ -279,6 +279,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const inline_zig_test_path = try getBinaryPath(allocator, "./test/out/inline_zig_test");
     const module_private_call_path = try getBinaryPath(allocator, "./test/out/module_private_call");
     const calculator_path = try getBinaryPath(allocator, "./test/out/calculator");
+    const http_link_path = try getBinaryPath(allocator, "./test/out/http_link_test");
 
     const test_cases = [_]TestCase{
         .{
@@ -363,6 +364,14 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = null,
             .expected_peek = answers.expected_module_private_call_results[0..],
+        },
+        .{
+            .name = "http link test",
+            .binary_path = http_link_path,
+            .mode = .SKIP,
+            .input = null,
+            .expected_print = null,
+            .expected_peek = null,
         },
     };
 

@@ -343,7 +343,7 @@ pub const Parser = struct {
                                 .end_col = entry_loc.column + @as(u32, @intCast(entry_loc.lexeme.len)),
                             },
                         };
-                        self.reporter.reportWarning(location, ErrorCode.ENTRY_SHOULD_BE_PUBLIC, "entry functions should be marked 'public'", .{});
+                        self.reporter.reportWarning(location, ErrorCode.ENTRY_SHOULD_BE_PUBLIC, "an entry function is inherently public, so it should be marked 'public'", .{});
                     }
                     if (is_entry) {
                         if (self.entry_point_location != null) {
@@ -1189,6 +1189,7 @@ pub const Parser = struct {
                 .imports = &[_]ast.ImportInfo{},
                 .ast = null,
                 .file_path = module_path,
+                .importer_path = importer_path,
                 .symbols = null,
             });
         }
@@ -1215,6 +1216,18 @@ pub const Parser = struct {
     pub fn ensureModuleNamespace(self: *Parser, namespace: []const u8) ErrorList!?ast.ModuleInfo {
         if (self.module_namespaces.get(namespace)) |existing| {
             if (existing.ast != null) return existing;
+            // When resolving a lazily-loaded module, set current_file to the
+            // importer's path so that relative module_paths resolve correctly.
+            const prev_file = self.current_file;
+            const prev_uri = self.current_file_uri;
+            if (existing.importer_path.len > 0) {
+                self.current_file = existing.importer_path;
+                self.current_file_uri = try self.reporter.ensureFileUri(existing.importer_path);
+            }
+            defer {
+                self.current_file = prev_file;
+                self.current_file_uri = prev_uri;
+            }
             const module_info = try self.loadAndRegisterModule(existing.file_path, namespace, null);
             return module_info;
         }
