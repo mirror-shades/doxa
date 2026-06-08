@@ -913,7 +913,14 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(unknown_gep);
                 try w.writeAll(unknown_gep);
 
+                const unknown_len = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                id.* += 1;
+                const unknown_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ unknown_len, unknown_info.len_name });
+                defer self.allocator.free(unknown_len_line);
+                try w.writeAll(unknown_len_line);
+
                 var current_ptr = unknown_ptr;
+                var current_len = unknown_len;
 
                 // Build a chain of selects that chooses the right variant label
                 // based on the integer discriminant.
@@ -941,6 +948,12 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(v_gep);
                     try w.writeAll(v_gep);
 
+                    const v_len = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                    id.* += 1;
+                    const v_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ v_len, v_info.len_name });
+                    defer self.allocator.free(v_len_line);
+                    try w.writeAll(v_len_line);
+
                     const cmp_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
                     id.* += 1;
                     const cmp_line = try std.fmt.allocPrint(
@@ -961,10 +974,21 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(sel_line);
                     try w.writeAll(sel_line);
 
+                    const sel_len_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+                    id.* += 1;
+                    const sel_len_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  {s} = select i1 {s}, i64 {s}, i64 {s}\n",
+                        .{ sel_len_name, cmp_name, v_len, current_len },
+                    );
+                    defer self.allocator.free(sel_len_line);
+                    try w.writeAll(sel_len_line);
+
                     current_ptr = sel_name;
+                    current_len = sel_len_name;
                 }
 
-                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{current_ptr});
+                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ current_ptr, current_len });
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
             }

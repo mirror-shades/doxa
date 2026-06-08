@@ -214,6 +214,7 @@ pub const IRPrinter = struct {
 
     pub const PeekStringInfo = struct {
         name: []const u8,
+        len_name: []const u8,
         length: usize,
     };
 
@@ -265,10 +266,6 @@ pub const IRPrinter = struct {
         return buffer.toOwnedSlice(allocator);
     }
 
-    /// TODO: Migrate peek globals from null-terminated (@.peek.str.N) to
-    /// the string pool format (ptr + len). This requires changing all callers
-    /// from @doxa_write_raw(ptr) to @doxa_write_cstr(ptr, len) and updating
-    /// internPeekString to track explicit lengths.
     pub fn internPeekString(
         allocator: std.mem.Allocator,
         map: *std.StringHashMap(usize),
@@ -297,12 +294,24 @@ pub const IRPrinter = struct {
             .{ global_name, value.len + 1, escaped },
         );
         errdefer allocator.free(global_line);
-
         try globals.append(global_line);
+
+        const len_name = try std.fmt.allocPrint(allocator, "@.peek.str.len.{d}", .{next_id.*});
+        errdefer allocator.free(len_name);
+        next_id.* += 1;
+
+        const len_line = try std.fmt.allocPrint(
+            allocator,
+            "{s} = constant i64 {d}\n",
+            .{ len_name, value.len },
+        );
+        errdefer allocator.free(len_line);
+        try globals.append(len_line);
 
         const info = PeekStringInfo{
             .name = global_name,
-            .length = value.len + 1,
+            .len_name = len_name,
+            .length = value.len,
         };
         try strings.append(info);
         try map.put(key_copy, strings.items.len - 1);
