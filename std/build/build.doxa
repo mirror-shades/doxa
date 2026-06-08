@@ -4,7 +4,7 @@ zig Build {
     const std = @import("std");
     const builtin = @import("builtin");
 
-    fn errorState(mode: i64, value: i64) i64 {
+    pub fn errorState(mode: i64, value: i64) i64 {
         const State = struct {
             var last_error_code: i64 = 0;
         };
@@ -23,19 +23,19 @@ zig Build {
         return 0;
     }
 
-    fn clearLastError() void {
+    pub fn clearLastError() void {
         _ = errorState(0, 0);
     }
 
-    fn setLastError(code: i64) void {
+    pub fn setLastError(code: i64) void {
         _ = errorState(0, code);
     }
 
-    fn takeLastErrorCode() i64 {
+    pub fn takeLastErrorCode() i64 {
         return errorState(2, 0);
     }
 
-    fn compileDoxa(src: []const u8, out: []const u8, arch: []const u8, os: []const u8, abi: []const u8, debug_text: []const u8) i64 {
+    pub fn compileDoxa(src: []const u8, out: []const u8, arch: []const u8, os: []const u8, abi: []const u8, debug_text: []const u8) i64 {
         clearLastError();
 
         if (src.len == 0 or out.len == 0) {
@@ -135,7 +135,7 @@ zig Build {
         };
     }
 
-    fn compileHost(src: []const u8, out: []const u8, debug_text: []const u8) i64 {
+    pub fn compileHost(src: []const u8, out: []const u8, debug_text: []const u8) i64 {
         return compileDoxa(
             src,
             out,

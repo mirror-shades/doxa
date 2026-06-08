@@ -5,14 +5,14 @@ zig IO {
     const builtin = @import("builtin");
 
     /// Line terminator for text streams on this OS (`\r\n` on Windows, `\n` elsewhere), like C++ `std::endl`’s newline part.
-    fn nativeNewline() []const u8 {
+    pub fn nativeNewline() []const u8 {
         return switch (builtin.os.tag) {
             .windows => "\r\n",
             else => "\n",
         };
     }
 
-    fn printlnStdout(text: []const u8) void {
+    pub fn printlnStdout(text: []const u8) void {
         const alloc = std.heap.page_allocator;
         const buf = std.mem.concat(alloc, u8, &.{ text, nativeNewline() }) catch {
             clearLastError();
@@ -23,7 +23,7 @@ zig IO {
         print(buf);
     }
 
-    fn eprintlnStderr(text: []const u8) void {
+    pub fn eprintlnStderr(text: []const u8) void {
         const alloc = std.heap.page_allocator;
         const buf = std.mem.concat(alloc, u8, &.{ text, nativeNewline() }) catch {
             clearLastError();
@@ -34,7 +34,7 @@ zig IO {
         eprint(buf);
     }
 
-    fn errorState(mode: i64, value: i64) i64 {
+    pub fn errorState(mode: i64, value: i64) i64 {
         const State = struct {
             var last_error_code: i64 = 0;
         };
@@ -53,19 +53,19 @@ zig IO {
         return 0;
     }
 
-    fn clearLastError() void {
+    pub fn clearLastError() void {
         _ = errorState(0, 0);
     }
 
-    fn setLastError(code: i64) void {
+    pub fn setLastError(code: i64) void {
         _ = errorState(0, code);
     }
 
-    fn takeLastErrorCode() i64 {
+    pub fn takeLastErrorCode() i64 {
         return errorState(2, 0);
     }
 
-    fn print(text: []const u8) void {
+    pub fn print(text: []const u8) void {
         clearLastError();
         var stdout_buffer: [1024]u8 = undefined;
         var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
@@ -82,7 +82,7 @@ zig IO {
         };
     }
 
-    fn eprint(text: []const u8) void {
+    pub fn eprint(text: []const u8) void {
         clearLastError();
         var stderr_buffer: [1024]u8 = undefined;
         var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
@@ -99,7 +99,7 @@ zig IO {
         };
     }
 
-    fn input() []const u8 {
+    pub fn input() []const u8 {
         clearLastError();
         var stdin_buffer: [4096]u8 = undefined;
         var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
@@ -131,7 +131,7 @@ zig IO {
         return duped;
     }
 
-    fn inputPrompt(prompt: []const u8) []const u8 {
+    pub fn inputPrompt(prompt: []const u8) []const u8 {
         print(prompt);
         if (errorState(1, 0) != 0) {
             return "";

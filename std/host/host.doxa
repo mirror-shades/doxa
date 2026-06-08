@@ -1,27 +1,27 @@
 zig Host {
     const builtin = @import("builtin");
 
-    fn osName() []const u8 {
+    pub fn osName() []const u8 {
         return @tagName(builtin.os.tag);
     }
 
-    fn archName() []const u8 {
+    pub fn archName() []const u8 {
         return @tagName(builtin.cpu.arch);
     }
 
-    fn abiName() []const u8 {
+    pub fn abiName() []const u8 {
         return @tagName(builtin.abi);
     }
 
-    fn isWindows() bool {
+    pub fn isWindows() bool {
         return builtin.os.tag == .windows;
     }
 
-    fn isLinux() bool {
+    pub fn isLinux() bool {
         return builtin.os.tag == .linux;
     }
 
-    fn isMac() bool {
+    pub fn isMac() bool {
         return builtin.os.tag == .macos;
     }
 }

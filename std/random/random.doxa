@@ -1,7 +1,7 @@
 zig Random {
     const std = @import("std");
 
-    fn floatUnit() f64 {
+    pub fn floatUnit() f64 {
         return std.crypto.random.float(f64);
     }
 }

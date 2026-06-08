@@ -4,29 +4,16 @@ const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 
 pub const ZigFnSig = struct {
-    /// True when the declaration used `pub` or `public` before `fn` (Doxa-callable + ABI-checked).
-    is_pub: bool,
     name: []const u8,
     param_types: []ast.TypeInfo,
     return_type: ast.TypeInfo,
 };
 
-fn freeOwnedTypeInfo(allocator: std.mem.Allocator, ti: ast.TypeInfo) void {
-    if (ti.base == .Custom) if (ti.custom_type) |ct| {
-        allocator.free(@constCast(ct));
-    };
-}
-
-/// Frees `name`, `param_types` contents, `param_types` slice, and owned `return_type` fields.
-pub fn freeZigFnSig(allocator: std.mem.Allocator, sig: ZigFnSig) void {
-    allocator.free(@constCast(sig.name));
-    for (sig.param_types) |pt| freeOwnedTypeInfo(allocator, pt);
-    allocator.free(sig.param_types);
-    freeOwnedTypeInfo(allocator, sig.return_type);
-}
-
 pub fn deinitSigs(allocator: std.mem.Allocator, sigs: []ZigFnSig) void {
-    for (sigs) |sig| freeZigFnSig(allocator, sig);
+    for (sigs) |sig| {
+        allocator.free(@constCast(sig.name));
+        allocator.free(sig.param_types);
+    }
     allocator.free(sigs);
 }
 
@@ -211,7 +198,7 @@ fn tokenIs(tok: Token, kind: TokenKind, lexeme: []const u8) bool {
     return tok.kind == kind and std.mem.eql(u8, tok.lexeme, lexeme);
 }
 
-fn parseAbiType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.TypeInfo {
+fn parseAllowedType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.TypeInfo {
     const tok_opt = try ts.next();
     if (tok_opt == null) switch (which) {
         .param => return error.InvalidParamType,
@@ -244,69 +231,6 @@ fn parseAbiType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.TypeIn
     };
 }
 
-/// If the next tokens form an ABI type, consume them and return it; otherwise leave the stream unchanged.
-fn parseAbiTypeMaybe(ts: *Tokenizer) ErrorList!?ast.TypeInfo {
-    const t = (try ts.peek()) orelse return null;
-
-    if (t.kind == .ident) {
-        if (std.mem.eql(u8, t.lexeme, "i64")) {
-            _ = try ts.next();
-            return .{ .base = .Int, .is_mutable = false };
-        }
-        if (std.mem.eql(u8, t.lexeme, "f64")) {
-            _ = try ts.next();
-            return .{ .base = .Float, .is_mutable = false };
-        }
-        if (std.mem.eql(u8, t.lexeme, "u8")) {
-            _ = try ts.next();
-            return .{ .base = .Byte, .is_mutable = false };
-        }
-        if (std.mem.eql(u8, t.lexeme, "bool")) {
-            _ = try ts.next();
-            return .{ .base = .Tetra, .is_mutable = false };
-        }
-        if (std.mem.eql(u8, t.lexeme, "void")) {
-            _ = try ts.next();
-            return .{ .base = .Nothing, .is_mutable = false };
-        }
-    }
-
-    if (t.kind == .symbol and std.mem.eql(u8, t.lexeme, "[")) {
-        _ = try ts.next();
-        const close = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(close, .symbol, "]")) return error.InlineZigNotValid;
-        const kw_const = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(kw_const, .ident, "const")) return error.InlineZigNotValid;
-        const u8_tok = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(u8_tok, .ident, "u8")) return error.InlineZigNotValid;
-        return .{ .base = .String, .is_mutable = false };
-    }
-
-    return null;
-}
-
-fn parseRelaxedParamType(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!ast.TypeInfo {
-    if (try parseAbiTypeMaybe(ts)) |ti| return ti;
-    const id = (try ts.next()) orelse return error.InvalidParamType;
-    if (id.kind != .ident) return error.InvalidParamType;
-    return .{
-        .base = .Custom,
-        .custom_type = try allocator.dupe(u8, id.lexeme),
-        .is_mutable = false,
-    };
-}
-
-fn parseRelaxedReturnType(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!ast.TypeInfo {
-    if (try parseAbiTypeMaybe(ts)) |ti| return ti;
-    const id = (try ts.next()) orelse return error.InvalidReturnType;
-    if (id.kind != .ident) return error.InvalidReturnType;
-    return .{
-        .base = .Custom,
-        .custom_type = try allocator.dupe(u8, id.lexeme),
-        .is_mutable = false,
-    };
-}
-
 fn isFnQualifier(tok: Token) bool {
     return tok.kind == .ident and (std.mem.eql(u8, tok.lexeme, "pub") or
         std.mem.eql(u8, tok.lexeme, "public") or
@@ -316,102 +240,42 @@ fn isFnQualifier(tok: Token) bool {
         std.mem.eql(u8, tok.lexeme, "extern"));
 }
 
-fn isPubOrPublicToken(tok: Token) bool {
-    return tok.kind == .ident and (std.mem.eql(u8, tok.lexeme, "pub") or
-        std.mem.eql(u8, tok.lexeme, "public"));
-}
+fn parseTopLevelImportConst(ts: *Tokenizer) ErrorList!void {
+    // Grammar (strict):
+    //   const IDENT = @import("...") ;
+    const kw = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (!tokenIs(kw, .ident, "const")) return error.InlineZigNotValid;
 
-fn skipParenGroup(ts: *Tokenizer) ErrorList!void {
-    const open = (try ts.next()) orelse return error.InlineZigNotValid;
-    if (!tokenIs(open, .symbol, "(")) return error.InlineZigNotValid;
-    var depth: usize = 1;
-    while (depth > 0) {
-        const x = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (x.kind == .symbol) {
-            if (std.mem.eql(u8, x.lexeme, "(")) depth += 1;
-            if (std.mem.eql(u8, x.lexeme, ")")) depth -= 1;
-        }
-    }
-}
-
-fn skipBraceBlockAfterOpenBrace(ts: *Tokenizer) ErrorList!void {
-    var depth: usize = 1;
-    while (depth > 0) {
-        const x = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (x.kind == .symbol) {
-            if (std.mem.eql(u8, x.lexeme, "{")) depth += 1;
-            if (std.mem.eql(u8, x.lexeme, "}")) depth -= 1;
-        }
-    }
-}
-
-/// After the leading `const` token, parse `NAME = ... ;` for @import, private struct, or private enum.
-fn parseConstDeclAfterConstKeyword(ts: *Tokenizer, forbid_struct_enum: bool) ErrorList!void {
     const name = (try ts.next()) orelse return error.InlineZigNotValid;
     if (name.kind != .ident) return error.InlineZigNotValid;
 
     const eq = (try ts.next()) orelse return error.InlineZigNotValid;
     if (!tokenIs(eq, .symbol, "=")) return error.InlineZigNotValid;
 
-    const rhs = (try ts.peek()) orelse return error.InlineZigNotValid;
-    if (tokenIs(rhs, .ident, "@import")) {
-        _ = try ts.next();
-        const lparen = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(lparen, .symbol, "(")) return error.InlineZigNotValid;
+    const at_import = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (!tokenIs(at_import, .ident, "@import")) return error.InlineZigNotValid;
 
-        const path = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (path.kind != .string_lit or !std.mem.startsWith(u8, path.lexeme, "\"")) return error.InlineZigNotValid;
+    const lparen = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (!tokenIs(lparen, .symbol, "(")) return error.InlineZigNotValid;
 
-        const rparen = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(rparen, .symbol, ")")) return error.InlineZigNotValid;
+    const path = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (path.kind != .string_lit or !std.mem.startsWith(u8, path.lexeme, "\"")) return error.InlineZigNotValid;
 
-        const semi = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(semi, .symbol, ";")) return error.InlineZigNotValid;
-        return;
-    }
+    const rparen = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (!tokenIs(rparen, .symbol, ")")) return error.InlineZigNotValid;
 
-    if (tokenIs(rhs, .ident, "struct")) {
-        if (forbid_struct_enum) return error.InlineZigNotValid;
-        _ = try ts.next();
-        const br = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(br, .symbol, "{")) return error.InlineZigNotValid;
-        try skipBraceBlockAfterOpenBrace(ts);
-        const semi = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(semi, .symbol, ";")) return error.InlineZigNotValid;
-        return;
-    }
-
-    if (tokenIs(rhs, .ident, "enum")) {
-        if (forbid_struct_enum) return error.InlineZigNotValid;
-        _ = try ts.next();
-        if (tokenIs((try ts.peek()) orelse return error.InlineZigNotValid, .symbol, "(")) {
-            try skipParenGroup(ts);
-        }
-        const br = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(br, .symbol, "{")) return error.InlineZigNotValid;
-        try skipBraceBlockAfterOpenBrace(ts);
-        const semi = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(semi, .symbol, ";")) return error.InlineZigNotValid;
-        return;
-    }
-
-    return error.InlineZigNotValid;
+    const semi = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (!tokenIs(semi, .symbol, ";")) return error.InlineZigNotValid;
 }
 
-fn parseTopLevelFnSigInner(allocator: std.mem.Allocator, ts: *Tokenizer, leading_pub: bool) ErrorList!?ZigFnSig {
+fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!ZigFnSig {
     // Grammar (restricted):
-    //   (pub|public|export|inline|noinline|extern)* fn IDENT "(" params ")" RetType "{"
-    // `pub` / `public` mark Doxa-callable functions (ABI-checked param/return types).
-    var is_pub = leading_pub;
+    //   (pub|export|inline|noinline|extern)* fn IDENT "(" (IDENT ":" AllowedType ("," IDENT ":" AllowedType)*)? ")" AllowedType "{"
+    // Note: requires a body (`{ ... }`) per docs/inline.md.
     while (true) {
         const t = (try ts.peek()) orelse return error.InlineZigNotValid;
         if (!isFnQualifier(t)) break;
-        if (isPubOrPublicToken(t)) is_pub = true;
         _ = try ts.next();
-    }
-
-    if (!is_pub) {
-        return error.InlineZigNotValid;
     }
 
     const kw_fn = (try ts.next()) orelse return error.InlineZigNotValid;
@@ -424,10 +288,7 @@ fn parseTopLevelFnSigInner(allocator: std.mem.Allocator, ts: *Tokenizer, leading
     if (!tokenIs(lparen, .symbol, "(")) return error.InlineZigNotValid;
 
     var param_types = std.array_list.Managed(ast.TypeInfo).init(allocator);
-    errdefer {
-        for (param_types.items) |pt| freeOwnedTypeInfo(allocator, pt);
-        param_types.deinit();
-    }
+    errdefer param_types.deinit();
 
     while (true) {
         const t = (try ts.peek()) orelse return error.InlineZigNotValid;
@@ -442,18 +303,16 @@ fn parseTopLevelFnSigInner(allocator: std.mem.Allocator, ts: *Tokenizer, leading
         const colon = (try ts.next()) orelse return error.InlineZigNotValid;
         if (!tokenIs(colon, .symbol, ":")) return error.InlineZigNotValid;
 
-        const ti = if (is_pub)
-            try parseAbiType(ts, .param)
-        else
-            try parseRelaxedParamType(allocator, ts);
+        const ti = try parseAllowedType(ts, .param);
         try param_types.append(ti);
 
+        // TODO: support defaults and extra param modifiers
         const after = (try ts.peek()) orelse return error.InlineZigNotValid;
         if (tokenIs(after, .symbol, "=")) return error.InlineZigNotValid;
 
         if (tokenIs(after, .symbol, ",")) {
             _ = try ts.next();
-            continue;
+            continue; // allow trailing comma before ')'
         }
         if (tokenIs(after, .symbol, ")")) {
             _ = try ts.next();
@@ -462,21 +321,53 @@ fn parseTopLevelFnSigInner(allocator: std.mem.Allocator, ts: *Tokenizer, leading
         return error.InlineZigNotValid;
     }
 
-    const ret_ti = if (is_pub)
-        try parseAbiType(ts, .ret)
-    else
-        try parseRelaxedReturnType(allocator, ts);
-    errdefer freeOwnedTypeInfo(allocator, ret_ti);
+    const ret_ti = try parseAllowedType(ts, .ret);
 
+    // Require function body
     const body = (try ts.next()) orelse return error.InlineZigNotValid;
     if (!tokenIs(body, .symbol, "{")) return error.InlineZigNotValid;
 
     return ZigFnSig{
-        .is_pub = is_pub,
         .name = try allocator.dupe(u8, name.lexeme),
         .param_types = try param_types.toOwnedSlice(),
         .return_type = ret_ti,
     };
+}
+
+fn skipTopLevelFnHeader(ts: *Tokenizer) ErrorList!void {
+    // Consume remaining qualifiers (public, inline, noinline, extern)
+    while (true) {
+        const t = (try ts.peek()) orelse return error.InlineZigNotValid;
+        if (!isFnQualifier(t)) break;
+        _ = try ts.next();
+    }
+
+    // fn
+    const kw_fn = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (!tokenIs(kw_fn, .ident, "fn")) return error.InlineZigNotValid;
+
+    // name
+    _ = (try ts.next()) orelse return error.InlineZigNotValid;
+
+    // (
+    const open = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (!tokenIs(open, .symbol, "(")) return error.InlineZigNotValid;
+
+    // skip parameter list
+    var parens: usize = 1;
+    while (parens > 0) {
+        const t = (try ts.next()) orelse return error.InlineZigNotValid;
+        if (t.kind == .symbol) {
+            if (std.mem.eql(u8, t.lexeme, "(")) parens += 1;
+            if (std.mem.eql(u8, t.lexeme, ")")) parens -= 1;
+        }
+    }
+
+    // consume return type tokens and opening {
+    while (true) {
+        const t = (try ts.next()) orelse return error.InlineZigNotValid;
+        if (tokenIs(t, .symbol, "{")) break;
+    }
 }
 
 fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList![]ZigFnSig {
@@ -486,14 +377,17 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList
     var ts = Tokenizer.init(trimmed);
 
     // Rules (docs/inline.md):
-    // - Top-level: `const` imports / private struct / private enum, `pub const` @import only,
-    //   and `fn` / `pub fn` declarations (and comments/blank lines).
-    // - `pub` / `public` on `fn` selects Doxa-visible functions and enforces ABI param/return types.
+    // - Top-level: only `const X = @import("...");` and `fn ... { ... }` declarations (and comments/blank lines)
+    // - No other global statements/declarations.
+    // - Function param/return types must be from allowed set.
     var depth: usize = 0;
 
     var out = std.array_list.Managed(ZigFnSig).init(allocator);
     errdefer {
-        for (out.items) |sig| freeZigFnSig(allocator, sig);
+        for (out.items) |sig| {
+            allocator.free(sig.name);
+            allocator.free(sig.param_types);
+        }
         out.deinit();
     }
 
@@ -515,32 +409,18 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList
             continue;
         }
 
-        if (tokenIs(tok, .ident, "pub") or tokenIs(tok, .ident, "export")) {
-            _ = try ts.next();
-            const t2 = (try ts.peek()) orelse return error.InlineZigNotValid;
-            if (tokenIs(t2, .ident, "const")) {
-                _ = try ts.next();
-                try parseConstDeclAfterConstKeyword(&ts, true);
-                continue;
-            }
-            const sig = try parseTopLevelFnSigInner(allocator, &ts, true);
-            if (sig) |s| {
-                try out.append(s);
-            }
-            depth = 1;
-            continue;
-        }
-
+        // depth == 0: enforce the restricted top-level set.
         if (tokenIs(tok, .ident, "const")) {
-            _ = try ts.next();
-            try parseConstDeclAfterConstKeyword(&ts, false);
+            try parseTopLevelImportConst(&ts);
             continue;
         }
 
         if (tokenIs(tok, .ident, "fn") or isFnQualifier(tok)) {
-            const sig = try parseTopLevelFnSigInner(allocator, &ts, false);
-            if (sig) |s| {
-                try out.append(s);
+            if (std.mem.eql(u8, tok.lexeme, "pub") or std.mem.eql(u8, tok.lexeme, "export")) {
+                const sig = try parseTopLevelFnSig(allocator, &ts);
+                try out.append(sig);
+            } else {
+                try skipTopLevelFnHeader(&ts);
             }
             depth = 1;
             continue;
