@@ -2,17 +2,10 @@
 !*/
 !.gitignore
 !src/**
-!test/**
-test/out/**
-
-
 !docs/**
 !external/**
 !scripts/**
 !std/**
-!test/**
-test/out/**
-test/advent2025/**
 !.github/**
 !.gitattributes
 !build.zig
@@ -21,3 +14,6 @@ test/advent2025/**
 !mkdocs.yml
 !pipeline.png
 !README.md
+!test/**
+test/out/**
+test/advent2025/**
