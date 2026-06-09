@@ -104,10 +104,9 @@ module std from @std()
 const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
 
 function getInput() returns byte {
-    @print("Input: ")
-    var userInput :: string is std.io.input()
-    var newByte :: byte is @byte(userInput[0])
-    return newByte
+    const input is std.io.input() as string else "0"
+    const inputByte is @byte(input[0])
+    return inputByte
 }
 
 function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {
@@ -139,7 +138,7 @@ function checkClosingBracket(scan :: string) returns tetra {
         if(scan[pointer] == "[") then openBrackets += 1
         if(scan[pointer] == "]") then openBrackets -= 1
         pointer += 1
-        if openBrackets < 0 return false
+        if openBrackets < 0 then return false
     }
     return(openBrackets == 0)
 }
@@ -169,7 +168,7 @@ function interpret(scan :: string) {
     }
 }
 
-entry function main() {
+public entry function main() {
     interpret(",+.")
 }
 ```
