@@ -2,6 +2,7 @@ const std = @import("std");
 const doxa_rt = @import("../../../runtime/doxa_rt.zig");
 const DoxaTag = doxa_rt.DoxaTag;
 const DoxaUnionMeta = doxa_rt.DoxaUnionMeta;
+const GroupTable = @import("../../../common/group_table.zig").GroupTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -354,7 +355,7 @@ pub fn Methods(comptime Ctx: type) type {
         };
     }
 
-    pub fn findUnionMemberIndex(_: *IRPrinter, union_type: HIR.HIRType, value: StackVal) u32 {
+    pub fn findUnionMemberIndex(self: *IRPrinter, union_type: HIR.HIRType, value: StackVal) u32 {
         if (union_type != .Union) return 0;
         const members = union_type.Union.members;
         for (members, 0..) |m_ptr, idx| {
@@ -363,6 +364,9 @@ pub fn Methods(comptime Ctx: type) type {
                 .I64 => {
                     if (m == .Int) return @intCast(idx);
                     if (m == .Enum) return @intCast(idx);
+                    if (m == .Group) {
+                        if (groupHasEnumMember(self.group_table, @intCast(m.Group))) return @intCast(idx);
+                    }
                 },
                 .F64 => if (m == .Float) return @intCast(idx),
                 .I8 => if (m == .Byte) return @intCast(idx),
@@ -381,6 +385,18 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
         return 0;
+    }
+
+    fn groupHasEnumMember(group_table: ?*anyopaque, group_id: HIR.GroupId) bool {
+        if (group_table) |gt_opaque| {
+            const gt: *GroupTable = @constCast(@ptrCast(@alignCast(gt_opaque)));
+            if (gt.getEntryById(group_id)) |entry| {
+                for (entry.members) |member| {
+                    if (member.kind == .Enum) return true;
+                }
+            }
+        }
+        return false;
     }
 
     pub fn buildDoxaValue(

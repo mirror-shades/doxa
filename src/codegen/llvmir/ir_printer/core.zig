@@ -665,7 +665,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn init(allocator: std.mem.Allocator) IRPrinter {
+        pub fn init(allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque) IRPrinter {
             return .{
                 .allocator = allocator,
                 .peek_string_counter = 0,
@@ -686,6 +686,8 @@ pub fn Methods(comptime Ctx: type) type {
                 .struct_desc_globals_by_type = std.StringHashMap([]const u8).init(allocator),
                 .enum_desc_globals_by_type = std.StringHashMap([]const u8).init(allocator),
                 .enum_print_map = std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)).init(allocator),
+                .group_table = group_table,
+                .enum_table = enum_table,
             };
         }
 

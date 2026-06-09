@@ -416,7 +416,7 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList
         }
 
         if (tokenIs(tok, .ident, "fn") or isFnQualifier(tok)) {
-            if (std.mem.eql(u8, tok.lexeme, "pub") or std.mem.eql(u8, tok.lexeme, "export")) {
+            if (std.mem.eql(u8, tok.lexeme, "pub") or std.mem.eql(u8, tok.lexeme, "public") or std.mem.eql(u8, tok.lexeme, "export")) {
                 const sig = try parseTopLevelFnSig(allocator, &ts);
                 try out.append(sig);
             } else {

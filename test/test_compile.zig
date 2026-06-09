@@ -368,10 +368,10 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
         .{
             .name = "http link test",
             .binary_path = http_link_path,
-            .mode = .SKIP,
+            .mode = .PEEK,
             .input = null,
             .expected_print = null,
-            .expected_peek = null,
+            .expected_peek = answers.expected_http_link_test_results[0..],
         },
     };
 
