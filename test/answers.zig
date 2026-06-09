@@ -587,6 +587,9 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = ">float | nothing", .value = "3.5" },
     .{ .type = ">float | nothing", .value = "4.5" },
     .{ .type = "float | >nothing", .value = "nothing" },
+    .{ .type = ">string | nothing", .value = "\"Bob\"" },
+    .{ .type = ">string | nothing", .value = "\"Sam\"" },
+    .{ .type = "string | >nothing", .value = "nothing" },
     .{ .type = "string", .value = "\"Bob\"" },
     .{ .type = "string", .value = "\"Sam\"" },
     .{ .type = "string", .value = "\"not found\"" },
@@ -632,6 +635,13 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "byte", .value = "0x00" },
     .{ .type = "tetra", .value = "false" },
     .{ .type = "string", .value = "\"\"" },
+
+    .{ .type = "int", .value = "1111" },
+    .{ .type = "int", .value = "0" },
+    .{ .type = "int", .value = "1110" },
+    .{ .type = "int", .value = "33" },
+    .{ .type = "int", .value = "113" },
+    .{ .type = "int", .value = "13" },
 
     .{ .type = "string", .value = "\"end\"" },
 };

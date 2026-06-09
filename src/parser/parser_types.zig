@@ -407,7 +407,7 @@ pub const Parser = struct {
                     }
                     try statements.append(group_decl);
                 },
-                .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH => {
+                .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH, .DEFER => {
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
@@ -1779,7 +1779,7 @@ pub const Parser = struct {
                                 }
                             }
                         },
-                        .ZigDecl, .Block, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast => {},
+                        .ZigDecl, .Block, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast, .Defer => {},
                     }
                 }
             },
