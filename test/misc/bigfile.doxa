@@ -812,6 +812,11 @@ map IdToNameElse {
     else "not found"
 }
 
+
+IdToName[1]?
+IdToName[2]?
+IdToName[3]?
+
 IdToNameElse[1]?
 IdToNameElse[2]?
 IdToNameElse[3]?
@@ -940,5 +945,80 @@ _tetra? # false
 
 var _string :: string
 _string? # ""
+
+
+##
+# DEFER
+##
+
+var defer_basic is 1
+{
+    defer defer_basic += 10
+    defer defer_basic += 100
+    defer_basic += 1000
+}
+defer_basic? # 1111
+
+function test_defer_return() returns int {
+    var r is 0
+    {
+        defer r is 100
+        return r
+    }
+    return 0
+}
+test_defer_return()? # 0
+
+function test_defer_nested() returns int {
+    var acc is 0
+    defer acc += 1
+    {
+        defer acc += 10
+        acc += 100
+    }
+    acc += 1000
+    return acc
+}
+test_defer_nested()? # 1110
+
+function test_defer_loop() returns int {
+    var sum is 0
+    for i is 0 while i < 3 do i++ {
+        defer sum += i
+        sum += 10
+    }
+    return sum
+}
+test_defer_loop()? # 33
+
+function test_defer_break() returns int {
+    var val is 0
+    {
+        defer val += 100
+        for i is 0 while i < 5 do i++ {
+            if i == 3 then {
+                defer val += 10
+                break
+            }
+            val += 1
+        }
+    }
+    return val
+}
+test_defer_break()? # 113
+
+function test_defer_continue() returns int {
+    var val is 0
+    for i is 0 while i < 4 do i++ {
+        if i == 2 then {
+            defer val += 10
+            continue
+        }
+        val += 1
+    }
+    return val
+}
+test_defer_continue()? # 13
+
 
 "end"?

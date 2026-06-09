@@ -141,6 +141,42 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
         .CONTINUE => parseContinueStmt(self),
         .BREAK => parseBreakStmt(self),
         .EACH => parseEachStmt(self),
+        .DEFER => blk: {
+            const defer_token = self.peek();
+            self.advance();
+            const expr = try expression_parser.parseExpression(self);
+
+            if (expr) |e| {
+                const is_block_like = switch (e.data) {
+                    .Block, .If, .Loop, .Peek, .Match => true,
+                    .Cast => |c| (c.then_branch != null and c.then_branch.?.data == .Block) or
+                        (c.else_branch != null and c.else_branch.?.data == .Block),
+                    else => false,
+                };
+                if (!is_block_like) {
+                    if (self.peek().type == .SEMICOLON) {
+                        self.advance();
+                    }
+                    const next_type = self.peek().type;
+                    if (next_type == .NEWLINE) {
+                        self.advance();
+                    } else if (next_type != .EOF and next_type != .RIGHT_BRACE) {
+                        e.deinit(self.allocator);
+                        self.allocator.destroy(e);
+                        return error.ExpectedNewline;
+                    }
+                }
+
+                break :blk ast.Stmt{
+                    .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(defer_token) },
+                    .data = .{ .Defer = e },
+                };
+            }
+            break :blk ast.Stmt{
+                .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(defer_token) },
+                .data = .{ .Expression = null },
+            };
+        },
         .IMPORT => blk: {
             _ = try import_parser.parseImportStmt(self, false);
             break :blk ast.Stmt{ .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(self.peek()) }, .data = .{ .Expression = null } };

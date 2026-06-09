@@ -1021,7 +1021,7 @@ pub const SemanticAnalyzer = struct {
                 },
                 .ZigDecl, .Module, .Path => {},
                 .GroupDecl, .MapLiteral => {},
-                .Return, .Continue, .Break, .Assert, .Cast => {},
+                .Return, .Continue, .Break, .Assert, .Cast, .Defer => {},
             }
         }
 
@@ -1255,7 +1255,7 @@ pub const SemanticAnalyzer = struct {
                 .Break, .Continue => {
                     prev_was_terminator = true;
                 },
-                .ZigDecl, .EnumDecl, .GroupDecl, .Module, .Path, .Import, .Assert, .Cast => {},
+                .ZigDecl, .EnumDecl, .GroupDecl, .Module, .Path, .Import, .Assert, .Cast, .Defer => {},
             }
         }
     }

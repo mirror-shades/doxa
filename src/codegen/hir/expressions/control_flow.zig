@@ -516,6 +516,9 @@ pub const ControlFlowHandler = struct {
         const loop_scope_id = self.generator.nextScopeId();
         try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = loop_scope_id, .var_count = 0 } });
 
+        const body_boundary = self.generator.deferred_stack.items.len;
+        try self.generator.loop_deferred_boundaries.append(body_boundary);
+
         try self.generator.generateExpression(loop.body, false, false);
 
         // If there's a step, exit scope at step label (continue target)
@@ -542,11 +545,14 @@ pub const ControlFlowHandler = struct {
         // Also exit scope here in case of break
         try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
         self.generator.popLoopContext();
+        _ = self.generator.loop_deferred_boundaries.pop();
     }
 
     /// Generate HIR for block expressions
     pub fn generateBlock(self: *ControlFlowHandler, block: ast.Expr.Data, preserve_result: bool) !void {
         const block_data = block.Block;
+
+        try self.generator.pushDeferredBlock();
 
         // Generate all block statements without creating scopes for simple blocks
         for (block_data.statements) |stmt| {
@@ -555,17 +561,17 @@ pub const ControlFlowHandler = struct {
 
         // Generate final value if present
         if (block_data.value) |value_expr| {
-            // Evaluate the final value expression
             if (preserve_result) {
                 try self.generator.generateExpression(value_expr, true, false);
             } else {
                 try self.generator.generateExpression(value_expr, false, false);
             }
         } else if (preserve_result) {
-            // Block without value: only push 'nothing' when a value is expected
             const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
         }
+
+        try self.generator.popAndEmitDeferred();
     }
 
     /// Generate HIR for return expressions
@@ -574,25 +580,30 @@ pub const ControlFlowHandler = struct {
 
         // TAIL CALL OPTIMIZATION: Check if return value is a direct function call
         if (return_data.value) |value| {
-            if (self.generator.tryGenerateTailCall(value)) {
-                return; // Tail call replaces both Call and Return
-            } else {
-                // Regular return with value
-                try self.generator.generateExpression(value, true, false);
+            if (self.generator.deferred_stack.items.len == 0) {
+                if (self.generator.tryGenerateTailCall(value)) {
+                    return; // Tail call replaces both Call and Return
+                }
             }
+            // Regular return with value
+            try self.generator.generateExpression(value, true, false);
         } else {
             // No value - push nothing
             const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
         }
 
-        // Exit function scope before returning
+        // Emit all pending deferred actions before scope exit
+        try self.generator.emitAllDeferredForReturn();
+
+        // Generate Return instruction first so the VM deep-copies the return value
+        // to the caller's arena before ExitScope frees the current scope's arena.
+        try self.generator.instructions.append(.{ .Return = .{ .has_value = return_data.value != null, .return_type = self.generator.current_function_return_type } });
+
+        // Exit function scope after returning
         if (self.generator.current_function_scope_id) |scope_id| {
             try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = scope_id } });
         }
-
-        // Generate Return instruction (only if not tail call)
-        try self.generator.instructions.append(.{ .Return = .{ .has_value = return_data.value != null, .return_type = self.generator.current_function_return_type } });
     }
 
     /// Emit a runtime trap for unreachable expressions

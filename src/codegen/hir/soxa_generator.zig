@@ -212,6 +212,9 @@ pub const HIRGenerator = struct {
     loop_context_stack: std.array_list.Managed(LoopContext),
     current_function_scope_id: ?u32 = null,
 
+    deferred_stack: std.array_list.Managed(DeferredBlock),
+    loop_deferred_boundaries: std.array_list.Managed(usize),
+
     is_generating_nested_array: bool = false,
 
     next_scope_id: u32 = 0,
@@ -238,6 +241,22 @@ pub const HIRGenerator = struct {
     pub const LoopContext = struct {
         break_label: []const u8,
         continue_label: []const u8,
+    };
+
+    pub const DeferredBlock = struct {
+        actions: std.array_list.Managed(DeferredAction),
+
+        pub fn init(allocator: std.mem.Allocator) DeferredBlock {
+            return .{ .actions = std.array_list.Managed(DeferredAction).init(allocator) };
+        }
+
+        pub fn deinit(self: *DeferredBlock) void {
+            self.actions.deinit();
+        }
+    };
+
+    pub const DeferredAction = struct {
+        expr: *ast.Expr,
     };
 
     pub const HIRStats = struct {
@@ -293,6 +312,8 @@ pub const HIRGenerator = struct {
             .current_enum_type = null,
             .stats = HIRStats.init(allocator),
             .loop_context_stack = std.array_list.Managed(LoopContext).init(allocator),
+            .deferred_stack = std.array_list.Managed(DeferredBlock).init(allocator),
+            .loop_deferred_boundaries = std.array_list.Managed(usize).init(allocator),
         };
     }
 
@@ -311,6 +332,11 @@ pub const HIRGenerator = struct {
         self.module_field_slots.deinit();
         self.function_calls.deinit();
         self.loop_context_stack.deinit();
+        for (self.deferred_stack.items) |*block| {
+            block.deinit();
+        }
+        self.deferred_stack.deinit();
+        self.loop_deferred_boundaries.deinit();
     }
 
     pub inline fn pushLoopContext(self: *HIRGenerator, break_label: []const u8, continue_label: []const u8) !void {
@@ -326,6 +352,47 @@ pub const HIRGenerator = struct {
     pub inline fn currentLoopContext(self: *HIRGenerator) ?LoopContext {
         if (self.loop_context_stack.items.len == 0) return null;
         return self.loop_context_stack.items[self.loop_context_stack.items.len - 1];
+    }
+
+    pub fn pushDeferredBlock(self: *HIRGenerator) !void {
+        try self.deferred_stack.append(DeferredBlock.init(self.allocator));
+    }
+
+    pub fn popAndEmitDeferred(self: *HIRGenerator) !void {
+        if (self.deferred_stack.items.len == 0) return;
+        var block = self.deferred_stack.pop() orelse return;
+        defer block.deinit();
+        var j = block.actions.items.len;
+        while (j > 0) {
+            j -= 1;
+            try self.generateExpression(block.actions.items[j].expr, false, false);
+        }
+    }
+
+    pub fn emitDeferredToBoundary(self: *HIRGenerator, boundary_index: usize) !void {
+        var i = self.deferred_stack.items.len;
+        while (i > boundary_index) {
+            i -= 1;
+            const block = self.deferred_stack.items[i];
+            var j = block.actions.items.len;
+            while (j > 0) {
+                j -= 1;
+                try self.generateExpression(block.actions.items[j].expr, false, false);
+            }
+        }
+    }
+
+    pub fn emitAllDeferredForReturn(self: *HIRGenerator) !void {
+        var i = self.deferred_stack.items.len;
+        while (i > 0) {
+            i -= 1;
+            const block = self.deferred_stack.items[i];
+            var j = block.actions.items.len;
+            while (j > 0) {
+                j -= 1;
+                try self.generateExpression(block.actions.items[j].expr, false, false);
+            }
+        }
     }
 
     pub fn generateProgram(self: *HIRGenerator, statements: []ast.Stmt) !HIRProgram {
@@ -805,6 +872,7 @@ pub const HIRGenerator = struct {
                 func_info.body_label = body_label;
             }
             var has_returned = false;
+            try self.pushDeferredBlock();
             for (function_body.statements) |body_stmt| {
                 if (has_returned) {
                     break;
@@ -815,10 +883,7 @@ pub const HIRGenerator = struct {
                 has_returned = self.statementAlwaysReturns(body_stmt);
             }
 
-            if (!has_returned) {
-                try self.instructions.append(.{ .ExitScope = .{ .scope_id = function_scope_id } });
-            }
-            self.current_function_scope_id = null;
+            try self.popAndEmitDeferred();
 
             var needs_implicit_return = true;
 
@@ -835,6 +900,11 @@ pub const HIRGenerator = struct {
                 const has_value = self.current_function_return_type != .Nothing;
                 try self.instructions.append(.{ .Return = .{ .has_value = has_value, .return_type = self.current_function_return_type } });
             }
+
+            if (!has_returned) {
+                try self.instructions.append(.{ .ExitScope = .{ .scope_id = function_scope_id } });
+            }
+            self.current_function_scope_id = null;
 
             if (self.function_signatures.getPtr(function_body.function_info.name)) |func_info| {
                 func_info.local_var_count = self.symbol_table.local_variable_count;

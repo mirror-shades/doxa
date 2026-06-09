@@ -78,6 +78,7 @@ pub const TokenType = enum {
     RETURNS, // returns
     THIS, // this
     UNREACHABLE, // unreachable
+    DEFER, // defer
 
     // built-in methods
     TYPE, // @type        - get type name as string

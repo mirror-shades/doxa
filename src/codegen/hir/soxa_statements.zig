@@ -62,6 +62,14 @@ fn collectNestedSizes(array_type: ?*const ast.TypeInfo) NestedSizes {
 
 pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || ErrorList)!void {
     switch (stmt.data) {
+        .Defer => |expr| {
+            if (self.deferred_stack.items.len > 0) {
+                try self.deferred_stack.items[self.deferred_stack.items.len - 1]
+                    .actions.append(.{ .expr = expr });
+            } else {
+                try self.generateExpression(expr, false, false);
+            }
+        },
         .ZigDecl => {
             // Inline zig modules are handled outside of normal statement lowering.
             // They only contribute external/module-callable functions.
@@ -75,6 +83,10 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
         },
         .Continue => {
             if (self.currentLoopContext()) |lc| {
+                if (self.loop_deferred_boundaries.items.len > 0) {
+                    const boundary = self.loop_deferred_boundaries.items[self.loop_deferred_boundaries.items.len - 1];
+                    try self.emitDeferredToBoundary(boundary);
+                }
                 try self.instructions.append(.{ .Jump = .{ .label = lc.continue_label, .vm_offset = 0 } });
             } else {
                 const location = Location{
@@ -97,6 +109,10 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
         },
         .Break => {
             if (self.currentLoopContext()) |lc| {
+                if (self.loop_deferred_boundaries.items.len > 0) {
+                    const boundary = self.loop_deferred_boundaries.items[self.loop_deferred_boundaries.items.len - 1];
+                    try self.emitDeferredToBoundary(boundary);
+                }
                 try self.instructions.append(.{ .Jump = .{ .label = lc.break_label, .vm_offset = 0 } });
             } else {
                 const location = Location{
@@ -505,11 +521,18 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
         .FunctionDecl => {},
         .Return => |ret| {
             if (ret.value) |value| {
-                try self.generateExpression(value, true, true);
-                const inferred_ret_type = self.inferTypeFromExpression(value);
-                try self.instructions.append(.{ .Return = .{ .has_value = true, .return_type = inferred_ret_type } });
+                try self.generateExpression(value, true, false);
             } else {
-                try self.instructions.append(.{ .Return = .{ .has_value = false, .return_type = .Nothing } });
+                const nothing_idx = try self.addConstant(HIRValue.nothing);
+                try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
+            }
+
+            try self.emitAllDeferredForReturn();
+
+            try self.instructions.append(.{ .Return = .{ .has_value = ret.value != null, .return_type = self.current_function_return_type } });
+
+            if (self.current_function_scope_id) |scope_id| {
+                try self.instructions.append(.{ .ExitScope = .{ .scope_id = scope_id } });
             }
         },
         .EnumDecl => |enum_decl| {
