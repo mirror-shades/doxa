@@ -153,6 +153,8 @@ pub const IRPrinter = struct {
     enum_desc_globals_by_type: std.StringHashMap([]const u8),
     last_emitted_enum_value: ?u64 = null,
     enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
+    group_table: ?*anyopaque = null,
+    enum_table: ?*anyopaque = null,
 
     pub const EnumVariantMeta = struct {
         index: u32,

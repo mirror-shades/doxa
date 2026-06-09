@@ -1,4 +1,6 @@
 const std = @import("std");
+const GroupTable = @import("../../../common/group_table.zig").GroupTable;
+const EnumTable = @import("../../../common/enum_table.zig").EnumTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -877,6 +879,24 @@ pub fn Methods(comptime Ctx: type) type {
                     const ev = hv.enum_variant;
                     try registerVariant.add(self, ev.type_name, ev.variant_index, ev.variant_name);
                 }
+            }
+
+            if (self.group_table) |gt_opaque| {
+                if (self.enum_table) |et_opaque| {
+                    const gt: *const GroupTable = @ptrCast(@alignCast(gt_opaque));
+                    const et: *const EnumTable = @ptrCast(@alignCast(et_opaque));
+                    for (gt.entries.items) |group_entry| {
+                        const group_name = group_entry.qualified_name;
+                        for (group_entry.members) |member| {
+                            if (member.kind != .Enum) continue;
+                            _ = et.getName(member.id) orelse continue;
+                            const variants = et.variants(member.id) orelse continue;
+                            for (variants) |variant| {
+                                try registerVariant.add(self, group_name, variant.index, variant.name);
+                    }
+                }
+            }
+        }
             }
         }
 

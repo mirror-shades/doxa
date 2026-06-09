@@ -1107,7 +1107,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const nothing_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ nothing_ptr, nothing_info.length, nothing_info.name });
                 defer self.allocator.free(nothing_gep);
                 try w.writeAll(nothing_gep);
-                const nothing_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ nothing_ptr, nothing_info.len_name });
+                const nothing_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {d})\n", .{ nothing_ptr, nothing_info.length });
                 defer self.allocator.free(nothing_call);
                 try w.writeAll(nothing_call);
                 try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
@@ -1617,7 +1617,7 @@ pub fn Methods(comptime Ctx: type) type {
             const loc_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ loc_ptr, info.length, info.name });
             defer self.allocator.free(loc_gep);
             try w.writeAll(loc_gep);
-            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ loc_ptr, info.len_name });
+            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {d})\n", .{ loc_ptr, info.length });
             defer self.allocator.free(call_line);
             try w.writeAll(call_line);
             try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");

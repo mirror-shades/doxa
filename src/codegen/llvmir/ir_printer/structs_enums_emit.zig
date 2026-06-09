@@ -605,7 +605,7 @@ pub fn Methods(comptime Ctx: type) type {
         );
         defer self.allocator.free(open_brace_gep);
         try w.writeAll(open_brace_gep);
-        const open_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ open_brace_ptr, open_brace_info.len_name });
+        const open_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {d})\n", .{ open_brace_ptr, open_brace_info.length });
         defer self.allocator.free(open_brace_call);
         try w.writeAll(open_brace_call);
 
@@ -635,7 +635,7 @@ pub fn Methods(comptime Ctx: type) type {
                     );
                     defer self.allocator.free(name_gep);
                     try w.writeAll(name_gep);
-                    const name_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ name_ptr, name_info.len_name });
+                    const name_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {d})\n", .{ name_ptr, name_info.length });
                     defer self.allocator.free(name_call);
                     try w.writeAll(name_call);
                 }
@@ -843,7 +843,7 @@ pub fn Methods(comptime Ctx: type) type {
                 );
                 defer self.allocator.free(comma_gep);
                 try w.writeAll(comma_gep);
-                const comma_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ comma_ptr, comma_info.len_name });
+                const comma_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {d})\n", .{ comma_ptr, comma_info.length });
                 defer self.allocator.free(comma_call);
                 try w.writeAll(comma_call);
             }
@@ -865,7 +865,7 @@ pub fn Methods(comptime Ctx: type) type {
         );
         defer self.allocator.free(close_brace_gep);
         try w.writeAll(close_brace_gep);
-        const close_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ close_brace_ptr, close_brace_info.len_name });
+        const close_brace_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {d})\n", .{ close_brace_ptr, close_brace_info.length });
         defer self.allocator.free(close_brace_call);
         try w.writeAll(close_brace_call);
     }
