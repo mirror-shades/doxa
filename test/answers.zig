@@ -603,6 +603,8 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = ">string | nothing", .value = "\"blue\"" },
     .{ .type = "Employee", .value = "{ salary: 1000, person: { age: 26, name: \"Mike\" } }" },
     .{ .type = "Employee", .value = "{ salary: 0, person: { age: 0, name: \"Unknown\" } }" },
+    .{ .type = "string", .value = "\"world\"" },
+    .{ .type = "string", .value = "\"default\"" },
     .{ .type = "int[]", .value = "[1, 2, 3, 4, 5, 6]" },
     .{ .type = "int[]", .value = "[0, 1, 2, 3]" },
     .{ .type = "int[]", .value = "[]" },

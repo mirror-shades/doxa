@@ -867,7 +867,18 @@ const mikeId2 is MyMap_struct[2] as Employee else $Employee { person is $Person 
 mikeId1?
 mikeId2?
 
+map my_hello_map {
+    "hello" then "world"
+}
 
+const str_union_from_map is my_hello_map["hello"]
+peek_a_string(str_union_from_map as string else "default")
+const nothing_union_from_map is my_hello_map["world"]
+peek_a_string(nothing_union_from_map as string else "default")
+
+function peek_a_string(my_str :: string) { 
+    my_str?
+}
 
 ##
 # RANGE
