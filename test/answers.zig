@@ -647,7 +647,3 @@ pub const expected_bigfile_results = [_]peek_result{
 
     .{ .type = "string", .value = "\"end\"" },
 };
-
-pub const expected_http_link_test_results = [_]peek_result{
-    .{ .type = "nothing | >StdError", .value = ".ConnectionFailed" },
-};
