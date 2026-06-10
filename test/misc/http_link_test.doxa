@@ -1,3 +1,2 @@
 module std from "std/std.doxa"
 const result is std.http.downloadUrl("http://localhost/t", "o.bin")
-result?
