@@ -644,6 +644,8 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "33" },
     .{ .type = "int", .value = "113" },
     .{ .type = "int", .value = "13" },
+    .{ .type = "string", .value = "\"hello\"" },
+    .{ .type = "string", .value = "\"hello\"" },
 
     .{ .type = "string", .value = "\"end\"" },
 };
