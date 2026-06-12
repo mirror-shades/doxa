@@ -45,7 +45,7 @@ pub const Resolver = struct {
 
         var it = self.parser.module_namespaces.iterator();
         while (it.next()) |entry| {
-            if (entry.value_ptr.ast == null) {
+            if (entry.value_ptr.ast == null and !entry.value_ptr.is_inline_zig) {
                 try keys.put(entry.key_ptr.*, {});
             }
         }

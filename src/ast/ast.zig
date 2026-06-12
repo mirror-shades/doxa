@@ -1197,6 +1197,7 @@ pub const ModuleInfo = struct {
     file_path: []const u8,
     importer_path: []const u8 = "",
     symbols: ?std.StringHashMap(ModuleSymbol) = null,
+    is_inline_zig: bool = false,
 
     pub fn hasPublicSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {
         if (self.symbols) |symbols| {

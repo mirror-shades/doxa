@@ -289,6 +289,7 @@ pub const Parser = struct {
                             .ast = null,
                             .file_path = self.current_file,
                             .symbols = null,
+                            .is_inline_zig = true,
                         });
                     }
 
@@ -1216,6 +1217,7 @@ pub const Parser = struct {
     pub fn ensureModuleNamespace(self: *Parser, namespace: []const u8) ErrorList!?ast.ModuleInfo {
         if (self.module_namespaces.get(namespace)) |existing| {
             if (existing.ast != null) return existing;
+            if (existing.is_inline_zig) return existing;
             // When resolving a lazily-loaded module, set current_file to the
             // importer's path so that relative module_paths resolve correctly.
             const prev_file = self.current_file;
