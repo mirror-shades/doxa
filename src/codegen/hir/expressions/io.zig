@@ -277,7 +277,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
             // Generate input call with the prompt as argument
             try self.generator.instructions.append(.{
                 .Call = .{
-                    .function_index = 0,
+                    .function_index = null,
                     .qualified_name = "input",
                     .arg_count = 1, // Has 1 argument (the prompt)
                     .call_kind = .BuiltinFunction,
@@ -289,7 +289,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
             // No prompt - call input with no arguments
             try self.generator.instructions.append(.{
                 .Call = .{
-                    .function_index = 0,
+                    .function_index = null,
                     .qualified_name = "input",
                     .arg_count = 0, // No arguments
                     .call_kind = .BuiltinFunction,

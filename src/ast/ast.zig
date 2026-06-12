@@ -226,6 +226,7 @@ pub const Stmt = struct {
         ZigDecl: struct {
             name: Token,
             source: []const u8,
+            sigs: []ZigFnSig = &.{},
         },
         VarDecl: struct {
             name: Token,
@@ -296,6 +297,11 @@ pub const Stmt = struct {
             },
             .ZigDecl => |z| {
                 allocator.free(z.source);
+                for (z.sigs) |sig| {
+                    allocator.free(sig.name);
+                    allocator.free(sig.param_types);
+                }
+                allocator.free(z.sigs);
             },
             .VarDecl => |*v| {
                 if (v.initializer) |init| {
@@ -1071,6 +1077,12 @@ pub const TypeInfo = struct {
         type_info.initDefault();
         return type_info;
     }
+};
+
+pub const ZigFnSig = struct {
+    name: []const u8,
+    param_types: []TypeInfo,
+    return_type: TypeInfo,
 };
 
 pub const StructFieldType = struct {

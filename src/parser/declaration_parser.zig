@@ -13,6 +13,7 @@ const statement_parser = @import("./statement_parser.zig");
 const precedence = @import("./precedence.zig");
 const declaration_parser = @import("./declaration_parser.zig");
 const ErrorCode = @import("../utils/errors.zig").ErrorCode;
+const inline_zig = @import("inline_zig.zig");
 
 pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
     if (self.peek().type != .ZIG) {
@@ -38,6 +39,12 @@ pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
         else => return error.InvalidExpression,
     };
     const source_owned = try self.allocator.dupe(u8, source);
+    errdefer self.allocator.free(source_owned);
+
+    const sigs = try inline_zig.sanitizeAndExtract(self.allocator, source_owned);
+    // If sanitizeAndExtract fails, source_owned is freed by errdefer above.
+    // Sigs are now owned by the ZigDecl AST node.
+
     self.advance();
 
     // Allow an optional newline after the block (recommended style).
@@ -59,6 +66,7 @@ pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
             .ZigDecl = .{
                 .name = module_name,
                 .source = source_owned,
+                .sigs = sigs,
             },
         },
     };

@@ -19,7 +19,7 @@ pub const CallTarget = union(enum) {
     struct_static: struct {
         qualified_name: []const u8,
         name_allocated: bool,
-        function_index: u32,
+        function_index: ?u32,
     },
     struct_method: struct {
         struct_name: []const u8,
@@ -47,28 +47,8 @@ pub fn moduleNamespaceFromExpr(generator: *HIRGenerator, expr: *ast.Expr) !?[]co
     };
 }
 
-fn isImportedModuleFunction(generator: *HIRGenerator, module_name: []const u8, fn_name: []const u8) bool {
-    const full_name = std.fmt.allocPrint(generator.allocator, "{s}.{s}", .{ module_name, fn_name }) catch return false;
-    defer generator.allocator.free(full_name);
-    if (generator.imported_symbols) |symbols| {
-        if (symbols.get(full_name)) |sym| {
-            return sym.kind == .Function;
-        }
-    }
-    return false;
-}
-
 fn resolveModuleFieldCall(generator: *HIRGenerator, field_access: ast.FieldAccess) !?ResolvedCall {
-    const module_ns = if (try moduleNamespaceFromExpr(generator, field_access.object)) |ns| ns else blk: {
-        if (field_access.object.data == .Variable) {
-            const object_name = field_access.object.data.Variable.lexeme;
-            if (isImportedModuleFunction(generator, object_name, field_access.field.lexeme)) {
-                break :blk try generator.allocator.dupe(u8, object_name);
-            }
-        }
-        break :blk null;
-    };
-    if (module_ns) |ns| {
+    if (try moduleNamespaceFromExpr(generator, field_access.object)) |ns| {
         defer generator.allocator.free(ns);
         const qualified = try std.fmt.allocPrint(generator.allocator, "{s}.{s}", .{ ns, field_access.field.lexeme });
         return .{

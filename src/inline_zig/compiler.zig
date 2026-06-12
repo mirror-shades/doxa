@@ -3,21 +3,50 @@ const builtin = @import("builtin");
 
 const ast = @import("../ast/ast.zig");
 const Parser = @import("../parser/parser_types.zig").Parser;
-const inline_zig = @import("../parser/inline_zig.zig");
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
 const VM = @import("../interpreter/vm.zig").VM;
 const bc = @import("../codegen/bytecode/module.zig");
+const abi_source = @embedFile("abi.zig");
+
+const inline_zig_cache_version = "__doxa_inlinezig_v5__";
+
+fn zigOptimizationFlag(opt_level: i32) []const u8 {
+    return switch (opt_level) {
+        0 => "-ODebug",
+        1 => "-OReleaseSafe",
+        2 => "-OReleaseFast",
+        else => "-OReleaseSmall",
+    };
+}
 
 const ZigDeclInfo = struct {
     module_name: []const u8,
     zig_source: []const u8,
     location: Reporting.Location,
-    /// When the zig block is inside an imported module, this is the Doxa
-    /// namespace path (e.g. "std.http").  Otherwise null (local zig block).
-    namespace_path: ?[]const u8 = null,
+    sigs: []ast.ZigFnSig,
+};
+
+const GeneratedModule = struct {
+    zig_path: []const u8,
+    lib_path: []const u8,
+    functions: std.StringHashMap(VM.ZigRuntimeFn),
+    free_sym_owned: []const u8,
+
+    pub fn deinit(self: *GeneratedModule, allocator: std.mem.Allocator) void {
+        allocator.free(self.zig_path);
+        allocator.free(self.lib_path);
+        allocator.free(self.free_sym_owned);
+        var it = self.functions.iterator();
+        while (it.next()) |entry| {
+            allocator.free(@constCast(entry.key_ptr.*));
+            allocator.free(@constCast(entry.value_ptr.*.symbol));
+            allocator.free(entry.value_ptr.*.param_types);
+        }
+        self.functions.deinit();
+    }
 };
 
 fn appendZigSourceSanitized(buf: *std.array_list.Managed(u8), source: []const u8) !void {
@@ -59,6 +88,7 @@ pub fn collectInlineZigDecls(
             .module_name = decl.name.lexeme,
             .zig_source = decl.source,
             .location = s.base.location(),
+            .sigs = decl.sigs,
         });
     }
 
@@ -76,7 +106,7 @@ pub fn collectInlineZigDecls(
                     .module_name = decl.name.lexeme,
                     .zig_source = decl.source,
                     .location = s.base.location(),
-                    .namespace_path = entry.key_ptr.*,
+                    .sigs = decl.sigs,
                 });
             }
         }
@@ -85,22 +115,20 @@ pub fn collectInlineZigDecls(
     return try out.toOwnedSlice();
 }
 
-fn compileOneInlineModule(
-    memoryManager: *MemoryManager,
+fn generateWrapperZigFile(
+    allocator: std.mem.Allocator,
     reporter: *Reporter,
-    zig_exe_path: []const u8,
     cache_dir: []const u8,
     decl: ZigDeclInfo,
-    modules: *std.StringHashMap(VM.ZigRuntimeModule),
-) !void {
+) !GeneratedModule {
     const Sha256 = std.crypto.hash.sha2.Sha256;
 
-    const sigs = try inline_zig.sanitizeAndExtract(memoryManager.getAllocator(), decl.zig_source);
-    defer inline_zig.deinitSigs(memoryManager.getAllocator(), sigs);
+    const sigs = decl.sigs;
 
     var h: [Sha256.digest_length]u8 = undefined;
     var hasher = Sha256.init(.{});
-    hasher.update("__doxa_inlinezig_v5__\n");
+    hasher.update(inline_zig_cache_version);
+    hasher.update("\n");
     hasher.update(decl.module_name);
     hasher.update("\n");
     hasher.update(decl.zig_source);
@@ -109,10 +137,10 @@ fn compileOneInlineModule(
     const hex_buf = std.fmt.bytesToHex(h, .lower);
     const short_hex = hex_buf[0..16];
 
-    var zig_path_buf: [512]u8 = undefined;
+    var zig_path_buf: [256]u8 = undefined;
     const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/{s}-{s}.zig", .{ cache_dir, decl.module_name, short_hex });
 
-    var lib_path_buf: [512]u8 = undefined;
+    var lib_path_buf: [256]u8 = undefined;
     const lib_ext = switch (builtin.os.tag) {
         .windows => "dll",
         .macos => "dylib",
@@ -120,87 +148,59 @@ fn compileOneInlineModule(
     };
     const lib_path = try std.fmt.bufPrint(&lib_path_buf, "{s}/{s}-{s}.{s}", .{ cache_dir, decl.module_name, short_hex, lib_ext });
 
-    var functions = std.StringHashMap(VM.ZigRuntimeFn).init(memoryManager.getAllocator());
+    var functions = std.StringHashMap(VM.ZigRuntimeFn).init(allocator);
     errdefer {
         var itf = functions.iterator();
         while (itf.next()) |entry| {
             const k = entry.key_ptr.*;
             const v = entry.value_ptr.*;
-            memoryManager.getAllocator().free(@constCast(k));
-            memoryManager.getAllocator().free(@constCast(v.symbol));
-            memoryManager.getAllocator().free(v.param_types);
+            allocator.free(@constCast(k));
+            allocator.free(@constCast(v.symbol));
+            allocator.free(v.param_types);
         }
         functions.deinit();
     }
 
-    var file_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
+    var file_buf = std.array_list.Managed(u8).init(allocator);
     defer file_buf.deinit();
-    // The Doxa zig-block syntax allows `public fn` and `export fn` as visibility
-    // qualifiers. Strip them before writing to the wrapper .zig file so the
-    // resulting source is valid Zig.
     try appendZigSourceSanitized(&file_buf, decl.zig_source);
     try file_buf.appendSlice("\n\n");
 
     const zigTypeName = struct {
-        fn fromNativeParamTypeInfo(t: ast.TypeInfo) ?[]const u8 {
+        const TypeMeta = struct {
+            native_param: ?[]const u8,
+            native_ret: ?[]const u8,
+            bytecode: bc.BytecodeType,
+        };
+
+        fn metaFor(t: ast.TypeInfo) TypeMeta {
             return switch (t.base) {
-                .Int => "i64",
-                .Float => "f64",
-                .Byte => "u8",
-                .Tetra => "bool",
-                .Nothing => "void",
-                .String => "?[*]const u8",
-                else => null,
+                .Int => .{ .native_param = "i64", .native_ret = "i64", .bytecode = .Int },
+                .Float => .{ .native_param = "f64", .native_ret = "f64", .bytecode = .Float },
+                .Byte => .{ .native_param = "u8", .native_ret = "u8", .bytecode = .Byte },
+                .Tetra => .{ .native_param = "bool", .native_ret = "bool", .bytecode = .Tetra },
+                .Nothing => .{ .native_param = "void", .native_ret = "void", .bytecode = .Nothing },
+                .String => .{ .native_param = "?[*]const u8", .native_ret = "void", .bytecode = .String },
+                else => .{ .native_param = null, .native_ret = null, .bytecode = .Nothing },
             };
+        }
+
+        fn fromNativeParamTypeInfo(t: ast.TypeInfo) ?[]const u8 {
+            return metaFor(t).native_param;
         }
 
         fn fromNativeReturnTypeInfo(t: ast.TypeInfo) ?[]const u8 {
-            return switch (t.base) {
-                .Int => "i64",
-                .Float => "f64",
-                .Byte => "u8",
-                .Tetra => "bool",
-                .Nothing => "void",
-                .String => "void",
-                else => null,
-            };
+            return metaFor(t).native_ret;
         }
 
         fn toBytecodeType(t: ast.TypeInfo) bc.BytecodeType {
-            return switch (t.base) {
-                .Int => .Int,
-                .Float => .Float,
-                .Byte => .Byte,
-                .Tetra => .Tetra,
-                .Nothing => .Nothing,
-                .String => .String,
-                else => .Nothing,
-            };
+            return metaFor(t).bytecode;
         }
     };
 
     try file_buf.appendSlice("const __doxa_std = @import(\"std\");\n\n");
-    try file_buf.appendSlice("pub const DoxaAbiTag = enum(u32) {\n");
-    try file_buf.appendSlice("    Int = 0,\n");
-    try file_buf.appendSlice("    Float = 1,\n");
-    try file_buf.appendSlice("    Byte = 2,\n");
-    try file_buf.appendSlice("    String = 3,\n");
-    try file_buf.appendSlice("    Tetra = 4,\n");
-    try file_buf.appendSlice("    Nothing = 5,\n");
-    try file_buf.appendSlice("};\n\n");
-    try file_buf.appendSlice("pub const DoxaAbiValue = extern struct {\n");
-    try file_buf.appendSlice("    tag: DoxaAbiTag,\n");
-    try file_buf.appendSlice("    flags: u32,\n");
-    try file_buf.appendSlice("    payload0: u64,\n");
-    try file_buf.appendSlice("    payload1: u64,\n");
-    try file_buf.appendSlice("};\n\n");
-    try file_buf.appendSlice("pub const DoxaAbiStatus = enum(i32) {\n");
-    try file_buf.appendSlice("    ok = 0,\n");
-    try file_buf.appendSlice("    bad_arity = 1,\n");
-    try file_buf.appendSlice("    bad_tag = 2,\n");
-    try file_buf.appendSlice("    bad_value = 3,\n");
-    try file_buf.appendSlice("    internal = 255,\n");
-    try file_buf.appendSlice("};\n\n");
+    try file_buf.appendSlice(abi_source);
+    try file_buf.appendSlice("\n");
 
     try file_buf.appendSlice("fn __doxa_to_cstr(s: []const u8) ?[*:0]u8 {\n");
     try file_buf.appendSlice("    const buf = __doxa_std.heap.page_allocator.allocSentinel(u8, s.len, 0) catch return null;\n");
@@ -208,11 +208,11 @@ fn compileOneInlineModule(
     try file_buf.appendSlice("    return buf.ptr;\n");
     try file_buf.appendSlice("}\n\n");
 
-    const free_sym = try std.fmt.allocPrint(memoryManager.getAllocator(), "__doxa_inlinezig_free_cstr__{s}_{s}", .{ decl.module_name, short_hex });
-    defer memoryManager.getAllocator().free(free_sym);
+    const free_sym = try std.fmt.allocPrint(allocator, "__doxa_inlinezig_free_cstr__{s}_{s}", .{ decl.module_name, short_hex });
+    defer allocator.free(free_sym);
 
-    const free_sym_owned = try memoryManager.getAllocator().dupe(u8, free_sym);
-    errdefer memoryManager.getAllocator().free(free_sym_owned);
+    const free_sym_owned = try allocator.dupe(u8, free_sym);
+    errdefer allocator.free(free_sym_owned);
 
     try file_buf.appendSlice("pub export fn ");
     try file_buf.appendSlice(free_sym);
@@ -229,17 +229,17 @@ fn compileOneInlineModule(
     try file_buf.appendSlice("}\n\n");
 
     for (sigs) |sig| {
-        var param_types_bc = try memoryManager.getAllocator().alloc(bc.BytecodeType, sig.param_types.len);
-        errdefer memoryManager.getAllocator().free(param_types_bc);
+        var param_types_bc = try allocator.alloc(bc.BytecodeType, sig.param_types.len);
+        errdefer allocator.free(param_types_bc);
 
-        const sym_ident = try std.fmt.allocPrint(memoryManager.getAllocator(), "__doxa_export__{s}_{s}", .{ decl.module_name, sig.name });
-        defer memoryManager.getAllocator().free(sym_ident);
-        const sym_export_abi = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}.__doxa_abi__{s}", .{ decl.module_name, sig.name });
-        errdefer memoryManager.getAllocator().free(sym_export_abi);
-        const sym_export_native = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}.{s}", .{ decl.module_name, sig.name });
-        defer memoryManager.getAllocator().free(sym_export_native);
+        const sym_ident = try std.fmt.allocPrint(allocator, "__doxa_export__{s}_{s}", .{ decl.module_name, sig.name });
+        defer allocator.free(sym_ident);
+        const sym_export_abi = try std.fmt.allocPrint(allocator, "{s}.__doxa_abi__{s}", .{ decl.module_name, sig.name });
+        errdefer allocator.free(sym_export_abi);
+        const sym_export_native = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ decl.module_name, sig.name });
+        defer allocator.free(sym_export_native);
 
-        var sig_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
+        var sig_buf = std.array_list.Managed(u8).init(allocator);
         defer sig_buf.deinit();
         try sig_buf.appendSlice("pub fn ");
         try sig_buf.appendSlice(sym_ident);
@@ -248,8 +248,8 @@ fn compileOneInlineModule(
         if (sig.param_types.len == 0) {
             try sig_buf.appendSlice("    _ = argv;\n");
         }
-        const expected_argc = try std.fmt.allocPrint(memoryManager.getAllocator(), "{}", .{sig.param_types.len});
-        defer memoryManager.getAllocator().free(expected_argc);
+        const expected_argc = try std.fmt.allocPrint(allocator, "{}", .{sig.param_types.len});
+        defer allocator.free(expected_argc);
         try sig_buf.appendSlice("    if (argc != ");
         try sig_buf.appendSlice(expected_argc);
         try sig_buf.appendSlice(") return .bad_arity;\n");
@@ -262,8 +262,8 @@ fn compileOneInlineModule(
             }
             param_types_bc[i] = bytecode_t;
 
-            const idx_str = try std.fmt.allocPrint(memoryManager.getAllocator(), "{}", .{i});
-            defer memoryManager.getAllocator().free(idx_str);
+            const idx_str = try std.fmt.allocPrint(allocator, "{}", .{i});
+            defer allocator.free(idx_str);
             try sig_buf.appendSlice("    const __doxa_v");
             try sig_buf.appendSlice(idx_str);
             try sig_buf.appendSlice(" = argv[");
@@ -355,14 +355,14 @@ fn compileOneInlineModule(
             }
         }
 
-        var call_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
+        var call_buf = std.array_list.Managed(u8).init(allocator);
         defer call_buf.deinit();
         try call_buf.appendSlice(sig.name);
         try call_buf.appendSlice("(");
         for (sig.param_types, 0..) |_, i| {
             if (i > 0) try call_buf.appendSlice(", ");
-            const idx_str = try std.fmt.allocPrint(memoryManager.getAllocator(), "{}", .{i});
-            defer memoryManager.getAllocator().free(idx_str);
+            const idx_str = try std.fmt.allocPrint(allocator, "{}", .{i});
+            defer allocator.free(idx_str);
             try call_buf.appendSlice("__doxa_a");
             try call_buf.appendSlice(idx_str);
         }
@@ -432,7 +432,7 @@ fn compileOneInlineModule(
 
         try file_buf.appendSlice(sig_buf.items);
 
-        var export_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
+        var export_buf = std.array_list.Managed(u8).init(allocator);
         defer export_buf.deinit();
         try export_buf.appendSlice("comptime { @export(");
         try export_buf.appendSlice("&");
@@ -442,23 +442,23 @@ fn compileOneInlineModule(
         try export_buf.appendSlice("\" }); }\n\n");
         try file_buf.appendSlice(export_buf.items);
 
-        const native_ident = try std.fmt.allocPrint(memoryManager.getAllocator(), "__doxa_native__{s}_{s}", .{ decl.module_name, sig.name });
-        defer memoryManager.getAllocator().free(native_ident);
+        const native_ident = try std.fmt.allocPrint(allocator, "__doxa_native__{s}_{s}", .{ decl.module_name, sig.name });
+        defer allocator.free(native_ident);
 
         const native_ret_zig = zigTypeName.fromNativeReturnTypeInfo(sig.return_type) orelse {
             reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in native bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
             return error.NotImplemented;
         };
 
-        var native_buf = std.array_list.Managed(u8).init(memoryManager.getAllocator());
+        var native_buf = std.array_list.Managed(u8).init(allocator);
         defer native_buf.deinit();
         try native_buf.appendSlice("pub fn ");
         try native_buf.appendSlice(native_ident);
         try native_buf.appendSlice("(");
 
-        var native_prelude = std.array_list.Managed(u8).init(memoryManager.getAllocator());
+        var native_prelude = std.array_list.Managed(u8).init(allocator);
         defer native_prelude.deinit();
-        var native_call = std.array_list.Managed(u8).init(memoryManager.getAllocator());
+        var native_call = std.array_list.Managed(u8).init(allocator);
         defer native_call.deinit();
         try native_call.appendSlice(sig.name);
         try native_call.appendSlice("(");
@@ -472,14 +472,14 @@ fn compileOneInlineModule(
                 try native_buf.appendSlice(", ");
                 try native_call.appendSlice(", ");
             }
-            const arg_name = try std.fmt.allocPrint(memoryManager.getAllocator(), "a{}", .{i});
-            defer memoryManager.getAllocator().free(arg_name);
+            const arg_name = try std.fmt.allocPrint(allocator, "a{}", .{i});
+            defer allocator.free(arg_name);
             try native_buf.appendSlice(arg_name);
             try native_buf.appendSlice(": ");
             try native_buf.appendSlice(pt_zig);
             if (pt.base == .String) {
-                const s_name = try std.fmt.allocPrint(memoryManager.getAllocator(), "__doxa_s{}", .{i});
-                defer memoryManager.getAllocator().free(s_name);
+                const s_name = try std.fmt.allocPrint(allocator, "__doxa_s{}", .{i});
+                defer allocator.free(s_name);
                 try native_prelude.appendSlice("    const ");
                 try native_prelude.appendSlice(s_name);
                 try native_prelude.appendSlice(": []const u8 = if (");
@@ -533,10 +533,10 @@ fn compileOneInlineModule(
         try native_buf.appendSlice("\" }); }\n\n");
         try file_buf.appendSlice(native_buf.items);
 
-        const fn_key = try memoryManager.getAllocator().dupe(u8, sig.name);
-        errdefer memoryManager.getAllocator().free(fn_key);
-        errdefer memoryManager.getAllocator().free(sym_export_abi);
-        errdefer memoryManager.getAllocator().free(param_types_bc);
+        const fn_key = try allocator.dupe(u8, sig.name);
+        errdefer allocator.free(fn_key);
+        errdefer allocator.free(sym_export_abi);
+        errdefer allocator.free(param_types_bc);
         try functions.put(fn_key, .{
             .symbol = sym_export_abi,
             .param_types = param_types_bc,
@@ -546,49 +546,12 @@ fn compileOneInlineModule(
 
     try std.fs.cwd().writeFile(.{ .sub_path = zig_path, .data = file_buf.items });
 
-    const already_compiled = blk: {
-        const f = std.fs.cwd().openFile(lib_path, .{}) catch break :blk false;
-        f.close();
-        break :blk true;
-    };
-
-    if (!already_compiled) {
-        var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
-        defer args_list.deinit();
-        const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{lib_path});
-        defer std.heap.page_allocator.free(emit_flag);
-        try args_list.appendSlice(&[_][]const u8{
-            zig_exe_path,
-            "build-lib",
-            "-dynamic",
-            zig_path,
-            emit_flag,
-            "-OReleaseSafe",
-        });
-        if (builtin.os.tag == .linux) {
-            try args_list.append("-lc");
-        }
-
-        var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
-        child.cwd = ".";
-        child.stdout_behavior = .Inherit;
-        child.stderr_behavior = .Inherit;
-        const term = try child.spawnAndWait();
-        switch (term) {
-            .Exited => |code| if (code != 0) return error.Unexpected,
-            else => return error.Unexpected,
-        }
-    }
-
-    const key_owned = try memoryManager.getAllocator().dupe(u8, decl.module_name);
-    const lib_owned = try memoryManager.getAllocator().dupe(u8, lib_path);
-
-    try modules.put(key_owned, .{
-        .lib_path = lib_owned,
-        .lib = null,
-        .free_cstr_symbol = free_sym_owned,
+    return .{
+        .zig_path = try allocator.dupe(u8, zig_path),
+        .lib_path = try allocator.dupe(u8, lib_path),
         .functions = functions,
-    });
+        .free_sym_owned = free_sym_owned,
+    };
 }
 
 pub fn compileInlineZigModules(
@@ -598,6 +561,7 @@ pub fn compileInlineZigModules(
     reporter: *Reporter,
     zig_exe_path: []const u8,
     cache_dir: []const u8,
+    opt_level: i32,
 ) !?std.StringHashMap(VM.ZigRuntimeModule) {
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
@@ -619,8 +583,70 @@ pub fn compileInlineZigModules(
     }
 
     for (zig_decls) |decl| {
-        try compileOneInlineModule(memoryManager, reporter, zig_exe_path, zig_cache_path, decl, &modules);
+        var gen = try generateWrapperZigFile(memoryManager.getAllocator(), reporter, zig_cache_path, decl);
+        defer gen.deinit(memoryManager.getAllocator());
+
+        const already_compiled = blk: {
+            const f = std.fs.cwd().openFile(gen.lib_path, .{}) catch break :blk false;
+            f.close();
+            break :blk true;
+        };
+
+        if (!already_compiled) {
+            var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+            defer args_list.deinit();
+            const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{gen.lib_path});
+            defer std.heap.page_allocator.free(emit_flag);
+            try args_list.appendSlice(&[_][]const u8{
+                zig_exe_path,
+                "build-lib",
+                "-dynamic",
+                gen.zig_path,
+                emit_flag,
+                zigOptimizationFlag(opt_level),
+            });
+            if (builtin.os.tag == .linux) {
+                try args_list.append("-lc");
+            }
+
+            var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
+            child.cwd = ".";
+            child.stdout_behavior = .Inherit;
+            child.stderr_behavior = .Inherit;
+            const term = try child.spawnAndWait();
+            switch (term) {
+                .Exited => |code| if (code != 0) return error.Unexpected,
+                else => return error.Unexpected,
+            }
+        }
+
+        const key_owned = try memoryManager.getAllocator().dupe(u8, decl.module_name);
+        const lib_owned = try memoryManager.getAllocator().dupe(u8, gen.lib_path);
+        const free_sym_owned = try memoryManager.getAllocator().dupe(u8, gen.free_sym_owned);
+
+        var mod_functions = std.StringHashMap(VM.ZigRuntimeFn).init(memoryManager.getAllocator());
+        var fn_it = gen.functions.iterator();
+        while (fn_it.next()) |entry| {
+            const fn_key = try memoryManager.getAllocator().dupe(u8, entry.key_ptr.*);
+            errdefer memoryManager.getAllocator().free(fn_key);
+            const fn_sym = try memoryManager.getAllocator().dupe(u8, entry.value_ptr.*.symbol);
+            errdefer memoryManager.getAllocator().free(fn_sym);
+            const fn_ptypes = try memoryManager.getAllocator().dupe(bc.BytecodeType, entry.value_ptr.*.param_types);
+            try mod_functions.put(fn_key, .{
+                .symbol = fn_sym,
+                .param_types = fn_ptypes,
+                .return_type = entry.value_ptr.*.return_type,
+            });
+        }
+
+        try modules.put(key_owned, .{
+            .lib_path = lib_owned,
+            .lib = null,
+            .free_cstr_symbol = free_sym_owned,
+            .functions = mod_functions,
+        });
     }
+
     return modules;
 }
 
@@ -631,30 +657,14 @@ pub fn compileInlineZigObjects(
     reporter: *Reporter,
     zig_exe_path: []const u8,
     cache_dir: []const u8,
+    opt_level: i32,
 ) ![]const []const u8 {
-    const Sha256 = std.crypto.hash.sha2.Sha256;
-
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
 
     const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{cache_dir});
     defer memoryManager.getAllocator().free(zig_cache_path);
     try std.fs.cwd().makePath(zig_cache_path);
-
-    var maybe_modules = std.StringHashMap(VM.ZigRuntimeModule).init(memoryManager.getAllocator());
-    defer {
-        var it = maybe_modules.iterator();
-        while (it.next()) |entry| {
-            const key = entry.key_ptr.*;
-            var m = entry.value_ptr.*;
-            m.deinit(memoryManager.getAllocator());
-            memoryManager.getAllocator().free(@constCast(key));
-        }
-        maybe_modules.deinit();
-    }
-    for (zig_decls) |decl| {
-        try compileOneInlineModule(memoryManager, reporter, zig_exe_path, zig_cache_path, decl, &maybe_modules);
-    }
 
     var out_paths = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
     errdefer {
@@ -663,22 +673,14 @@ pub fn compileInlineZigObjects(
     }
 
     for (zig_decls) |decl| {
-        var h: [Sha256.digest_length]u8 = undefined;
-        var hasher = Sha256.init(.{});
-        hasher.update("__doxa_inlinezig_v5__\n");
-        hasher.update(decl.module_name);
-        hasher.update("\n");
-        hasher.update(decl.zig_source);
-        hasher.final(&h);
-        const hex_buf = std.fmt.bytesToHex(h, .lower);
-        const short_hex = hex_buf[0..16];
+        var gen = try generateWrapperZigFile(memoryManager.getAllocator(), reporter, zig_cache_path, decl);
+        defer gen.deinit(memoryManager.getAllocator());
 
-        var zig_path_buf: [512]u8 = undefined;
-        const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/{s}-{s}.zig", .{ zig_cache_path, decl.module_name, short_hex });
-
-        var obj_path_buf: [512]u8 = undefined;
         const obj_ext = if (builtin.os.tag == .windows) "obj" else "o";
-        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}-{s}.{s}", .{ zig_cache_path, decl.module_name, short_hex, obj_ext });
+        const zig_dir = std.fs.path.dirname(gen.zig_path) orelse ".";
+        const zig_stem = std.fs.path.stem(gen.zig_path);
+        var obj_path_buf: [256]u8 = undefined;
+        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}.{s}", .{ zig_dir, zig_stem, obj_ext });
 
         const obj_already_compiled = blk: {
             const f = std.fs.cwd().openFile(obj_path, .{}) catch break :blk false;
@@ -694,9 +696,9 @@ pub fn compileInlineZigObjects(
             try args_list.appendSlice(&[_][]const u8{
                 zig_exe_path,
                 "build-obj",
-                zig_path,
+                gen.zig_path,
                 emit_flag,
-                "-OReleaseSafe",
+                zigOptimizationFlag(opt_level),
             });
 
             var child = std.process.Child.init(args_list.items, std.heap.page_allocator);

@@ -445,7 +445,7 @@ pub const BytecodeGenerator = struct {
                 },
                 .Call => |payload| try self.instructions.append(self.allocator, .{ .Call = .{
                     .target = .{
-                        .function_index = payload.function_index,
+                        .function_index = payload.function_index orelse 0,
                         .qualified_name = payload.qualified_name,
                         .call_kind = payload.call_kind,
                         .target_module = payload.target_module,

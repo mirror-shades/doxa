@@ -133,6 +133,7 @@ pub const IRPrinter = struct {
     pub const hirTypeToLLVMType = StructsEnumsEmitMethods.hirTypeToLLVMType;
 
     allocator: std.mem.Allocator,
+    zig_fn_param_types: std.StringHashMap([]HIR.HIRType),
     peek_string_counter: usize,
     string_pool_len: usize = 0,
 

@@ -945,9 +945,9 @@ pub const HIRGenerator = struct {
 
         if (entry_function) |entry_func| {
             const entry_function_index = if (entry_function_name) |name|
-                self.getFunctionIndex(name) orelse 0
+                self.getFunctionIndex(name)
             else
-                0;
+                null;
 
             const entry_call_instruction = HIRInstruction{
                 .Call = .{
@@ -1573,7 +1573,7 @@ pub const HIRGenerator = struct {
 
         const return_type = self.inferCallReturnType(name, .BuiltinFunction) catch .String;
         try self.instructions.append(.{ .Call = .{
-            .function_index = 0,
+            .function_index = null,
             .qualified_name = name,
             .arg_count = arg_emitted_count,
             .call_kind = .BuiltinFunction,
@@ -1997,9 +1997,6 @@ pub const HIRGenerator = struct {
                 if (self.function_signatures.get(function_name)) |func_info| {
                     return func_info.return_type;
                 }
-                // Inline-zig module functions are registered via `imported_symbols` (parser),
-                // but won't exist in `function_signatures` because they are not Doxa FunctionDecls.
-                // Use the imported metadata so codegen uses the correct return type.
                 if (self.imported_symbols) |imported_symbols| {
                     if (imported_symbols.get(function_name)) |sym| {
                         if (sym.kind == .Function) {
@@ -2009,7 +2006,13 @@ pub const HIRGenerator = struct {
                         }
                     }
                 }
-                return .String;
+                self.reporter.reportCompileError(
+                    null,
+                    ErrorCode.FUNCTION_NOT_FOUND,
+                    "Imported zig module function '{s}' not found. Ensure the zig block exports this function.",
+                    .{function_name},
+                );
+                return ErrorList.FunctionNotFound;
             },
         }
     }

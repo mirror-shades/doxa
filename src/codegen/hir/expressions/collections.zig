@@ -119,7 +119,7 @@ pub const CollectionsHandler = struct {
         int_type_ptr.* = .Int;
         try self.generator.instructions.append(.{
             .Call = .{
-                .function_index = 0,
+                .function_index = null,
                 .qualified_name = "range",
                 .arg_count = 2,
                 .call_kind = .BuiltinFunction,
@@ -517,7 +517,7 @@ pub const CollectionsHandler = struct {
 
         try self.generator.instructions.append(.{
             .Call = .{
-                .function_index = 0,
+                .function_index = null,
                 .qualified_name = operator_name,
                 .arg_count = 2, // array + comparison value
                 .call_kind = .BuiltinFunction,
@@ -680,7 +680,7 @@ pub const CollectionsHandler = struct {
 
         try self.generator.instructions.append(.{
             .Call = .{
-                .function_index = 0,
+                .function_index = null,
                 .qualified_name = operator_name,
                 .arg_count = 2, // array + comparison value
                 .call_kind = .BuiltinFunction,

@@ -665,9 +665,10 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn init(allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque) IRPrinter {
+        pub fn init(allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType)) IRPrinter {
             return .{
                 .allocator = allocator,
+                .zig_fn_param_types = zig_fn_param_types,
                 .peek_string_counter = 0,
                 .global_types = std.StringHashMap(StackType).init(allocator),
                 .global_array_types = std.StringHashMap(HIR.HIRType).init(allocator),
@@ -693,6 +694,7 @@ pub fn Methods(comptime Ctx: type) type {
 
         pub fn deinit(self: *IRPrinter) void {
             self.peek_string_counter = 0;
+            self.zig_fn_param_types.deinit();
             self.global_types.deinit();
             self.global_array_types.deinit();
             self.global_enum_types.deinit();

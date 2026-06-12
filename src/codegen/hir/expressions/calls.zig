@@ -125,7 +125,7 @@ pub const CallsHandler = struct {
 
         const ret_type: HIRType = self.generator.inferCallReturnType(qualified_name, .LocalFunction) catch
             self.generator.convertTypeInfo(mi.return_type.*);
-        const fn_index: u32 = self.generator.getFunctionIndex(qualified_name) orelse 0;
+        const fn_index: ?u32 = self.generator.getFunctionIndex(qualified_name);
 
         var arg_count: u32 = @intCast(arguments.len);
         if (!mi.is_static) arg_count += 1;
@@ -151,7 +151,7 @@ pub const CallsHandler = struct {
         const call_data = function_call.FunctionCall;
         const function_name = resolved.qualified_name;
         const call_kind = resolved.call_kind;
-        const function_index: u32 = resolved.function_index orelse 0;
+        const function_index: ?u32 = resolved.function_index;
 
         var arg_emitted_count: u32 = 0;
         for (call_data.arguments, 0..) |arg, arg_index| {
@@ -327,7 +327,7 @@ pub const CallsHandler = struct {
         if (builtin_methods.getMethodInfoByName(name)) |info| {
             const return_type = self.astTypeToHIRType(info.return_type);
             try self.generator.instructions.append(.{ .Call = .{
-                .function_index = 0,
+                .function_index = null,
                 .qualified_name = name,
                 .arg_count = @intCast(arguments.len),
                 .call_kind = .BuiltinFunction,
@@ -633,7 +633,7 @@ pub const CallsHandler = struct {
                 try self.generator.generateExpression(builtin_data.arguments[0], true, false);
                 try self.generator.instructions.append(.{
                     .Call = .{
-                        .function_index = 0,
+                        .function_index = null,
                         .qualified_name = "clear",
                         .arg_count = 1,
                         .call_kind = .BuiltinFunction,
@@ -662,7 +662,7 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(builtin_data.arguments[1], true, false);
             try self.generator.instructions.append(.{
                 .Call = .{
-                    .function_index = 0,
+                    .function_index = null,
                     .qualified_name = "find",
                     .arg_count = 2,
                     .call_kind = .BuiltinFunction,
@@ -680,7 +680,7 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.instructions.append(.{
                 .Call = .{
-                    .function_index = 0,
+                    .function_index = null,
                     .qualified_name = "print",
                     .arg_count = 1,
                     .call_kind = .BuiltinFunction,
@@ -776,7 +776,7 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(internal_data.receiver, true, false);
             try self.generator.instructions.append(.{
                 .Call = .{
-                    .function_index = 0,
+                    .function_index = null,
                     .qualified_name = "type",
                     .arg_count = 1,
                     .call_kind = .BuiltinFunction,
