@@ -1031,5 +1031,21 @@ function test_defer_continue() returns int {
 }
 test_defer_continue()? # 13
 
+zig z_io {
+    const std = @import("std");
+
+    pub fn helloPrint() void {
+        std.debug.print("{s}\n", .{":: string is \"hello\""});
+    }
+
+    pub fn helloReturn() []const u8 {
+        return "hello";
+    }
+
+}
+
+z_io.helloPrint()
+const hello_from_zig is z_io.helloReturn()
+hello_from_zig?
 
 "end"?
