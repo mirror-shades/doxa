@@ -243,7 +243,7 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
 
         .JumpCond => |j| try writer.print("    JumpCond {s} {s}            ; Conditional jump\n", .{ j.label_true, j.label_false }),
 
-        .Call => |c| try writer.print("    Call {} {} \"{s}\" {s} tail={}     ; Function call\n", .{ c.function_index, c.arg_count, c.qualified_name, @tagName(c.call_kind), c.tail }),
+        .Call => |c| try writer.print("    Call {} {} \"{s}\" {s} tail={}     ; Function call\n", .{ c.function_index orelse @as(u32, 0), c.arg_count, c.qualified_name, @tagName(c.call_kind), c.tail }),
 
         .Return => |r| try writer.print("    Return {}                   ; Return from function\n", .{r.has_value}),
 

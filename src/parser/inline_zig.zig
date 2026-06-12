@@ -3,25 +3,6 @@ const ast = @import("../ast/ast.zig");
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 
-pub const ZigFnSig = struct {
-    name: []const u8,
-    param_types: []ast.TypeInfo,
-    return_type: ast.TypeInfo,
-};
-
-pub fn deinitSigs(allocator: std.mem.Allocator, sigs: []ZigFnSig) void {
-    for (sigs) |sig| {
-        allocator.free(@constCast(sig.name));
-        allocator.free(sig.param_types);
-    }
-    allocator.free(sigs);
-}
-
-pub fn deinitSigsShallow(allocator: std.mem.Allocator, sigs: []ZigFnSig) void {
-    // Use when the caller has transferred ownership of `name`/`param_types` elsewhere.
-    allocator.free(sigs);
-}
-
 const TokenKind = enum {
     ident,
     string_lit,
@@ -268,7 +249,7 @@ fn parseTopLevelImportConst(ts: *Tokenizer) ErrorList!void {
     if (!tokenIs(semi, .symbol, ";")) return error.InlineZigNotValid;
 }
 
-fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!ZigFnSig {
+fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!ast.ZigFnSig {
     // Grammar (restricted):
     //   (pub|export|inline|noinline|extern)* fn IDENT "(" (IDENT ":" AllowedType ("," IDENT ":" AllowedType)*)? ")" AllowedType "{"
     // Note: requires a body (`{ ... }`) per docs/inline.md.
@@ -327,7 +308,7 @@ fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!Zi
     const body = (try ts.next()) orelse return error.InlineZigNotValid;
     if (!tokenIs(body, .symbol, "{")) return error.InlineZigNotValid;
 
-    return ZigFnSig{
+    return ast.ZigFnSig{
         .name = try allocator.dupe(u8, name.lexeme),
         .param_types = try param_types.toOwnedSlice(),
         .return_type = ret_ti,
@@ -370,7 +351,7 @@ fn skipTopLevelFnHeader(ts: *Tokenizer) ErrorList!void {
     }
 }
 
-fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList![]ZigFnSig {
+fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList![]ast.ZigFnSig {
     const trimmed = std.mem.trim(u8, input, " \t\n");
     if (trimmed.len == 0) return error.EmptyInput;
 
@@ -382,7 +363,7 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList
     // - Function param/return types must be from allowed set.
     var depth: usize = 0;
 
-    var out = std.array_list.Managed(ZigFnSig).init(allocator);
+    var out = std.array_list.Managed(ast.ZigFnSig).init(allocator);
     errdefer {
         for (out.items) |sig| {
             allocator.free(sig.name);
@@ -434,11 +415,6 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList
     return try out.toOwnedSlice();
 }
 
-pub fn parseZig(allocator: std.mem.Allocator, input: []const u8) ErrorList!void {
-    const sigs = try validateAndExtract(allocator, input);
-    deinitSigs(allocator, sigs);
-}
-
-pub fn sanitizeAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList![]ZigFnSig {
+pub fn sanitizeAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList![]ast.ZigFnSig {
     return try validateAndExtract(allocator, input);
 }

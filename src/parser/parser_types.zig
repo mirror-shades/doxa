@@ -1,7 +1,6 @@
 const std = @import("std");
 const token = @import("../types/token.zig");
 const declaration_parser = @import("declaration_parser.zig");
-const inline_zig = @import("inline_zig.zig");
 const expression_parser = @import("expression_parser.zig");
 const statement_parser = @import("statement_parser.zig");
 const Precedence = @import("./precedence.zig").Precedence;
@@ -125,6 +124,13 @@ pub const Parser = struct {
         }
         self.module_resolution_status.deinit();
         self.import_stack.deinit();
+    }
+
+    pub fn getImportedSymbols(self: *Parser) *std.StringHashMap(import_parser.ImportedSymbol) {
+        if (self.imported_symbols == null) {
+            self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
+        }
+        return &self.imported_symbols.?;
     }
 
     pub fn peek(self: *Parser) token.Token {
@@ -274,15 +280,25 @@ pub const Parser = struct {
                         return error.MisplacedPublicModifier;
                     }
                     const zig_decl = try declaration_parser.parseZigDecl(self);
-                    // Validate and register module namespace + function signatures so `Ops.fn(...)` works.
                     const module_name = zig_decl.data.ZigDecl.name.lexeme;
-                    const zig_source = zig_decl.data.ZigDecl.source;
+                    const sigs = zig_decl.data.ZigDecl.sigs;
 
-                    const sigs = try inline_zig.sanitizeAndExtract(self.allocator, zig_source);
-                    defer inline_zig.deinitSigsShallow(self.allocator, sigs);
-
-                    // Ensure the namespace exists (placeholder ModuleInfo is enough for semantic module lookup).
-                    if (!self.module_namespaces.contains(module_name)) {
+                    if (self.module_namespaces.get(module_name)) |existing| {
+                        if (existing.is_inline_zig) {
+                            const location = Location{
+                                .file = self.current_file,
+                                .file_uri = self.current_file_uri,
+                                .range = .{
+                                    .start_line = zig_decl.base.span.?.location.range.start_line,
+                                    .start_col = zig_decl.base.span.?.location.range.start_col,
+                                    .end_line = zig_decl.base.span.?.location.range.end_line,
+                                    .end_col = zig_decl.base.span.?.location.range.end_col,
+                                },
+                            };
+                            self.reporter.reportCompileError(location, ErrorCode.DUPLICATE_VARIABLE, "Duplicate zig block '{s}'", .{module_name});
+                            return error.ModuleAlreadyExists;
+                        }
+                    } else {
                         try self.module_namespaces.put(module_name, .{
                             .name = module_name,
                             .imports = &[_]ast.ImportInfo{},
@@ -293,14 +309,10 @@ pub const Parser = struct {
                         });
                     }
 
-                    if (self.imported_symbols == null) {
-                        self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
-                    }
-
+                    const imported_symbols = self.getImportedSymbols();
                     for (sigs) |sig| {
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, sig.name });
-                        // Note: allocate-owned strings for imported symbol fields.
-                        try self.imported_symbols.?.put(full_name, .{
+                        try imported_symbols.put(full_name, .{
                             .kind = .Function,
                             .name = sig.name,
                             .original_module = module_name,
@@ -1595,7 +1607,7 @@ pub const Parser = struct {
         var it = self.module_namespaces.iterator();
         while (it.next()) |entry| {
             const module_info = entry.value_ptr.*;
-            if (module_info.ast == null) continue;
+            if (module_info.ast == null and !module_info.is_inline_zig) continue;
             try reachable.put(entry.key_ptr.*, module_info);
         }
         return reachable;
@@ -1626,7 +1638,7 @@ pub const Parser = struct {
             }
 
             const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, symbol_name });
-            try self.imported_symbols.?.put(full_name, .{
+            try self.getImportedSymbols().put(full_name, .{
                 .kind = switch (symbol.kind) {
                     .Function => .Function,
                     .Variable => .Variable,
@@ -1706,7 +1718,7 @@ pub const Parser = struct {
                                     }
                                 }
 
-                                try self.imported_symbols.?.put(symbol_name, .{
+                                try self.getImportedSymbols().put(symbol_name, .{
                                     .kind = .Function,
                                     .name = func.name.lexeme,
                                     .original_module = module_path,
@@ -1721,7 +1733,7 @@ pub const Parser = struct {
                         .VarDecl => |var_decl| {
                             const is_public = var_decl.is_public;
                             if (is_public and std.mem.eql(u8, var_decl.name.lexeme, symbol_name)) {
-                                try self.imported_symbols.?.put(symbol_name, .{
+                                try self.getImportedSymbols().put(symbol_name, .{
                                     .kind = .Variable,
                                     .name = var_decl.name.lexeme,
                                     .original_module = module_path,
@@ -1732,7 +1744,7 @@ pub const Parser = struct {
                         .EnumDecl => |enum_decl| {
                             const is_public = enum_decl.is_public;
                             if (is_public and std.mem.eql(u8, enum_decl.name.lexeme, symbol_name)) {
-                                try self.imported_symbols.?.put(symbol_name, .{
+                                try self.getImportedSymbols().put(symbol_name, .{
                                     .kind = .Enum,
                                     .name = enum_decl.name.lexeme,
                                     .original_module = module_path,
@@ -1741,7 +1753,7 @@ pub const Parser = struct {
                                 });
                                 for (enum_decl.variants) |variant| {
                                     const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ symbol_name, variant.lexeme });
-                                    try self.imported_symbols.?.put(variant_full_name, .{
+                                    try self.getImportedSymbols().put(variant_full_name, .{
                                         .kind = .Enum,
                                         .name = variant.lexeme,
                                         .original_module = module_path,
@@ -1755,7 +1767,7 @@ pub const Parser = struct {
                         .GroupDecl => |group_decl| {
                             const is_public = group_decl.is_public;
                             if (is_public and std.mem.eql(u8, group_decl.name.lexeme, symbol_name)) {
-                                try self.imported_symbols.?.put(symbol_name, .{
+                                try self.getImportedSymbols().put(symbol_name, .{
                                     .kind = .Group,
                                     .name = group_decl.name.lexeme,
                                     .original_module = module_path,
@@ -1771,7 +1783,7 @@ pub const Parser = struct {
                                     const struct_decl = expr.data.StructDecl;
                                     const is_public = struct_decl.is_public;
                                     if (is_public and std.mem.eql(u8, struct_decl.name.lexeme, symbol_name)) {
-                                        try self.imported_symbols.?.put(symbol_name, .{
+                                        try self.getImportedSymbols().put(symbol_name, .{
                                             .kind = .Struct,
                                             .name = struct_decl.name.lexeme,
                                             .original_module = module_path,

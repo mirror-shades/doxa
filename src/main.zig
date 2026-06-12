@@ -19,6 +19,7 @@ const SoxaCompiler = @import("./codegen/hir/soxa.zig");
 const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
 const SoxaTextParser = @import("./codegen/hir/soxa_parser.zig").SoxaTextParser;
 const HIRProgram = @import("./codegen/hir/soxa_types.zig").HIRProgram;
+const HIRType = @import("./codegen/hir/soxa_types.zig").HIRType;
 const VM = @import("./interpreter/vm.zig").VM;
 const ConstantFolder = @import("./analysis/constant_folder.zig").ConstantFolder;
 const Errors = @import("./utils/errors.zig");
@@ -262,16 +263,16 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, mod
     return hir_program;
 }
 
-fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8) !?std.StringHashMap(VM.ZigRuntimeModule) {
+fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, opt_level: i32) !?std.StringHashMap(VM.ZigRuntimeModule) {
     const zig_exe_path = try resolveBundledZigExecutable(memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
-    return inline_zig_compiler.compileInlineZigModules(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir);
+    return inline_zig_compiler.compileInlineZigModules(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, opt_level);
 }
 
-fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8) ![]const []const u8 {
+fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, opt_level: i32) ![]const []const u8 {
     const zig_exe_path = try resolveBundledZigExecutable(memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
-    return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir);
+    return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, opt_level);
 }
 
 fn generateZigRoot(
@@ -751,7 +752,7 @@ pub fn main() !void {
 
         profiler.startPhase(Phase.EXECUTION);
 
-        const zig_modules = try compileInlineZigModules(&memoryManager, parsedStatements, &parser, &reporter, cli_options.cache_dir);
+        const zig_modules = try compileInlineZigModules(&memoryManager, parsedStatements, &parser, &reporter, cli_options.cache_dir, cli_options.opt_level);
 
         runBytecodeModule(&memoryManager, &bytecode_module, &reporter, zig_modules, cli_options.program_args) catch |err| switch (err) {
             error.RuntimeTrap => std.process.exit(EXIT_CODE_RUNTIME),
@@ -827,7 +828,31 @@ pub fn main() !void {
         };
         const ir_path = try std.fmt.bufPrint(&ir_path_buf, "{s}/{s}.ll", .{ cli_options.cache_dir, stem_for_derivatives });
         {
-            var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())));
+            var zig_fn_param_types = std.StringHashMap([]HIRType).init(memoryManager.getExecutionAllocator());
+            if (parser.imported_symbols) |imported_symbols| {
+                var it = imported_symbols.iterator();
+                while (it.next()) |entry| {
+                    const sym = entry.value_ptr.*;
+                    if (sym.kind != .Function) continue;
+                    if (sym.param_types) |pt| {
+                        const hir_params = try memoryManager.getExecutionAllocator().alloc(HIRType, pt.len);
+                        for (pt, 0..) |ti, i| {
+                            hir_params[i] = switch (ti.base) {
+                                .Int => HIRType.Int,
+                                .Float => HIRType.Float,
+                                .Byte => HIRType.Byte,
+                                .Tetra => HIRType.Tetra,
+                                .Nothing => HIRType.Nothing,
+                                .String => HIRType.String,
+                                else => HIRType.Nothing,
+                            };
+                        }
+                        const key = try memoryManager.getExecutionAllocator().dupe(u8, entry.key_ptr.*);
+                        try zig_fn_param_types.put(key, hir_params);
+                    }
+                }
+            }
+            var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), zig_fn_param_types);
             try printer.emitToFile(&hir_program_for_bytecode, ir_path);
         }
 
@@ -874,7 +899,7 @@ pub fn main() !void {
             }
         }
 
-        const inline_zig_wrapper_paths = try compileInlineZigObjects(&memoryManager, parsedStatements, &parser, &reporter, cli_options.cache_dir);
+        const inline_zig_wrapper_paths = try compileInlineZigObjects(&memoryManager, parsedStatements, &parser, &reporter, cli_options.cache_dir, cli_options.opt_level);
         defer {
             for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
             memoryManager.getAllocator().free(inline_zig_wrapper_paths);
@@ -926,8 +951,7 @@ pub fn main() !void {
             }
             // LLVM IR references malloc and other C runtime symbols.
             try args_ln.append("-lc");
-            // Inline zig wrappers compiled to .o may pull in Windows platform libs.
-            if (builtin.os.tag == .windows) {
+            if (builtin.os.tag == .windows and inline_zig_wrapper_paths.len > 0) {
                 try args_ln.appendSlice(&.{ "-lws2_32", "-lcrypt32" });
             }
 

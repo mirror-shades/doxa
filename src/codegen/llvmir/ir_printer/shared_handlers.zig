@@ -1825,13 +1825,16 @@ pub fn Methods(comptime Ctx: type) type {
                 arg_strings.deinit();
             }
 
-            const func_info = if (c.function_index < hir.function_table.len)
+            const func_info = if (c.function_index) |fi|
+                if (fi < hir.function_table.len)
                 blk: {
-                    const candidate = hir.function_table[c.function_index];
+                    const candidate = hir.function_table[fi];
                     if (std.mem.eql(u8, candidate.qualified_name, c.qualified_name))
                         break :blk candidate;
                     break :blk null;
                 }
+            else
+                null
             else
                 null;
 

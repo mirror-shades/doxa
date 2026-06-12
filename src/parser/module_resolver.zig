@@ -4,7 +4,6 @@ const ast = @import("../ast/ast.zig");
 const ModuleInfo = ast.ModuleInfo;
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const import_parser = @import("import_parser.zig");
-const inline_zig = @import("inline_zig.zig");
 
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -359,10 +358,6 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
 
     var module_symbols = std.StringHashMap(ast.ModuleSymbol).init(self.allocator);
 
-    if (self.imported_symbols == null) {
-        self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
-    }
-
     if (module_ast.data == .Block) {
         const statements = module_ast.data.Block.statements;
 
@@ -375,21 +370,25 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                     }
                 },
                 .ZigDecl => |zig_decl| {
-                    const sigs = try inline_zig.sanitizeAndExtract(self.allocator, zig_decl.source);
-                    defer inline_zig.deinitSigsShallow(self.allocator, sigs);
-
-                    for (sigs) |sig| {
+                    for (zig_decl.sigs) |sig| {
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ zig_decl.name.lexeme, sig.name });
-                        if (!self.imported_symbols.?.contains(full_name)) {
-                            try self.imported_symbols.?.put(full_name, .{
-                                .kind = .Function,
-                                .name = sig.name,
-                                .original_module = module_path,
-                                .param_count = @intCast(sig.param_types.len),
-                                .param_types = sig.param_types,
-                                .return_type_info = sig.return_type,
-                            });
+                        if (self.getImportedSymbols().contains(full_name)) {
+                            self.reporter.reportCompileError(
+                                null,
+                                ErrorCode.DUPLICATE_VARIABLE,
+                                "Duplicate zig module function '{s}' from module '{s}'",
+                                .{ full_name, module_path },
+                            );
+                            return error.DuplicateVariableName;
                         }
+                        try self.getImportedSymbols().put(full_name, .{
+                            .kind = .Function,
+                            .name = sig.name,
+                            .original_module = module_path,
+                            .param_count = @intCast(sig.param_types.len),
+                            .param_types = sig.param_types,
+                            .return_type_info = sig.return_type,
+                        });
                     }
                 },
                 .Import => |import_info| {
@@ -410,7 +409,7 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                         if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
-                            try self.imported_symbols.?.put(full_name, .{
+                            try self.getImportedSymbols().put(full_name, .{
                                 .kind = .Variable,
                                 .name = symbol_name,
                                 .original_module = module_path,
@@ -433,7 +432,7 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                         if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
-                            try self.imported_symbols.?.put(full_name, .{
+                            try self.getImportedSymbols().put(full_name, .{
                                 .kind = .Function,
                                 .name = symbol_name,
                                 .original_module = module_path,
@@ -461,7 +460,7 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                 const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                                 if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
-                                    try self.imported_symbols.?.put(full_name, .{
+                                    try self.getImportedSymbols().put(full_name, .{
                                         .kind = .Struct,
                                         .name = symbol_name,
                                         .original_module = module_path,
@@ -485,7 +484,7 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
 
                                 if (specific_symbol) |specific| {
                                     if (std.mem.eql(u8, specific, enum_decl.name.lexeme)) {
-                                        try self.imported_symbols.?.put(full_name, .{
+                                        try self.getImportedSymbols().put(full_name, .{
                                             .kind = .Enum,
                                             .name = enum_decl.name.lexeme,
                                             .original_module = module_path,
@@ -495,7 +494,7 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
 
                                         for (enum_decl.variants) |variant| {
                                             const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ full_name, variant.lexeme });
-                                            try self.imported_symbols.?.put(variant_full_name, .{
+                                            try self.getImportedSymbols().put(variant_full_name, .{
                                                 .kind = .Enum,
                                                 .name = variant.lexeme,
                                                 .original_module = module_path,
@@ -505,7 +504,7 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                         }
                                     }
                                 } else {
-                                    try self.imported_symbols.?.put(full_name, .{
+                                    try self.getImportedSymbols().put(full_name, .{
                                         .kind = .Enum,
                                         .name = enum_decl.name.lexeme,
                                         .original_module = module_path,
@@ -515,7 +514,7 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
 
                                     for (enum_decl.variants) |variant| {
                                         const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ full_name, variant.lexeme });
-                                        try self.imported_symbols.?.put(variant_full_name, .{
+                                        try self.getImportedSymbols().put(variant_full_name, .{
                                             .kind = .Enum,
                                             .name = variant.lexeme,
                                             .original_module = module_path,
@@ -541,7 +540,7 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                                 const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                                 if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
-                                    try self.imported_symbols.?.put(full_name, .{
+                                    try self.getImportedSymbols().put(full_name, .{
                                         .kind = .Group,
                                         .name = group_decl.name.lexeme,
                                         .original_module = module_path,
@@ -640,10 +639,6 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
 
     var module_symbols = std.StringHashMap(ast.ModuleSymbol).init(self.allocator);
 
-    if (self.imported_symbols == null) {
-        self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
-    }
-
     // Propagate nested module imported symbols (including enum type/variant metadata)
     // into the parent parser symbol table so downstream HIR generation can resolve
     // imported enums used inside module bodies.
@@ -651,8 +646,8 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
         var nested_it = nested_imported.iterator();
         while (nested_it.next()) |nested_entry| {
             const nested_key = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ name, nested_entry.key_ptr.* });
-            if (!self.imported_symbols.?.contains(nested_key)) {
-                try self.imported_symbols.?.put(nested_key, nested_entry.value_ptr.*);
+            if (!self.getImportedSymbols().contains(nested_key)) {
+                try self.getImportedSymbols().put(nested_key, nested_entry.value_ptr.*);
             }
         }
     }
@@ -669,21 +664,25 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                     }
                 },
                 .ZigDecl => |zig_decl| {
-                    const sigs = try inline_zig.sanitizeAndExtract(self.allocator, zig_decl.source);
-                    defer inline_zig.deinitSigsShallow(self.allocator, sigs);
-
-                    for (sigs) |sig| {
+                    for (zig_decl.sigs) |sig| {
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ zig_decl.name.lexeme, sig.name });
-                        if (!self.imported_symbols.?.contains(full_name)) {
-                            try self.imported_symbols.?.put(full_name, .{
-                                .kind = .Function,
-                                .name = sig.name,
-                                .original_module = module_path,
-                                .param_count = @intCast(sig.param_types.len),
-                                .param_types = sig.param_types,
-                                .return_type_info = sig.return_type,
-                            });
+                        if (self.getImportedSymbols().contains(full_name)) {
+                            self.reporter.reportCompileError(
+                                null,
+                                ErrorCode.DUPLICATE_VARIABLE,
+                                "Duplicate zig module function '{s}' from module '{s}'",
+                                .{ full_name, module_path },
+                            );
+                            return error.DuplicateVariableName;
                         }
+                        try self.getImportedSymbols().put(full_name, .{
+                            .kind = .Function,
+                            .name = sig.name,
+                            .original_module = module_path,
+                            .param_count = @intCast(sig.param_types.len),
+                            .param_types = sig.param_types,
+                            .return_type_info = sig.return_type,
+                        });
                     }
                 },
                 .Import => |import_info| {
@@ -704,7 +703,7 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                         if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
-                            try self.imported_symbols.?.put(full_name, .{
+                            try self.getImportedSymbols().put(full_name, .{
                                 .kind = .Variable,
                                 .name = symbol_name,
                                 .original_module = module_path,
@@ -727,7 +726,7 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                         if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
-                            try self.imported_symbols.?.put(full_name, .{
+                            try self.getImportedSymbols().put(full_name, .{
                                 .kind = .Function,
                                 .name = symbol_name,
                                 .original_module = module_path,
@@ -755,7 +754,7 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                                 const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                                 if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
-                                    try self.imported_symbols.?.put(full_name, .{
+                                    try self.getImportedSymbols().put(full_name, .{
                                         .kind = .Struct,
                                         .name = symbol_name,
                                         .original_module = module_path,
@@ -780,7 +779,7 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                         if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
-                            try self.imported_symbols.?.put(full_name, .{
+                            try self.getImportedSymbols().put(full_name, .{
                                 .kind = .Enum,
                                 .name = enum_decl.name.lexeme,
                                 .original_module = module_path,
@@ -790,7 +789,7 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
 
                             for (enum_decl.variants) |variant| {
                                 const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ full_name, variant.lexeme });
-                                try self.imported_symbols.?.put(variant_full_name, .{
+                                try self.getImportedSymbols().put(variant_full_name, .{
                                     .kind = .Enum,
                                     .name = variant.lexeme,
                                     .original_module = module_path,
@@ -816,7 +815,7 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                         if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
-                            try self.imported_symbols.?.put(full_name, .{
+                            try self.getImportedSymbols().put(full_name, .{
                                 .kind = .Group,
                                 .name = group_decl.name.lexeme,
                                 .original_module = module_path,

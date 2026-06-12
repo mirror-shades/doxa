@@ -85,8 +85,8 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_clear(ptr)\n");
             try w.writeAll("declare ptr @doxa_array_range(i64, i64)\n");
 
-            // Inline zig module functions (external): declare them as varargs so we don't need full type info here.
-            // We only declare calls that are NOT backed by a HIR function_table entry.
+            // Inline zig module functions (external): declare with typed parameters
+            // for correct ABI on all architectures.
             var declared_inline = std.StringHashMap(void).init(self.allocator);
             defer declared_inline.deinit();
             for (hir.instructions) |inst| {
@@ -96,7 +96,6 @@ pub fn Methods(comptime Ctx: type) type {
                 if (std.mem.indexOfScalar(u8, c.qualified_name, '.') == null) continue;
                 if (c.qualified_name.len == 0) continue;
 
-                // If this name exists as a defined HIR function, don't declare varargs (would conflict with definition).
                 var is_defined = false;
                 for (hir.function_table) |ft| {
                     if (std.mem.eql(u8, ft.qualified_name, c.qualified_name)) {
@@ -108,8 +107,30 @@ pub fn Methods(comptime Ctx: type) type {
                 if (declared_inline.contains(c.qualified_name)) continue;
                 try declared_inline.put(c.qualified_name, {});
 
-                const ret_ty = if (c.call_kind == .ModuleFunction and c.return_type == .String) "void" else self.hirTypeToLLVMType(c.return_type, false);
-                const decl = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}(...)\n", .{ ret_ty, c.qualified_name });
+                const ret_ty = if (c.return_type == .String) "void" else self.hirTypeToLLVMType(c.return_type, false);
+
+                var params_buf = std.array_list.Managed(u8).init(self.allocator);
+                defer params_buf.deinit();
+                if (self.zig_fn_param_types.get(c.qualified_name)) |param_types| {
+                    for (param_types, 0..) |pt, i| {
+                        if (i > 0) try params_buf.appendSlice(", ");
+                        switch (pt) {
+                            .String => try params_buf.appendSlice("ptr, i64"),
+                            .Int => try params_buf.appendSlice("i64"),
+                            .Float => try params_buf.appendSlice("double"),
+                            .Byte => try params_buf.appendSlice("i8"),
+                            .Tetra => try params_buf.appendSlice("i1"),
+                            .Nothing => try params_buf.appendSlice("void"),
+                            else => try params_buf.appendSlice("i64"),
+                        }
+                    }
+                }
+                if (c.return_type == .String) {
+                    if (params_buf.items.len > 0) try params_buf.appendSlice(", ");
+                    try params_buf.appendSlice("ptr, i64");
+                }
+
+                const decl = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ ret_ty, c.qualified_name, params_buf.items });
                 defer self.allocator.free(decl);
                 try w.writeAll(decl);
             }
@@ -351,8 +372,9 @@ pub fn Methods(comptime Ctx: type) type {
             for (hir.instructions[0..limit], 0..) |inst, idx| {
                 if (inst != .Call) continue;
                 const c = inst.Call;
-                if (c.function_index >= hir.function_table.len) continue;
-                const f = hir.function_table[c.function_index];
+                const fi = c.function_index orelse continue;
+                if (fi >= hir.function_table.len) continue;
+                const f = hir.function_table[fi];
                 if (f.is_entry and std.mem.eql(u8, f.qualified_name, c.qualified_name)) return idx;
             }
             return null;

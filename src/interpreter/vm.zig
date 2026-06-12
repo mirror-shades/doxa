@@ -18,6 +18,7 @@ const ValueOwner = hir_values.ValueOwner;
 const core = @import("core.zig");
 const HIRFrame = core.HIRFrame;
 const runtime = @import("runtime.zig");
+const abi = @import("../inline_zig/abi.zig");
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
 const Memory = @import("../utils/memory.zig");
 const Managed = std.array_list.Managed;
@@ -116,25 +117,7 @@ pub const VM = struct {
         return_type: module.BytecodeType,
     };
 
-    const DoxaAbiValue = extern struct {
-        tag: u32,
-        flags: u32,
-        payload0: u64,
-        payload1: u64,
-    };
-
-    const ABI_TAG_INT: u32 = 0;
-    const ABI_TAG_FLOAT: u32 = 1;
-    const ABI_TAG_BYTE: u32 = 2;
-    const ABI_TAG_STRING: u32 = 3;
-    const ABI_TAG_TETRA: u32 = 4;
-    const ABI_TAG_NOTHING: u32 = 5;
-
-    const ABI_STATUS_OK: i32 = 0;
-    const ABI_STATUS_BAD_ARITY: i32 = 1;
-    const ABI_STATUS_BAD_TAG: i32 = 2;
-    const ABI_STATUS_BAD_VALUE: i32 = 3;
-    const ABI_STATUS_INTERNAL: i32 = 255;
+    const DoxaAbiValue = abi.DoxaAbiValue;
 
     pub const ZigRuntimeModule = struct {
         lib_path: []const u8,
@@ -1871,30 +1854,30 @@ pub const VM = struct {
                 i -= 1;
                 const v = try self.popValue();
                 const expected = fn_entry.param_types[i];
-                abi_args[i] = .{ .tag = ABI_TAG_NOTHING, .flags = 0, .payload0 = 0, .payload1 = 0 };
+                abi_args[i] = .{ .tag = .Nothing, .flags = 0, .payload0 = 0, .payload1 = 0 };
                 switch (expected) {
                     .Int => switch (v) {
-                        .int => |n| abi_args[i] = .{ .tag = ABI_TAG_INT, .flags = 0, .payload0 = @bitCast(n), .payload1 = 0 },
-                        .byte => |b| abi_args[i] = .{ .tag = ABI_TAG_INT, .flags = 0, .payload0 = @bitCast(@as(i64, b)), .payload1 = 0 },
+                        .int => |n| abi_args[i] = .{ .tag = .Int, .flags = 0, .payload0 = @bitCast(n), .payload1 = 0 },
+                        .byte => |b| abi_args[i] = .{ .tag = .Int, .flags = 0, .payload0 = @bitCast(@as(i64, b)), .payload1 = 0 },
                         else => return self.abiArgTypeError(qualified_name),
                     },
                     .Float => switch (v) {
-                        .float => |f| abi_args[i] = .{ .tag = ABI_TAG_FLOAT, .flags = 0, .payload0 = @bitCast(f), .payload1 = 0 },
-                        .int => |n| abi_args[i] = .{ .tag = ABI_TAG_FLOAT, .flags = 0, .payload0 = @bitCast(@as(f64, @floatFromInt(n))), .payload1 = 0 },
-                        .byte => |b| abi_args[i] = .{ .tag = ABI_TAG_FLOAT, .flags = 0, .payload0 = @bitCast(@as(f64, @floatFromInt(b))), .payload1 = 0 },
+                        .float => |f| abi_args[i] = .{ .tag = .Float, .flags = 0, .payload0 = @bitCast(f), .payload1 = 0 },
+                        .int => |n| abi_args[i] = .{ .tag = .Float, .flags = 0, .payload0 = @bitCast(@as(f64, @floatFromInt(n))), .payload1 = 0 },
+                        .byte => |b| abi_args[i] = .{ .tag = .Float, .flags = 0, .payload0 = @bitCast(@as(f64, @floatFromInt(b))), .payload1 = 0 },
                         else => return self.abiArgTypeError(qualified_name),
                     },
                     .Byte => switch (v) {
-                        .byte => |b| abi_args[i] = .{ .tag = ABI_TAG_BYTE, .flags = 0, .payload0 = b, .payload1 = 0 },
+                        .byte => |b| abi_args[i] = .{ .tag = .Byte, .flags = 0, .payload0 = b, .payload1 = 0 },
                         .int => |n| {
                             if (n < 0 or n > std.math.maxInt(u8))
                                 return self.abiArgTypeError(qualified_name);
-                            abi_args[i] = .{ .tag = ABI_TAG_BYTE, .flags = 0, .payload0 = @intCast(n), .payload1 = 0 };
+                            abi_args[i] = .{ .tag = .Byte, .flags = 0, .payload0 = @intCast(n), .payload1 = 0 };
                         },
                         else => return self.abiArgTypeError(qualified_name),
                     },
                     .String => switch (v) {
-                        .string => |s| abi_args[i] = .{ .tag = ABI_TAG_STRING, .flags = 0, .payload0 = if (s.len == 0) 0 else @intFromPtr(s.ptr), .payload1 = s.len },
+                        .string => |s| abi_args[i] = .{ .tag = .String, .flags = 0, .payload0 = if (s.len == 0) 0 else @intFromPtr(s.ptr), .payload1 = s.len },
                         else => return self.abiArgTypeError(qualified_name),
                     },
                     .Tetra => switch (v) {
@@ -1903,12 +1886,12 @@ pub const VM = struct {
                                 self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Invalid tetra value for {s}", .{qualified_name});
                                 return ErrorList.RuntimeError;
                             }
-                            abi_args[i] = .{ .tag = ABI_TAG_TETRA, .flags = 0, .payload0 = t, .payload1 = 0 };
+                            abi_args[i] = .{ .tag = .Tetra, .flags = 0, .payload0 = t, .payload1 = 0 };
                         },
                         else => return self.abiArgTypeError(qualified_name),
                     },
                     .Nothing => switch (v) {
-                        .nothing => abi_args[i] = .{ .tag = ABI_TAG_NOTHING, .flags = 0, .payload0 = 0, .payload1 = 0 },
+                        .nothing => abi_args[i] = .{ .tag = .Nothing, .flags = 0, .payload0 = 0, .payload1 = 0 },
                         else => return self.abiArgTypeError(qualified_name),
                     },
                     else => {
@@ -1930,26 +1913,26 @@ pub const VM = struct {
                 return ErrorList.RuntimeError;
             };
 
-            var out_ret = DoxaAbiValue{ .tag = ABI_TAG_NOTHING, .flags = 0, .payload0 = 0, .payload1 = 0 };
-            var zero_arg = DoxaAbiValue{ .tag = ABI_TAG_NOTHING, .flags = 0, .payload0 = 0, .payload1 = 0 };
+            var out_ret = DoxaAbiValue{ .tag = .Nothing, .flags = 0, .payload0 = 0, .payload1 = 0 };
+            var zero_arg = DoxaAbiValue{ .tag = .Nothing, .flags = 0, .payload0 = 0, .payload1 = 0 };
             const argv_ptr: [*]const DoxaAbiValue = if (arg_count == 0) @ptrCast(&zero_arg) else abi_args.ptr;
-            const status = f(argv_ptr, arg_count, &out_ret);
+            const status: i32 = f(argv_ptr, arg_count, &out_ret);
 
             switch (status) {
-                ABI_STATUS_OK => {},
-                ABI_STATUS_BAD_ARITY => {
+                @intFromEnum(abi.DoxaAbiStatus.ok) => {},
+                @intFromEnum(abi.DoxaAbiStatus.bad_arity) => {
                     self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT_COUNT, "Inline zig bad arity for {s}", .{qualified_name});
                     return ErrorList.RuntimeError;
                 },
-                ABI_STATUS_BAD_TAG => {
+                @intFromEnum(abi.DoxaAbiStatus.bad_tag) => {
                     self.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "Inline zig type mismatch for {s}", .{qualified_name});
                     return ErrorList.RuntimeError;
                 },
-                ABI_STATUS_BAD_VALUE => {
+                @intFromEnum(abi.DoxaAbiStatus.bad_value) => {
                     self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig bad value for {s}", .{qualified_name});
                     return ErrorList.RuntimeError;
                 },
-                ABI_STATUS_INTERNAL => {
+                @intFromEnum(abi.DoxaAbiStatus.internal) => {
                     self.reporter.reportRuntimeError(null, ErrorCode.INTERNAL_ERROR, "Inline zig internal failure for {s}", .{qualified_name});
                     return ErrorList.RuntimeError;
                 },
@@ -1962,17 +1945,17 @@ pub const VM = struct {
             switch (fn_entry.return_type) {
                 .Nothing => return,
                 .Int => {
-                    try self.abiCheckReturnTag(out_ret, ABI_TAG_INT, qualified_name);
+                    try self.abiCheckReturnTag(out_ret, .Int, qualified_name);
                     try self.pushValue(.{ .int = @bitCast(out_ret.payload0) });
                     return;
                 },
                 .Float => {
-                    try self.abiCheckReturnTag(out_ret, ABI_TAG_FLOAT, qualified_name);
+                    try self.abiCheckReturnTag(out_ret, .Float, qualified_name);
                     try self.pushValue(.{ .float = @bitCast(out_ret.payload0) });
                     return;
                 },
                 .Byte => {
-                    try self.abiCheckReturnTag(out_ret, ABI_TAG_BYTE, qualified_name);
+                    try self.abiCheckReturnTag(out_ret, .Byte, qualified_name);
                     if (out_ret.payload0 > std.math.maxInt(u8)) {
                         self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned invalid byte for {s}", .{qualified_name});
                         return ErrorList.RuntimeError;
@@ -1981,7 +1964,7 @@ pub const VM = struct {
                     return;
                 },
                 .Tetra => {
-                    try self.abiCheckReturnTag(out_ret, ABI_TAG_TETRA, qualified_name);
+                    try self.abiCheckReturnTag(out_ret, .Tetra, qualified_name);
                     if (out_ret.payload0 > 3) {
                         self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned invalid tetra for {s}", .{qualified_name});
                         return ErrorList.RuntimeError;
@@ -1990,7 +1973,7 @@ pub const VM = struct {
                     return;
                 },
                 .String => {
-                    try self.abiCheckReturnTag(out_ret, ABI_TAG_STRING, qualified_name);
+                    try self.abiCheckReturnTag(out_ret, .String, qualified_name);
                     if (out_ret.payload0 == 0 and out_ret.payload1 != 0) {
                         self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned malformed string for {s}", .{qualified_name});
                         return ErrorList.RuntimeError;
@@ -2025,7 +2008,7 @@ pub const VM = struct {
         return ErrorList.RuntimeError;
     }
 
-    fn abiCheckReturnTag(self: *VM, out_ret: DoxaAbiValue, expected_tag: u32, qualified_name: []const u8) VmError!void {
+    fn abiCheckReturnTag(self: *VM, out_ret: DoxaAbiValue, expected_tag: abi.DoxaAbiTag, qualified_name: []const u8) VmError!void {
         if (out_ret.tag != expected_tag) {
             self.reporter.reportRuntimeError(null, ErrorCode.RUNTIME_ERROR, "Inline zig returned wrong tag for {s}", .{qualified_name});
             return ErrorList.RuntimeError;

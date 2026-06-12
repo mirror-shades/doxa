@@ -246,7 +246,7 @@ pub const HIRInstruction = union(enum) {
     /// VM: OP_CALL -> getFunction(function_index)
     /// LLVM: LLVMBuildCall2 -> function_map[qualified_name]
     Call: struct {
-        function_index: u32, // VM: Direct function table index
+        function_index: ?u32, // VM: Direct function table index (null = zig module / builtin)
         qualified_name: []const u8, // LLVM: Full function name with module prefix
         arg_count: u32, // Stack management for both targets
         call_kind: CallKind, // Resolution context

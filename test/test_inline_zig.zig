@@ -18,7 +18,13 @@ test "inline zig: accepts import consts and function bodies" {
     ;
 
     const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src);
-    defer inline_zig.deinitSigs(testing.allocator, sigs);
+    defer {
+        for (sigs) |sig| {
+            testing.allocator.free(sig.name);
+            testing.allocator.free(sig.param_types);
+        }
+        testing.allocator.free(sigs);
+    }
 
     try testing.expectEqual(@as(usize, 1), sigs.len);
     try testing.expectEqualStrings("add", sigs[0].name);
@@ -40,7 +46,13 @@ test "inline zig: accepts multiline signatures" {
     ;
 
     const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src);
-    defer inline_zig.deinitSigs(testing.allocator, sigs);
+    defer {
+        for (sigs) |sig| {
+            testing.allocator.free(sig.name);
+            testing.allocator.free(sig.param_types);
+        }
+        testing.allocator.free(sigs);
+    }
 
     try testing.expectEqual(@as(usize, 1), sigs.len);
     try testing.expectEqualStrings("foo", sigs[0].name);
