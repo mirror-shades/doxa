@@ -1035,7 +1035,7 @@ zig z_io {
     const std = @import("std");
 
     pub fn helloPrint() void {
-        std.debug.print("{s}\n", .{":: string is \"hello\""});
+        std.debug.print("{s}\n", .{"[test/misc/bigfile.doxa:1038:22] :: string is \"hello\""});
     }
 
     pub fn helloReturn() []const u8 {
