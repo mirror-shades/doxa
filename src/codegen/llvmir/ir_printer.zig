@@ -156,6 +156,8 @@ pub const IRPrinter = struct {
     enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
     group_table: ?*anyopaque = null,
     enum_table: ?*anyopaque = null,
+    entry_str_out_ptr: ?[]const u8 = null,
+    entry_str_out_len: ?[]const u8 = null,
 
     pub const EnumVariantMeta = struct {
         index: u32,

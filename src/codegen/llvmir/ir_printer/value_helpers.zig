@@ -18,17 +18,25 @@ pub fn Methods(comptime Ctx: type) type {
         fn_name: []const u8,
         args_line: []const u8,
     ) !void {
-        const out_ptr_slot = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-        id.* += 1;
-        const out_len_slot = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-        id.* += 1;
+        const out_ptr_slot = if (self.entry_str_out_ptr) |p| p else blk: {
+            const s = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+            id.* += 1;
+            break :blk s;
+        };
+        const out_len_slot = if (self.entry_str_out_len) |p| p else blk: {
+            const s = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+            id.* += 1;
+            break :blk s;
+        };
 
-        const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
-        const alloca_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
-        defer self.allocator.free(alloca_ptr_line);
-        defer self.allocator.free(alloca_len_line);
-        try w.writeAll(alloca_ptr_line);
-        try w.writeAll(alloca_len_line);
+        if (self.entry_str_out_ptr == null) {
+            const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
+            const alloca_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
+            defer self.allocator.free(alloca_ptr_line);
+            defer self.allocator.free(alloca_len_line);
+            try w.writeAll(alloca_ptr_line);
+            try w.writeAll(alloca_len_line);
+        }
 
         const init_ptr_line = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
         const init_len_line = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
@@ -309,14 +317,16 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(cast_line);
                 try w.writeAll(cast_line);
 
-                const out_ptr_slot = try self.nextTemp(id);
-                const out_len_slot = try self.nextTemp(id);
-                const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
-                const alloca_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
-                defer self.allocator.free(alloca_ptr_line);
-                defer self.allocator.free(alloca_len_line);
-                try w.writeAll(alloca_ptr_line);
-                try w.writeAll(alloca_len_line);
+                const out_ptr_slot = if (self.entry_str_out_ptr) |p| p else try self.nextTemp(id);
+                const out_len_slot = if (self.entry_str_out_len) |p| p else try self.nextTemp(id);
+                if (self.entry_str_out_ptr == null) {
+                    const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
+                    const alloca_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
+                    defer self.allocator.free(alloca_ptr_line);
+                    defer self.allocator.free(alloca_len_line);
+                    try w.writeAll(alloca_ptr_line);
+                    try w.writeAll(alloca_len_line);
+                }
                 const init_ptr_line = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
                 const init_len_line = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
                 defer self.allocator.free(init_ptr_line);
@@ -547,13 +557,22 @@ pub fn Methods(comptime Ctx: type) type {
         return switch (element_type) {
             .Int, .Byte, .Tetra => try self.ensureI64(w, value, id),
             .Float => blk: {
-                if (value.ty != .F64) {
-                    break :blk try self.ensureI64(w, value, id);
+                if (value.ty == .F64) {
+                    const tmp = try self.nextTemp(id);
+                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast double {s} to i64\n", .{ tmp, value.name });
+                    defer self.allocator.free(line);
+                    try w.writeAll(line);
+                    break :blk StackVal{ .name = tmp, .ty = .I64 };
                 }
-                const tmp = try self.nextTemp(id);
-                const line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast double {s} to i64\n", .{ tmp, value.name });
+                const as_i64 = try self.ensureI64(w, value, id);
+                const as_double = try self.nextTemp(id);
+                const line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ as_double, as_i64.name });
                 defer self.allocator.free(line);
                 try w.writeAll(line);
+                const tmp = try self.nextTemp(id);
+                const line2 = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast double {s} to i64\n", .{ tmp, as_double });
+                defer self.allocator.free(line2);
+                try w.writeAll(line2);
                 break :blk StackVal{ .name = tmp, .ty = .I64 };
             },
             .Enum => try self.ensureI64(w, value, id),

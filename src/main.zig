@@ -281,6 +281,7 @@ fn generateZigRoot(
     const root_path = "__doxa_main.zig";
 
     var content = std.array_list.Managed(u8).init(allocator);
+    defer content.deinit();
     try content.appendSlice("const std = @import(\"std\");\n");
     try content.appendSlice("const doxa_rt = @import(\"");
     try appendZigPath(&content, RUNTIME_SOURCE_PATH);
