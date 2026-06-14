@@ -1,78 +1,119 @@
-module time from "std/time/time.doxa"
-module random from "std/random/random.doxa"
+module std from @std()
 
-const limit :: int is 100_000_000;
+function runSuite(runs :: int) {
 
-function diceRoll() returns int {
-    const randomFloat is random.random() * 6 + 1
-    return @int(randomFloat)
-}
+    std.io.println("Compiling benchmarks...")
+    std.process.exec("./doxa/bin/doxa compile test/benchmark/fib.doxa -o test/benchmark/d-bin/fib")
+    std.process.exec("gcc test/benchmark/fib.c -o test/benchmark/c-bin/fib")
+    std.process.exec("./doxa/bin/doxa compile test/benchmark/sieve.doxa -o test/benchmark/d-bin/sieve")
+    std.process.exec("gcc test/benchmark/sieve.c -o test/benchmark/c-bin/sieve")
 
-function add(a :: int, b :: int) returns int {
-    return a + b
-}
+    std.io.println("Running benchmarks...")
 
-# Dice roll benchmark
-function diceRollBenchmark() {
-    var count is 0
-    var startTime is time.tick()
+    var time_d_fib :: int
+    var time_c_fib :: int
+    var time_d_sieve :: int
+    var time_c_sieve :: int
+    var time_d_matrix :: int
+    var time_c_matrix :: int
     
-    for i is 1 while i <= limit do i += 1 {
-        const roll is diceRoll()
-        count is count + roll  # Prevent optimization
+    each run in 0 to runs - 1 {
+        const output_d_fib is timeExec("./test/benchmark/d-bin/fib", ^time_d_fib)
+        const output_c_fib is timeExec("./test/benchmark/c-bin/fib", ^time_c_fib)
+        const output_d_sieve is timeExec("./test/benchmark/d-bin/sieve", ^time_d_sieve)
+        const output_c_sieve is timeExec("./test/benchmark/c-bin/sieve", ^time_c_sieve)
+        const output_d_matrix is timeExec("./test/benchmark/d-bin/matrix", ^time_d_matrix)
+        const output_c_matrix is timeExec("./test/benchmark/c-bin/matrix", ^time_c_matrix)
+        if run == 0 then {
+            matchOutput(output_c_fib, output_d_fib)
+            matchOutput(output_c_sieve, output_d_sieve)
+            matchOutput(output_c_matrix, output_d_matrix)
+        }
+        else {
+            time_d_fib += @length(output_d_fib)
+            time_c_fib += @length(output_c_fib)
+            time_d_sieve += @length(output_d_sieve)
+            time_c_sieve += @length(output_c_sieve)
+            time_d_matrix += @length(output_d_matrix)
+            time_c_matrix += @length(output_c_matrix)
+        }
     }
-    
-    var endTime is time.tick()
-    @print("Dice rolls: {count}, Time: {(endTime - startTime) / 1000000000 }s\n")
+
+
+    std.io.println("test\t| lang\t| runtime")
+    compare("Fib", time_d_fib, time_c_fib, runs)
+    compare("Sieve", time_d_sieve, time_c_sieve, runs)
+    compare("Matrix", time_d_matrix, time_c_matrix, runs)
 }
 
-# FizzBuzz benchmark
-function fizzbuzzBenchmark() {
-    var startTime is time.tick()
-    
-    for i is 1 while i <= limit do i += 1 {
-        if i % 15 == 0 then "FizzBuzz"
-        else if i % 3 == 0 then "Fizz" 
-        else if i % 5 == 0 then "Buzz"
-        else @string(i)
+function compare(test :: string, d_time :: int, c_time :: int, runs :: int) {
+    const c_total_time is c_time / 1000000000
+    const d_total_time is d_time / 1000000000
+    const c_average_time is c_total_time / runs
+    const d_average_time is d_total_time / runs
+    std.io.println("--------------------------------")
+    std.io.println("{test}\t| Doxa\t| {roundTo(d_average_time, 2)}s ( {roundTo(d_total_time, 2)}s / {runs} iterations)")
+    std.io.println("{test}\t| C\t| {roundTo(c_average_time, 2)}s ( {roundTo(c_total_time, 2)}s / {runs} iterations)")
+    if c_average_time < d_average_time then {
+        std.io.println("Doxa is {roundTo(((d_average_time - c_average_time) / c_average_time) * 100, 2)}% slower than C")
     }
-    
-    var endTime is time.tick()
-    @print("FizzBuzz time: {(endTime - startTime) / 1000000000 }s\n")
-}
-
-# Arithmetic benchmark
-function arithmeticBenchmark() {
-    var sum is 0
-    var start is time.tick()
-    
-    each i in 1 to limit {
-        sum += i * 2 + 1
+    else {
+        std.io.println("Doxa is {roundTo(((c_average_time - d_average_time) / d_average_time) * 100, 2)}% faster than C")
     }
-    
-    @print("Arithmetic: {sum}, Time: {(time.tick() - start) / 1000000000}s\n")
 }
 
-# Function call benchmark  
-function callBenchmark() {
-    var sum is 0
-    var start is time.tick()
-    
-    each i in 1 to limit {
-        sum += add(i, i + 1)
+function roundTo(value :: float, precision :: int) returns float {
+    const str_value is @string(value)
+    var decimal_index is -1
+        each char at i in str_value {
+            if decimal_index < 0 then {
+                if char == "." then decimal_index is i
+            }
+        }
+        if(@length(str_value) < decimal_index + precision + 1) then {
+            return @float(str_value)
+        }
+        return @float(@slice(str_value, 0, decimal_index+precision+1))
+}
+
+function matchOutput(c_output :: string, d_output :: string) {
+    if(c_output != d_output) then {
+        const c_len is @length(c_output)
+        const d_len is @length(d_output)
+        if c_len != d_len then {
+            std.io.println("Output length mismatch: c:{c_len} != d:{d_len}")
+            return
+        }
+        each c at i in c_output {
+            if c != d_output[i] then {
+                std.io.println("Output mismatch at index {i}: c:{c} != d:{d_output[i]}")
+            }
+        }
+        std.io.println("Output mismatch c:{c_output} != d:{d_output}")
     }
-    
-    @print("Function calls: {sum}, Time: {(time.tick() - start) / 1000000000}s\n")
 }
 
-# Run all benchmarks
-@print("=== DOXA BENCHMARK SUITE ===\n")
-diceRollBenchmark()
-fizzbuzzBenchmark()
-arithmeticBenchmark()
-callBenchmark()
+function timeExec(command :: string, ^time :: int) returns string {
+    const startTime is std.time.tick()
+    const output is std.process.execCapture(command) as string else {
+        std.io.println("Error executing command: {command}")
+        return ""
+    }
+    const endTime is std.time.tick()
+    time += (endTime - startTime)
+    return output
+}
 
-
-
-
-
+public entry function suite() {
+    const args is std.process.args() as string[] else {
+        std.io.println("Error getting arguments")
+        return
+    }
+    var runs is 1
+    each arg in args {
+        if arg == "--long" then {
+            runs += 4
+        }
+    }
+    runSuite(runs)
+}
