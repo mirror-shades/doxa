@@ -547,6 +547,67 @@ pub fn Methods(comptime Ctx: type) type {
         };
     }
 
+    pub fn fixedArrayInnermostLLVMType(_: *IRPrinter, element_type: HIR.HIRType) []const u8 {
+        var cursor = element_type;
+        while (true) {
+            switch (cursor) {
+                .Array => |inner| cursor = inner.*,
+                .Int => return "i64",
+                .Float => return "double",
+                .Byte => return "i8",
+                .Tetra => return "i2",
+                else => return "i64",
+            }
+        }
+    }
+
+    pub fn buildFixedArrayLLVMTypeStr(
+        self: *IRPrinter,
+        element_type: HIR.HIRType,
+        size: u32,
+        nested_sizes: [4]u32,
+        nested_depth: u3,
+    ) ![]const u8 {
+        const base = self.fixedArrayInnermostLLVMType(element_type);
+        var result = try self.allocator.dupe(u8, base);
+
+        var i: i32 = @as(i32, @intCast(nested_depth)) - 1;
+        while (i >= 0) : (i -= 1) {
+            const wrapped = try std.fmt.allocPrint(self.allocator, "[{d} x {s}]", .{ nested_sizes[@intCast(i)], result });
+            result = wrapped;
+        }
+
+        const full = try std.fmt.allocPrint(self.allocator, "[{d} x {s}]", .{ size, result });
+        return full;
+    }
+
+    pub fn fixedArrayRemainingLLVMType(
+        self: *IRPrinter,
+        base_llvm_type: []const u8,
+    ) ![]const u8 {
+        const open = std.mem.indexOfScalar(u8, base_llvm_type, '[') orelse return base_llvm_type;
+        const close = std.mem.indexOfScalarPos(u8, base_llvm_type, open + 1, 'x') orelse return base_llvm_type;
+        const inner = base_llvm_type[close + 1 ..];
+        const trimmed = std.mem.trim(u8, inner, " ");
+        const end = std.mem.indexOfScalar(u8, trimmed, ']') orelse return trimmed;
+        return try self.allocator.dupe(u8, trimmed[0..end]);
+    }
+
+    pub fn fixedArrayLevelLLVMType(
+        self: *IRPrinter,
+        base_llvm_type: []const u8,
+        sizes: [4]u32,
+        depth: u3,
+    ) ![]const u8 {
+        var result = try self.allocator.dupe(u8, base_llvm_type);
+        var i: i32 = @as(i32, @intCast(depth)) - 1;
+        while (i >= 0) : (i -= 1) {
+            const wrapped = try std.fmt.allocPrint(self.allocator, "[{d} x {s}]", .{ sizes[@intCast(i)], result });
+            result = wrapped;
+        }
+        return result;
+    }
+
     pub fn convertValueToArrayStorage(
         self: *IRPrinter,
         w: anytype,

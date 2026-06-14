@@ -309,10 +309,22 @@ fn writeHIRInstructionText(writer: anytype, instruction: HIRInstruction) !void {
         .Halt => try writer.print("    Halt                        ; Program termination\n", .{}),
 
         // Array operations
-        .ArrayNew => |a| try writer.print(
-            "    ArrayNew {s} {} {s}             ; Create array\n",
-            .{ @tagName(a.element_type), a.size, @tagName(a.storage_kind) },
-        ),
+        .ArrayNew => |a| {
+            try writer.print(
+                "    ArrayNew {s} {} {s}",
+                .{ @tagName(a.element_type), a.size, @tagName(a.storage_kind) },
+            );
+            if (a.nested_depth > 0) {
+                try writer.print(" depth={d}", .{a.nested_depth});
+                try writer.writeAll(" [");
+                for (0..@as(usize, a.nested_depth)) |i| {
+                    if (i > 0) try writer.writeAll(",");
+                    try writer.print("{d}", .{a.nested_sizes[i]});
+                }
+                try writer.writeAll("]");
+            }
+            try writer.print("             ; Create array\n", .{});
+        },
         .ArrayGet => |a| try writer.print("    ArrayGet {}                 ; Get array element\n", .{a.bounds_check}),
         .ArrayCompoundAssign => |a| try writer.print("    ArrayCompoundAssign {} {s}   ; Compound array assignment\n", .{ a.bounds_check, @tagName(a.op) }),
         .ArraySet => |a| try writer.print("    ArraySet {}                 ; Set array element\n", .{a.bounds_check}),

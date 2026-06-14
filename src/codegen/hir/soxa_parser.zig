@@ -21,6 +21,7 @@ const SoxaTypes = @import("soxa_types.zig");
 const CallKind = SoxaTypes.CallKind;
 const HIRProgram = SoxaTypes.HIRProgram;
 const HIRType = SoxaTypes.HIRType;
+const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 
 fn parseTypeFromToken(name: []const u8) HIRType {
     if (std.mem.eql(u8, name, "Int")) return .Int;
@@ -746,12 +747,32 @@ pub const SoxaTextParser = struct {
         } else if (std.mem.eql(u8, op, "ArrayNew")) {
             const type_str = tokens.next() orelse return;
             const size_str = tokens.next() orelse return;
+            const storage_str = tokens.next() orelse return;
             const element_type: HIRType = if (std.mem.eql(u8, type_str, "Int")) .Int else if (std.mem.eql(u8, type_str, "Float")) .Float else if (std.mem.eql(u8, type_str, "String")) .String else if (std.mem.eql(u8, type_str, "Byte")) .Byte else if (std.mem.eql(u8, type_str, "Tetra")) .Tetra else if (std.mem.eql(u8, type_str, "Array")) .Nothing else .Nothing;
             const size = std.fmt.parseInt(u32, size_str, 10) catch return;
+            const storage_kind: ArrayStorageKind = if (std.mem.eql(u8, storage_str, "fixed")) .fixed else if (std.mem.eql(u8, storage_str, "const_literal")) .const_literal else .dynamic;
+
+            var nested_sizes: [4]u32 = [_]u32{0} ** 4;
+            var nested_depth: u3 = 0;
+
+            if (tokens.next()) |maybe_depth| {
+                if (std.mem.startsWith(u8, maybe_depth, "depth=")) {
+                    nested_depth = std.fmt.parseInt(u3, maybe_depth["depth=".len..], 10) catch 0;
+                    _ = tokens.next(); // skip '['
+                    for (0..@as(usize, nested_depth)) |i| {
+                        const ns_str = tokens.next() orelse return;
+                        const ns_trimmed = std.mem.trimRight(u8, ns_str, ",]");
+                        nested_sizes[i] = std.fmt.parseInt(u32, ns_trimmed, 10) catch return;
+                    }
+                }
+            }
+
             try self.instructions.append(HIRInstruction{ .ArrayNew = .{
                 .element_type = element_type,
                 .size = size,
-                .storage_kind = .dynamic,
+                .storage_kind = storage_kind,
+                .nested_sizes = nested_sizes,
+                .nested_depth = nested_depth,
             } });
         } else if (std.mem.eql(u8, op, "ArrayGet")) {
             const bounds_str = tokens.next() orelse return;

@@ -126,6 +126,8 @@ pub fn Methods(comptime Ctx: type) type {
                 .struct_field_names = top.struct_field_names,
                 .struct_type_name = top.struct_type_name,
                 .string_literal_value = top.string_literal_value,
+                .fixed_array_depth = top.fixed_array_depth,
+                .fixed_array_sizes = top.fixed_array_sizes,
             };
             try stack.append(duped);
         }
@@ -1851,6 +1853,38 @@ pub fn Methods(comptime Ctx: type) type {
                     }
                 }
                 if (!is_alias) {
+                    if (arg.fixed_array_depth > 0 and declared_type != null and declared_type.? == .Array) {
+                        const elem_type = arg.array_type orelse HIR.HIRType.Int;
+                        const elem_size = self.arrayElementSize(elem_type);
+                        const elem_tag = self.arrayElementTag(elem_type);
+                        var total_elems: u64 = arg.fixed_array_sizes[0];
+                        for (1..@as(usize, arg.fixed_array_depth)) |j| {
+                            total_elems *= arg.fixed_array_sizes[j];
+                        }
+                        const total_bytes = total_elems * elem_size;
+
+                        const dyn_reg = try self.nextTemp(id);
+                        const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n", .{ dyn_reg, elem_size, elem_tag, total_elems });
+                        defer self.allocator.free(new_line);
+                        try w.writeAll(new_line);
+
+                        const data_ptr_ptr = try self.nextTemp(id);
+                        const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr_ptr, dyn_reg });
+                        defer self.allocator.free(gep_line);
+                        try w.writeAll(gep_line);
+
+                        const data_ptr = try self.nextTemp(id);
+                        const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ data_ptr, data_ptr_ptr });
+                        defer self.allocator.free(load_line);
+                        try w.writeAll(load_line);
+
+                        const copy_line = try std.fmt.allocPrint(self.allocator, "  call void @llvm.memcpy.p0.p0.i64(ptr align 1 {s}, ptr align 1 {s}, i64 {d}, i1 false)\n", .{ data_ptr, arg.name, total_bytes });
+                        defer self.allocator.free(copy_line);
+                        try w.writeAll(copy_line);
+
+                        arg = .{ .name = dyn_reg, .ty = .PTR, .array_type = elem_type };
+                        arg_ptr.* = arg;
+                    }
                     if (declared_type) |decl| {
                         if (arg.ty == .Value and decl != .Union) {
                             arg = try self.unwrapDoxaValueToType(w, arg, decl, id);
@@ -2020,7 +2054,7 @@ pub fn Methods(comptime Ctx: type) type {
             if (sd.declared_type == .Union) {
                 value = try self.buildDoxaValue(w, value, sd.declared_type, id);
             }
-            if (!sd.is_const and sd.declared_type == .Array) {
+            if (!sd.is_const and sd.declared_type == .Array and value.fixed_array_depth == 0) {
                 const src_ptr = if (value.ty == .PTR) value else try self.ensurePointer(w, value, id);
                 const clone_reg = try self.nextTemp(id);
                 const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_clone(ptr {s})\n", .{ clone_reg, src_ptr.name });
@@ -2048,6 +2082,12 @@ pub fn Methods(comptime Ctx: type) type {
                 _ = try self.global_array_types.put(sd.var_name, array_type);
             }
             _ = try self.defined_globals.put(sd.var_name, true);
+            if (value.fixed_array_depth > 0) {
+                _ = try self.global_fixed_array_info.put(sd.var_name, .{
+                    .depth = value.fixed_array_depth,
+                    .sizes = value.fixed_array_sizes,
+                });
+            }
             const gptr = try self.mangleGlobalName(sd.var_name);
             defer self.allocator.free(gptr);
             if (value.struct_field_types) |fts| {
@@ -2094,6 +2134,12 @@ pub fn Methods(comptime Ctx: type) type {
                 _ = try self.global_enum_types.put(sv.var_name, enum_type_name);
             }
             _ = try self.defined_globals.put(sv.var_name, true);
+            if (value.fixed_array_depth > 0) {
+                _ = try self.global_fixed_array_info.put(sv.var_name, .{
+                    .depth = value.fixed_array_depth,
+                    .sizes = value.fixed_array_sizes,
+                });
+            }
             const gptr = try self.mangleGlobalName(sv.var_name);
             defer self.allocator.free(gptr);
             if (value.struct_field_types) |fts| {
@@ -2139,7 +2185,18 @@ pub fn Methods(comptime Ctx: type) type {
             const struct_fields = self.global_struct_field_types.get(gname);
             const struct_names = self.global_struct_field_names.get(gname);
             const struct_type_name = self.global_struct_type_names.get(gname);
-            try stack.append(.{ .name = result_name, .ty = st, .array_type = array_type, .enum_type_name = enum_type_name, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+            const fixed_info = self.global_fixed_array_info.get(gname);
+            try stack.append(.{
+                .name = result_name,
+                .ty = st,
+                .array_type = array_type,
+                .enum_type_name = enum_type_name,
+                .struct_field_types = struct_fields,
+                .struct_field_names = struct_names,
+                .struct_type_name = struct_type_name,
+                .fixed_array_depth = if (fixed_info) |fi| fi.depth else 0,
+                .fixed_array_sizes = if (fixed_info) |fi| fi.sizes else [_]u32{0} ** 4,
+            });
         }
 
         pub fn handlePushStorageIdGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gname: []const u8) !void {
@@ -2155,6 +2212,70 @@ pub fn Methods(comptime Ctx: type) type {
             const struct_names = self.global_struct_field_names.get(gname);
             const struct_type_name = self.global_struct_type_names.get(gname);
             try stack.append(.{ .name = gptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+        }
+
+        pub fn wrapFixedArrayHeader(
+            self: *IRPrinter,
+            w: anytype,
+            fixed: StackVal,
+            id: *usize,
+        ) !StackVal {
+            const elem_type = fixed.array_type orelse HIR.HIRType.Int;
+            const elem_size = self.arrayElementSize(elem_type);
+            const elem_tag = self.arrayElementTag(elem_type);
+
+            var total_elems: u64 = fixed.fixed_array_sizes[0];
+            var i: u32 = 1;
+            while (i < fixed.fixed_array_depth) : (i += 1) {
+                total_elems *= fixed.fixed_array_sizes[i];
+            }
+
+            const hdr_reg = try self.nextTemp(id);
+            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_reg});
+            defer self.allocator.free(alloca_line);
+            try w.writeAll(alloca_line);
+
+            const data_ptr = try self.nextTemp(id);
+            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr, hdr_reg });
+            defer self.allocator.free(gep_line);
+            try w.writeAll(gep_line);
+            const store_data = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ fixed.name, data_ptr });
+            defer self.allocator.free(store_data);
+            try w.writeAll(store_data);
+
+            const len_ptr = try self.nextTemp(id);
+            const len_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 1\n", .{ len_ptr, hdr_reg });
+            defer self.allocator.free(len_gep);
+            try w.writeAll(len_gep);
+            const store_len = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ total_elems, len_ptr });
+            defer self.allocator.free(store_len);
+            try w.writeAll(store_len);
+
+            const cap_ptr = try self.nextTemp(id);
+            const cap_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 2\n", .{ cap_ptr, hdr_reg });
+            defer self.allocator.free(cap_gep);
+            try w.writeAll(cap_gep);
+            const store_cap = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ total_elems, cap_ptr });
+            defer self.allocator.free(store_cap);
+            try w.writeAll(store_cap);
+
+            const esz_ptr = try self.nextTemp(id);
+            const esz_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 3\n", .{ esz_ptr, hdr_reg });
+            defer self.allocator.free(esz_gep);
+            try w.writeAll(esz_gep);
+            const store_esz = try std.fmt.allocPrint(self.allocator, "  store i32 {d}, ptr {s}\n", .{ elem_size, esz_ptr });
+            defer self.allocator.free(store_esz);
+            try w.writeAll(store_esz);
+
+            const tag_ptr = try self.nextTemp(id);
+            const tag_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 4\n", .{ tag_ptr, hdr_reg });
+            defer self.allocator.free(tag_gep);
+            try w.writeAll(tag_gep);
+            const store_tag = try std.fmt.allocPrint(self.allocator, "  store i32 {d}, ptr {s}\n", .{ elem_tag, tag_ptr });
+            defer self.allocator.free(store_tag);
+            try w.writeAll(store_tag);
+
+            return .{ .name = hdr_reg, .ty = .PTR, .array_type = elem_type };
         }
     };
 }

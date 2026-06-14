@@ -184,7 +184,7 @@ pub fn arrayGet(vm: anytype, a: anytype) !void {
         .array => |arr| {
             const resolved_index = try resolveArrayIndex(index, arr.length);
 
-            if (a.bounds_check and resolved_index >= arr.length) {
+            if (a.bounds_check and arr.storage_kind != .fixed and resolved_index >= arr.length) {
                 return ErrorList.IndexOutOfBounds;
             }
 
@@ -255,6 +255,10 @@ pub fn arraySet(vm: anytype, a: anytype) !void {
         .array => |arr| {
             var mutable_arr = arr;
 
+            if (mutable_arr.storage_kind == .fixed and index_val >= mutable_arr.capacity) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds for fixed-size array: {} (size: {})", .{ index_val, mutable_arr.capacity });
+            }
+
             if (index_val >= mutable_arr.capacity) {
                 mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
                 const allocator = try vm.arrayAllocator(mutable_arr);
@@ -293,7 +297,9 @@ pub fn arrayPop(vm: anytype) !void {
     switch (array.value) {
         .array => |arr| {
             var mutable_arr = arr;
-            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            if (mutable_arr.storage_kind != .fixed) {
+                mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            }
 
             if (mutable_arr.length == 0) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot pop from empty array", .{});
@@ -671,6 +677,9 @@ pub fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
     const array_frame = try vm.stack.pop();
     switch (array_frame.value) {
         .array => |arr| {
+            if (arr.storage_kind == .fixed) {
+                return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot push to fixed-size array", .{});
+            }
             var mutable_arr = arr;
             mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
             const allocator = try vm.arrayAllocator(mutable_arr);
@@ -971,7 +980,9 @@ fn execArrayGetAndCompound(vm: anytype, comptime op: CompoundOp) !void {
     switch (array_frame.value) {
         .array => |arr| {
             var mutable_arr = arr;
-            mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            if (mutable_arr.storage_kind != .fixed) {
+                mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
+            }
             if (index_val >= mutable_arr.capacity) {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
             }
