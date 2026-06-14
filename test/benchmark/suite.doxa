@@ -38,26 +38,24 @@ function runSuite(runs :: int) {
 
     std.io.println("Running benchmarks...")
 
-
-    each run in 0 to runs - 1 {
+    each test in tests {
         var time_d is 0
         var time_c is 0
-        each test in tests {
+        var is_match is false
+        each run in 0 to runs - 1 {
             const output_d is timeExec("./test/benchmark/d-bin/{test}", ^time_d)
             const output_c is timeExec("./test/benchmark/c-bin/{test}", ^time_c)
-            # var is_match is false
-            # if run == 0 then {
-            #     is_match is matchOutput(output_c, output_d)
-            # }
-            # @push(results, Result.new(test, runs, time_d, time_c, is_match))
+            if run == 0 then {
+                is_match is matchOutput(output_c, output_d)
+            }
         }
+        @push(results, Result.new(test, runs, time_d, time_c, is_match))
     }
 
-
-    # std.io.println("test\t| lang\t| runtime")
-    # each result in results {
-    #     compare(result)
-    # }
+    std.io.println("test\t| lang\t| runtime")
+    each result in results {
+        compare(result)
+    }
 }
 
 function compare(result :: Result) {
@@ -118,9 +116,6 @@ function timeExec(command :: string, ^time :: int) returns string {
         return ""
     }
     const endTime is std.time.tick()
-    time?
-    startTime?
-    endTime?
     time += (endTime - startTime)
     return output
 }
