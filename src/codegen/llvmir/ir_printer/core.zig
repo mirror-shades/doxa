@@ -689,6 +689,8 @@ pub fn Methods(comptime Ctx: type) type {
                 .enum_print_map = std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)).init(allocator),
                 .group_table = group_table,
                 .enum_table = enum_table,
+                .entry_str_out_ptr = null,
+                .entry_str_out_len = null,
             };
         }
 

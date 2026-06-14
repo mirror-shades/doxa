@@ -390,6 +390,10 @@ pub fn Methods(comptime Ctx: type) type {
         ) !void {
             try w.writeAll("define void @doxa_program_main() {\n");
             try w.writeAll("entry:\n");
+            try w.writeAll("  %str_out_ptr = alloca ptr\n");
+            try w.writeAll("  %str_out_len = alloca i64\n");
+            self.entry_str_out_ptr = "%str_out_ptr";
+            self.entry_str_out_len = "%str_out_len";
 
             var id: usize = 0;
             var stack = std.array_list.Managed(StackVal).init(self.allocator);

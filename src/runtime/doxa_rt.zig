@@ -1292,11 +1292,11 @@ fn asArrayHeader(ptr: ?*anyopaque) ?*ArrayHeader {
 }
 
 pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
-    var buf: [4096]u8 = undefined;
-    var fbs = std.io.fixedBufferStream(&buf);
-    const out = fbs.writer();
+    var list = std.array_list.Managed(u8).init(std.heap.page_allocator);
+    defer list.deinit();
+    const out = list.writer();
     printArrayHdrImpl(out, hdr) catch return;
-    doxaWrite(fbs.getWritten());
+    doxaWrite(list.items);
 }
 
 fn printTaggedBitsImpl(out: anytype, tag: u64, bits: i64) anyerror!void {
@@ -1310,7 +1310,11 @@ fn printTaggedBitsImpl(out: anytype, tag: u64, bits: i64) anyerror!void {
         },
         2 => { // float (f64)
             const f: f64 = asFloat(bits);
-            try out.print("{d}", .{f});
+            const rounded_down = std.math.floor(f);
+            if (f - rounded_down == 0)
+                try out.print("{d}.0", .{f})
+            else
+                try out.print("{d}", .{f});
         },
          3 => { // string (i8* + len stored separately in array or as DoxaString)
             const ds = doxaStringFromBits(bits);

@@ -166,6 +166,12 @@ pub fn Methods(comptime Ctx: type) type {
                 try variables.put(var_name, var_info);
             }
 
+            // Reusable stack slots for string operations (avoid alloca-in-loop stack overflow)
+            try w.writeAll("  %str_out_ptr = alloca ptr\n");
+            try w.writeAll("  %str_out_len = alloca i64\n");
+            self.entry_str_out_ptr = "%str_out_ptr";
+            self.entry_str_out_len = "%str_out_len";
+
             // Process function body instructions
             var id: usize = func.param_types.len; // Start after parameters
             var stack = std.array_list.Managed(StackVal).init(self.allocator);
