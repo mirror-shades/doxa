@@ -374,7 +374,7 @@ pub const BytecodeGenerator = struct {
                     try self.instructions.append(self.allocator, .{ .StoreSlot = .{ .target = operand, .type_tag = try module.typeFromHIR(safe_hir_type) } });
                 },
                 .PushStorageId => |payload| {
-                    const operand = self.slotFromCache(payload.var_index) orelse try self.makeSlotOperand(payload.scope_kind, payload.var_index, null);
+                    const operand = try self.makeSlotOperand(payload.scope_kind, payload.var_index, null);
                     try self.instructions.append(self.allocator, .{ .PushStorageRef = operand });
                 },
                 .UnionConstruct => |payload| {

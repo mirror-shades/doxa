@@ -1807,44 +1807,44 @@ pub const VM = struct {
     }
 
     fn execInlineZigModuleFunction(self: *VM, qualified_name: []const u8, arg_count_raw: u32) VmError!void {
-        const dot_idx = std.mem.indexOfScalar(u8, qualified_name, '.') orelse {
-            self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown module function: {s}", .{qualified_name});
-            return ErrorList.RuntimeError;
-        };
-        const module_name = qualified_name[0..dot_idx];
-        const fn_name = qualified_name[dot_idx + 1 ..];
-
         if (self.zig_modules == null) {
             self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Module function not available in VM: {s}", .{qualified_name});
             return ErrorList.RuntimeError;
         }
         var mods = &self.zig_modules.?;
-        if (mods.getPtr(module_name)) |mod_ptr| {
-            if (mod_ptr.lib == null) {
-                mod_ptr.lib = std.DynLib.open(mod_ptr.lib_path) catch {
-                    self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to load zig module library: {s}", .{mod_ptr.lib_path});
+
+        var scan_pos: usize = 0;
+        while (std.mem.indexOfScalar(u8, qualified_name[scan_pos..], '.')) |local_dot| {
+            const dot_idx = scan_pos + local_dot;
+            const module_name = qualified_name[0..dot_idx];
+            const fn_name = qualified_name[dot_idx + 1 ..];
+
+            if (mods.getPtr(module_name)) |mod_ptr| {
+                if (mod_ptr.lib == null) {
+                    mod_ptr.lib = std.DynLib.open(mod_ptr.lib_path) catch {
+                        self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Failed to load zig module library: {s}", .{mod_ptr.lib_path});
+                        return ErrorList.RuntimeError;
+                    };
+                }
+                const fn_entry = mod_ptr.functions.getPtr(fn_name) orelse {
+                    self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function '{s}' not found in zig module '{s}'", .{ fn_name, module_name });
                     return ErrorList.RuntimeError;
                 };
-            }
-            const fn_entry = mod_ptr.functions.getPtr(fn_name) orelse {
-                self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Function '{s}' not found in zig module '{s}'", .{ fn_name, module_name });
-                return ErrorList.RuntimeError;
-            };
 
-            const arg_count: usize = @intCast(arg_count_raw);
-            if (arg_count != fn_entry.param_types.len) {
-                self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT_COUNT, "Invalid argument count for {s}: expected {}, got {}", .{ qualified_name, fn_entry.param_types.len, arg_count });
-                return ErrorList.RuntimeError;
-            }
+                const arg_count: usize = @intCast(arg_count_raw);
+                if (arg_count != fn_entry.param_types.len) {
+                    self.reporter.reportRuntimeError(null, ErrorCode.INVALID_ARGUMENT_COUNT, "Invalid argument count for {s}: expected {}, got {}", .{ qualified_name, fn_entry.param_types.len, arg_count });
+                    return ErrorList.RuntimeError;
+                }
 
-            const lib = &mod_ptr.lib.?;
-            const FreeAbiStringFn = *const fn (*const DoxaAbiValue) callconv(.c) void;
-            const free_abi_string: ?FreeAbiStringFn = blk: {
-                const sym = mod_ptr.free_cstr_symbol orelse break :blk null;
-                const sym_z = self.allocator.dupeZ(u8, sym) catch break :blk null;
-                defer self.allocator.free(sym_z);
-                break :blk lib.lookup(FreeAbiStringFn, sym_z);
-            };
+                const lib = &mod_ptr.lib.?;
+                const FreeAbiStringFn = *const fn (*const DoxaAbiValue) callconv(.c) void;
+                const free_abi_string: ?FreeAbiStringFn = blk: {
+                    const sym = mod_ptr.free_cstr_symbol orelse break :blk null;
+                    const sym_z = self.allocator.dupeZ(u8, sym) catch break :blk null;
+                    defer self.allocator.free(sym_z);
+                    break :blk lib.lookup(FreeAbiStringFn, sym_z);
+                };
 
             var abi_args = try self.runtimeAllocator().alloc(DoxaAbiValue, arg_count);
             defer self.runtimeAllocator().free(abi_args);
@@ -1998,8 +1998,10 @@ pub const VM = struct {
                 },
             }
         }
+            scan_pos = dot_idx + 1;
+        }
 
-        self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown zig module: {s}", .{module_name});
+        self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Unknown zig module for call: {s}", .{qualified_name});
         return ErrorList.RuntimeError;
     }
 

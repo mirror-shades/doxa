@@ -26,7 +26,7 @@ int main() {
         }
     }
 
-    printf("%.0f\n", c[N-1][N-1]);
+    printf("%.1f\n", c[N-1][N-1]);
 
     return 0;
 }

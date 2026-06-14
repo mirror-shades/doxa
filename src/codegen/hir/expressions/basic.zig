@@ -134,18 +134,6 @@ pub const BasicExpressionHandler = struct {
                 try self.generator.instructions.append(load_var_inst);
             }
         } else {
-            if (self.generator.isModuleNamespace(var_token.lexeme)) {
-                const bindings = try self.generator.resolveModuleBindings(var_token.lexeme);
-                try self.generator.instructions.append(.{
-                    .LoadModule = .{
-                        .module_name = var_token.lexeme,
-                        .field_names = bindings.names,
-                        .field_slots = bindings.slots,
-                    },
-                });
-                return;
-            }
-
             // Check if this is an alias parameter that wasn't found in the symbol table
             if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
                 // For alias parameters, get the correct slot from the slot manager
@@ -159,24 +147,35 @@ pub const BasicExpressionHandler = struct {
                 } else {
                     return ErrorList.InvalidAliasArgument;
                 }
-            } else {
-                // Regular variable - ensure it exists in the current scope and load it at runtime
-                const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
-
-                // Determine scope based on where the variable was actually created
-                // This must happen AFTER getOrCreateVariable to ensure the variable is registered
-                const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-
-                const load_var_inst2 = HIRInstruction{
-                    .LoadVar = .{
-                        .var_index = var_idx2,
-                        .var_name = var_token.lexeme,
-                        .scope_kind = scope_kind,
-                        .module_context = null,
+                return;
+            } else if (self.generator.isModuleNamespace(var_token.lexeme)) {
+                const bindings = try self.generator.resolveModuleBindings(var_token.lexeme);
+                try self.generator.instructions.append(.{
+                    .LoadModule = .{
+                        .module_name = var_token.lexeme,
+                        .field_names = bindings.names,
+                        .field_slots = bindings.slots,
                     },
-                };
-                try self.generator.instructions.append(load_var_inst2);
+                });
+                return;
             }
+
+            // Regular variable - ensure it exists in the current scope and load it at runtime
+            const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
+
+            // Determine scope based on where the variable was actually created
+            // This must happen AFTER getOrCreateVariable to ensure the variable is registered
+            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+
+            const load_var_inst2 = HIRInstruction{
+                .LoadVar = .{
+                    .var_index = var_idx2,
+                    .var_name = var_token.lexeme,
+                    .scope_kind = scope_kind,
+                    .module_context = null,
+                },
+            };
+            try self.generator.instructions.append(load_var_inst2);
         }
     }
 
