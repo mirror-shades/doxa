@@ -32,8 +32,8 @@ function runSuite(runs :: int) {
     std.io.println("Compiling benchmarks...")
 
     each test in tests {
-        std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test}")
-        std.process.exec("gcc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}")
+        std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test} --opt=2")
+        std.process.exec("gcc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test} -O2")
     }
 
     std.io.println("Running benchmarks...")
