@@ -1,64 +1,81 @@
 module std from @std()
 
+const tests is [
+    "fib",
+    "sieve",
+    "matrix",
+    "mb",
+]
+
+struct Result {
+    public test :: string,
+    public runs :: int,
+    public time_d :: int,
+    public time_c :: int,
+    public is_match :: tetra
+
+    function new(test :: string, runs :: int, time_d :: int, time_c :: int, is_match :: tetra) returns Result {
+        return $Result {
+            test is test,
+            runs is runs,
+            time_d is time_d,
+            time_c is time_c,
+            is_match is is_match,
+        }
+    }
+}
+
+var results :: Result[]
+
 function runSuite(runs :: int) {
 
     std.io.println("Compiling benchmarks...")
-    std.process.exec("./doxa/bin/doxa compile test/benchmark/fib.doxa -o test/benchmark/d-bin/fib")
-    std.process.exec("gcc test/benchmark/fib.c -o test/benchmark/c-bin/fib")
-    std.process.exec("./doxa/bin/doxa compile test/benchmark/sieve.doxa -o test/benchmark/d-bin/sieve")
-    std.process.exec("gcc test/benchmark/sieve.c -o test/benchmark/c-bin/sieve")
+
+    each test in tests {
+        std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test}")
+        std.process.exec("gcc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}")
+    }
 
     std.io.println("Running benchmarks...")
 
-    var time_d_fib :: int
-    var time_c_fib :: int
-    var time_d_sieve :: int
-    var time_c_sieve :: int
-    var time_d_matrix :: int
-    var time_c_matrix :: int
-    
+
     each run in 0 to runs - 1 {
-        const output_d_fib is timeExec("./test/benchmark/d-bin/fib", ^time_d_fib)
-        const output_c_fib is timeExec("./test/benchmark/c-bin/fib", ^time_c_fib)
-        const output_d_sieve is timeExec("./test/benchmark/d-bin/sieve", ^time_d_sieve)
-        const output_c_sieve is timeExec("./test/benchmark/c-bin/sieve", ^time_c_sieve)
-        const output_d_matrix is timeExec("./test/benchmark/d-bin/matrix", ^time_d_matrix)
-        const output_c_matrix is timeExec("./test/benchmark/c-bin/matrix", ^time_c_matrix)
-        if run == 0 then {
-            matchOutput(output_c_fib, output_d_fib)
-            matchOutput(output_c_sieve, output_d_sieve)
-            matchOutput(output_c_matrix, output_d_matrix)
-        }
-        else {
-            time_d_fib += @length(output_d_fib)
-            time_c_fib += @length(output_c_fib)
-            time_d_sieve += @length(output_d_sieve)
-            time_c_sieve += @length(output_c_sieve)
-            time_d_matrix += @length(output_d_matrix)
-            time_c_matrix += @length(output_c_matrix)
+        var time_d is 0
+        var time_c is 0
+        each test in tests {
+            const output_d is timeExec("./test/benchmark/d-bin/{test}", ^time_d)
+            const output_c is timeExec("./test/benchmark/c-bin/{test}", ^time_c)
+            # var is_match is false
+            # if run == 0 then {
+            #     is_match is matchOutput(output_c, output_d)
+            # }
+            # @push(results, Result.new(test, runs, time_d, time_c, is_match))
         }
     }
 
 
-    std.io.println("test\t| lang\t| runtime")
-    compare("Fib", time_d_fib, time_c_fib, runs)
-    compare("Sieve", time_d_sieve, time_c_sieve, runs)
-    compare("Matrix", time_d_matrix, time_c_matrix, runs)
+    # std.io.println("test\t| lang\t| runtime")
+    # each result in results {
+    #     compare(result)
+    # }
 }
 
-function compare(test :: string, d_time :: int, c_time :: int, runs :: int) {
-    const c_total_time is c_time / 1000000000
-    const d_total_time is d_time / 1000000000
-    const c_average_time is c_total_time / runs
-    const d_average_time is d_total_time / runs
+function compare(result :: Result) {
+    const c_total_time is result.time_c / 1000000000
+    const d_total_time is result.time_d / 1000000000
+    const c_average_time is c_total_time / result.runs
+    const d_average_time is d_total_time / result.runs
     std.io.println("--------------------------------")
-    std.io.println("{test}\t| Doxa\t| {roundTo(d_average_time, 2)}s ( {roundTo(d_total_time, 2)}s / {runs} iterations)")
-    std.io.println("{test}\t| C\t| {roundTo(c_average_time, 2)}s ( {roundTo(c_total_time, 2)}s / {runs} iterations)")
+    std.io.println("{result.test}\t| Doxa\t| {roundTo(d_average_time, 2)}s ( {roundTo(d_total_time, 2)}s / {result.runs} iterations)")
+    std.io.println("{result.test}\t| C\t| {roundTo(c_average_time, 2)}s ( {roundTo(c_total_time, 2)}s / {result.runs} iterations)")
     if c_average_time < d_average_time then {
         std.io.println("Doxa is {roundTo(((d_average_time - c_average_time) / c_average_time) * 100, 2)}% slower than C")
     }
-    else {
+    else if c_average_time > d_average_time then {
         std.io.println("Doxa is {roundTo(((c_average_time - d_average_time) / d_average_time) * 100, 2)}% faster than C")
+    }
+    else {
+        std.io.println("Doxa is equal to C")
     }
 }
 
@@ -76,13 +93,12 @@ function roundTo(value :: float, precision :: int) returns float {
         return @float(@slice(str_value, 0, decimal_index+precision+1))
 }
 
-function matchOutput(c_output :: string, d_output :: string) {
+function matchOutput(c_output :: string, d_output :: string) returns tetra {
     if(c_output != d_output) then {
         const c_len is @length(c_output)
         const d_len is @length(d_output)
         if c_len != d_len then {
             std.io.println("Output length mismatch: c:{c_len} != d:{d_len}")
-            return
         }
         each c at i in c_output {
             if c != d_output[i] then {
@@ -90,7 +106,9 @@ function matchOutput(c_output :: string, d_output :: string) {
             }
         }
         std.io.println("Output mismatch c:{c_output} != d:{d_output}")
+        return false
     }
+    return true
 }
 
 function timeExec(command :: string, ^time :: int) returns string {
@@ -100,6 +118,9 @@ function timeExec(command :: string, ^time :: int) returns string {
         return ""
     }
     const endTime is std.time.tick()
+    time?
+    startTime?
+    endTime?
     time += (endTime - startTime)
     return output
 }
