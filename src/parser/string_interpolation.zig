@@ -16,7 +16,7 @@ pub fn buildStringLiteralExpr(
     interpolated: bool,
 ) ErrorList!*ast.Expr {
     if (interpolated and std.mem.indexOfScalar(u8, content, '{') != null) {
-        const template = try parseFormatTemplate(self, content);
+        const template = try parseFormatTemplate(self, content, span);
         const expr = try self.allocator.create(ast.Expr);
         expr.* = .{
             .base = .{
@@ -40,7 +40,7 @@ pub fn buildStringLiteralExpr(
     return expr;
 }
 
-fn parseFormatTemplate(self: *Parser, format_string: []const u8) ErrorList!*ast.FormatTemplate {
+fn parseFormatTemplate(self: *Parser, format_string: []const u8, span: ast.SourceSpan) ErrorList!*ast.FormatTemplate {
     var template_parts = std.array_list.Managed(ast.FormatPart).init(self.allocator);
     errdefer {
         for (template_parts.items) |*part| {
@@ -89,7 +89,7 @@ fn parseFormatTemplate(self: *Parser, format_string: []const u8) ErrorList!*ast.
             }
 
             const placeholder_content = format_string[i + 1 .. j];
-            const placeholder_expr = try parsePlaceholderExpression(self, placeholder_content);
+            const placeholder_expr = try parsePlaceholderExpression(self, placeholder_content, span);
             try template_parts.append(ast.createExpressionPart(placeholder_expr));
 
             i = j + 1;
@@ -105,7 +105,7 @@ fn parseFormatTemplate(self: *Parser, format_string: []const u8) ErrorList!*ast.
     return try ast.createFormatTemplate(self.allocator, try template_parts.toOwnedSlice());
 }
 
-fn parsePlaceholderExpression(self: *Parser, content: []const u8) ErrorList!*ast.Expr {
+fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: ast.SourceSpan) ErrorList!*ast.Expr {
     var temp_lexer = try LexicalAnalyzer.init(self.allocator, content, self.current_file, self.reporter);
     defer temp_lexer.deinit();
 
@@ -131,12 +131,13 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8) ErrorList!*ast
         var_expr.* = .{
             .base = .{
                 .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(var_token),
+                .span = outer_span,
             },
             .data = .{ .Variable = var_token },
         };
         return var_expr;
     };
 
+    expr.base.span = outer_span;
     return expr;
 }
