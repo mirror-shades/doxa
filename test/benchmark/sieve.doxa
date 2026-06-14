@@ -1,0 +1,32 @@
+module std from @std()
+
+public entry function main() {
+    const limit is 100000000;
+
+    var prime :: byte[limit + 1]
+
+    for i while i <= limit do i++ {
+        prime[i] is 0x01
+    }
+
+    prime[0] is 0x00
+    prime[1] is 0x00
+
+    for i while (i * i <= limit) do i++ {
+        if prime[i] > 0x00 then {
+            for j is i * i while j <= limit do j += i {
+                prime[j] is 0x00
+            }
+        }
+    }
+
+    var count :: int;
+
+    for i while i <= limit do i++ {
+        if prime[i] > 0x00 then {
+            count += 1;
+        }
+    }
+
+    std.io.println("{count}");
+}

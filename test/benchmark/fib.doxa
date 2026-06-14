@@ -1,0 +1,12 @@
+module std from @std()
+
+function fib(n :: int) returns int {
+    if n < 2 then return n
+    return fib(n - 1) + fib(n - 2)
+}
+
+public entry function main() {
+    var result is fib(44)
+    std.io.println("{result}")
+}
+
