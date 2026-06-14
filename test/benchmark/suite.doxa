@@ -120,16 +120,42 @@ function timeExec(command :: string, ^time :: int) returns string {
     return output
 }
 
+function writeStats(results :: Result[]) {
+    const path is "test/benchmark/stats.csv"
+    const header is "test, c_runtime, d_runtime, percentage, delta, date\n"
+
+    if not std.file.exists(path) then {
+        std.file.write(path, header)
+    }
+    each result in results {
+        const c_raw is result.time_c / result.runs / 1000000000
+        const d_raw is result.time_d / result.runs / 1000000000
+        const c_time is roundTo(c_raw, 2)
+        const d_time is roundTo(d_raw, 2)
+        const percentage is roundTo(((d_raw - c_raw) / c_raw) * 100, 2)
+        const delta is roundTo(d_raw - c_raw, 2)
+        std.file.append(path, "{result.test}, {c_time}, {d_time}, {percentage}, {delta}, {std.time.unix()}\n")
+    }
+    
+}
+
 public entry function suite() {
+    var runs is 1
+    var write is false
     const args is std.process.args() as string[] else {
         std.io.println("Error getting arguments")
         return
     }
-    var runs is 1
     each arg in args {
         if arg == "--long" then {
             runs += 4
         }
+        else if arg == "--write" then {
+            write is true
+        }
     }
     runSuite(runs)
+    if write then {
+        writeStats(results)
+    }
 }
