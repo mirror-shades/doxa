@@ -538,6 +538,15 @@ pub const CallsHandler = struct {
             }
         } else if (std.mem.eql(u8, name, "push")) {
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
+            if (builtin_data.arguments[0].data == .Variable) {
+                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+                const storage_kind = self.generator.getTrackedArrayStorageKind(var_name) orelse .dynamic;
+                if (storage_kind == .fixed or storage_kind == .const_literal) {
+                    const location = builtin_data.arguments[0].base.location();
+                    self.generator.reporter.reportCompileError(location, ErrorCode.INVALID_ARRAY_TYPE, "cannot push to a fixed-size array", .{});
+                    return ErrorList.UnsupportedArrayType;
+                }
+            }
             const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.generateExpression(builtin_data.arguments[1], true, false);
@@ -747,6 +756,15 @@ pub const CallsHandler = struct {
         } else if (std.mem.eql(u8, name, "push")) {
             if (internal_data.arguments.len != 1) {
                 return error.InvalidArgumentCount;
+            }
+            if (internal_data.receiver.data == .Variable) {
+                const var_name = internal_data.receiver.data.Variable.lexeme;
+                const storage_kind = self.generator.getTrackedArrayStorageKind(var_name) orelse .dynamic;
+                if (storage_kind == .fixed or storage_kind == .const_literal) {
+                    const location = internal_data.receiver.base.location();
+                    self.generator.reporter.reportCompileError(location, ErrorCode.INVALID_ARRAY_TYPE, "cannot push to a fixed-size array", .{});
+                    return ErrorList.UnsupportedArrayType;
+                }
             }
             const target_type = self.generator.inferTypeFromExpression(internal_data.receiver);
             try self.generator.generateExpression(internal_data.receiver, true, false);

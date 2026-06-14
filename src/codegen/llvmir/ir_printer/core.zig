@@ -676,6 +676,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .global_struct_field_types = std.StringHashMap([]HIR.HIRType).init(allocator),
                 .global_struct_field_names = std.StringHashMap([]const []const u8).init(allocator),
                 .global_struct_type_names = std.StringHashMap([]const u8).init(allocator),
+                .global_fixed_array_info = std.StringHashMap(IRPrinter.GlobalFixedArrayInfo).init(allocator),
                 .struct_fields_by_id = std.AutoHashMap(HIR.StructId, []HIR.HIRType).init(allocator),
                 .struct_type_names_by_id = std.AutoHashMap(HIR.StructId, []const u8).init(allocator),
                 .defined_globals = std.StringHashMap(bool).init(allocator),
@@ -703,6 +704,7 @@ pub fn Methods(comptime Ctx: type) type {
             self.global_struct_field_types.deinit();
             self.global_struct_field_names.deinit();
             self.global_struct_type_names.deinit();
+            self.global_fixed_array_info.deinit();
             self.struct_fields_by_id.deinit();
             self.struct_type_names_by_id.deinit();
             self.defined_globals.deinit();

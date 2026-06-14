@@ -13,6 +13,26 @@ const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 
+/// Collect dimension sizes from nested array literals.
+/// For [[[0;3];3];3] this yields sizes=[3,3,3], depth=3.
+fn collectLiteralNestedSizes(
+    elements: []const *ast.Expr,
+    sizes: *[4]u32,
+    depth: *u3,
+) void {
+    if (elements.len == 0 or depth.* >= 4) return;
+    if (elements[0].data != .Array) return;
+    const inner = elements[0].data.Array;
+    const inner_len = inner.len;
+    for (elements[1..]) |el| {
+        if (el.data != .Array or el.data.Array.len != inner_len) return;
+    }
+    if (inner_len == 0) return;
+    sizes[depth.*] = @intCast(inner_len);
+    depth.* += 1;
+    collectLiteralNestedSizes(inner, sizes, depth);
+}
+
 /// Handle collection operations: arrays, maps, indexing
 pub const CollectionsHandler = struct {
     generator: *HIRGenerator,
@@ -71,12 +91,24 @@ pub const CollectionsHandler = struct {
 
         const storage_kind = self.generator.array_storage_override orelse ArrayStorageKind.dynamic;
 
+        var nested_sizes: [4]u32 = [_]u32{0} ** 4;
+        var nested_depth: u3 = 0;
+
+        // TODO: nested_sizes currently walks only one literal level deep.
+        // Triple-nested literals (e.g. int[3][3][3]) need recursive size
+        // collection across all dimensions.
+        if (storage_kind == .fixed or storage_kind == .const_literal) {
+            collectLiteralNestedSizes(elements, &nested_sizes, &nested_depth);
+        }
+
         // Generate ArrayNew instruction with nested type info
         try self.generator.instructions.append(.{ .ArrayNew = .{
             .element_type = element_type,
             .size = @intCast(elements.len),
             .nested_element_type = nested_element_type,
             .storage_kind = storage_kind,
+            .nested_sizes = nested_sizes,
+            .nested_depth = nested_depth,
         } });
 
         // Generate each element and ArraySet

@@ -22,6 +22,9 @@ pub fn Methods(comptime Ctx: type) type {
             func_start_labels: *std.StringHashMap(bool),
             peek_state: *PeekEmitState,
         ) !void {
+            self.in_function_context = true;
+            defer self.in_function_context = false;
+
             const range = self.getFunctionRange(hir, func, func_start_labels) orelse return;
             const start_idx = range.start;
             const end_idx = range.end;
@@ -447,6 +450,8 @@ pub fn Methods(comptime Ctx: type) type {
                                 .struct_field_types = entry.struct_field_types,
                                 .struct_field_names = entry.struct_field_names,
                                 .struct_type_name = entry.struct_type_name,
+                                .fixed_array_depth = entry.fixed_array_depth,
+                                .fixed_array_sizes = entry.fixed_array_sizes,
                             });
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -668,7 +673,7 @@ pub fn Methods(comptime Ctx: type) type {
                             if (sd.declared_type == .Union) {
                                 value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
                             }
-                            if (!sd.is_const and sd.declared_type == .Array) {
+                            if (!sd.is_const and sd.declared_type == .Array and value.fixed_array_depth == 0) {
                                 const src_ptr = if (value.ty == .PTR) value else try self.ensurePointer(w, value, &id);
                                 const clone_reg = try self.nextTemp(&id);
                                 const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_clone(ptr {s})\n", .{ clone_reg, src_ptr.name });
@@ -705,6 +710,10 @@ pub fn Methods(comptime Ctx: type) type {
                                 if (info_ptr.?.struct_field_types == null) info_ptr.?.struct_field_types = value.struct_field_types;
                                 if (info_ptr.?.struct_field_names == null) info_ptr.?.struct_field_names = value.struct_field_names;
                                 if (info_ptr.?.struct_type_name == null) info_ptr.?.struct_type_name = value.struct_type_name;
+                                if (info_ptr.?.fixed_array_depth == 0 and value.fixed_array_depth > 0) {
+                                    info_ptr.?.fixed_array_depth = value.fixed_array_depth;
+                                    info_ptr.?.fixed_array_sizes = value.fixed_array_sizes;
+                                }
                             }
                             const target_local_ty = info_ptr.?.stack_type;
                             value = try self.coerceForStore(value, target_local_ty, &id, w);
@@ -749,6 +758,10 @@ pub fn Methods(comptime Ctx: type) type {
                                 if (info_ptr.?.struct_field_types == null) info_ptr.?.struct_field_types = value.struct_field_types;
                                 if (info_ptr.?.struct_field_names == null) info_ptr.?.struct_field_names = value.struct_field_names;
                                 if (info_ptr.?.struct_type_name == null) info_ptr.?.struct_type_name = value.struct_type_name;
+                                if (info_ptr.?.fixed_array_depth == 0 and value.fixed_array_depth > 0) {
+                                    info_ptr.?.fixed_array_depth = value.fixed_array_depth;
+                                    info_ptr.?.fixed_array_sizes = value.fixed_array_sizes;
+                                }
                             }
                             const target_ty = info_ptr.?.stack_type;
                             value = try self.coerceForStore(value, target_ty, &id, w);

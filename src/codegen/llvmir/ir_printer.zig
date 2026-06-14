@@ -71,6 +71,9 @@ pub const IRPrinter = struct {
     pub const convertArrayStorageToValue = ValueHelperMethods.convertArrayStorageToValue;
     pub const ensureString = ValueHelperMethods.ensureString;
     pub const loadArrayLength = ValueHelperMethods.loadArrayLength;
+    pub const fixedArrayInnermostLLVMType = ValueHelperMethods.fixedArrayInnermostLLVMType;
+    pub const buildFixedArrayLLVMTypeStr = ValueHelperMethods.buildFixedArrayLLVMTypeStr;
+    pub const fixedArrayLevelLLVMType = ValueHelperMethods.fixedArrayLevelLLVMType;
 
     const CollectionsEmitMethods = @import("./ir_printer/collections_emit.zig").Methods(Ctx);
     pub const emitArrayNew = CollectionsEmitMethods.emitArrayNew;
@@ -143,6 +146,7 @@ pub const IRPrinter = struct {
     global_struct_field_types: std.StringHashMap([]HIR.HIRType),
     global_struct_field_names: std.StringHashMap([]const []const u8),
     global_struct_type_names: std.StringHashMap([]const u8),
+    global_fixed_array_info: std.StringHashMap(GlobalFixedArrayInfo),
     defined_globals: std.StringHashMap(bool),
     struct_fields_by_id: std.AutoHashMap(HIR.StructId, []HIR.HIRType),
     struct_type_names_by_id: std.AutoHashMap(HIR.StructId, []const u8),
@@ -158,6 +162,7 @@ pub const IRPrinter = struct {
     enum_table: ?*anyopaque = null,
     entry_str_out_ptr: ?[]const u8 = null,
     entry_str_out_len: ?[]const u8 = null,
+    in_function_context: bool = false,
 
     pub const EnumVariantMeta = struct {
         index: u32,
@@ -180,6 +185,8 @@ pub const IRPrinter = struct {
         struct_field_names: ?[]const []const u8 = null,
         struct_type_name: ?[]const u8 = null,
         string_literal_value: ?[]const u8 = null,
+        fixed_array_depth: u3 = 0,
+        fixed_array_sizes: [4]u32 = [_]u32{0} ** 4,
     };
 
     pub const VariableInfo = struct {
@@ -190,6 +197,13 @@ pub const IRPrinter = struct {
         struct_field_types: ?[]HIR.HIRType = null,
         struct_field_names: ?[]const []const u8 = null,
         struct_type_name: ?[]const u8 = null,
+        fixed_array_depth: u3 = 0,
+        fixed_array_sizes: [4]u32 = [_]u32{0} ** 4,
+    };
+
+    pub const GlobalFixedArrayInfo = struct {
+        depth: u3,
+        sizes: [4]u32,
     };
 
     pub const StackIncoming = struct {
