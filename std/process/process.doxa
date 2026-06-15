@@ -369,6 +369,22 @@ public function execOk(input :: string) returns tetra {
     }
 }
 
+public function args() returns string[] | error.StdError {
+    const _argc is as int else {
+        return mapProcessError(Process.takeLastErrorCode())
+    }
+    var result is string[]
+    for i while i < _argc do i += 1 {
+        const arg is argv(i) as string else {
+            return mapProcessError(Process.takeLastErrorCode())
+        }
+        @push(result, arg)
+    }
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return result
+    return mapProcessError(err)
+}
+
 public function argc() returns int | error.StdError {
     const count is Process.argCount();
     const err is Process.takeLastErrorCode()
