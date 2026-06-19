@@ -91,6 +91,10 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - expand tests
 - improve error logging with better messages
 - improve effiency literally everywhere
+- lower fixed-size arrays to contiguous flat allocas (LLVM + VM backends)
+  - function-local flat scalar arrays lowered via alloca + GEP (brainfuck `tape :: byte[10]`)
+  - global and nested arrays still use ArrayHeader path (peek/print compat, stack size limits)
+  - wait for global `.bss` allocation and nested DoxaValue-free peek before removing gates
 
 
 ## Example

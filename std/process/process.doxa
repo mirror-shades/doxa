@@ -370,7 +370,7 @@ public function execOk(input :: string) returns tetra {
 }
 
 public function args() returns string[] | error.StdError {
-    const _argc is as int else {
+    const _argc is argc() as int else {
         return mapProcessError(Process.takeLastErrorCode())
     }
     var result is string[]
