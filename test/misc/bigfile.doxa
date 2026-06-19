@@ -813,13 +813,13 @@ map IdToNameElse {
 }
 
 
-IdToName[1]?
-IdToName[2]?
-IdToName[3]?
+IdToName[1]? # Bob
+IdToName[2]? # Sam
+IdToName[3]? # not found
 
-IdToNameElse[1]?
-IdToNameElse[2]?
-IdToNameElse[3]?
+IdToNameElse[1]? # Bob
+IdToNameElse[2]? # Sam
+IdToNameElse[3]? # not found
 
 
 map MyMap_typed0 returns string {
@@ -863,7 +863,14 @@ map MyMap_struct {
 }
 
 const mikeId1 is MyMap_struct[1] as Employee else $Employee { person is $Person { name is "Unknown", age is 0 }, salary is 0 }
-const mikeId2 is MyMap_struct[2] as Employee else $Employee { person is $Person { name is "Unknown", age is 0 }, salary is 0 }
+
+const mikeId2 is MyMap_struct[2] as Employee else $Employee { 
+    person is $Person { 
+        name is "Unknown", age is 0 
+    }, 
+    salary is 0 
+}
+
 mikeId1?
 mikeId2?
 
