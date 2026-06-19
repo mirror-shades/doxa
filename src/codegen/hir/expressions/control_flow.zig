@@ -698,11 +698,17 @@ pub const ControlFlowHandler = struct {
         // Success branch
         try self.generator.instructions.append(.{ .Label = .{ .name = ok_label, .vm_address = 0 } });
         if (cast_data.then_branch) |then_expr| {
-            // On success, drop original and evaluate then-branch
-            try self.generator.instructions.append(.Pop);
-            try self.generator.generateExpression(then_expr, preserve_result, false);
+            if (then_expr.data == .Block) {
+                try self.generator.generateExpression(then_expr, true, false);
+                try self.generator.instructions.append(.Pop);
+                if (!preserve_result) {
+                    try self.generator.instructions.append(.Pop);
+                }
+            } else {
+                try self.generator.instructions.append(.Pop);
+                try self.generator.generateExpression(then_expr, preserve_result, false);
+            }
         } else {
-            // No then branch: keep original value if result is needed, drop if not
             if (!preserve_result) {
                 try self.generator.instructions.append(.Pop);
             }

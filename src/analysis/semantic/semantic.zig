@@ -63,6 +63,7 @@ pub const SemanticAnalyzer = struct {
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
     current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     current_initializing_var: ?[]const u8 = null,
+    block_value_expected: bool = false,
     current_struct_type: ?[]const u8 = null,
     parser: ?*const Parser = null,
     struct_table: StructTable,
@@ -1021,7 +1022,7 @@ pub const SemanticAnalyzer = struct {
                 },
                 .ZigDecl, .Module, .Path => {},
                 .GroupDecl, .MapLiteral => {},
-                .Return, .Continue, .Break, .Assert, .Cast, .Defer => {},
+                .Return, .Continue, .Break, .Assert, .Cast, .Defer, .Lift => {},
             }
         }
 
@@ -1079,8 +1080,11 @@ pub const SemanticAnalyzer = struct {
 
             switch (stmt.data) {
                 .VarDecl => |decl| {
-                    // For function bodies, we need to add local variables to the function scope
-                    // For global scope, variables are already added during collectDeclarations
+                    // TODO: block_value_expected should also be set for assignment RHS and return expressions
+                    const prev_bve = self.block_value_expected;
+                    self.block_value_expected = decl.initializer != null;
+                    defer self.block_value_expected = prev_bve;
+
                     if (self.current_scope) |scope| {
                         // Check if this variable is already in the scope (from collectDeclarations)
                         if (scope.lookupVariable(decl.name.lexeme) == null) {
@@ -1252,7 +1256,7 @@ pub const SemanticAnalyzer = struct {
                         _ = try infer_type.inferTypeFromExpr(self, entry.value);
                     }
                 },
-                .Break, .Continue => {
+                .Break, .Continue, .Lift => {
                     prev_was_terminator = true;
                 },
                 .ZigDecl, .EnumDecl, .GroupDecl, .Module, .Path, .Import, .Assert, .Cast, .Defer => {},

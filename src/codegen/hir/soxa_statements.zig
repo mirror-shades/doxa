@@ -70,10 +70,16 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 try self.generateExpression(expr, false, false);
             }
         },
+        .Lift => |lift_data| {
+            // TODO: lift outside a block context should be a semantic error reported earlier
+            try self.generateExpression(lift_data.value, false, true);
+        },
         .ZigDecl => {
             // Inline zig modules are handled outside of normal statement lowering.
             // They only contribute external/module-callable functions.
         },
+        // TODO: binary expressions don't pop their result when should_pop_after_use=true,
+        // causing stack leaks when binary expressions appear as discarded statements in blocks
         .Expression => |expr| {
             if (expr) |e| {
                 // Do not treat a trailing expression as an implicit function return.

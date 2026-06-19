@@ -132,12 +132,55 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
     };
 }
 
+pub fn parseLiftStmt(self: *Parser) ErrorList!ast.Stmt {
+    if (self.peek().type != .LIFT) {
+        return error.UnexpectedToken;
+    }
+    self.advance();
+
+    const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
+
+    if (self.peek().type == .SEMICOLON) {
+        self.advance();
+    }
+    const next_type = self.peek().type;
+    if (next_type == .NEWLINE) {
+        self.advance();
+    } else if (next_type != .RIGHT_BRACE and next_type != .EOF) {
+        const location = Reporting.Location{
+            .file = self.current_file,
+            .file_uri = self.current_file_uri,
+            .range = .{
+                .start_line = @intCast(self.peek().line),
+                .start_col = self.peek().column,
+                .end_line = @intCast(self.peek().line),
+                .end_col = self.peek().column + self.peek().lexeme.len,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_NEWLINE, "Expected newline or closing brace after lift", .{});
+        return error.ExpectedNewline;
+    }
+
+    return ast.Stmt{
+        .base = .{
+            .id = ast.generateNodeId(),
+            .span = ast.SourceSpan.fromToken(self.peek()),
+        },
+        .data = .{
+            .Lift = .{
+                .value = value,
+            },
+        },
+    };
+}
+
 pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
     return switch (self.peek().type) {
         .ZIG => declaration_parser.parseZigDecl(self),
         .VAR, .CONST => declaration_parser.parseVarDecl(self),
         .FUNCTION => declaration_parser.parseFunctionDecl(self),
         .RETURN => parseReturnStmt(self),
+        .LIFT => parseLiftStmt(self),
         .CONTINUE => parseContinueStmt(self),
         .BREAK => parseBreakStmt(self),
         .EACH => parseEachStmt(self),

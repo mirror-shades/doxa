@@ -421,6 +421,31 @@ pub fn unionContainsNothing(self: *SemanticAnalyzer, union_type_info: ast.TypeIn
     return false;
 }
 
+pub fn subtractTypeFromUnion(self: *SemanticAnalyzer, union_type_info: *const ast.TypeInfo, target: *const ast.TypeInfo) !*ast.TypeInfo {
+    if (union_type_info.base != .Union or union_type_info.union_type == null) {
+        const copy = try ast.TypeInfo.createDefault(self.allocator);
+        copy.* = union_type_info.*;
+        return copy;
+    }
+    const u = union_type_info.union_type.?;
+    var remaining = std.ArrayListUnmanaged(*ast.TypeInfo){};
+    defer remaining.deinit(self.allocator);
+    for (u.types) |member| {
+        if (!typesEqual(self, target, member)) {
+            try remaining.append(self.allocator, member);
+        }
+    }
+    if (remaining.items.len == 0) {
+        const nothing = try ast.TypeInfo.createDefault(self.allocator);
+        nothing.* = .{ .base = .Nothing };
+        return nothing;
+    }
+    if (remaining.items.len == 1) {
+        return remaining.items[0];
+    }
+    return try createUnionType(self, remaining.items);
+}
+
 pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
     // ── Phase 1: Group widening ──
     // If expected is a group, any member type (or union of members) is assignable.

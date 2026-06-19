@@ -248,14 +248,14 @@ precedence(["*", "+", "-", "=", "/"])
 
 var mixedBranch1 is if true then {
     var notUsed is 10 + 5
-    "true"
+    lift "true"
 } else "false"
 
 mixedBranch1? # true
 
 var mixedBranch2 is if false then {
     var notUsed is 10 + 5
-    "true"
+    lift "true"
 } else "false"
 
 mixedBranch2? # false
@@ -284,11 +284,11 @@ var asThen2 is asThenUnion as int then 20 else 0
 
 asThen2? # 20
 
-var asThen3 is asThenUnion as int then {10 + 20} else 0
+var asThen3 is asThenUnion as int else 0
 
-asThen3? # 30
+asThen3? # 10
 
-var asThen4 is asThenUnion as float then 40.0 else { 0.0 }
+var asThen4 is asThenUnion as float then 40.0 else { lift 0.0 }
 
 asThen4? # 0.0
 

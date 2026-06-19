@@ -277,6 +277,9 @@ pub const Stmt = struct {
             else_branch: ?*Expr,
         },
         Defer: *Expr,
+        Lift: struct {
+            value: *Expr,
+        },
     };
 
     pub fn getBase(self: *Stmt) *Base {
@@ -383,6 +386,10 @@ pub const Stmt = struct {
             .Defer => |expr| {
                 expr.deinit(allocator);
                 allocator.destroy(expr);
+            },
+            .Lift => |lift| {
+                lift.value.deinit(allocator);
+                allocator.destroy(lift.value);
             },
         }
     }
@@ -1307,6 +1314,10 @@ fn dumpStmt(writer: anytype, stmt: *const Stmt, depth: u32) @TypeOf(writer).Erro
         .Defer => |expr| {
             try writer.print("Stmt.Defer\n", .{});
             try dumpExpr(writer, expr, depth + 1);
+        },
+        .Lift => |lift| {
+            try writer.print("Stmt.Lift\n", .{});
+            try dumpExpr(writer, lift.value, depth + 1);
         },
     }
 }

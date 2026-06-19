@@ -79,6 +79,7 @@ pub const TokenType = enum {
     THIS, // this
     UNREACHABLE, // unreachable
     DEFER, // defer
+    LIFT, // lift
 
     // built-in methods
     TYPE, // @type        - get type name as string
