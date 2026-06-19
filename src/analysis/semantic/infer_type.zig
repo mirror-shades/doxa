@@ -10,6 +10,7 @@ const unifyTypes = helpers.unifyTypes;
 const getLocationFromBase = helpers.getLocationFromBase;
 const eval = @import("eval_utils.zig");
 const lookupVariable = helpers.lookupVariable;
+const Scope = @import("../../utils/memory.zig").Scope;
 const builtin_methods = @import("../../runtime/builtin_methods.zig");
 
 const SemanticError = std.mem.Allocator.Error || ErrorList;
@@ -2309,6 +2310,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             }
 
+            // TODO: warn on lift in as-then blocks (value is discarded, side-effects only)
+            // TODO: warn on discarded non-Nothing values in if/as blocks without lift
+            // TODO: warn on unused variable when both branches diverge via return
             var then_type: ?*ast.TypeInfo = null;
             if (cast.then_branch) |then_expr| {
                 const then_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
@@ -2318,72 +2322,40 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 self.current_scope = then_scope;
                 defer self.current_scope = prev_scope;
 
-                if (cast.value.data == .Variable) {
-                    const var_name = cast.value.data.Variable.lexeme;
-                    const token_type = eval.convertTypeToTokenType(target_type_info.base);
-                    _ = then_scope.createValueBinding(
-                        var_name,
-                        TokenLiteral{ .nothing = {} },
-                        token_type,
-                        target_type_info,
-                        false,
-                    ) catch {}; // fresh narrowed scope binding, duplicate cannot occur
-                } else if (cast.value.data == .FieldAccess) {
-                    const field_access = cast.value.data.FieldAccess;
-                    if (field_access.object.data == .Variable) {
-                        const obj_name = field_access.object.data.Variable.lexeme;
-                        const fld_name = field_access.field.lexeme;
-                        if (lookupVariable(self, obj_name)) |variable| {
-                            if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                                const original_type = storage.type_info.*;
-                                var struct_fields: ?[]ast.StructFieldType = null;
-                                if (original_type.base == .Struct and original_type.struct_fields != null) {
-                                    struct_fields = original_type.struct_fields.?;
-                                } else if (original_type.base == .Custom and original_type.custom_type != null) {
-                                    if (self.custom_types.get(original_type.custom_type.?)) |custom_type| {
-                                        if (custom_type.kind == .Struct and custom_type.struct_fields != null) {
-                                            const ct_fields = custom_type.struct_fields.?;
-                                            const new_sf = try self.allocator.alloc(ast.StructFieldType, ct_fields.len);
-                                            for (ct_fields, 0..) |ct_field, i| {
-                                                new_sf[i] = .{ .name = ct_field.name, .type_info = ct_field.field_type_info };
-                                            }
-                                            struct_fields = new_sf;
-                                        }
-                                    }
-                                }
-                                if (struct_fields) |fields_arr| {
-                                    const dup_fields = try self.allocator.alloc(ast.StructFieldType, fields_arr.len);
-                                    for (fields_arr, 0..) |sf, i| {
-                                        if (std.mem.eql(u8, sf.name, fld_name)) {
-                                            dup_fields[i] = .{ .name = sf.name, .type_info = target_type_info };
-                                        } else {
-                                            dup_fields[i] = sf;
-                                        }
-                                    }
-                                    const narrowed_struct = try ast.TypeInfo.createDefault(self.allocator);
-                                    narrowed_struct.* = .{ .base = .Struct, .struct_fields = dup_fields };
-                                    _ = then_scope.createValueBinding(
-                                        obj_name,
-                                        TokenLiteral{ .nothing = {} },
-                                        .STRUCT,
-                                        narrowed_struct,
-                                        false,
-                                    ) catch {}; // fresh narrowed scope binding, duplicate cannot occur
-                                }
-                            }
-                        }
-                    }
+                try bindNarrowedCastType(self, then_scope, cast.value, target_type_info);
+
+                const inferred_then = try inferTypeFromExpr(self, then_expr);
+                if (then_expr.data != .Block) {
+                    then_type = inferred_then;
                 }
-                then_type = try inferTypeFromExpr(self, then_expr);
             }
 
+            var else_diverges = false;
+            // TODO: divergence analysis should also check for Break/Continue and nested returns
             var else_type: ?*ast.TypeInfo = null;
             if (cast.else_branch) |else_expr| {
+                const else_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+                defer else_scope.deinit();
+
+                const prev_else_scope = self.current_scope;
+                self.current_scope = else_scope;
+                defer self.current_scope = prev_else_scope;
+
+                const remainder_type = try helpers.subtractTypeFromUnion(self, value_type, target_type_info);
+                try bindNarrowedCastType(self, else_scope, cast.value, remainder_type);
+
                 else_type = try inferTypeFromExpr(self, else_expr);
                 if (else_expr.data == .ReturnExpr) {
+                    else_diverges = true;
                     const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                     nothing_type.* = .{ .base = .Nothing };
                     else_type = nothing_type;
+                }
+                if (else_expr.data == .Block) {
+                    const stmts = else_expr.data.Block.statements;
+                    if (stmts.len > 0 and stmts[stmts.len - 1].data == .Return) {
+                        else_diverges = true;
+                    }
                 }
             }
 
@@ -2403,7 +2375,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     }
                 }.run;
 
-                const fallback_matches_target = et.base == .Nothing or helpers.typesEqual(self, target_type_info, et);
+                const fallback_matches_target = (et.base == .Nothing and (else_diverges or !self.block_value_expected)) or helpers.typesEqual(self, target_type_info, et);
                 if (!fallback_matches_target) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
@@ -2431,18 +2403,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 } else {
                     type_info.* = tt.*;
                 }
-            } else if (else_type) |et| {
-                if (et.base == .Nothing) {
-                    type_info.* = target_type_info.*;
-                } else if (target_type_info.base == et.base) {
-                    type_info.* = target_type_info.*;
-                } else {
-                    var types = [_]*ast.TypeInfo{ target_type_info, et };
-                    const union_type = try helpers.createUnionType(self, &types);
-                    type_info.* = union_type.*;
-                }
-            } else {
-                type_info.* = target_type_info.*;
             }
         },
         .Loop => |loop| {
@@ -2746,4 +2706,63 @@ fn assignValueOrNothingUnion(self: *SemanticAnalyzer, dest: *ast.TypeInfo, value
         .union_type = union_info,
         .is_mutable = value_type.is_mutable,
     };
+}
+
+fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast.Expr, narrowed_type: *ast.TypeInfo) !void {
+    if (cast_value.data == .Variable) {
+        const var_name = cast_value.data.Variable.lexeme;
+        const token_type = eval.convertTypeToTokenType(narrowed_type.base);
+        _ = scope.createValueBinding(
+            var_name,
+            TokenLiteral{ .nothing = {} },
+            token_type,
+            narrowed_type,
+            false,
+        ) catch {};
+    } else if (cast_value.data == .FieldAccess) {
+        const field_access = cast_value.data.FieldAccess;
+        if (field_access.object.data == .Variable) {
+            const obj_name = field_access.object.data.Variable.lexeme;
+            const fld_name = field_access.field.lexeme;
+            if (lookupVariable(self, obj_name)) |variable| {
+                if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+                    const original_type = storage.type_info.*;
+                    var struct_fields: ?[]ast.StructFieldType = null;
+                    if (original_type.base == .Struct and original_type.struct_fields != null) {
+                        struct_fields = original_type.struct_fields.?;
+                    } else if (original_type.base == .Custom and original_type.custom_type != null) {
+                        if (self.custom_types.get(original_type.custom_type.?)) |custom_type| {
+                            if (custom_type.kind == .Struct and custom_type.struct_fields != null) {
+                                const ct_fields = custom_type.struct_fields.?;
+                                const new_sf = try self.allocator.alloc(ast.StructFieldType, ct_fields.len);
+                                for (ct_fields, 0..) |ct_field, i| {
+                                    new_sf[i] = .{ .name = ct_field.name, .type_info = ct_field.field_type_info };
+                                }
+                                struct_fields = new_sf;
+                            }
+                        }
+                    }
+                    if (struct_fields) |fields_arr| {
+                        const dup_fields = try self.allocator.alloc(ast.StructFieldType, fields_arr.len);
+                        for (fields_arr, 0..) |sf, i| {
+                            if (std.mem.eql(u8, sf.name, fld_name)) {
+                                dup_fields[i] = .{ .name = sf.name, .type_info = narrowed_type };
+                            } else {
+                                dup_fields[i] = sf;
+                            }
+                        }
+                        const narrowed_struct = try ast.TypeInfo.createDefault(self.allocator);
+                        narrowed_struct.* = .{ .base = .Struct, .struct_fields = dup_fields };
+                        _ = scope.createValueBinding(
+                            obj_name,
+                            TokenLiteral{ .nothing = {} },
+                            .STRUCT,
+                            narrowed_struct,
+                            false,
+                        ) catch {};
+                    }
+                }
+            }
+        }
+    }
 }

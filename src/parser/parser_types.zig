@@ -178,6 +178,14 @@ pub const Parser = struct {
     }
 
     pub fn block(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
+        return self.parseBlockBody(true);
+    }
+
+    pub fn liftBlock(self: *Parser) ErrorList!?*ast.Expr {
+        return self.parseBlockBody(false);
+    }
+
+    fn parseBlockBody(self: *Parser, allow_implicit_value: bool) ErrorList!?*ast.Expr {
         if (self.peek().type != .LEFT_BRACE) {
             return error.ExpectedLeftBrace;
         }
@@ -191,10 +199,16 @@ pub const Parser = struct {
             statements.deinit();
         }
 
-        var last_expr: ?*ast.Expr = null;
+        var block_value: ?*ast.Expr = null;
 
         while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
             const stmt = try statement_parser.parseStatement(self);
+
+            if (stmt.data == .Lift) {
+                block_value = stmt.data.Lift.value;
+                break;
+            }
+
             try statements.append(stmt);
 
             if (stmt.data == .Return) break;
@@ -209,13 +223,13 @@ pub const Parser = struct {
         }
         self.advance();
 
-        if (statements.items.len > 0) {
+        if (allow_implicit_value and block_value == null and statements.items.len > 0) {
             const last_idx = statements.items.len - 1;
             const last_stmt = statements.items[last_idx];
             switch (last_stmt.data) {
                 .Expression => |maybe_expr| {
                     if (maybe_expr) |e| {
-                        last_expr = e;
+                        block_value = e;
                     }
                     statements.items.len = last_idx;
                 },
@@ -232,7 +246,7 @@ pub const Parser = struct {
             .data = .{
                 .Block = .{
                     .statements = try statements.toOwnedSlice(),
-                    .value = last_expr,
+                    .value = block_value,
                 },
             },
         };
@@ -1793,7 +1807,7 @@ pub const Parser = struct {
                                 }
                             }
                         },
-                        .ZigDecl, .Block, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast, .Defer => {},
+                        .ZigDecl, .Block, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast, .Defer, .Lift => {},
                     }
                 }
             },

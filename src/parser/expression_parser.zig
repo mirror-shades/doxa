@@ -938,7 +938,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             };
             then_expr = block_expr;
         } else if (self.peek().type == .LEFT_BRACE) {
-            then_expr = (try braceExpr(self, null, .NONE)) orelse {
+            then_expr = (try self.liftBlock()) orelse {
                 condition.deinit(self.allocator);
                 self.allocator.destroy(condition);
                 return error.ExpectedExpression;
@@ -951,7 +951,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
             };
         }
     } else if (self.peek().type == .LEFT_BRACE) {
-        then_expr = (try braceExpr(self, null, .NONE)) orelse {
+        then_expr = (try self.liftBlock()) orelse {
             condition.deinit(self.allocator);
             self.allocator.destroy(condition);
             return error.ExpectedExpression;
@@ -983,7 +983,7 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         if (self.peek().type == .IF) {
             else_expr = try parseIfExpr(self, null, .NONE);
         } else if (self.peek().type == .LEFT_BRACE) {
-            else_expr = try braceExpr(self, null, .NONE);
+            else_expr = try self.liftBlock();
         } else {
             else_expr = try precedence.parsePrecedence(self, .NONE);
         }
@@ -1128,7 +1128,7 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     if (self.peek().type == .THEN) {
         self.advance();
         if (self.peek().type == .LEFT_BRACE) {
-            const block_expr = try braceExpr(self, null, .NONE) orelse return error.ExpectedLeftBrace;
+            const block_expr = try self.liftBlock() orelse return error.ExpectedLeftBrace;
             then_branch = block_expr;
         } else {
             then_branch = try parseExpression(self) orelse return error.ExpectedExpression;
@@ -1145,7 +1145,7 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         while (self.peek().type == .NEWLINE) self.advance();
 
         if (self.peek().type == .LEFT_BRACE) {
-            const block_expr = try braceExpr(self, null, .NONE) orelse return error.ExpectedLeftBrace;
+            const block_expr = try self.liftBlock() orelse return error.ExpectedLeftBrace;
             else_branch = block_expr;
         } else {
             else_branch = try parseExpression(self) orelse return error.ExpectedExpression;

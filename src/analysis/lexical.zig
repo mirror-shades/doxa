@@ -89,6 +89,7 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("return", .RETURN);
         try self.keywords.put("unreachable", .UNREACHABLE);
         try self.keywords.put("defer", .DEFER);
+        try self.keywords.put("lift", .LIFT);
         try self.keywords.put("this", .THIS);
         try self.keywords.put("const", .CONST);
         try self.keywords.put("var", .VAR);

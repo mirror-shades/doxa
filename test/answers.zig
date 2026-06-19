@@ -459,7 +459,7 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "string", .value = "\"true\"" },
     .{ .type = "int", .value = "10" },
     .{ .type = "int", .value = "20" },
-    .{ .type = "int", .value = "30" },
+    .{ .type = "int", .value = "10" },
     .{ .type = "float", .value = "0.0" },
     .{ .type = "int", .value = "50" },
     .{ .type = ">int | float | byte", .value = "10" },
