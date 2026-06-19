@@ -373,7 +373,7 @@ public function args() returns string[] | error.StdError {
     const _argc is argc() as int else {
         return mapProcessError(Process.takeLastErrorCode())
     }
-    var result is string[]
+    var result :: string[]
     for i while i < _argc do i += 1 {
         const arg is argv(i) as string else {
             return mapProcessError(Process.takeLastErrorCode())
