@@ -1078,6 +1078,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .Assignment => |assign| {
             if (assign.value) |value| {
+                const prev_bve = self.block_value_expected;
+                self.block_value_expected = true;
+                defer self.block_value_expected = prev_bve;
                 const value_type = try inferTypeFromExpr(self, value);
                 if (lookupVariable(self, assign.name.lexeme)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
@@ -1142,6 +1145,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .ReturnExpr => |return_expr| {
             if (return_expr.value) |value| {
+                const prev_bve = self.block_value_expected;
+                self.block_value_expected = true;
+                defer self.block_value_expected = prev_bve;
                 type_info.* = (try inferTypeFromExpr(self, value)).*;
             } else {
                 type_info.* = .{ .base = .Nothing };
@@ -2310,7 +2316,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             }
 
-            // TODO: warn on lift in as-then blocks (value is discarded, side-effects only)
             // TODO: warn on discarded non-Nothing values in if/as blocks without lift
             // TODO: warn on unused variable when both branches diverge via return
             var then_type: ?*ast.TypeInfo = null;
@@ -2324,6 +2329,15 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                 try bindNarrowedCastType(self, then_scope, cast.value, target_type_info);
 
+                if (then_expr.data == .Block and then_expr.data.Block.value != null) {
+                    self.reporter.reportWarning(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.CONDITION_ALWAYS_TRUE,
+                        "lift in 'as' then block has no effect; value comes from the narrowed original",
+                        .{},
+                    );
+                }
+
                 const inferred_then = try inferTypeFromExpr(self, then_expr);
                 if (then_expr.data != .Block) {
                     then_type = inferred_then;
@@ -2331,7 +2345,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             }
 
             var else_diverges = false;
-            // TODO: divergence analysis should also check for Break/Continue and nested returns
             var else_type: ?*ast.TypeInfo = null;
             if (cast.else_branch) |else_expr| {
                 const else_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
@@ -2353,8 +2366,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
                 if (else_expr.data == .Block) {
                     const stmts = else_expr.data.Block.statements;
-                    if (stmts.len > 0 and stmts[stmts.len - 1].data == .Return) {
-                        else_diverges = true;
+                    if (stmts.len > 0) {
+                        const last = stmts[stmts.len - 1].data;
+                        if (last == .Return or last == .Break or last == .Continue) {
+                            else_diverges = true;
+                        }
                     }
                 }
             }
