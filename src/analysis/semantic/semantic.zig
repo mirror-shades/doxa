@@ -1080,7 +1080,6 @@ pub const SemanticAnalyzer = struct {
 
             switch (stmt.data) {
                 .VarDecl => |decl| {
-                    // TODO: block_value_expected should also be set for assignment RHS and return expressions
                     const prev_bve = self.block_value_expected;
                     self.block_value_expected = decl.initializer != null;
                     defer self.block_value_expected = prev_bve;
