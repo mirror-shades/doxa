@@ -1475,8 +1475,20 @@ pub const SemanticAnalyzer = struct {
             }
         }
 
-        // Handle union types - return as-is since flattenUnionType was removed
+        // Handle union types - return as-is since flattenUnionType was removed,
+        // but mark any custom member types (enums/structs) as used so that a
+        // type referenced solely through a union annotation (e.g. `int | E`)
+        // does not trigger a spurious unused-variable warning.
         if (type_info.base == .Union) {
+            if (type_info.union_type) |ut| {
+                for (ut.types) |member| {
+                    if (member.base == .Custom) {
+                        if (member.custom_type) |member_name| {
+                            _ = helpers.lookupVariable(self, member_name);
+                        }
+                    }
+                }
+            }
             return type_info;
         }
 
@@ -2167,6 +2179,11 @@ pub const SemanticAnalyzer = struct {
     fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo, struct_type: ?[]const u8) !void {
         // Create function scope with parameters
         const func_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+
+        // Resolving the declared return type marks any custom member types
+        // (e.g. an enum appearing only in a `int | E` union return) as used so
+        // they don't trigger a spurious unused-variable warning.
+        _ = try self.resolveTypeInfo(expected_return_type);
 
         // Add parameters to function scope
         for (func.params) |param| {

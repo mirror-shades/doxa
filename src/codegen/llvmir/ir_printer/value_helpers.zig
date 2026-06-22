@@ -368,16 +368,41 @@ pub fn Methods(comptime Ctx: type) type {
     pub fn findUnionMemberIndex(self: *IRPrinter, union_type: HIR.HIRType, value: StackVal) u32 {
         if (union_type != .Union) return 0;
         const members = union_type.Union.members;
+
+        // Enums and ints both lower to .I64 on the stack, so the raw stack type
+        // cannot tell them apart. Use the enum metadata carried on the value as
+        // the authoritative discriminator, mirroring the VM which keys off the
+        // runtime value's tag. Without this, an enum returned through an
+        // `int | Enum` union would match the `int` member first and encode the
+        // wrong active member index.
+        if (value.ty == .I64) {
+            const is_enum_value = value.enum_type_name != null;
+            // Preferred match: enum-bearing members for enum values, plain ints
+            // otherwise.
+            // TODO: When a union carries multiple enum members, disambiguate by
+            // resolving each member's enum name and matching value.enum_type_name.
+            for (members, 0..) |m_ptr, idx| {
+                const m = m_ptr.*;
+                if (is_enum_value) {
+                    if (m == .Enum) return @intCast(idx);
+                    if (m == .Group and groupHasEnumMember(self.group_table, @intCast(m.Group))) return @intCast(idx);
+                } else if (m == .Int) {
+                    return @intCast(idx);
+                }
+            }
+            // Fallback: accept any other I64-compatible member when the preferred
+            // kind is absent (e.g. an enum flowing into an int-only union).
+            for (members, 0..) |m_ptr, idx| {
+                const m = m_ptr.*;
+                if (m == .Int or m == .Enum) return @intCast(idx);
+                if (m == .Group and groupHasEnumMember(self.group_table, @intCast(m.Group))) return @intCast(idx);
+            }
+            return 0;
+        }
+
         for (members, 0..) |m_ptr, idx| {
             const m = m_ptr.*;
             switch (value.ty) {
-                .I64 => {
-                    if (m == .Int) return @intCast(idx);
-                    if (m == .Enum) return @intCast(idx);
-                    if (m == .Group) {
-                        if (groupHasEnumMember(self.group_table, @intCast(m.Group))) return @intCast(idx);
-                    }
-                },
                 .F64 => if (m == .Float) return @intCast(idx),
                 .I8 => if (m == .Byte) return @intCast(idx),
                 .I2, .I1 => if (m == .Tetra) return @intCast(idx),
@@ -391,7 +416,7 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 .STRING => if (m == .String) return @intCast(idx),
                 .Nothing => if (m == .Nothing) return @intCast(idx),
-                .Value => {},
+                .I64, .Value => {},
             }
         }
         return 0;
