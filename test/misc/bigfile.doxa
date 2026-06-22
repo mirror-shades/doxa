@@ -313,11 +313,25 @@ function onlyUsesInt(x :: int) {
     x?
 }
 
-const x :: int | float is 17
+const u_int_float :: int | float is 17
 
 # ensure the fallback matches the narrowed type
-x as int then onlyUsesInt(x) else 0?
+u_int_float as int then onlyUsesInt(u_int_float) else 0?
 
+enum MyErrorSet {
+    Failed,
+}
+
+function can_pass(x :: int) returns int | MyErrorSet {
+    if x < 0 then return MyErrorSet.Failed
+    return x
+}
+
+const pass_result is can_pass(10)
+pass_result? # int | MyErrorSet: 10
+
+const fail_result is can_pass(-1)
+fail_result? # int | MyErrorSet: .Failed
 
 ##
 # RETURNS 
@@ -785,6 +799,8 @@ const resfloat is newun as float else 0.0 # float
 
 resint? # 3
 resfloat? # 0
+
+
 
 ##
 # MAPS

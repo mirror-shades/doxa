@@ -466,6 +466,9 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "int | >float | byte", .value = "12.345" },
     .{ .type = "int | float | >byte", .value = "0x0A" },
     .{ .type = "int", .value = "17" },
+    .{ .type = ">int | MyErrorSet", .value = "10" },
+    .{ .type = "int | >MyErrorSet", .value = ".Failed" },
+
     .{ .type = "string", .value = "\"return\"" },
     .{ .type = "int", .value = "0" },
     .{ .type = "int", .value = "50" },
