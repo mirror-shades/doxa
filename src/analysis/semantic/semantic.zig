@@ -63,10 +63,6 @@ pub const SemanticAnalyzer = struct {
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
     current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     current_initializing_var: ?[]const u8 = null,
-    // When an `as` cast is the initializer of a declaration, this holds the
-    // declared name so the cast can narrow that binding inside its then/else
-    // branches (target type in then, remainder in else).
-    current_cast_decl_name: ?[]const u8 = null,
     block_value_expected: bool = false,
     current_struct_type: ?[]const u8 = null,
     parser: ?*const Parser = null,
@@ -1095,13 +1091,6 @@ pub const SemanticAnalyzer = struct {
                     self.block_value_expected = decl.initializer != null;
                     defer self.block_value_expected = prev_bve;
 
-                    const prev_cast_decl = self.current_cast_decl_name;
-                    self.current_cast_decl_name = if (decl.initializer) |init_e|
-                        (if (init_e.data == .Cast) decl.name.lexeme else null)
-                    else
-                        null;
-                    defer self.current_cast_decl_name = prev_cast_decl;
-
                     if (self.current_scope) |scope| {
                         // Check if this variable is already in the scope (from collectDeclarations)
                         if (scope.lookupVariable(decl.name.lexeme) == null) {
@@ -1992,16 +1981,32 @@ pub const SemanticAnalyzer = struct {
 
                 // If we have branches, pick one at evaluation time
                 if (cast.then_branch != null or cast.else_branch != null) {
-                    if (matches_target) {
-                        if (cast.then_branch) |then_expr| {
-                            return try self.evaluateExpression(then_expr);
+                    const branch_expr = if (matches_target) cast.then_branch else cast.else_branch;
+                    if (branch_expr) |be| {
+                        // If this cast initializes a declaration, expose the declared
+                        // name inside the branch (as a placeholder bound to the subject
+                        // value) so branch bodies may reference it during const-eval
+                        // without raising "Undefined variable".
+                        if (cast.decl_name) |decl_name| {
+                            const branch_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
+                            defer branch_scope.deinit();
+                            const prev_scope = self.current_scope;
+                            self.current_scope = branch_scope;
+                            defer self.current_scope = prev_scope;
+
+                            const placeholder_type = try ast.TypeInfo.createDefault(self.allocator);
+                            placeholder_type.* = target_type_info.*;
+                            _ = branch_scope.createValueBinding(
+                                decl_name,
+                                value_literal,
+                                eval.convertTypeToTokenType(placeholder_type.base),
+                                placeholder_type,
+                                false,
+                            ) catch {};
+
+                            return try self.evaluateExpression(be);
                         }
-                        // No then branch; fall through
-                    } else {
-                        if (cast.else_branch) |else_expr| {
-                            return try self.evaluateExpression(else_expr);
-                        }
-                        // No else branch; fall through
+                        return try self.evaluateExpression(be);
                     }
                     // If the relevant branch is missing, return nothing
                     return TokenLiteral{ .nothing = {} };
