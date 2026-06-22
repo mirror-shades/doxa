@@ -286,7 +286,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         }
 
                         const var_index = try self.getOrCreateVariable(decl.name.lexeme);
-                        try self.symbol_table.trackVariableUnionMembersByIndex(var_index, member_names);
+                        try self.symbol_table.trackVariableUnionMembers(self.symbol_table.isLocalVariable(decl.name.lexeme), var_index, member_names);
                     }
 
                     if (var_type == .Group) {
@@ -302,7 +302,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         if (group_name) |gn| {
                             const member_names = try self.type_system.getGroupMemberNames(gn);
                             if (member_names.len > 0) {
-                                try self.symbol_table.trackVariableUnionMembersByIndex(var_index, member_names);
+                                try self.symbol_table.trackVariableUnionMembers(self.symbol_table.isLocalVariable(decl.name.lexeme), var_index, member_names);
                             }
                         }
                     }
@@ -481,7 +481,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             if (decl.type_info.base == .Union) {
                 if (decl.type_info.union_type) |ut| {
                     const list = try self.collectUnionMemberNames(ut);
-                    try self.symbol_table.trackVariableUnionMembersByIndex(var_idx, list);
+                    try self.symbol_table.trackVariableUnionMembers(self.symbol_table.isLocalVariable(decl.name.lexeme), var_idx, list);
                 }
             }
 

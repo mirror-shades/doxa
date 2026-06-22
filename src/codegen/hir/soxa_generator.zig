@@ -1636,10 +1636,6 @@ pub const HIRGenerator = struct {
         try self.symbol_table.trackVariableType(var_name, var_type);
     }
 
-    pub fn trackVariableUnionMembersByIndex(self: *HIRGenerator, var_index: u32, members: [][]const u8) !void {
-        try self.symbol_table.trackVariableUnionMembersByIndex(var_index, members);
-    }
-
     pub fn trackVariableCustomType(self: *HIRGenerator, var_name: []const u8, custom_type_name: []const u8) !void {
         try self.symbol_table.trackVariableCustomType(var_name, custom_type_name);
     }
@@ -1666,7 +1662,7 @@ pub const HIRGenerator = struct {
         return names;
     }
 
-    fn hirTypeToDisplayName(self: *HIRGenerator, ty: HIRType) ![]const u8 {
+    pub fn hirTypeToDisplayName(self: *HIRGenerator, ty: HIRType) ![]const u8 {
         return switch (ty) {
             .Int => "int",
             .Float => "float",

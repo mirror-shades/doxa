@@ -611,9 +611,113 @@ pub const ControlFlowHandler = struct {
         try self.generator.instructions.append(.{ .Unreachable = .{ .location = expr.base.location() } });
     }
 
+    /// Narrowing applied to the cast subject variable inside the then/else branches.
+    /// The then branch narrows the variable to the target type; the else branch
+    /// narrows it to the union remainder (full union minus target).
+    const CastNarrowing = struct {
+        var_name: []const u8,
+        var_index: u32,
+        is_local: bool,
+        saved_type: HIRType,
+        saved_index_members: ?[][]const u8,
+        then_type: HIRType,
+        then_members: [][]const u8,
+        else_type: HIRType,
+        else_members: [][]const u8,
+    };
+
+    fn applyCastNarrowing(self: *ControlFlowHandler, nw: CastNarrowing, ty: HIRType, members: [][]const u8) !void {
+        try self.generator.trackVariableType(nw.var_name, ty);
+        try self.generator.symbol_table.trackVariableUnionMembers(nw.is_local, nw.var_index, members);
+    }
+
+    fn restoreCastNarrowing(self: *ControlFlowHandler, nw: CastNarrowing) !void {
+        try self.generator.trackVariableType(nw.var_name, nw.saved_type);
+        if (nw.saved_index_members) |members| {
+            try self.generator.symbol_table.trackVariableUnionMembers(nw.is_local, nw.var_index, members);
+        } else {
+            self.generator.symbol_table.removeVariableUnionMembers(nw.is_local, nw.var_index);
+        }
+    }
+
+    /// Compute the per-branch narrowing for an `as` cast whose subject is a plain
+    /// union-typed variable. Returns null when narrowing does not apply (subject is
+    /// not a tracked union variable, or the target is not a member of the union).
+    fn computeCastNarrowing(self: *ControlFlowHandler, cast_data: anytype) !?CastNarrowing {
+        if (cast_data.value.data != .Variable) return null;
+        const var_name = cast_data.value.data.Variable.lexeme;
+        const var_index = self.generator.symbol_table.getVariable(var_name) orelse return null;
+        const is_local = self.generator.symbol_table.isLocalVariable(var_name);
+        const saved_type = self.generator.getTrackedVariableType(var_name) orelse return null;
+        if (saved_type != .Union) return null;
+
+        const member_ptrs = saved_type.Union.members;
+        if (member_ptrs.len == 0) return null;
+
+        const target_name: []const u8 = switch (cast_data.target_type.data) {
+            .Basic => |b| switch (b) {
+                .Integer => "int",
+                .Byte => "byte",
+                .Float => "float",
+                .String => "string",
+                .Tetra => "tetra",
+                .Nothing => "nothing",
+            },
+            .Custom => |tok| tok.lexeme,
+            else => return null,
+        };
+
+        const full_names = try self.generator.allocator.alloc([]const u8, member_ptrs.len);
+        for (member_ptrs, 0..) |mp, i| {
+            full_names[i] = try self.generator.hirTypeToDisplayName(mp.*);
+        }
+
+        var then_member_ptr: ?*const HIRType = null;
+        const remainder_ptrs = try self.generator.allocator.alloc(*const HIRType, member_ptrs.len);
+        const remainder_names = try self.generator.allocator.alloc([]const u8, member_ptrs.len);
+        var remainder_len: usize = 0;
+        for (member_ptrs, 0..) |mp, i| {
+            if (then_member_ptr == null and std.mem.eql(u8, full_names[i], target_name)) {
+                then_member_ptr = mp;
+            } else {
+                remainder_ptrs[remainder_len] = mp;
+                remainder_names[remainder_len] = full_names[i];
+                remainder_len += 1;
+            }
+        }
+        if (then_member_ptr == null) return null;
+
+        // Represent both narrowed views as unions (even single-member) so the
+        // VM and native peek paths agree: the VM keys off the runtime value while
+        // the native backend resolves the active member through the union member
+        // list, which preserves concrete enum/struct names.
+        const then_member_ptrs = try self.generator.allocator.alloc(*const HIRType, 1);
+        then_member_ptrs[0] = then_member_ptr.?;
+        const then_type = HIRType{ .Union = .{ .id = saved_type.Union.id, .members = then_member_ptrs } };
+        const then_members = try self.generator.allocator.alloc([]const u8, 1);
+        then_members[0] = target_name;
+
+        const else_remainder_ptrs = remainder_ptrs[0..remainder_len];
+        const else_members = remainder_names[0..remainder_len];
+        const else_type = HIRType{ .Union = .{ .id = saved_type.Union.id, .members = else_remainder_ptrs } };
+
+        return CastNarrowing{
+            .var_name = var_name,
+            .var_index = var_index,
+            .is_local = is_local,
+            .saved_type = saved_type,
+            .saved_index_members = self.generator.symbol_table.getVariableUnionMembers(is_local, var_index),
+            .then_type = then_type,
+            .then_members = then_members,
+            .else_type = else_type,
+            .else_members = else_members,
+        };
+    }
+
     /// Generate HIR for cast expressions
     pub fn generateCast(self: *ControlFlowHandler, cast_expr: ast.Expr.Data, preserve_result: bool) !void {
         const cast_data = cast_expr.Cast;
+        const narrowing = try self.computeCastNarrowing(cast_data);
 
         // Generate the value to cast
         try self.generator.generateExpression(cast_data.value, true, false);
@@ -706,7 +810,9 @@ pub const ControlFlowHandler = struct {
         try self.generator.instructions.append(.Pop);
         if (cast_data.else_branch) |else_expr| {
             // Preserve result only if requested by parent
+            if (narrowing) |nw| try self.applyCastNarrowing(nw, nw.else_type, nw.else_members);
             try self.generator.generateExpression(else_expr, preserve_result, false);
+            if (narrowing) |nw| try self.restoreCastNarrowing(nw);
         } else {
             // No else branch: cast must fail -> halt program
             try self.generator.instructions.append(.Halt);
@@ -716,6 +822,7 @@ pub const ControlFlowHandler = struct {
         // Success branch
         try self.generator.instructions.append(.{ .Label = .{ .name = ok_label, .vm_address = 0 } });
         if (cast_data.then_branch) |then_expr| {
+            if (narrowing) |nw| try self.applyCastNarrowing(nw, nw.then_type, nw.then_members);
             if (then_expr.data == .Block) {
                 try self.generator.generateExpression(then_expr, true, false);
                 try self.generator.instructions.append(.Pop);
@@ -726,6 +833,7 @@ pub const ControlFlowHandler = struct {
                 try self.generator.instructions.append(.Pop);
                 try self.generator.generateExpression(then_expr, preserve_result, false);
             }
+            if (narrowing) |nw| try self.restoreCastNarrowing(nw);
         } else {
             if (!preserve_result) {
                 try self.generator.instructions.append(.Pop);

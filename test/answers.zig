@@ -468,6 +468,8 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "17" },
     .{ .type = ">int | MyErrorSet", .value = "10" },
     .{ .type = "int | >MyErrorSet", .value = ".Failed" },
+    .{ .type = "int", .value = "10" },
+    .{ .type = "MyErrorSet", .value = ".Failed" },
 
     .{ .type = "string", .value = "\"return\"" },
     .{ .type = "int", .value = "0" },

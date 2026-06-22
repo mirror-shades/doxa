@@ -4,6 +4,15 @@ const HIRType = SoxaTypes.HIRType;
 const ScopeKind = SoxaTypes.ScopeKind;
 const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 
+/// Identifies a variable for union-member tracking. Variable indices are only
+/// unique within their namespace (per-function locals vs. globals), so the raw
+/// index must be paired with `is_local` to avoid a global at index N leaking its
+/// union members onto a function parameter that also lands at index N.
+const UnionMemberKey = struct {
+    is_local: bool,
+    index: u32,
+};
+
 pub const SymbolTable = struct {
     variables: std.StringHashMap(u32),
     local_scopes: std.array_list.Managed(std.StringHashMap(u32)),
@@ -16,7 +25,7 @@ pub const SymbolTable = struct {
     variable_array_element_types: std.StringHashMap(HIRType),
     variable_array_storage: std.StringHashMap(ArrayStorageKind),
 
-    variable_union_members_by_index: std.AutoHashMap(u32, [][]const u8),
+    variable_union_members: std.AutoHashMap(UnionMemberKey, [][]const u8),
 
     alias_parameters: std.StringHashMap(void),
 
@@ -34,7 +43,7 @@ pub const SymbolTable = struct {
             .variable_custom_types = std.StringHashMap([]const u8).init(allocator),
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
             .variable_array_storage = std.StringHashMap(ArrayStorageKind).init(allocator),
-            .variable_union_members_by_index = std.AutoHashMap(u32, [][]const u8).init(allocator),
+            .variable_union_members = std.AutoHashMap(UnionMemberKey, [][]const u8).init(allocator),
             .alias_parameters = std.StringHashMap(void).init(allocator),
             .current_function = null,
             .allocator = allocator,
@@ -52,7 +61,7 @@ pub const SymbolTable = struct {
         self.variable_custom_types.deinit();
         self.variable_array_element_types.deinit();
         self.variable_array_storage.deinit();
-        self.variable_union_members_by_index.deinit();
+        self.variable_union_members.deinit();
         self.alias_parameters.deinit();
     }
 
@@ -68,6 +77,21 @@ pub const SymbolTable = struct {
         self.local_scopes.deinit();
         self.local_scopes = std.array_list.Managed(std.StringHashMap(u32)).init(self.allocator);
         self.local_variable_count = 0;
+
+        // Drop union-member tracking for the previous function's locals; local
+        // indices restart per function, so stale entries would otherwise leak
+        // onto same-indexed locals in the new function.
+        var union_it = self.variable_union_members.iterator();
+        var stale_local_keys = std.array_list.Managed(UnionMemberKey).init(self.allocator);
+        defer stale_local_keys.deinit();
+        while (union_it.next()) |entry| {
+            if (entry.key_ptr.is_local) {
+                try stale_local_keys.append(entry.key_ptr.*);
+            }
+        }
+        for (stale_local_keys.items) |key| {
+            _ = self.variable_union_members.remove(key);
+        }
 
         // Clear alias parameters for the new function scope
         self.alias_parameters.deinit();
@@ -280,9 +304,11 @@ pub const SymbolTable = struct {
         return self.variable_array_storage.get(var_name);
     }
 
-    /// Track union member type names by variable index to avoid name collisions
-    pub fn trackVariableUnionMembersByIndex(self: *SymbolTable, var_index: u32, members: [][]const u8) !void {
-        try self.variable_union_members_by_index.put(var_index, members);
+    /// Track union member type names for a variable. Keyed by scope-aware
+    /// identity (`is_local` + index) so locals and globals at the same numeric
+    /// index do not collide.
+    pub fn trackVariableUnionMembers(self: *SymbolTable, is_local: bool, var_index: u32, members: [][]const u8) !void {
+        try self.variable_union_members.put(.{ .is_local = is_local, .index = var_index }, members);
     }
 
     /// Track an alias parameter
@@ -295,8 +321,27 @@ pub const SymbolTable = struct {
         return self.alias_parameters.contains(var_name);
     }
 
-    /// Get union members by variable index
-    pub fn getUnionMembersByIndex(self: *SymbolTable, var_index: u32) ?[][]const u8 {
-        return self.variable_union_members_by_index.get(var_index);
+    /// Get union members for a scope-aware variable identity.
+    pub fn getVariableUnionMembers(self: *SymbolTable, is_local: bool, var_index: u32) ?[][]const u8 {
+        return self.variable_union_members.get(.{ .is_local = is_local, .index = var_index });
+    }
+
+    /// Remove any union-member tracking for a scope-aware variable identity. Used
+    /// to restore the original (possibly absent) state after temporary `as`
+    /// narrowing.
+    pub fn removeVariableUnionMembers(self: *SymbolTable, is_local: bool, var_index: u32) void {
+        _ = self.variable_union_members.remove(.{ .is_local = is_local, .index = var_index });
+    }
+
+    /// Whether a variable name resolves to the per-function local namespace
+    /// (as opposed to globals/module). Used to key union-member tracking.
+    pub fn isLocalVariable(self: *SymbolTable, name: []const u8) bool {
+        if (self.current_function == null) return false;
+        var i = self.local_scopes.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.local_scopes.items[i].get(name)) |_| return true;
+        }
+        return false;
     }
 };

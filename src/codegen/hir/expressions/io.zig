@@ -67,30 +67,15 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
         // Attach inline union info for selected builtins/internal calls
         if (peek.expr.data == .Variable) {
             const var_name = peek.expr.data.Variable.lexeme;
-            // Prefer index-based lookup to avoid name collisions; do this for all scopes
+            // Scope-aware lookup: local and global variables can share a numeric
+            // index, so the union-member key is keyed by (is_local, index).
             if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
-                // FIXED: Only use union member information if we're looking at the correct scope
-                // When inside a function, only use union members for local variables to avoid
-                // global union variables affecting function parameters with the same name
-                var should_use_union_members = true;
-                if (self.generator.symbol_table.current_function != null) {
-                    // Inside function: only use union members if this is a local variable
-                    var is_local = false;
-                    for (self.generator.symbol_table.local_scopes.items) |scope| {
-                        if (scope.get(var_name)) |_| {
-                            is_local = true;
-                            break;
-                        }
-                    }
-                    if (!is_local) {
-                        // This is a global variable accessed from inside a function
-                        // Don't use union member information to avoid scope confusion
-                        should_use_union_members = false;
-                    }
-                }
-
+                const is_local = self.generator.symbol_table.isLocalVariable(var_name);
+                // Inside a function, a global accessed by name should not surface
+                // union member info; keep parameters/locals authoritative.
+                const should_use_union_members = !(self.generator.symbol_table.current_function != null and !is_local);
                 if (should_use_union_members) {
-                    if (self.generator.symbol_table.getUnionMembersByIndex(var_index)) |members2| {
+                    if (self.generator.symbol_table.getVariableUnionMembers(is_local, var_index)) |members2| {
                         union_members = members2;
                     }
                 }
