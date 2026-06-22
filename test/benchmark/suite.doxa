@@ -127,9 +127,10 @@ function writeStats(results :: Result[]) {
     if not std.file.exists(path) then {
         std.file.write(path, header)
     }
+    const ns_per_s is 1_000_000_000
     each result in results {
-        const c_raw is result.time_c / result.runs / 1000000000
-        const d_raw is result.time_d / result.runs / 1000000000
+        const c_raw is result.time_c / result.runs / ns_per_s
+        const d_raw is result.time_d / result.runs / ns_per_s
         const c_time is roundTo(c_raw, 2)
         const d_time is roundTo(d_raw, 2)
         const percentage is roundTo(((d_raw - c_raw) / c_raw) * 100, 2)
