@@ -31,25 +31,73 @@ else @print(current)
 
 - **else required**, **then optional**.
 - Same body rules: expression bodies end with ` `, block bodies do not.
+- The tested variable is narrowed in both branches: the **then** branch narrows to the target type, the **else** branch narrows to the remainder (union minus target).
 
 Examples:
 
 ```doxa
-# Success and failure as expressions
+# Inline fallback value
 const n_or_zero is value as int else 0
 
-# Block failure case
-value as int else {
+# Block with explicit return (guard pattern)
+const n is value as int else {
     @print("value is not an int/n")
+    return -1
 }
 
-# Explicit success block
-value as int then {
-    # use the narrowed int value here
+# Block with lift (provides fallback value, continues)
+const n is value as int else {
+    @print("value is not an int, using default/n")
+    lift 0
+}
+
+# Type narrowing in both branches
+const val :: int | float | Error is foo()
+val as int then {
+    # val :: int here
 } else {
-    # handle non-int here
+    # val :: float | Error here
 }
 ```
+
+**Then block behavior**: when the then branch is a block, it runs for side effects only. The `as` expression's value on the success path is the original narrowed value. When the then branch is an inline expression, its value is used as the result.
+
+```doxa
+var x is val as int then 20 else 0        # x is 20 (inline then)
+var x is val as int then { work() } else 0 # x is val's int value (block then, side-effects)
+```
+
+### Block values and `lift`
+
+In `if` and `as` branches, blocks do **not** implicitly return their last expression. The last expression in a block is discarded (side-effect only). To provide a value from a block, use `lift`:
+
+```doxa
+# lift provides a value from a block
+var x is if cond then { lift compute() } else { lift 0 }
+
+# Without lift, blocks produce nothing — use inline for simple values
+var x is if cond then compute() else 0
+```
+
+`lift` terminates the block (code after `lift` is unreachable). It scopes to the immediately enclosing block `{ }`.
+
+`return` always exits the enclosing function. `lift` always provides a value to the enclosing expression.
+
+```doxa
+var x is foo() as int else {
+    @print("error/n")
+    lift 0               # x gets 0, execution continues after the as expression
+}
+
+var x is foo() as int else {
+    @print("fatal/n")
+    return -1            # function exits, x is never assigned
+}
+```
+
+When `as` or `if` is used in assignment, block branches must either `lift` a value or diverge via `return`/`break`. A block that falls through without `lift` produces `nothing`, which is a compile error when a value is expected.
+
+`match` arms are not affected — implicit last-expression returns are preserved in match blocks.
 
 ### if vs as
 
@@ -141,10 +189,11 @@ var msg is match color {
 Notes:
 
 - **Exhaustiveness**: For enums, prefer covering all variants or add an `else` arm. For unions, cover the needed type arms `else` is optional.
-- **Result type**: All arms must produce a compatible result type. For block arms, the last expression is the arm’s value.
+- **Result type**: All arms must produce a compatible result type. For block arms, the last expression is the arm's value.
 
 ### Quick reference
 
-- **if**: then required else optional expression body ends with ` `, block body does not.
-- **as**: else required then optional same body rules.
-- **match**: pattern then BODY else BODY arm separation via expression ` ` or closing block `}`.
+- **if**: then required else optional. Inline expressions or blocks with `lift`.
+- **as**: else required then optional. Type narrowing in both branches. Blocks use `lift` or `return`.
+- **match**: pattern then BODY else BODY. Block arms use implicit last expression.
+- **lift**: provides a value from a block, terminates the block. Scopes to the immediately enclosing `{ }`.
