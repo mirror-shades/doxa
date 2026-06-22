@@ -160,8 +160,13 @@ pub fn exec(vm: anytype, s: anytype) !void {
             },
             .array => |arr| {
                 var logical_len: usize = 0;
-                while (logical_len < arr.elements.len) : (logical_len += 1) {
-                    if (arr.elements[logical_len] == .nothing) break;
+                switch (arr.backing) {
+                    .boxed => |boxed| {
+                        while (logical_len < boxed.len) : (logical_len += 1) {
+                            if (boxed[logical_len] == .nothing) break;
+                        }
+                    },
+                    else => logical_len = arr.length,
                 }
                 try vm.stack.push(HIRFrame.initInt(@intCast(logical_len)));
             },
@@ -199,13 +204,19 @@ pub fn exec(vm: anytype, s: anytype) !void {
             .array => |a| a,
             else => return vm.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@pack: expected byte array", .{}),
         };
-        const bytes = try vm.scopeAllocator().alloc(u8, arr.length);
-        for (0..arr.length) |i| {
-            bytes[i] = switch (arr.elements[i]) {
-                .byte => |b| b,
-                else => return vm.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@pack: array element is not a byte", .{}),
-            };
-        }
+        const bytes = switch (arr.backing) {
+            .bytes => |buf| try vm.scopeAllocator().dupe(u8, buf[0..arr.length]),
+            else => blk: {
+                const out = try vm.scopeAllocator().alloc(u8, arr.length);
+                for (0..arr.length) |i| {
+                    out[i] = switch (arr.get(i)) {
+                        .byte => |b| b,
+                        else => return vm.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@pack: array element is not a byte", .{}),
+                    };
+                }
+                break :blk out;
+            },
+        };
         try vm.stack.push(HIRFrame.initString(bytes));
         return;
     }
@@ -214,12 +225,9 @@ pub fn exec(vm: anytype, s: anytype) !void {
             .string => |s_val| s_val,
             else => return vm.reporter.reportRuntimeError(null, ErrorCode.TYPE_MISMATCH, "@unpack: expected string", .{}),
         };
-        const elements = try vm.scopeAllocator().alloc(HIRValue, str.len);
-        for (str, 0..) |byte, i| {
-            elements[i] = HIRValue{ .byte = byte };
-        }
+        const buf = try vm.scopeAllocator().dupe(u8, str);
         const array = HIRValue{ .array = HIRArray{
-            .elements = elements,
+            .backing = .{ .bytes = buf },
             .element_type = .Byte,
             .capacity = @intCast(str.len),
             .length = @intCast(str.len),

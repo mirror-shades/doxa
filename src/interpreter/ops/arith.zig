@@ -23,28 +23,24 @@ pub fn exec(vm: anytype, a: anytype) !void {
                             const len_a = arr_a.length;
                             const len_b = arr_b.length;
 
-                            const new_elements = try vm.scopeAllocator().alloc(HIRValue, len_a + len_b);
+                            var result_arr: SoxaValues.HIRArray = .{
+                                .backing = try SoxaValues.HIRArray.allocBacking(vm.scopeAllocator(), arr_a.element_type, len_a + len_b),
+                                .capacity = len_a + len_b,
+                                .length = len_a + len_b,
+                                .element_type = arr_a.element_type,
+                                .owner = SoxaValues.ValueOwner.Scope,
+                                .scope_id = vm.currentScopeId(),
+                            };
 
                             for (0..len_a) |i| {
-                                new_elements[i] = arr_a.elements[i];
+                                result_arr.set(i, arr_a.get(i));
                             }
 
                             for (0..len_b) |i| {
-                                new_elements[len_a + i] = arr_b.elements[i];
+                                result_arr.set(len_a + i, arr_b.get(i));
                             }
 
-                            const result_array = HIRValue{
-                                .array = .{
-                                    .elements = new_elements,
-                                    .capacity = len_a + len_b,
-                                    .length = len_a + len_b,
-                                    .element_type = arr_a.element_type,
-                                    .owner = SoxaValues.ValueOwner.Scope,
-                                    .scope_id = vm.currentScopeId(),
-                                },
-                            };
-
-                            try vm.stack.push(HIRFrame.initFromHIRValue(result_array));
+                            try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = result_arr }));
                             return;
                         },
                         else => {

@@ -751,6 +751,29 @@ pub const VM = struct {
     }
 
     fn storeValueAtPtr(self: *VM, value: HIRValue, ptr: runtime.SlotPointer, owner: ValueOwner, operand: ?module.SlotOperand) VmError!void {
+        // Load-mutate-store fast path: when the array being written back is the
+        // exact same backing already held by this slot, it was produced by an
+        // in-place mutation (LoadVar -> ArraySet/ArrayCompoundAssign -> StoreVar).
+        // Deep-copying it would be both redundant and O(n) per store, which turns
+        // element-wise array fills into O(n^2). Slots are always initialized to
+        // `nothing` (see runtime.zig), so reading the current slot value is safe.
+        if (value == .array and value.array.backingLen() > 0) {
+            const existing = ptr.load();
+            if (existing == .array and existing.array.backingPtr() == value.array.backingPtr()) {
+                ptr.store(value);
+                switch (owner) {
+                    .Module => |module_id| {
+                        const state = try self.resolveModuleState(module_id);
+                        if (self.moduleSlotIndexForStore(state, operand, ptr)) |slot_idx| {
+                            state.markInitialized(slot_idx);
+                        }
+                    },
+                    else => {},
+                }
+                return;
+            }
+        }
+
         var allocator: std.mem.Allocator = undefined;
         var module_state_ptr: ?*runtime.ModuleState = null;
         var old_module_value: HIRValue = undefined;
@@ -898,9 +921,9 @@ pub const VM = struct {
                 const arr_len = arr.length;
                 var i: u32 = 0;
                 while (i < arr_len) : (i += 1) {
-                    const element = &arr.elements[i];
+                    var element = arr.get(i);
                     var predicate_copy = predicate;
-                    const predicate_value = try self.evaluatePredicate(&predicate_copy, element);
+                    const predicate_value = try self.evaluatePredicate(&predicate_copy, &element);
                     const truthy = try self.isTruthy(predicate_value);
                     if (is_exists) {
                         if (truthy) {
@@ -1055,7 +1078,7 @@ pub const VM = struct {
                 else => false,
             },
             .array => |av| switch (b) {
-                .array => |bv| av.elements.ptr == bv.elements.ptr, // Reference equality for arrays
+                .array => |bv| av.backingPtr() == bv.backingPtr(), // Reference equality for arrays
                 else => false,
             },
             .union_instance => |av| switch (b) {
@@ -1138,16 +1161,11 @@ pub const VM = struct {
                             const length = mutable_arr.length;
                             if (length >= mutable_arr.capacity) {
                                 const new_capacity = @max(mutable_arr.capacity * 2, mutable_arr.capacity + 1);
-                                var new_elements = try self.scopeAllocator().alloc(HIRValue, new_capacity);
-                                @memcpy(new_elements[0..mutable_arr.elements.len], mutable_arr.elements);
-                                mutable_arr.elements = new_elements;
+                                try mutable_arr.resizeBacking(self.scopeAllocator(), new_capacity);
                                 mutable_arr.capacity = @intCast(new_capacity);
                             }
-                            mutable_arr.elements[length] = element.value;
+                            mutable_arr.set(length, element.value);
                             mutable_arr.length += 1;
-                            if (length + 1 < mutable_arr.elements.len) {
-                                mutable_arr.elements[length + 1] = HIRValue.nothing;
-                            }
                             try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
                         },
                         else => return self.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "push: target must be array", .{}),
@@ -1199,7 +1217,7 @@ pub const VM = struct {
                             const arr_len = arr.length;
                             var j: u32 = 0;
                             while (j < arr_len) : (j += 1) {
-                                if (quantifierElementSatisfies(arr.elements[j], comparison_value.value, is_equality)) {
+                                if (quantifierElementSatisfies(arr.get(j), comparison_value.value, is_equality)) {
                                     found = true;
                                     break;
                                 }
@@ -1221,7 +1239,7 @@ pub const VM = struct {
                             const arr_len = arr.length;
                             var k: u32 = 0;
                             while (k < arr_len) : (k += 1) {
-                                if (!quantifierElementSatisfies(arr.elements[k], comparison_value.value, is_equality)) {
+                                if (!quantifierElementSatisfies(arr.get(k), comparison_value.value, is_equality)) {
                                     all_satisfy = false;
                                     break;
                                 }
@@ -1266,11 +1284,12 @@ pub const VM = struct {
                     const coll = try self.stack.pop();
                     switch (coll.value) {
                         .array => |arr| {
-                            const mutable_arr = arr;
-                            for (mutable_arr.elements) |*elem| {
-                                elem.* = HIRValue.nothing;
+                            var updated = arr;
+                            var idx: usize = 0;
+                            const n = updated.backingLen();
+                            while (idx < n) : (idx += 1) {
+                                updated.set(idx, HIRValue.nothing);
                             }
-                            var updated = mutable_arr;
                             updated.length = 0;
                             try self.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = updated }));
                         },
@@ -1291,7 +1310,7 @@ pub const VM = struct {
                             var idx: i64 = 0;
                             const arr_len: u32 = arr.length;
                             while (idx < arr_len) : (idx += 1) {
-                                if (valuesEqual(arr.elements[@intCast(idx)], value.value)) {
+                                if (valuesEqual(arr.get(@intCast(idx)), value.value)) {
                                     try self.stack.push(HIRFrame.initInt(idx));
                                     return;
                                 }
@@ -2315,12 +2334,14 @@ pub const VM = struct {
                 defer result.deinit();
                 try result.append('[');
                 var first = true;
-                const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
-                for (arr.elements[0..visible_len]) |*elem| {
+                const visible_len = @min(arr.backingLen(), @as(usize, @intCast(arr.length)));
+                var ei: usize = 0;
+                while (ei < visible_len) : (ei += 1) {
+                    var elem = arr.get(ei);
                     if (!first) try result.appendSlice(", ");
-                    const elem_str = try self.valueToString(allocator, elem);
+                    const elem_str = try self.valueToString(allocator, &elem);
                     defer allocator.free(elem_str);
-                    switch (elem.*) {
+                    switch (elem) {
                         .string => {
                             try result.append('"');
                             try result.appendSlice(elem_str);
@@ -2426,10 +2447,17 @@ pub const VM = struct {
                 }
             },
             .array => |a| {
-                for (a.elements) |*elem| {
-                    self.freeValueFromAllocator(allocator, elem);
+                switch (a.backing) {
+                    .boxed => |s| {
+                        for (s) |*elem| {
+                            self.freeValueFromAllocator(allocator, elem);
+                        }
+                        allocator.free(s);
+                    },
+                    .bytes => |s| allocator.free(s),
+                    .ints => |s| allocator.free(s),
+                    .floats => |s| allocator.free(s),
                 }
-                allocator.free(a.elements);
             },
             .enum_variant => |e| {
                 if (e.type_name.len > 0) allocator.free(e.type_name);
@@ -2514,10 +2542,17 @@ pub const VM = struct {
                 }
             },
             .array => |a| {
-                for (a.elements) |*elem| {
-                    self.freeValueContents(allocator, elem);
+                switch (a.backing) {
+                    .boxed => |s| {
+                        for (s) |*elem| {
+                            self.freeValueContents(allocator, elem);
+                        }
+                        allocator.free(s);
+                    },
+                    .bytes => |s| allocator.free(s),
+                    .ints => |s| allocator.free(s),
+                    .floats => |s| allocator.free(s),
                 }
-                allocator.free(a.elements);
             },
             .enum_variant => |e| {
                 if (e.type_name.len > 0) allocator.free(e.type_name);
@@ -2598,15 +2633,21 @@ pub const VM = struct {
                 break :blk HIRValue{ .map = .{ .entries = entries, .key_pool = key_pool, .value_pool = value_pool, .key_type = m.key_type, .value_type = m.value_type, .path = null, .else_value = else_copy, .owner = owner, .scope_id = 0 } };
             },
             .array => |a| blk: {
-                const elems = try allocator.alloc(HIRValue, a.elements.len);
-                const visible_len = @min(a.elements.len, @as(usize, @intCast(a.length)));
-                for (a.elements[0..visible_len], 0..) |_, i| {
-                    elems[i] = try self.deepCopyValueToAllocator(allocator, &a.elements[i], owner);
-                }
-                for (elems[visible_len..]) |*elem| {
-                    elem.* = hir_values.nothing_value;
-                }
-                break :blk HIRValue{ .array = .{ .elements = elems, .element_type = a.element_type, .capacity = a.capacity, .length = a.length, .path = null, .nested_element_type = a.nested_element_type, .owner = owner, .scope_id = 0 } };
+                const new_backing: hir_values.HIRArray.Backing = switch (a.backing) {
+                    .boxed => |src| bk: {
+                        const elems = try allocator.alloc(HIRValue, src.len);
+                        const visible_len = @min(src.len, @as(usize, @intCast(a.length)));
+                        for (0..visible_len) |i| {
+                            elems[i] = try self.deepCopyValueToAllocator(allocator, &src[i], owner);
+                        }
+                        for (elems[visible_len..]) |*elem| {
+                            elem.* = hir_values.nothing_value;
+                        }
+                        break :bk .{ .boxed = elems };
+                    },
+                    else => try a.cloneBackingShallow(allocator),
+                };
+                break :blk HIRValue{ .array = .{ .backing = new_backing, .element_type = a.element_type, .capacity = a.capacity, .length = a.length, .path = null, .nested_element_type = a.nested_element_type, .owner = owner, .scope_id = 0 } };
             },
             .enum_variant => |e| blk: {
                 const type_name = try allocator.dupe(u8, e.type_name);

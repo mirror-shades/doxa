@@ -29,8 +29,8 @@ pub fn resolveArrayIndex(index: HIRFrame, array_length: usize) !u32 {
             break :blk parsed;
         },
         .array => |arr| blk: {
-            if (arr.elements.len > 0) {
-                break :blk switch (arr.elements[0]) {
+            if (arr.backingLen() > 0) {
+                break :blk switch (arr.get(0)) {
                     .int => |i| i,
                     .byte => |u| @as(i64, u),
                     .tetra => |t| @as(i64, t),
@@ -69,12 +69,9 @@ pub fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
 
     if (needs_conversion) {
         const runtime_alloc = vm.scopeAllocator();
-        const element_count = converted.elements.len;
-        const new_elements = try runtime_alloc.alloc(HIRValue, element_count);
+        const element_count = converted.backingLen();
 
-        @memcpy(new_elements, converted.elements);
-
-        converted.elements = new_elements;
+        converted.backing = try converted.cloneBackingShallow(runtime_alloc);
         converted.capacity = @intCast(element_count);
         converted.owner = SoxaValues.ValueOwner.Scope;
         converted.storage_kind = .dynamic;
@@ -83,13 +80,10 @@ pub fn ensureDynamicArrayStorage(vm: anytype, array: HIRArray) !HIRArray {
 
     if (converted.storage_kind == .dynamic) return converted;
 
-    const element_count = converted.elements.len;
+    const element_count = converted.backingLen();
     const allocator = vm.scopeAllocator();
-    const new_elements = try allocator.alloc(HIRValue, element_count);
 
-    @memcpy(new_elements, converted.elements);
-
-    converted.elements = new_elements;
+    converted.backing = try converted.cloneBackingShallow(allocator);
     converted.capacity = @intCast(element_count);
     converted.storage_kind = .dynamic;
     return converted;
@@ -117,7 +111,7 @@ fn createDefaultArrayValue(
 
     return HIRValue{
         .array = .{
-            .elements = elements,
+            .backing = .{ .boxed = elements },
             .capacity = @intCast(inner_size),
             .length = @intCast(inner_size),
             .element_type = element_type,
@@ -139,27 +133,47 @@ pub fn arrayNew(vm: anytype, a: anytype) !void {
         .dynamic => if (requested_len == 0) 8 else requested_len,
         else => requested_len,
     };
-    const elements = try vm.scopeAllocator().alloc(HIRValue, initial_capacity);
 
     const has_nested = @hasField(@TypeOf(a), "nested_depth") and @hasField(@TypeOf(a), "nested_sizes");
     const nested_depth: u32 = if (has_nested) a.nested_depth else 0;
     const nested_sizes_slice: []const u32 = if (has_nested) a.nested_sizes[0..@intCast(nested_depth)] else &[_]u32{};
 
-    var i: usize = 0;
-    while (i < requested_len and i < elements.len) : (i += 1) {
-        if (nested_depth > 0) {
+    const allocator = vm.scopeAllocator();
+
+    var backing: HIRArray.Backing = undefined;
+    if (nested_depth > 0) {
+        // Arrays of arrays: each element is itself an array, so use boxed storage.
+        const elements = try allocator.alloc(HIRValue, initial_capacity);
+        var i: usize = 0;
+        while (i < requested_len and i < elements.len) : (i += 1) {
             elements[i] = try createDefaultArrayValue(vm, a.element_type, nested_sizes_slice, a.nested_element_type);
-        } else {
-            elements[i] = getDefaultValue(a.element_type);
         }
-    }
-    while (i < elements.len) : (i += 1) {
-        elements[i] = nothing_value;
+        while (i < elements.len) : (i += 1) {
+            elements[i] = nothing_value;
+        }
+        backing = .{ .boxed = elements };
+    } else {
+        backing = try HIRArray.allocBacking(allocator, a.element_type, initial_capacity);
+        switch (backing) {
+            .boxed => |s| {
+                const default = getDefaultValue(a.element_type);
+                var i: usize = 0;
+                while (i < requested_len and i < s.len) : (i += 1) {
+                    s[i] = default;
+                }
+                while (i < s.len) : (i += 1) {
+                    s[i] = nothing_value;
+                }
+            },
+            .bytes => |s| @memset(s, 0),
+            .ints => |s| @memset(s, 0),
+            .floats => |s| @memset(s, 0),
+        }
     }
 
     const new_array = HIRValue{
         .array = .{
-            .elements = elements,
+            .backing = backing,
             .capacity = @intCast(initial_capacity),
             .length = @intCast(requested_len),
             .element_type = a.element_type,
@@ -189,7 +203,7 @@ pub fn arrayGet(vm: anytype, a: anytype) !void {
             }
 
             const element = if (resolved_index < arr.length)
-                arr.elements[resolved_index]
+                arr.get(resolved_index)
             else
                 getDefaultValue(arr.element_type);
 
@@ -263,16 +277,11 @@ pub fn arraySet(vm: anytype, a: anytype) !void {
                 mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
                 const allocator = try vm.arrayAllocator(mutable_arr);
                 const new_capacity = @max(mutable_arr.capacity * 2, index_val + 1);
-                const new_elements = try allocator.realloc(mutable_arr.elements, new_capacity);
-                mutable_arr.elements = new_elements;
+                try mutable_arr.resizeBacking(allocator, new_capacity);
                 mutable_arr.capacity = new_capacity;
-
-                for (mutable_arr.elements[arr.capacity..new_capacity]) |*element| {
-                    element.* = nothing_value;
-                }
             }
 
-            mutable_arr.elements[index_val] = value.value;
+            mutable_arr.set(index_val, value.value);
             if (index_val >= mutable_arr.length) {
                 mutable_arr.length = index_val + 1;
             }
@@ -307,10 +316,10 @@ pub fn arrayPop(vm: anytype) !void {
 
             mutable_arr.length -= 1;
             const last_idx = mutable_arr.length;
-            var last_element = mutable_arr.elements[last_idx];
+            var last_element = mutable_arr.get(last_idx);
             const last_element_copy = try vm.deepCopyValueToAllocator(vm.scopeAllocator(), &last_element, SoxaValues.ValueOwner.Scope);
 
-            mutable_arr.elements[last_idx] = nothing_value;
+            mutable_arr.set(last_idx, nothing_value);
 
             const updated_array = HIRValue{ .array = mutable_arr };
             try vm.stack.push(HIRFrame.initFromHIRValue(updated_array));
@@ -407,9 +416,7 @@ pub fn arrayInsert(vm: anytype) !void {
 
             if (logical_len >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, logical_len + 1);
-                const new_elements = try allocator.realloc(mutable_arr.elements, new_capacity);
-                for (new_elements[mutable_arr.capacity..new_capacity]) |*e| e.* = nothing_value;
-                mutable_arr.elements = new_elements;
+                try mutable_arr.resizeBacking(allocator, new_capacity);
                 mutable_arr.capacity = new_capacity;
             }
 
@@ -417,10 +424,10 @@ pub fn arrayInsert(vm: anytype) !void {
             while (i >= @as(i32, @intCast(index_val))) : (i -= 1) {
                 const from_idx: usize = @intCast(i);
                 const to_idx: usize = from_idx + 1;
-                mutable_arr.elements[to_idx] = if (from_idx < mutable_arr.capacity) mutable_arr.elements[from_idx] else nothing_value;
+                mutable_arr.set(to_idx, if (from_idx < mutable_arr.capacity) mutable_arr.get(from_idx) else nothing_value);
             }
 
-            mutable_arr.elements[index_val] = value.value;
+            mutable_arr.set(index_val, value.value);
             mutable_arr.length += 1;
 
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
@@ -485,13 +492,13 @@ pub fn arrayRemove(vm: anytype) !void {
             }
             var mutable_arr = arr;
             mutable_arr = try ensureDynamicArrayStorage(vm, mutable_arr);
-            var removed_elem = mutable_arr.elements[index_val];
+            var removed_elem = mutable_arr.get(index_val);
             const removed_elem_copy = try vm.deepCopyValueToAllocator(vm.scopeAllocator(), &removed_elem, SoxaValues.ValueOwner.Scope);
             var i: u32 = index_val;
             while (i + 1 < mutable_arr.capacity and i + 1 < logical_len) : (i += 1) {
-                mutable_arr.elements[i] = mutable_arr.elements[i + 1];
+                mutable_arr.set(i, mutable_arr.get(i + 1));
             }
-            mutable_arr.elements[logical_len - 1] = nothing_value;
+            mutable_arr.set(logical_len - 1, nothing_value);
             mutable_arr.length -= 1;
 
             try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = mutable_arr }));
@@ -579,21 +586,19 @@ pub fn arraySlice(vm: anytype) !void {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array slice out of bounds: start={}, length={} (max length: {})", .{ start_val, length_val, logical_len - start_val });
             }
 
-            const sliced_elements = try vm.scopeAllocator().alloc(HIRValue, length_val);
-            for (0..length_val) |i| {
-                sliced_elements[i] = arr.elements[start_val + i];
-            }
-
-            const sliced_arr = HIRValue{ .array = .{
-                .elements = sliced_elements,
+            var sliced_arr: HIRArray = .{
+                .backing = try HIRArray.allocBacking(vm.scopeAllocator(), arr.element_type, length_val),
                 .capacity = length_val,
                 .length = length_val,
                 .element_type = arr.element_type,
                 .owner = SoxaValues.ValueOwner.Scope,
                 .scope_id = vm.currentScopeId(),
-            } };
+            };
+            for (0..length_val) |i| {
+                sliced_arr.set(i, arr.get(start_val + i));
+            }
 
-            try vm.stack.push(HIRFrame.initFromHIRValue(sliced_arr));
+            try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = sliced_arr }));
         },
         .string => |s| {
             if (start_val > s.len) {
@@ -639,28 +644,24 @@ pub fn arrayConcat(vm: anytype) !void {
                     const len_a = arr_a.length;
                     const len_b = arr_b.length;
 
-                    const new_elements = try vm.scopeAllocator().alloc(HIRValue, len_a + len_b);
+                    var result_arr: HIRArray = .{
+                        .backing = try HIRArray.allocBacking(vm.scopeAllocator(), arr_a.element_type, len_a + len_b),
+                        .capacity = len_a + len_b,
+                        .length = len_a + len_b,
+                        .element_type = arr_a.element_type,
+                        .owner = SoxaValues.ValueOwner.Scope,
+                        .scope_id = vm.currentScopeId(),
+                    };
 
                     for (0..len_a) |i| {
-                        new_elements[i] = arr_a.elements[i];
+                        result_arr.set(i, arr_a.get(i));
                     }
 
                     for (0..len_b) |i| {
-                        new_elements[len_a + i] = arr_b.elements[i];
+                        result_arr.set(len_a + i, arr_b.get(i));
                     }
 
-                    const result_array = HIRValue{
-                        .array = .{
-                            .elements = new_elements,
-                            .capacity = len_a + len_b,
-                            .length = len_a + len_b,
-                            .element_type = arr_a.element_type,
-                            .owner = SoxaValues.ValueOwner.Scope,
-                            .scope_id = vm.currentScopeId(),
-                        },
-                    };
-
-                    try vm.stack.push(HIRFrame.initFromHIRValue(result_array));
+                    try vm.stack.push(HIRFrame.initFromHIRValue(HIRValue{ .array = result_arr }));
                 },
                 else => {
                     return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Cannot concatenate array with {s}", .{@tagName(b.value)});
@@ -706,16 +707,11 @@ pub fn handleArrayPush(vm: anytype, element_value: HIRValue) !void {
 
             if (insert_index >= mutable_arr.capacity) {
                 const new_capacity = @max(mutable_arr.capacity * 2, insert_index + 1);
-                const new_elements = try allocator.realloc(mutable_arr.elements, new_capacity);
-                mutable_arr.elements = new_elements;
+                try mutable_arr.resizeBacking(allocator, new_capacity);
                 mutable_arr.capacity = new_capacity;
-
-                for (mutable_arr.elements[arr.capacity..new_capacity]) |*element| {
-                    element.* = nothing_value;
-                }
             }
 
-            mutable_arr.elements[insert_index] = coerced_element;
+            mutable_arr.set(insert_index, coerced_element);
             mutable_arr.length += 1;
 
             const updated_array = HIRValue{ .array = mutable_arr };
@@ -766,25 +762,23 @@ pub fn arrayRange(vm: anytype, r: anytype) !void {
     else
         0;
 
-    const elements = try vm.scopeAllocator().alloc(HIRValue, size);
+    var range_arr: HIRArray = .{
+        .backing = try HIRArray.allocBacking(vm.scopeAllocator(), r.element_type, size),
+        .capacity = size,
+        .length = size,
+        .element_type = r.element_type,
+        .owner = SoxaValues.ValueOwner.Scope,
+        .scope_id = vm.currentScopeId(),
+    };
 
     var i: u32 = 0;
     var current = start_val;
     while (i < size) : (i += 1) {
-        elements[i] = HIRValue{ .int = current };
+        range_arr.set(i, HIRValue{ .int = current });
         current += 1;
     }
 
-    const range_array = HIRValue{
-        .array = .{
-            .elements = elements,
-            .capacity = size,
-            .length = size,
-            .element_type = r.element_type,
-            .owner = SoxaValues.ValueOwner.Scope,
-            .scope_id = vm.currentScopeId(),
-        },
-    };
+    const range_array = HIRValue{ .array = range_arr };
 
     try vm.stack.push(HIRFrame.initFromHIRValue(range_array));
 }
@@ -799,7 +793,7 @@ pub fn getDefaultValue(hir_type: HIRType) HIRValue {
         .Nothing => nothing_value,
         .Poison => nothing_value,
         .Array => HIRValue{ .array = .{
-            .elements = &[_]HIRValue{},
+            .backing = .{ .boxed = &[_]HIRValue{} },
             .element_type = .Unknown,
             .capacity = 0,
             .length = 0,
@@ -987,19 +981,14 @@ fn execArrayGetAndCompound(vm: anytype, comptime op: CompoundOp) !void {
                 return vm.reporter.reportRuntimeError(null, ErrorCode.VARIABLE_NOT_FOUND, "Array index out of bounds: {}", .{index_val});
             }
 
-            const current_element = if (index_val < mutable_arr.elements.len) mutable_arr.elements[index_val] else nothing_value;
+            const current_element = if (index_val < mutable_arr.backingLen()) mutable_arr.get(index_val) else nothing_value;
             const result = try compoundResult(vm, current_element, value.value, op);
 
             const allocator = try vm.arrayAllocator(mutable_arr);
-            if (index_val >= mutable_arr.elements.len) {
-                const prev_len = mutable_arr.elements.len;
-                const new_elements = try allocator.realloc(mutable_arr.elements, index_val + 1);
-                mutable_arr.elements = new_elements;
-                for (mutable_arr.elements[prev_len .. index_val + 1]) |*element| {
-                    element.* = nothing_value;
-                }
+            if (index_val >= mutable_arr.backingLen()) {
+                try mutable_arr.resizeBacking(allocator, index_val + 1);
             }
-            mutable_arr.elements[index_val] = result;
+            mutable_arr.set(index_val, result);
             if (index_val >= mutable_arr.length) {
                 mutable_arr.length = index_val + 1;
             }
