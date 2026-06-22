@@ -601,58 +601,7 @@ fn exitIfCompileErrors(reporter: *Reporter) void {
     }
 }
 
-pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-
-    defer {
-        const leaked = gpa.deinit();
-        if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
-    }
-
-    if (builtin.os.tag == .windows) {
-        // Set the console output code page to UTF-8 to enable Unicode support
-        // I think this is only needed for Windows
-        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
-    }
-
-    const cli_options = try parseArgs(gpa.allocator());
-    defer cli_options.deinit(gpa.allocator());
-
-    switch (cli_options.lsp_mode) {
-        .none => {},
-        .stdio => {
-            try LspServer.run(gpa.allocator(), .{
-                .reporter_options = cli_options.reporter_options,
-                .trace_io = cli_options.lsp_io_trace,
-            });
-            return;
-        },
-        .harness => {
-            const script = cli_options.lsp_debug_file orelse unreachable;
-            try LspServer.runDebugHarness(gpa.allocator(), .{
-                .reporter_options = cli_options.reporter_options,
-                .script_path = script,
-            });
-            return;
-        },
-    }
-
-    var memoryManager = try MemoryManager.init(gpa.allocator());
-    defer memoryManager.deinit();
-
-    var sourceCache = source_cache.SourceCache.init(gpa.allocator());
-    defer sourceCache.deinit();
-
-    var reporter = Reporter.init(gpa.allocator(), cli_options.reporter_options, &sourceCache);
-    defer reporter.deinit();
-
-    var profiler = Profiler.init(gpa.allocator(), cli_options.profile);
-    defer profiler.deinit();
-
-    const path = cli_options.script_path.?;
-
-    const path_uri = try reporter.ensureFileUri(path);
-
+fn isDoxaFile(path: []const u8, path_uri: []const u8, reporter: *Reporter) void {
     if (!stringEndsWith(path, DOXA_EXTENSION)) {
         const loc = Location{
             .file = path,
@@ -667,13 +616,65 @@ pub fn main() !void {
         reporter.reportCompileError(loc, null, "Error: '{s}' is not a doxa file\n", .{path});
         std.process.exit(EXIT_CODE_USAGE);
     }
+}
 
-    const source = try std.fs.cwd().readFileAlloc(memoryManager.getAnalysisAllocator(), path, MAX_FILE_SIZE);
+pub fn main() !void {
+    if (builtin.os.tag == .windows) {
+        // Set the console output code page to UTF-8 to enable Unicode support
+        // I think this is only needed for Windows
+        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
+    }
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+
+    defer {
+        const leaked = gpa.deinit();
+        if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
+    }
+
+    var memoryManager = try MemoryManager.init(gpa.allocator());
+    defer memoryManager.deinit();
+
+    var sourceCache = source_cache.SourceCache.init(gpa.allocator());
+    defer sourceCache.deinit();
+
+    var reporter = Reporter.init(gpa.allocator(), .{}, &sourceCache);
+    defer reporter.deinit();
+
+    const cli_options = try parseArgs(gpa.allocator());
+    defer cli_options.deinit(gpa.allocator());
+
+    switch (cli_options.lsp_mode) {
+        .none => {},
+        .stdio => return LspServer.run(gpa.allocator(), .{
+            .reporter_options = cli_options.reporter_options,
+            .trace_io = cli_options.lsp_io_trace,
+        }),
+        .harness => return LspServer.runDebugHarness(gpa.allocator(), .{
+            .reporter_options = cli_options.reporter_options,
+            .script_path = cli_options.lsp_debug_file orelse unreachable,
+        }),
+    }
+
+    const script_path = cli_options.script_path orelse unreachable;
+
+    var profiler = Profiler.init(gpa.allocator(), cli_options.profile);
+    defer profiler.deinit();
+
+    const source = try std.fs.cwd().readFileAlloc(memoryManager.getAnalysisAllocator(), script_path, MAX_FILE_SIZE);
     defer memoryManager.getAnalysisAllocator().free(source);
-    try sourceCache.load(path, source);
+    try sourceCache.load(script_path, source);
+    isDoxaFile(script_path, try reporter.ensureFileUri(script_path), &reporter);
 
+    pipeline(gpa.allocator(), cli_options, script_path, &memoryManager, &reporter, &profiler, source) catch |err| switch (err) {
+        error.RuntimeTrap => std.process.exit(EXIT_CODE_RUNTIME),
+        else => return err,
+    };
+}
+
+fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8, memoryManager: *MemoryManager, reporter: *Reporter, profiler: *Profiler, source: []const u8) !void {
     profiler.startPhase(Phase.LEXIC_A);
-    const lexedTokens = try lexicAnalysis(&memoryManager, source, path, &reporter);
+    const lexedTokens = try lexicAnalysis(memoryManager, source, script_path, reporter);
     defer lexedTokens.deinit();
     if (cli_options.reporter_options.debug_lexer) {
         for (lexedTokens.items) |token| {
@@ -683,11 +684,11 @@ pub fn main() !void {
     profiler.stopPhase();
 
     profiler.startPhase(Phase.PARSING);
-    var parser = Parser.init(memoryManager.getAnalysisAllocator(), lexedTokens.items, path, path_uri, &reporter);
+    var parser = Parser.init(memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(script_path), reporter);
     defer parser.deinit();
     const parsedStatements = try parser.execute();
     profiler.stopPhase();
-    exitIfCompileErrors(&reporter);
+    exitIfCompileErrors(reporter);
 
     if (cli_options.reporter_options.debug_parser) {
         var ast_dump = std.array_list.Managed(u8).init(memoryManager.getAnalysisAllocator());
@@ -701,28 +702,28 @@ pub fn main() !void {
     defer resolver.deinit();
     try resolver.resolve(parsedStatements);
     profiler.stopPhase();
-    exitIfCompileErrors(&reporter);
+    exitIfCompileErrors(reporter);
 
     profiler.startPhase(Phase.SEMANTIC_A);
-    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), &reporter, &memoryManager, &parser);
+    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), reporter, memoryManager, &parser);
     defer semantic_analyzer.deinit();
     try semantic_analyzer.analyze(parsedStatements);
     profiler.stopPhase();
-    exitIfCompileErrors(&reporter);
+    exitIfCompileErrors(reporter);
 
     if (cli_options.reporter_options.debug_memory) {
-        memoryManager.dumpState(&reporter);
+        memoryManager.dumpState(reporter);
     }
 
     profiler.startPhase(Phase.GENERATE_S);
 
-    const soxa_path = try generateArtifactPath(&memoryManager, path, ".soxa", cli_options.cache_dir);
+    const soxa_path = try generateArtifactPath(memoryManager, script_path, ".soxa", cli_options.cache_dir);
 
     var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
     defer reachable_modules.deinit();
-    const hir_program_for_bytecode = try generateHIRProgram(&memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, &reporter);
-    exitIfCompileErrors(&reporter);
-    try SoxaCompiler.writeSoxaFile(&hir_program_for_bytecode, soxa_path, path, memoryManager.getExecutionAllocator());
+    const hir_program_for_bytecode = try generateHIRProgram(memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, reporter);
+    exitIfCompileErrors(reporter);
+    try SoxaCompiler.writeSoxaFile(&hir_program_for_bytecode, soxa_path, script_path, memoryManager.getExecutionAllocator());
     profiler.stopPhase();
 
     if (cli_options.mode == .RUN) {
@@ -731,10 +732,10 @@ pub fn main() !void {
         const hir_program = hir_program_for_bytecode;
         const artifact_stem = blk: {
             var filename_start: usize = 0;
-            for (path, 0..) |c, i| {
+            for (script_path, 0..) |c, i| {
                 if (c == '/' or c == '\\') filename_start = i + 1;
             }
-            const filename = path[filename_start..];
+            const filename = script_path[filename_start..];
             if (std.mem.lastIndexOfScalar(u8, filename, '.')) |dot| {
                 break :blk filename[0..dot];
             }
@@ -742,7 +743,7 @@ pub fn main() !void {
         };
 
         var bytecode_generator = BytecodeGenerator.init(memoryManager.getExecutionAllocator(), cli_options.cache_dir, artifact_stem);
-        bytecode_generator.source_path = path;
+        bytecode_generator.source_path = script_path;
         var bytecode_module = try bytecode_generator.generate(&hir_program);
         defer bytecode_module.deinit();
 
@@ -753,9 +754,9 @@ pub fn main() !void {
 
         profiler.startPhase(Phase.EXECUTION);
 
-        const zig_modules = try compileInlineZigModules(&memoryManager, parsedStatements, &parser, &reporter, cli_options.cache_dir, cli_options.opt_level);
+        const zig_modules = try compileInlineZigModules(memoryManager, parsedStatements, &parser, reporter, cli_options.cache_dir, cli_options.opt_level);
 
-        runBytecodeModule(&memoryManager, &bytecode_module, &reporter, zig_modules, cli_options.program_args) catch |err| switch (err) {
+        runBytecodeModule(memoryManager, &bytecode_module, reporter, zig_modules, cli_options.program_args) catch |err| switch (err) {
             error.RuntimeTrap => std.process.exit(EXIT_CODE_RUNTIME),
             else => return err,
         };
@@ -763,23 +764,23 @@ pub fn main() !void {
         profiler.stopPhase();
 
         if (cli_options.reporter_options.debug_memory) {
-            memoryManager.dumpState(&reporter);
+            memoryManager.dumpState(reporter);
         }
         try profiler.dump();
     }
 
     if (cli_options.mode == .COMPILE) {
         profiler.startPhase(Phase.GENERATE_L);
-        const zig_exe_path = try resolveBundledZigExecutable(gpa.allocator());
-        defer gpa.allocator().free(zig_exe_path);
+        const zig_exe_path = try resolveBundledZigExecutable(allocator);
+        defer allocator.free(zig_exe_path);
 
         const artifact_stem = blk: {
             if (cli_options.output_path) |op| break :blk op;
             var filename_start: usize = 0;
-            for (path, 0..) |c, i| {
+            for (script_path, 0..) |c, i| {
                 if (c == '/' or c == '\\') filename_start = i + 1;
             }
-            const filename = path[filename_start..];
+            const filename = script_path[filename_start..];
             if (std.mem.lastIndexOfScalar(u8, filename, '.')) |dot| break :blk filename[0..dot];
             break :blk filename;
         };
@@ -900,7 +901,7 @@ pub fn main() !void {
             }
         }
 
-        const inline_zig_wrapper_paths = try compileInlineZigObjects(&memoryManager, parsedStatements, &parser, &reporter, cli_options.cache_dir, cli_options.opt_level);
+        const inline_zig_wrapper_paths = try compileInlineZigObjects(memoryManager, parsedStatements, &parser, reporter, cli_options.cache_dir, cli_options.opt_level);
         defer {
             for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
             memoryManager.getAllocator().free(inline_zig_wrapper_paths);
