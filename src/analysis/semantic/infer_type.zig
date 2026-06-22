@@ -2317,11 +2317,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             }
 
             // When this cast is the initializer of a declaration, the declared
-            // name is narrowed to the target type in the then branch and to the
-            // remainder in the else branch. Capture and clear it so nested casts
-            // inside the branch bodies do not inherit the name.
-            const cast_decl_name = self.current_cast_decl_name;
-            self.current_cast_decl_name = null;
+            // name (carried on the cast node) is narrowed to the target type in
+            // the then branch and to the remainder in the else branch.
+            const cast_decl_name = cast.decl_name;
 
             // TODO: warn on discarded non-Nothing values in if/as blocks without lift
             // TODO: warn on unused variable when both branches diverge via return

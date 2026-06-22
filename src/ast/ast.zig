@@ -630,6 +630,10 @@ pub const Expr = struct {
             target_type: *TypeExpr,
             then_branch: ?*Expr = null,
             else_branch: ?*Expr,
+            // When this cast is the initializer of a `var`/`const` declaration,
+            // the declared name — so any analysis pass can narrow/expose that
+            // binding inside the then/else branches.
+            decl_name: ?[]const u8 = null,
         },
         ReturnExpr: struct { value: ?*Expr },
         Unreachable: struct {

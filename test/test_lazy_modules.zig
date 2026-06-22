@@ -152,7 +152,25 @@ test "lazy modules: circular imports are detected when reached" {
 }
 
 test "lazy modules: std.process usage does not expose std.http in module_namespaces" {
-    _ = testing;
-    return error.SkipZigTest;
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var parsed = try parseSource(allocator, &reporter, "module std from \"std/std.doxa\"\n", "test/misc/lazy/std_user.doxa");
+    defer parsed.deinit();
+    const parser = &parsed.parser;
+
+    // Materializing the std aggregator must not register any child namespace.
+    _ = try parser.ensureModuleNamespace("std");
+    try testing.expect(parser.module_namespaces.contains("std"));
+    try testing.expect(!parser.module_namespaces.contains("std.process"));
+    try testing.expect(!parser.module_namespaces.contains("std.http"));
+
+    // Using std.process registers only std.process — std.http stays absent.
+    _ = try parser.ensureNestedModuleNamespace("std", "process");
+    try testing.expect(parser.module_namespaces.contains("std.process"));
+    try testing.expect(!parser.module_namespaces.contains("std.http"));
 }
 

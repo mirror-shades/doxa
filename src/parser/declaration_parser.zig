@@ -1115,6 +1115,14 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         type_info.is_mutable = original_mutability;
     }
 
+    // If the initializer is an `as` cast, record the declared name on the cast
+    // node so analysis passes can narrow/expose the binding inside its branches.
+    if (initializer) |init_expr| {
+        if (init_expr.data == .Cast) {
+            init_expr.data.Cast.decl_name = name.lexeme;
+        }
+    }
+
     return ast.Stmt{
         .base = .{
             .id = ast.generateNodeId(),
