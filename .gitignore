@@ -15,5 +15,7 @@
 !pipeline.png
 !README.md
 !test/**
+test/benchmark/c-bin/**
+test/benchmark/d-bin/**
 test/out/**
 test/advent2025/**
