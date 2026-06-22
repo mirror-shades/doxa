@@ -82,7 +82,7 @@ fn writeConstant(idx: usize, value: module.ConstantValue, writer: anytype) !void
         .tetra => |v| try writer.print("const[{d}]: tetra {d}\n", .{ idx, v }),
         .nothing => try writer.print("const[{d}]: nothing\n", .{idx}),
         .storage_id_ref => |v| try writer.print("const[{d}]: storage {d}\n", .{ idx, v }),
-        .array => |arr| try writer.print("const[{d}]: array len:{} elem_type:{s}\n", .{ idx, arr.elements.len, @tagName(arr.element_type) }),
+        .array => |arr| try writer.print("const[{d}]: array len:{} elem_type:{s}\n", .{ idx, arr.backingLen(), @tagName(arr.element_type) }),
         .struct_instance => |s| try writer.print("const[{d}]: struct {s} fields:{}\n", .{ idx, s.type_name, s.fields.len }),
         .map => |m| try writer.print("const[{d}]: map entries:{}\n", .{ idx, m.entries.len }),
         .enum_variant => |ev| try writer.print("const[{d}]: enum {s}.{s} (idx {})\n", .{ idx, ev.type_name, ev.variant_name, ev.variant_index }),

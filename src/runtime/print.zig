@@ -204,10 +204,11 @@ pub const PrintOps = struct {
             .array => |arr| {
                 try printFormatted(sink, "[", .{});
                 var first = true;
-                const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
-                for (arr.elements[0..visible_len]) |elem| {
+                const visible_len = @min(arr.backingLen(), @as(usize, @intCast(arr.length)));
+                var i: usize = 0;
+                while (i < visible_len) : (i += 1) {
                     if (!first) try printFormatted(sink, ", ", .{});
-                    try PrintOps.printHIRValue(vm, elem, sink);
+                    try PrintOps.printHIRValue(vm, arr.get(i), sink);
                     first = false;
                 }
                 try printFormatted(sink, "]", .{});
@@ -280,8 +281,10 @@ pub const PrintOps = struct {
         };
     }
 
-    fn firstNonNothingElement(elems: []HIRValue) ?HIRValue {
-        for (elems) |e| {
+    fn firstNonNothingElement(arr: anytype, visible_len: usize) ?HIRValue {
+        var i: usize = 0;
+        while (i < visible_len) : (i += 1) {
+            const e = arr.get(i);
             if (e != .nothing) return e;
         }
         return null;
@@ -295,8 +298,8 @@ pub const PrintOps = struct {
             switch (cursor) {
                 .array => |arr| {
                     depth += 1;
-                    const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
-                    if (firstNonNothingElement(arr.elements[0..visible_len])) |first_elem| {
+                    const visible_len = @min(arr.backingLen(), @as(usize, @intCast(arr.length)));
+                    if (firstNonNothingElement(arr, visible_len)) |first_elem| {
                         switch (first_elem) {
                             .array => {
                                 cursor = first_elem;
@@ -383,10 +386,11 @@ pub const PrintOps = struct {
             .array => |arr| {
                 try printFormatted(sink, "[", .{});
                 var first = true;
-                const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
-                for (arr.elements[0..visible_len]) |elem| {
+                const visible_len = @min(arr.backingLen(), @as(usize, @intCast(arr.length)));
+                var i: usize = 0;
+                while (i < visible_len) : (i += 1) {
                     if (!first) try printFormatted(sink, ", ", .{});
-                    try PrintOps.formatHIRValue(vm, elem, sink);
+                    try PrintOps.formatHIRValue(vm, arr.get(i), sink);
                     first = false;
                 }
                 try printFormatted(sink, "]", .{});
@@ -487,10 +491,11 @@ pub const PrintOps = struct {
             .array => |arr| {
                 try printFormatted(sink, "[", .{});
                 var first = true;
-                const visible_len = @min(arr.elements.len, @as(usize, @intCast(arr.length)));
-                for (arr.elements[0..visible_len]) |elem| {
+                const visible_len = @min(arr.backingLen(), @as(usize, @intCast(arr.length)));
+                var i: usize = 0;
+                while (i < visible_len) : (i += 1) {
                     if (!first) try printFormatted(sink, ", ", .{});
-                    try PrintOps.formatHIRValue(vm, elem, sink);
+                    try PrintOps.formatHIRValue(vm, arr.get(i), sink);
                     first = false;
                 }
                 try printFormatted(sink, "]", .{});
