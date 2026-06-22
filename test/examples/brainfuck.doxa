@@ -36,10 +36,9 @@ function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], t
 function checkClosingBracket(scan :: string) returns tetra {
     var pointer :: int
     var openBrackets :: int
-    while(pointer < @length(scan)) {
-        if(scan[pointer] == "[") then openBrackets += 1
-        if(scan[pointer] == "]") then openBrackets -= 1
-        pointer += 1
+    while pointer < @length(scan) do pointer += 1 {
+        if scan[pointer] == "[" then openBrackets += 1
+        if scan[pointer] == "]" then openBrackets -= 1
         if openBrackets < 0 then return false
     }
     return(openBrackets == 0)
@@ -59,14 +58,14 @@ function interpret(scan :: string) {
 
     while(ip < scanLength) do ip += 1 {
         var currentInstruction is scan[ip]
-        if(currentInstruction == ">") then tp += 1
-        if(currentInstruction == "<") then tp -= 1
-        if(currentInstruction == "+") then tape[tp] += 0x01
-        if(currentInstruction == "-") then tape[tp] -= 0x01
-        if(currentInstruction == ".") then @print("Output: {tape[tp]}\n")
-        if(currentInstruction == ",") then tape[tp] is getInput()
-        if(currentInstruction == "[") then startLoop(^loopSpot, ^loops, ip)
-        if(currentInstruction == "]") then endLoop(loopSpot, ^loops, ^ip, tape, tp)
+        if currentInstruction == ">" then tp += 1
+        if currentInstruction == "<" then tp -= 1
+        if currentInstruction == "+" then tape[tp] += 0x01
+        if currentInstruction == "-" then tape[tp] -= 0x01
+        if currentInstruction == "." then @print("Output: {tape[tp]}\n")
+        if currentInstruction == "," then tape[tp] is getInput()
+        if currentInstruction == "[" then startLoop(^loopSpot, ^loops, ip)
+        if currentInstruction == "]" then endLoop(loopSpot, ^loops, ^ip, tape, tp)
     }
 }
 
