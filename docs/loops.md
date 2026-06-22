@@ -68,7 +68,7 @@ do the_time is getTheTime() {
 # complex do block
 do {
   if getTheTime() > the_time + 100 then {
-    the_time = getTheTime()
+    the_time is getTheTime()
   } else log_too_early()
 } {
 
@@ -108,7 +108,7 @@ while countdown > 0 do {
 
 ```doxa
 var sensor_reading is 0
-for reading do reading = get_reading() {
+for reading do reading is get_reading() {
     if reading > 7 then {
         @print("Warning: reading is too high!")
         break
@@ -120,7 +120,7 @@ for reading do reading = get_reading() {
 
 ```doxa
 # Default initialization: process tasks until done
-var tasks = ["Write report", "Submit assignment", "Attend meeting"]
+var tasks is ["Write report", "Submit assignment", "Attend meeting"]
 var index is 0  # we start at index 0
 for index while index < tasks.length do index += 1 {
     "Task: " + tasks[index]?
