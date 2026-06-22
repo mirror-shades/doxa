@@ -1181,20 +1181,21 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                     }
 
-                    if (enum_member_idx) |enum_idx| {
-                        const reserved = try self.nextTemp(id);
-                        const reserved_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 1\n", .{ reserved, val.name });
-                        defer self.allocator.free(reserved_line);
-                        try w.writeAll(reserved_line);
+                    if (enum_member_name) |enum_name| {
+                        // Decide whether the active union member is the enum by
+                        // inspecting the canonical value's runtime tag rather than
+                        // the baked member index. Narrowing (`as`) re-presents the
+                        // union with a different member ordering inside then/else
+                        // branches, so the baked index no longer lines up with the
+                        // member list; the tag is order-independent.
+                        const value_tag = try self.nextTemp(id);
+                        const value_tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 0\n", .{ value_tag, val.name });
+                        defer self.allocator.free(value_tag_line);
+                        try w.writeAll(value_tag_line);
 
-                        const active_member = try self.nextTemp(id);
-                        const active_member_line = try std.fmt.allocPrint(self.allocator, "  {s} = and i32 {s}, 65535\n", .{ active_member, reserved });
-                        defer self.allocator.free(active_member_line);
-                        try w.writeAll(active_member_line);
-
-                        const enum_idx_i32: i32 = @intCast(enum_idx);
+                        // 6 == DoxaTag.Enum (see runtime/doxa_rt.zig).
                         const is_enum_member = try self.nextTemp(id);
-                        const is_enum_member_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, {d}\n", .{ is_enum_member, active_member, enum_idx_i32 });
+                        const is_enum_member_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, 6\n", .{ is_enum_member, value_tag });
                         defer self.allocator.free(is_enum_member_line);
                         try w.writeAll(is_enum_member_line);
 
@@ -1221,7 +1222,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(payload_bits_line);
                         try w.writeAll(payload_bits_line);
 
-                        try self.emitEnumPrint(peek_state, w, id, enum_member_name.?, payload_bits);
+                        try self.emitEnumPrint(peek_state, w, id, enum_name, payload_bits);
 
                         const enum_br_merge_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{merge_label});
                         defer self.allocator.free(enum_br_merge_line);

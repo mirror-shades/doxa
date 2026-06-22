@@ -333,6 +333,13 @@ pass_result? # int | MyErrorSet: 10
 const fail_result is can_pass(-1)
 fail_result? # int | MyErrorSet: .Failed
 
+pass_result as int then pass_result? else pass_result? # int: 10
+fail_result as int then { # MyErrorSet: .Failed
+    fail_result?
+} else {
+    fail_result?
+}
+
 ##
 # RETURNS 
 ##

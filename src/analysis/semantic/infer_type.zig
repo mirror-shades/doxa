@@ -2400,7 +2400,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     }
                 }.run;
 
-                const fallback_matches_target = (et.base == .Nothing and (else_diverges or !self.block_value_expected)) or helpers.typesEqual(self, target_type_info, et);
+                const fallback_matches_target = !self.block_value_expected or (et.base == .Nothing and else_diverges) or helpers.typesEqual(self, target_type_info, et);
                 if (!fallback_matches_target) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
