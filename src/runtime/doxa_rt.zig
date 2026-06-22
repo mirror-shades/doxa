@@ -2,6 +2,13 @@ const std = @import("std");
 const builtin = @import("builtin");
 const MapRuntime = @import("map_runtime.zig");
 
+// Force the arena scope C-ABI exports (doxa_scope_enter/exit/alloc) into the
+// compiled runtime. They live in arena.zig but are referenced only by emitted
+// IR, so without this they would be dropped from the link.
+comptime {
+    _ = @import("arena.zig");
+}
+
 var peek_output_active: bool = false;
 
 fn doxaWrite(slice: []const u8) void {

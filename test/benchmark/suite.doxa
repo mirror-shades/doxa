@@ -153,12 +153,12 @@ function prepareEnv() {
             return
         }
     }
-    std.file.makeDir("test/benchmark/d-bin") as nothing else {
-        std.io.println("Failed to create d-bin: {result}")
+    const result_d is std.file.makeDir("test/benchmark/d-bin") as nothing else {
+        std.io.println("Failed to create d-bin: {result_d}")
         return
     }
-    std.file.makeDir("test/benchmark/c-bin") as nothing else {
-        std.io.println("Failed to create c-bin: {result}")
+    const result_c is std.file.makeDir("test/benchmark/c-bin") as nothing else {
+        std.io.println("Failed to create c-bin: {result_c}")
         return
     }
 }

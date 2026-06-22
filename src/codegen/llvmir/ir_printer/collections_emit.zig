@@ -33,21 +33,50 @@ pub fn Methods(comptime Ctx: type) type {
 
             if ((inst.storage_kind == .fixed or inst.storage_kind == .const_literal) and can_flat_alloc) {
                 const total_depth: u3 = if (inst.nested_depth > 0) inst.nested_depth + 1 else 1;
-                const llvm_type = try self.buildFixedArrayLLVMTypeStr(
-                    inst.element_type,
-                    inst.size,
-                    inst.nested_sizes,
-                    inst.nested_depth,
-                );
+
+                // Byte size of the contiguous flat buffer: element count across all
+                // (flattened) dimensions times the element's byte size.
+                var total_elems: u64 = inst.size;
+                for (0..@as(usize, inst.nested_depth)) |i| {
+                    total_elems *= inst.nested_sizes[i];
+                }
+                const elem_bytes = self.arrayElementSize(inst.element_type);
+                const total_bytes = total_elems * elem_bytes;
 
                 const reg = try self.nextTemp(id);
-                const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ reg, llvm_type });
-                defer self.allocator.free(alloca_line);
-                try w.writeAll(alloca_line);
 
-                const zero_line = try std.fmt.allocPrint(self.allocator, "  store {s} zeroinitializer, ptr {s}\n", .{ llvm_type, reg });
-                defer self.allocator.free(zero_line);
-                try w.writeAll(zero_line);
+                // Large fixed arrays must not live on the stack: a multi-megabyte
+                // `alloca` overflows the stack, and `store <huge aggregate>
+                // zeroinitializer` makes LLVM materialize the whole constant and
+                // balloon to many GB during codegen. Above the threshold we allocate
+                // the flat buffer from the current scope arena (bulk-freed at scope
+                // exit) and zero it with llvm.memset. The flat layout is preserved,
+                // so downstream indexing is unchanged.
+                const FLAT_STACK_BYTE_LIMIT: u64 = 64 * 1024;
+                if (total_bytes >= FLAT_STACK_BYTE_LIMIT) {
+                    const align_bytes: u64 = if (elem_bytes == 0) 1 else elem_bytes;
+                    const alloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {d}, i64 {d})\n", .{ reg, total_bytes, align_bytes });
+                    defer self.allocator.free(alloc_line);
+                    try w.writeAll(alloc_line);
+
+                    const memset_line = try std.fmt.allocPrint(self.allocator, "  call void @llvm.memset.p0.i64(ptr align {d} {s}, i8 0, i64 {d}, i1 false)\n", .{ align_bytes, reg, total_bytes });
+                    defer self.allocator.free(memset_line);
+                    try w.writeAll(memset_line);
+                } else {
+                    const llvm_type = try self.buildFixedArrayLLVMTypeStr(
+                        inst.element_type,
+                        inst.size,
+                        inst.nested_sizes,
+                        inst.nested_depth,
+                    );
+                    const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ reg, llvm_type });
+                    defer self.allocator.free(alloca_line);
+                    try w.writeAll(alloca_line);
+
+                    const zero_line = try std.fmt.allocPrint(self.allocator, "  store {s} zeroinitializer, ptr {s}\n", .{ llvm_type, reg });
+                    defer self.allocator.free(zero_line);
+                    try w.writeAll(zero_line);
+                }
 
                 var fixed_sizes: [4]u32 = [_]u32{0} ** 4;
                 fixed_sizes[0] = inst.size;

@@ -84,6 +84,8 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare i8 @doxa_forall_quantifier_eq(ptr, i64)\n");
             try w.writeAll("declare void @doxa_clear(ptr)\n");
             try w.writeAll("declare ptr @doxa_array_range(i64, i64)\n");
+            try w.writeAll("declare ptr @doxa_scope_alloc(i64, i64)\n");
+            try w.writeAll("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
 
             // Inline zig module functions (external): declare with typed parameters
             // for correct ABI on all architectures.
