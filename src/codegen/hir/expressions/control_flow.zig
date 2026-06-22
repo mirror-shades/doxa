@@ -618,6 +618,24 @@ pub const ControlFlowHandler = struct {
         // Generate the value to cast
         try self.generator.generateExpression(cast_data.value, true, false);
 
+        // If this cast initializes a declaration, store the subject value into the
+        // declared binding so it is readable (narrowed) inside the then/else
+        // branches. Consume the target so nested casts in the branches don't inherit it.
+        if (self.generator.cast_decl_var_index) |target_idx| {
+            const decl_name = self.generator.cast_decl_var_name.?;
+            self.generator.cast_decl_var_index = null;
+            self.generator.cast_decl_var_name = null;
+            try self.generator.instructions.append(.Dup);
+            const decl_scope = self.generator.symbol_table.determineVariableScope(decl_name);
+            try self.generator.instructions.append(.{ .StoreVar = .{
+                .var_index = target_idx,
+                .var_name = decl_name,
+                .scope_kind = decl_scope,
+                .module_context = null,
+                .expected_type = .Unknown,
+            } });
+        }
+
         // Duplicate it so we can keep original value on success path
         try self.generator.instructions.append(.Dup);
 

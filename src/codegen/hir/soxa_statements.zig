@@ -141,6 +141,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
         },
         .VarDecl => |decl| {
             var var_type: HIRType = .Nothing;
+            var precreated_cast_idx: ?u32 = null;
 
             var custom_type_name: ?[]const u8 = null;
             if (decl.type_info.base != .Nothing) {
@@ -205,7 +206,21 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     self.array_storage_override = null;
                 }
 
+                // If the initializer is an `as` cast, pre-create the variable slot
+                // and expose it so the cast can store the subject value into the
+                // binding before its then/else branches run, making the declared
+                // name readable (and narrowed) inside both branches.
+                if (init_expr.data == .Cast) {
+                    const idx = try self.symbol_table.createVariable(decl.name.lexeme);
+                    precreated_cast_idx = idx;
+                    self.cast_decl_var_index = idx;
+                    self.cast_decl_var_name = decl.name.lexeme;
+                }
+
                 try self.generateExpression(init_expr, true, true);
+
+                self.cast_decl_var_index = null;
+                self.cast_decl_var_name = null;
 
                 self.current_enum_type = old_enum_context;
 
@@ -456,7 +471,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 try self.trackVariableCustomType(decl.name.lexeme, custom_type);
             }
 
-            const var_idx = try self.symbol_table.createVariable(decl.name.lexeme);
+            const var_idx = precreated_cast_idx orelse try self.symbol_table.createVariable(decl.name.lexeme);
             const is_module_ctx = self.current_function == null and self.isModuleContext();
             if (is_module_ctx and self.current_module_context != null) {
                 const module_name = self.current_module_context.?;
