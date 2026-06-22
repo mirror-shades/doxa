@@ -45,7 +45,8 @@ function checkClosingBracket(scan :: string) returns tetra {
 }
 
 function interpret(scan :: string) {
-    var tape :: byte[10] # increase if needed
+    const tapeSize is 30000
+    var tape :: byte[tapeSize]
     var loops :: int
     var loopSpot :: int[]
     var tp :: int
