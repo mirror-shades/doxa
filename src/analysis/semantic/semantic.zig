@@ -1070,9 +1070,9 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
-    pub fn validateStatements(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!void {
+    pub fn validateStatements(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {
         var prev_was_terminator = false;
-        for (statements) |stmt| {
+        for (statements, 0..) |stmt, i| {
             if (prev_was_terminator) {
                 self.reporter.reportWarning(
                     getLocationFromBase(stmt.base),
@@ -1083,7 +1083,14 @@ pub const SemanticAnalyzer = struct {
             }
 
             switch (stmt.data) {
-                .VarDecl => |decl| {
+                .VarDecl => {
+                    // Resolve non-literal fixed-array sizes (e.g. `byte[n]`, `byte[2+2]`)
+                    // now that earlier consts in this scope are bound, and persist the
+                    // result to the AST so codegen creates a correctly sized array.
+                    if (statements[i].data.VarDecl.type_expr) |te| {
+                        self.tryResolveArraySizes(&statements[i].data.VarDecl.type_info, te);
+                    }
+                    const decl = statements[i].data.VarDecl;
                     const prev_bve = self.block_value_expected;
                     self.block_value_expected = decl.initializer != null;
                     defer self.block_value_expected = prev_bve;
@@ -1486,6 +1493,31 @@ pub const SemanticAnalyzer = struct {
 
         // Return the original type info if no resolution needed
         return type_info;
+    }
+
+    /// Best-effort resolution of fixed-array sizes from their declared size
+    /// expressions (literals, constant expressions, or references to bound
+    /// consts), persisting the result into `type_info`. Unlike resolveArraySizes
+    /// this never reports: if a size cannot be evaluated yet (e.g. during an
+    /// early inference pass, before the referenced consts are bound) it is left
+    /// unresolved for a later pass to fill in.
+    fn tryResolveArraySizes(self: *SemanticAnalyzer, type_info: *ast.TypeInfo, type_expr: *ast.TypeExpr) void {
+        if (type_expr.data != .Array) return;
+        const array_type = type_expr.data.Array;
+        if (type_info.base == .Array and type_info.array_size == null) {
+            if (array_type.size) |size_expr| {
+                const sv = self.evaluateExpression(size_expr) catch return;
+                if (sv == .int and sv.int >= 0) {
+                    type_info.array_size = @intCast(sv.int);
+                    type_info.array_storage = .fixed;
+                }
+            }
+        }
+        if (type_info.base == .Array) {
+            if (type_info.array_type) |child| {
+                self.tryResolveArraySizes(child, array_type.element_type);
+            }
+        }
     }
 
     fn resolveArraySizes(self: *SemanticAnalyzer, type_info: *ast.TypeInfo, type_expr: *ast.TypeExpr) ErrorList!void {
