@@ -63,6 +63,10 @@ pub const SemanticAnalyzer = struct {
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
     current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     current_initializing_var: ?[]const u8 = null,
+    // When an `as` cast is the initializer of a declaration, this holds the
+    // declared name so the cast can narrow that binding inside its then/else
+    // branches (target type in then, remainder in else).
+    current_cast_decl_name: ?[]const u8 = null,
     block_value_expected: bool = false,
     current_struct_type: ?[]const u8 = null,
     parser: ?*const Parser = null,
@@ -1083,6 +1087,13 @@ pub const SemanticAnalyzer = struct {
                     const prev_bve = self.block_value_expected;
                     self.block_value_expected = decl.initializer != null;
                     defer self.block_value_expected = prev_bve;
+
+                    const prev_cast_decl = self.current_cast_decl_name;
+                    self.current_cast_decl_name = if (decl.initializer) |init_e|
+                        (if (init_e.data == .Cast) decl.name.lexeme else null)
+                    else
+                        null;
+                    defer self.current_cast_decl_name = prev_cast_decl;
 
                     if (self.current_scope) |scope| {
                         // Check if this variable is already in the scope (from collectDeclarations)

@@ -2316,6 +2316,13 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             }
 
+            // When this cast is the initializer of a declaration, the declared
+            // name is narrowed to the target type in the then branch and to the
+            // remainder in the else branch. Capture and clear it so nested casts
+            // inside the branch bodies do not inherit the name.
+            const cast_decl_name = self.current_cast_decl_name;
+            self.current_cast_decl_name = null;
+
             // TODO: warn on discarded non-Nothing values in if/as blocks without lift
             // TODO: warn on unused variable when both branches diverge via return
             var then_type: ?*ast.TypeInfo = null;
@@ -2328,6 +2335,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 defer self.current_scope = prev_scope;
 
                 try bindNarrowedCastType(self, then_scope, cast.value, target_type_info);
+                if (cast_decl_name) |name| try bindNarrowedName(then_scope, name, target_type_info);
 
                 if (then_expr.data == .Block and then_expr.data.Block.value != null) {
                     self.reporter.reportWarning(
@@ -2356,6 +2364,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                 const remainder_type = try helpers.subtractTypeFromUnion(self, value_type, target_type_info);
                 try bindNarrowedCastType(self, else_scope, cast.value, remainder_type);
+                if (cast_decl_name) |name| try bindNarrowedName(else_scope, name, remainder_type);
 
                 else_type = try inferTypeFromExpr(self, else_expr);
                 if (else_expr.data == .ReturnExpr) {
@@ -2724,17 +2733,20 @@ fn assignValueOrNothingUnion(self: *SemanticAnalyzer, dest: *ast.TypeInfo, value
     };
 }
 
+fn bindNarrowedName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInfo) !void {
+    const token_type = eval.convertTypeToTokenType(narrowed_type.base);
+    _ = scope.createValueBinding(
+        name,
+        TokenLiteral{ .nothing = {} },
+        token_type,
+        narrowed_type,
+        false,
+    ) catch {};
+}
+
 fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast.Expr, narrowed_type: *ast.TypeInfo) !void {
     if (cast_value.data == .Variable) {
-        const var_name = cast_value.data.Variable.lexeme;
-        const token_type = eval.convertTypeToTokenType(narrowed_type.base);
-        _ = scope.createValueBinding(
-            var_name,
-            TokenLiteral{ .nothing = {} },
-            token_type,
-            narrowed_type,
-            false,
-        ) catch {};
+        try bindNarrowedName(scope, cast_value.data.Variable.lexeme, narrowed_type);
     } else if (cast_value.data == .FieldAccess) {
         const field_access = cast_value.data.FieldAccess;
         if (field_access.object.data == .Variable) {

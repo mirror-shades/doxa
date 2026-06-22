@@ -209,6 +209,12 @@ pub const HIRGenerator = struct {
     current_enum_type: ?[]const u8 = null,
     current_assignment_target: ?[]const u8 = null,
 
+    // When an `as` cast is a declaration initializer, the declared variable's
+    // slot is pre-created so the cast can store the subject value into it before
+    // running the then/else branches (making the binding readable inside them).
+    cast_decl_var_index: ?u32 = null,
+    cast_decl_var_name: ?[]const u8 = null,
+
     loop_context_stack: std.array_list.Managed(LoopContext),
     current_function_scope_id: ?u32 = null,
 
