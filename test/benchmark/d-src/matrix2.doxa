@@ -1,0 +1,31 @@
+module std from @std()
+
+const N is 400
+const SIZE is N * N
+
+var a :: float[SIZE]
+var b :: float[SIZE]
+var c :: float[SIZE]
+
+public entry function main() {
+    for i while i < N do i++ {
+        for j while j < N do j++ {
+            a[i * N + j] is i + j
+            b[i * N + j] is i - j
+        }
+    }
+
+    for i while i < N do i++ {
+        for j while j < N do j++ {
+            var sum is 0.0
+
+            for k while k < N do k++ {
+                sum += a[i * N + k] * b[k * N + j]
+            }
+
+            c[i * N + j] is sum
+        }
+    }
+
+    std.io.println("{c[(N - 1) * N + (N - 1)]}")
+}

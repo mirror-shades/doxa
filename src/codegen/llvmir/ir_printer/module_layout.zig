@@ -171,6 +171,9 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64 }\n\n");
             try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n");
             try w.writeAll("@.doxa.empty = private constant [1 x i8] c\"\\00\"\n");
+            try w.writeAll("@.doxa.arr_open = private constant [2 x i8] c\"[\\00\"\n");
+            try w.writeAll("@.doxa.arr_close = private constant [2 x i8] c\"]\\00\"\n");
+            try w.writeAll("@.doxa.arr_sep = private constant [3 x i8] c\", \\00\"\n");
 
             try w.writeAll("@tetra_not_lut = private constant [4 x i8] [i8 1, i8 0, i8 2, i8 3]\n");
             try w.writeAll("@tetra_and_lut = private constant [4 x [4 x i8]] [\n");
