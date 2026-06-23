@@ -16,20 +16,27 @@ pub fn Methods(comptime Ctx: type) type {
             id: *usize,
             inst: std.meta.TagPayload(HIRInstruction, .ArrayNew),
         ) !void {
-            // Flat-alloca fixed arrays are only emitted inside functions.
-            // Global/module-level fixed arrays must stay on the ArrayHeader path
-            // because the runtime peek/print infrastructure (doxa_print_array_hdr,
-            // doxa_array_to_string) expects DoxaValue elements, not raw typed values.
-            // TODO: support flat allocas globally by teaching print/peek to walk
-            // the flat layout directly, or by emitting a DoxaValue-per-element
-            // at print time.
-            const can_flat_alloc = self.in_function_context and
-                inst.element_type != .String and
-                inst.element_type != .Array and
-                inst.element_type != .Map and
-                inst.element_type != .Struct and
-                inst.element_type != .Function and
-                inst.element_type != .Union;
+            // Fixed arrays of scalar types get a flat contiguous buffer
+            // (alloca / scope_alloc for functions; alloca in doxa_program_main
+            // or scope_alloc for module-level globals) with GEP-based element
+            // access. Non-scalar element types (String, Map, Struct, Function,
+            // Union) stay on the boxed ArrayHeader path. Multidimensional arrays
+            // whose innermost element is a scalar type (e.g. float[N][M]) are
+            // eligible via nested_depth; the element_type itself may be .Array.
+            const can_flat_alloc = blk: {
+                if (inst.element_type == .Array) {
+                    if (inst.nested_depth > 0) {
+                        const inner = inst.nested_element_type orelse break :blk false;
+                        break :blk inner != .String and inner != .Array and inner != .Map and inner != .Struct and inner != .Function and inner != .Union;
+                    }
+                    break :blk false;
+                }
+                break :blk inst.element_type != .String and
+                    inst.element_type != .Map and
+                    inst.element_type != .Struct and
+                    inst.element_type != .Function and
+                    inst.element_type != .Union;
+            };
 
             if ((inst.storage_kind == .fixed or inst.storage_kind == .const_literal) and can_flat_alloc) {
                 const total_depth: u3 = if (inst.nested_depth > 0) inst.nested_depth + 1 else 1;
@@ -40,7 +47,11 @@ pub fn Methods(comptime Ctx: type) type {
                 for (0..@as(usize, inst.nested_depth)) |i| {
                     total_elems *= inst.nested_sizes[i];
                 }
-                const elem_bytes = self.arrayElementSize(inst.element_type);
+                const innermost_elem_type = if (inst.element_type == .Array)
+                    inst.nested_element_type orelse inst.element_type
+                else
+                    inst.element_type;
+                const elem_bytes = self.arrayElementSize(innermost_elem_type);
                 const total_bytes = total_elems * elem_bytes;
 
                 const reg = try self.nextTemp(id);
@@ -493,7 +504,7 @@ pub fn Methods(comptime Ctx: type) type {
                     if (!std.mem.eql(u8, innermost, "i64") and store_val.ty == .I64) {
                         if (std.mem.eql(u8, innermost, "double")) {
                             const tmp = try self.nextTemp(id);
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast i64 {s} to double\n", .{ tmp, store_val.name });
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ tmp, store_val.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
                             store_val = .{ .name = tmp, .ty = .F64 };
@@ -1811,6 +1822,379 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             return .{ .name = result_name, .ty = .I1 };
+        }
+
+        pub fn emitFlatArrayPeek(
+            self: *IRPrinter,
+            w: anytype,
+            val: StackVal,
+            id: *usize,
+        ) !void {
+            var total_elems: u64 = val.fixed_array_sizes[0];
+            for (1..@as(usize, val.fixed_array_depth)) |d| {
+                total_elems *= val.fixed_array_sizes[d];
+            }
+
+            const elem_llvm_ty = if (val.array_type) |at| self.fixedArrayInnermostLLVMType(at) else "i64";
+            const print_fn: []const u8 = if (val.array_type != null and val.array_type.? == .Float) "doxa_print_f64"
+            else if (val.array_type != null and val.array_type.? == .Int) "doxa_print_i64"
+            else if (val.array_type != null and val.array_type.? == .Byte) "doxa_print_byte"
+            else if (val.array_type != null and val.array_type.? == .Tetra) "doxa_print_i64"
+            else "doxa_print_i64";
+
+            const depth = val.fixed_array_depth;
+            const row_size: u64 = if (depth > 1) val.fixed_array_sizes[1] else 0;
+
+            const sep_str = "  call void @doxa_write_cstr(ptr getelementptr inbounds ([3 x i8], ptr @.doxa.arr_sep, i64 0, i64 0), i64 2)\n";
+            const open_str = "  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.arr_open, i64 0, i64 0), i64 1)\n";
+            const close_str = "  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.arr_close, i64 0, i64 0), i64 1)\n";
+
+            const total_reg = try self.nextTemp(id);
+            const total_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ total_reg, total_elems });
+            defer self.allocator.free(total_line);
+            try w.writeAll(total_line);
+
+            var row_size_reg: ?[]const u8 = null;
+            if (row_size > 0) {
+                const rs = try self.nextTemp(id);
+                const rs_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ rs, row_size });
+                defer self.allocator.free(rs_line);
+                try w.writeAll(rs_line);
+                row_size_reg = rs;
+            }
+
+            const i_ptr = try self.nextTemp(id);
+            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{i_ptr});
+            defer self.allocator.free(alloca_line);
+            try w.writeAll(alloca_line);
+
+            const store0 = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{i_ptr});
+            defer self.allocator.free(store0);
+            try w.writeAll(store0);
+
+            const loop_label = try std.fmt.allocPrint(self.allocator, "peek_arr_loop_{d}", .{id.*});
+            defer self.allocator.free(loop_label);
+            const done_label = try std.fmt.allocPrint(self.allocator, "peek_arr_done_{d}", .{id.*});
+            defer self.allocator.free(done_label);
+            const sep_label = try std.fmt.allocPrint(self.allocator, "peek_arr_sep_{d}", .{id.*});
+            defer self.allocator.free(sep_label);
+            const val_label = try std.fmt.allocPrint(self.allocator, "peek_arr_val_{d}", .{id.*});
+            defer self.allocator.free(val_label);
+            const value_label = try std.fmt.allocPrint(self.allocator, "peek_arr_value_{d}", .{id.*});
+            defer self.allocator.free(value_label);
+            const next_label = try std.fmt.allocPrint(self.allocator, "peek_arr_next_{d}", .{id.*});
+            defer self.allocator.free(next_label);
+
+            const br_loop = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{loop_label});
+            defer self.allocator.free(br_loop);
+            try w.writeAll(br_loop);
+
+            // === Loop header ===
+            const loop_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{loop_label});
+            defer self.allocator.free(loop_lbl);
+            try w.writeAll(loop_lbl);
+
+            const i_reg = try self.nextTemp(id);
+            const ld_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ i_reg, i_ptr });
+            defer self.allocator.free(ld_line);
+            try w.writeAll(ld_line);
+
+            const done_reg = try self.nextTemp(id);
+            const cmp_done = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, {s}\n", .{ done_reg, i_reg, total_reg });
+            defer self.allocator.free(cmp_done);
+            try w.writeAll(cmp_done);
+
+            const br_done = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ done_reg, done_label, sep_label });
+            defer self.allocator.free(br_done);
+            try w.writeAll(br_done);
+
+            // === Separator / bracket logic ===
+            const sep_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{sep_label});
+            defer self.allocator.free(sep_lbl);
+            try w.writeAll(sep_lbl);
+
+            const is_first_reg = try self.nextTemp(id);
+            const first_cmp = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 0\n", .{ is_first_reg, i_reg });
+            defer self.allocator.free(first_cmp);
+            try w.writeAll(first_cmp);
+
+            if (row_size > 0) {
+                // 2D: first element → "[[", row start → "], [", else → ", "
+                const first_label = try std.fmt.allocPrint(self.allocator, "peek_arr_first_{d}", .{id.*});
+                defer self.allocator.free(first_label);
+                const br_first = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ is_first_reg, first_label, val_label });
+                defer self.allocator.free(br_first);
+                try w.writeAll(br_first);
+
+                // First element: emit "[["
+                const first_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{first_label});
+                defer self.allocator.free(first_lbl);
+                try w.writeAll(first_lbl);
+
+                try w.writeAll(open_str);
+                try w.writeAll(open_str);
+
+                const br_after_first = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{value_label});
+                defer self.allocator.free(br_after_first);
+                try w.writeAll(br_after_first);
+            } else {
+                // 1D: first element → "[", else → ", "
+                const first_label = try std.fmt.allocPrint(self.allocator, "peek_arr_first_{d}", .{id.*});
+                defer self.allocator.free(first_label);
+                const comma_label = try std.fmt.allocPrint(self.allocator, "peek_arr_comma_{d}", .{id.*});
+                defer self.allocator.free(comma_label);
+                const br_first = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ is_first_reg, first_label, comma_label });
+                defer self.allocator.free(br_first);
+                try w.writeAll(br_first);
+
+                const first_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{first_label});
+                defer self.allocator.free(first_lbl);
+                try w.writeAll(first_lbl);
+
+                try w.writeAll(open_str);
+
+                const br_after_first = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{value_label});
+                defer self.allocator.free(br_after_first);
+                try w.writeAll(br_after_first);
+
+                // Comma separator for 1D
+                const comma_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{comma_label});
+                defer self.allocator.free(comma_lbl);
+                try w.writeAll(comma_lbl);
+
+                try w.writeAll(sep_str);
+
+                const br_comma = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{value_label});
+                defer self.allocator.free(br_comma);
+                try w.writeAll(br_comma);
+            }
+
+            // 2D non-first separator: row-start → "], [", else → ", "
+            if (row_size > 0) {
+                const val_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{val_label});
+                defer self.allocator.free(val_lbl);
+                try w.writeAll(val_lbl);
+
+                const col_tmp = try self.nextTemp(id);
+                const rem_line = try std.fmt.allocPrint(self.allocator, "  {s} = urem i64 {s}, {s}\n", .{ col_tmp, i_reg, row_size_reg.? });
+                defer self.allocator.free(rem_line);
+                try w.writeAll(rem_line);
+
+                const at_row_start = try self.nextTemp(id);
+                const row_cmp = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 0\n", .{ at_row_start, col_tmp });
+                defer self.allocator.free(row_cmp);
+                try w.writeAll(row_cmp);
+
+                const row_sep_label = try std.fmt.allocPrint(self.allocator, "peek_arr_row_sep_{d}", .{id.*});
+                defer self.allocator.free(row_sep_label);
+                const comma_label2 = try std.fmt.allocPrint(self.allocator, "peek_arr_comma2_{d}", .{id.*});
+                defer self.allocator.free(comma_label2);
+
+                const br_row = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ at_row_start, row_sep_label, comma_label2 });
+                defer self.allocator.free(br_row);
+                try w.writeAll(br_row);
+
+                // Row separator: "], ["
+                const row_sep_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{row_sep_label});
+                defer self.allocator.free(row_sep_lbl);
+                try w.writeAll(row_sep_lbl);
+
+                try w.writeAll(close_str);
+                try w.writeAll(sep_str);
+                try w.writeAll(open_str);
+                const br_row_sep = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{value_label});
+                defer self.allocator.free(br_row_sep);
+                try w.writeAll(br_row_sep);
+
+                // Comma separator within row
+                const comma_lbl2 = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{comma_label2});
+                defer self.allocator.free(comma_lbl2);
+                try w.writeAll(comma_lbl2);
+
+                try w.writeAll(sep_str);
+                const br_comma2 = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{value_label});
+                defer self.allocator.free(br_comma2);
+                try w.writeAll(br_comma2);
+            }
+
+            // === Print element value ===
+            const value_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{value_label});
+            defer self.allocator.free(value_lbl);
+            try w.writeAll(value_lbl);
+
+            const elem_ptr = try self.nextTemp(id);
+            const gep_line = try std.fmt.allocPrint(self.allocator,
+                "  {s} = getelementptr {s}, ptr {s}, i64 {s}\n",
+                .{ elem_ptr, elem_llvm_ty, val.name, i_reg },
+            );
+            defer self.allocator.free(gep_line);
+            try w.writeAll(gep_line);
+
+            const elem_val = try self.nextTemp(id);
+            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ elem_val, elem_llvm_ty, elem_ptr });
+            defer self.allocator.free(load_line);
+            try w.writeAll(load_line);
+
+            const print_val_name: []const u8 = if (val.array_type != null and val.array_type.? == .Tetra) blk: {
+                const widened = try self.nextTemp(id);
+                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i2 {s} to i64\n", .{ widened, elem_val });
+                defer self.allocator.free(zext_line);
+                try w.writeAll(zext_line);
+                break :blk widened;
+            } else if (val.array_type != null and val.array_type.? == .Byte) blk: {
+                const widened = try self.nextTemp(id);
+                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i8 {s} to i64\n", .{ widened, elem_val });
+                defer self.allocator.free(zext_line);
+                try w.writeAll(zext_line);
+                break :blk widened;
+            } else elem_val;
+
+            const print_call = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s} {s})\n", .{ print_fn, elem_llvm_ty, print_val_name });
+            defer self.allocator.free(print_call);
+            try w.writeAll(print_call);
+
+            const br_to_next = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{next_label});
+            defer self.allocator.free(br_to_next);
+            try w.writeAll(br_to_next);
+
+            // === Increment ===
+            const next_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{next_label});
+            defer self.allocator.free(next_lbl);
+            try w.writeAll(next_lbl);
+
+            const i_next = try self.nextTemp(id);
+            const add_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, 1\n", .{ i_next, i_reg });
+            defer self.allocator.free(add_line);
+            try w.writeAll(add_line);
+
+            const store_next = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ i_next, i_ptr });
+            defer self.allocator.free(store_next);
+            try w.writeAll(store_next);
+
+            const br_loop_end = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{loop_label});
+            defer self.allocator.free(br_loop_end);
+            try w.writeAll(br_loop_end);
+
+            // === Done: closing bracket(s) ===
+            const done_lbl = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{done_label});
+            defer self.allocator.free(done_lbl);
+            try w.writeAll(done_lbl);
+
+            if (row_size > 0) {
+                // 2D: close inner row then outer
+                try w.writeAll(close_str);
+                try w.writeAll(close_str);
+            } else {
+                try w.writeAll(close_str);
+            }
+
+            const nl_line = try std.fmt.allocPrint(self.allocator,
+                "  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n", .{});
+            defer self.allocator.free(nl_line);
+            try w.writeAll(nl_line);
+        }
+
+        /// Synthesizes a temporary on-stack ArrayHeader that wraps a flat
+        /// fixed array buffer, so that runtime functions expecting an
+        /// ArrayHeader (doxa_array_to_string, doxa_print_array_hdr, etc.)
+        /// can operate on the flat array. Returns a StackVal with the header
+        /// pointer.
+        pub fn emitSyntheticArrayHeader(
+            self: *IRPrinter,
+            w: anytype,
+            val: StackVal,
+            id: *usize,
+        ) !StackVal {
+            var total_elems: u64 = val.fixed_array_sizes[0];
+            for (1..@as(usize, val.fixed_array_depth)) |d| {
+                total_elems *= val.fixed_array_sizes[d];
+            }
+
+            const elem_type = val.array_type orelse HIR.HIRType.Int;
+            const elem_size: u64 = self.arrayElementSize(elem_type);
+            const elem_tag: u64 = self.arrayElementTag(elem_type);
+
+            const hdr_ptr = try self.nextTemp(id);
+            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_ptr});
+            defer self.allocator.free(alloca_line);
+            try w.writeAll(alloca_line);
+
+            const data_ptr_reg = try self.nextTemp(id);
+            const data_gep = try std.fmt.allocPrint(self.allocator,
+                "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n",
+                .{ data_ptr_reg, hdr_ptr },
+            );
+            defer self.allocator.free(data_gep);
+            try w.writeAll(data_gep);
+
+            const store_data = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ val.name, data_ptr_reg });
+            defer self.allocator.free(store_data);
+            try w.writeAll(store_data);
+
+            const len_reg = try self.nextTemp(id);
+            const len_gep = try std.fmt.allocPrint(self.allocator,
+                "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 1\n",
+                .{ len_reg, hdr_ptr },
+            );
+            defer self.allocator.free(len_gep);
+            try w.writeAll(len_gep);
+
+            const total_len_reg = try self.nextTemp(id);
+            const total_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ total_len_reg, total_elems });
+            defer self.allocator.free(total_len_line);
+            try w.writeAll(total_len_line);
+
+            const store_len = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ total_len_reg, len_reg });
+            defer self.allocator.free(store_len);
+            try w.writeAll(store_len);
+
+            const cap_reg = try self.nextTemp(id);
+            const cap_gep = try std.fmt.allocPrint(self.allocator,
+                "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 2\n",
+                .{ cap_reg, hdr_ptr },
+            );
+            defer self.allocator.free(cap_gep);
+            try w.writeAll(cap_gep);
+
+            const store_cap = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ total_len_reg, cap_reg });
+            defer self.allocator.free(store_cap);
+            try w.writeAll(store_cap);
+
+            const esize_reg = try self.nextTemp(id);
+            const esize_gep = try std.fmt.allocPrint(self.allocator,
+                "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 3\n",
+                .{ esize_reg, hdr_ptr },
+            );
+            defer self.allocator.free(esize_gep);
+            try w.writeAll(esize_gep);
+
+            const esize_val = try self.nextTemp(id);
+            const esize_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ esize_val, elem_size });
+            defer self.allocator.free(esize_line);
+            try w.writeAll(esize_line);
+
+            const store_esize = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ esize_val, esize_reg });
+            defer self.allocator.free(store_esize);
+            try w.writeAll(store_esize);
+
+            const etag_reg = try self.nextTemp(id);
+            const etag_gep = try std.fmt.allocPrint(self.allocator,
+                "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 4\n",
+                .{ etag_reg, hdr_ptr },
+            );
+            defer self.allocator.free(etag_gep);
+            try w.writeAll(etag_gep);
+
+            const etag_val = try self.nextTemp(id);
+            const etag_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ etag_val, elem_tag });
+            defer self.allocator.free(etag_line);
+            try w.writeAll(etag_line);
+
+            const store_etag = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ etag_val, etag_reg });
+            defer self.allocator.free(store_etag);
+            try w.writeAll(store_etag);
+
+            return StackVal{ .name = hdr_ptr, .ty = .PTR, .array_type = elem_type };
         }
     };
 }

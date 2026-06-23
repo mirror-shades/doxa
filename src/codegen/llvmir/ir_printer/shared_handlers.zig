@@ -881,7 +881,11 @@ pub fn Methods(comptime Ctx: type) type {
                         },
                         .PTR => {
                             if (arg.array_type != null) {
-                                const args_line = try std.fmt.allocPrint(self.allocator, "ptr {s}", .{arg.name});
+                                const hdr_arg = if (arg.fixed_array_depth > 0)
+                                    try self.emitSyntheticArrayHeader(w, arg, id)
+                                else
+                                    arg;
+                                const args_line = try std.fmt.allocPrint(self.allocator, "ptr {s}", .{hdr_arg.name});
                                 defer self.allocator.free(args_line);
                                 try self.emitRTCallReturningString(w, stack, id, "doxa_array_to_string", args_line);
                             } else if (arg.struct_field_types != null or arg.struct_type_name != null) {
@@ -1323,9 +1327,13 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(call_line);
                         try w.writeAll(call_line);
                     } else if (val.array_type) |_| {
-                        const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{val.name});
-                        defer self.allocator.free(line);
-                        try w.writeAll(line);
+                        if (val.fixed_array_depth > 0) {
+                            try self.emitFlatArrayPeek(w, val, id);
+                        } else {
+                            const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{val.name});
+                            defer self.allocator.free(line);
+                            try w.writeAll(line);
+                        }
                     } else {
                         // Print string - let runtime handle formatting
                         const call_val = try std.fmt.allocPrint(self.allocator, "  call void @doxa_peek_string(ptr {s}, i64 0)\n", .{val.name});
