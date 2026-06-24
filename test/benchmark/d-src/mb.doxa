@@ -3,6 +3,8 @@ module std from @std()
 public entry function main() {
     var count :: int
 
+    const t0 is std.time.monotonic()
+
     for y while y < 2000 do y++ {
         for x while x < 2000 do x++ {
 
@@ -25,5 +27,7 @@ public entry function main() {
         }
     }
 
-    std.io.println("{count}");
+    const t1 is std.time.monotonic()
+
+    std.io.println("{t1 - t0}, {count}")
 }

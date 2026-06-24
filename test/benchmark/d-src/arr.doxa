@@ -1,0 +1,35 @@
+module std from @std()
+
+const N is 1_000_000
+const OUTER is 7500
+
+function arr_reduce(arr :: int[], n :: int) returns int {
+    var sum is 0
+
+    for r while r < OUTER do r++ {
+        for i while i < N do i++ {
+            sum += arr[i]
+        }
+    }
+    return sum
+}
+
+public entry function main() {
+    var arr :: int[N]
+    var sink is 0
+
+    for i while i < N do i++ {
+        arr[i] is i % 997
+    }
+
+    for i while i < 75000000 do i++ {
+        sink += arr[i % N]
+    }
+
+    const t0 is std.time.monotonic()
+    const result is arr_reduce(arr, N)
+    const t1 is std.time.monotonic()
+
+    const elapsed is t1 - t0
+    std.io.println("{elapsed}, {result}")
+}

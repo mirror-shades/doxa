@@ -1,0 +1,30 @@
+module std from @std()
+
+const ITERS is 350_000_000
+
+function leaf_add(a :: int, b :: int) returns int {
+    return a + b;
+}
+
+function leaf_sum(iters :: int) returns int {
+    var sum is 0
+    for i while i < iters do i++ {
+        const a is leaf_add(i, (sum % 997) + 1)
+        sum += a
+    }
+    return sum
+}
+
+public entry function main() {
+    var sink is 0
+    for i while i < 35000000 do i++ {
+        sink += leaf_add(i, (sink % 997) + 1)
+    }
+
+    const t0 is std.time.monotonic()
+    const result is leaf_sum(ITERS)
+    const t1 is std.time.monotonic()
+
+    const elapsed is t1 - t0
+    std.io.println("{elapsed}, {result}")
+}

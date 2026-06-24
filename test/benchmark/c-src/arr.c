@@ -20,18 +20,39 @@ static long long monotonic_ns(void) {
 #endif
 }
 
-long fib(long n) {
-    if (n < 2) {
-        return n;
+#define N         1000000
+#define OUTER     7500
+
+long long arr_reduce(long long *arr, long long n) {
+    long long sum = 0;
+    long long i, r;
+
+    for (r = 0; r < OUTER; r++) {
+        for (i = 0; i < N; i++) {
+            sum += arr[i];
+        }
     }
-    return fib(n - 1) + fib(n - 2);
+    return sum;
 }
 
 int main(void) {
+    static long long arr[N];
+    long long i;
+
+    for (i = 0; i < N; i++)
+        arr[i] = i % 997;
+
+    {
+        volatile long long sink = 0;
+        for (i = 0; i < 75000000; i++)
+            sink += arr[i % N];
+    }
+
     long long t0 = monotonic_ns();
-    long result = fib(44);
+    long long result = arr_reduce(arr, N);
     long long t1 = monotonic_ns();
 
-    printf("%lld, %ld\n", t1 - t0, result);
+    long long elapsed = t1 - t0;
+    printf("%lld, %lld\n", elapsed, result);
     return 0;
 }
