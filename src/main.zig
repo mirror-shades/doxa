@@ -73,6 +73,8 @@ const CLI = struct {
     target_os: ?[]const u8,
     target_abi: ?[]const u8,
     opt_level: i32, // -1 for debug-peek, 0..3 for optimization
+    emit_opt_ir: bool,
+    emit_asm: bool,
     lsp_mode: LspMode,
     lsp_debug_file: ?[]const u8,
     lsp_io_trace: bool,
@@ -321,6 +323,74 @@ fn resolveBundledZigExecutable(allocator: std.mem.Allocator) ![]u8 {
     file.close();
     return zig_path;
 }
+
+fn clangOptFlag(opt_level: i32) []const u8 {
+    return if (opt_level <= -1) "-O0" else if (opt_level >= 3) "-O3" else switch (opt_level) {
+        0 => "-O0",
+        1 => "-O1",
+        2 => "-O2",
+        else => "-O0",
+    };
+}
+
+const EmitKind = enum { opt_ir, asm_ };
+
+// Run the vendored `zig cc` over the already-emitted `<stem>.ll` to produce an
+// inspection artifact (optimized LLVM IR or target assembly) at the same
+// optimization level the object build uses. Non-fatal: a failure here warns but
+// does not abort the compile.
+fn emitInspectionArtifact(zig_exe_path: []const u8, cli_options: *const CLI, stem: []const u8, kind: EmitKind) !void {
+    var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+    defer args.deinit();
+
+    const in_name = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.ll", .{stem});
+    defer std.heap.page_allocator.free(in_name);
+    const out_ext = switch (kind) {
+        .opt_ir => "opt.ll",
+        .asm_ => "s",
+    };
+    const out_name = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.{s}", .{ stem, out_ext });
+    defer std.heap.page_allocator.free(out_name);
+
+    try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-Wno-override-module", "-Wno-unused-command-line-argument", "-S" });
+    if (kind == .opt_ir) try args.append("-emit-llvm");
+    try args.appendSlice(&[_][]const u8{ in_name, "-o", out_name });
+
+    if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
+        try args.append("-target");
+        const arch = cli_options.target_arch orelse "";
+        const os = cli_options.target_os orelse "";
+        const abi = cli_options.target_abi orelse "";
+        var triple_buf: [128]u8 = undefined;
+        const triple = try std.fmt.bufPrint(&triple_buf, "{s}{s}{s}{s}{s}", .{
+            arch,
+            if (os.len > 0) "-" else "",
+            os,
+            if (abi.len > 0) "-" else "",
+            abi,
+        });
+        try args.append(triple);
+    }
+    try args.append(clangOptFlag(cli_options.opt_level));
+
+    var child = std.process.Child.init(args.items, std.heap.page_allocator);
+    child.cwd = cli_options.cache_dir;
+    child.stdout_behavior = .Inherit;
+    child.stderr_behavior = .Inherit;
+    const term = try child.spawnAndWait();
+    switch (term) {
+        .Exited => |code| if (code != 0) {
+            std.debug.print("Warning: could not emit {s} (zig cc exited {d})\n", .{ out_name, code });
+            return;
+        },
+        else => {
+            std.debug.print("Warning: could not emit {s}\n", .{out_name});
+            return;
+        },
+    }
+    std.debug.print("Wrote {s}/{s}\n", .{ cli_options.cache_dir, out_name });
+}
+
 fn runBytecodeModule(memoryManager: *MemoryManager, bytecode_module: *BytecodeModule, reporter: *Reporter, zig_modules: ?std.StringHashMap(VM.ZigRuntimeModule), program_args: []const []const u8) !void {
     var vm = try VM.init(memoryManager.getAllocator(), bytecode_module, reporter, memoryManager, zig_modules, program_args);
     defer vm.deinit();
@@ -354,6 +424,8 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         .target_os = null,
         .target_abi = null,
         .opt_level = 0,
+        .emit_opt_ir = false,
+        .emit_asm = false,
         .lsp_mode = .none,
         .lsp_debug_file = null,
         .lsp_io_trace = false,
@@ -496,6 +568,12 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
                 std.process.exit(EXIT_CODE_USAGE);
             };
             continue;
+        } else if (stringEquals(arg, "--emit-opt-ir")) {
+            options.emit_opt_ir = true;
+            continue;
+        } else if (stringEquals(arg, "--emit-asm")) {
+            options.emit_asm = true;
+            continue;
         } else if (stringEquals(arg, "--help") or stringEquals(arg, "-h")) {
             printUsage();
             std.process.exit(0);
@@ -564,6 +642,8 @@ fn printUsage() void {
     std.debug.print("  --abi=<abi>                       # Target ABI (optional)\n", .{});
     std.debug.print("  -O-1 | --opt=-1                   # Debug-aware codegen (peek dumps)\n", .{});
     std.debug.print("  -O0..-O3 | --opt=0..3             # LLVM and codegen optimization level\n", .{});
+    std.debug.print("  --emit-opt-ir                     # Also write optimized LLVM IR (<stem>.opt.ll) to cache\n", .{});
+    std.debug.print("  --emit-asm                        # Also write target assembly (<stem>.s) to cache\n", .{});
     std.debug.print("  --lsp-debug-io                    # Trace raw LSP I/O when used with --lsp\n", .{});
     std.debug.print("\nExamples:\n", .{});
     std.debug.print("  doxa run file.doxa\n", .{});
@@ -882,14 +962,7 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
                 });
                 try args.append(triple);
             }
-            const olvl = cli_options.opt_level;
-            const oflag = if (olvl <= -1) "-O0" else if (olvl >= 3) "-O3" else switch (olvl) {
-                0 => "-O0",
-                1 => "-O1",
-                2 => "-O2",
-                else => "-O0",
-            };
-            try args.append(oflag);
+            try args.append(clangOptFlag(cli_options.opt_level));
             var child = std.process.Child.init(args.items, std.heap.page_allocator);
             child.cwd = cli_options.cache_dir;
             child.stdout_behavior = .Inherit;
@@ -900,6 +973,9 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
                 else => return error.Unexpected,
             }
         }
+
+        if (cli_options.emit_opt_ir) try emitInspectionArtifact(zig_exe_path, &cli_options, stem_for_derivatives, .opt_ir);
+        if (cli_options.emit_asm) try emitInspectionArtifact(zig_exe_path, &cli_options, stem_for_derivatives, .asm_);
 
         const inline_zig_wrapper_paths = try compileInlineZigObjects(memoryManager, parsedStatements, &parser, reporter, cli_options.cache_dir, cli_options.opt_level);
         defer {
