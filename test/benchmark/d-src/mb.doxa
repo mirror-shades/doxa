@@ -8,22 +8,22 @@ public entry function main() {
     for y while y < 2000 do y++ {
         for x while x < 2000 do x++ {
 
-            var cr is (x - 1000.0) / 500.0;
-            var ci is (y - 1000.0) / 500.0;
+            var cr is (x - 1000.0) / 500.0
+            var ci is (y - 1000.0) / 500.0
 
-            var zr is 0.0;
-            var zi is 0.0;
+            var zr is 0.0
+            var zi is 0.0
 
-            var iter is 0;
+            var iter is 0
 
             while zr * zr + zi * zi < 4.0 and iter < 1000 {
-                var tmp is zr * zr - zi * zi + cr;
-                zi is 2.0 * zr * zi + ci;
-                zr is tmp;
-                iter += 1;
+                var tmp is zr * zr - zi * zi + cr
+                zi is 2.0 * zr * zi + ci
+                zr is tmp
+                iter += 1
             }
 
-            count += iter;
+            count += iter
         }
     }
 

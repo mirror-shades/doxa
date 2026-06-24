@@ -1,7 +1,7 @@
 module std from @std()
 
 public entry function main() {
-    const limit is 130000000;
+    const limit is 130000000
 
     var prime :: byte[limit + 1]
 
@@ -22,11 +22,11 @@ public entry function main() {
         }
     }
 
-    var count :: int;
+    var count :: int
 
     for i while i <= limit do i++ {
         if prime[i] > 0x00 then {
-            count += 1;
+            count += 1
         }
     }
 
