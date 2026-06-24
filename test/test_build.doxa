@@ -5,6 +5,7 @@ build.compile("./test/misc/bigfile.doxa", "./test/out/bigfile", host.arch(), hos
 build.compile("./test/misc/complex_print.doxa", "./test/out/complex_print", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/expressions.doxa", "./test/out/expressions", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/array_storage_migration.doxa", "./test/out/array_storage_migration", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/misc/alias_arrays.doxa", "./test/out/alias_arrays", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/methods.doxa", "./test/out/methods", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/union_enum_return.doxa", "./test/out/union_enum_return", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/inline_zig_string.doxa", "./test/out/inline_zig_string", host.arch(), host.os(), host.abi(), true)

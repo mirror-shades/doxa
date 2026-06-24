@@ -1,0 +1,44 @@
+function fillAndScale(n :: int, ^a :: int[]) {
+    for i while i < n do i++ {
+        a[i] is a[i] * 2 + 1
+    }
+}
+
+function saxpy(n :: int, s :: float, x :: float[], ^y :: float[]) {
+    for i while i < n do i++ {
+        y[i] += s * x[i]
+    }
+}
+
+function tag(^names :: string[]) {
+    names[0] is "alpha"
+    names[1] is "beta"
+}
+
+public entry function main() {
+    var ints :: int[4]
+    for i while i < 4 do i++ {
+        ints[i] is i
+    }
+    fillAndScale(4, ^ints)
+    @print("{@string(ints[0])} {@string(ints[1])} {@string(ints[2])} {@string(ints[3])}\n")
+
+    var x :: float[5]
+    var y :: float[5]
+    for i while i < 5 do i++ {
+        x[i] is i
+        y[i] is 0.0
+    }
+    saxpy(5, 2.0, x, ^y)
+    var checksum is 0.0
+    for i while i < 5 do i++ {
+        checksum += y[i]
+    }
+    @print("{@string(checksum)}\n")
+
+    var names :: string[2]
+    names[0] is "x"
+    names[1] is "y"
+    tag(^names)
+    @print("{names[0]} {names[1]}\n")
+}

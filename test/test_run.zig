@@ -201,6 +201,14 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected_peek = null,
         },
         .{
+            .name = "alias arrays",
+            .path = "./test/misc/alias_arrays.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_alias_arrays_results[0..],
+            .expected_peek = null,
+        },
+        .{
             .name = "inline zig string",
             .path = "./test/misc/inline_zig_string.doxa",
             .mode = .PRINT,
