@@ -2272,7 +2272,7 @@ pub fn Methods(comptime Ctx: type) type {
             const esz_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 3\n", .{ esz_ptr, hdr_reg });
             defer self.allocator.free(esz_gep);
             try w.writeAll(esz_gep);
-            const store_esz = try std.fmt.allocPrint(self.allocator, "  store i32 {d}, ptr {s}\n", .{ elem_size, esz_ptr });
+            const store_esz = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ elem_size, esz_ptr });
             defer self.allocator.free(store_esz);
             try w.writeAll(store_esz);
 
@@ -2280,7 +2280,7 @@ pub fn Methods(comptime Ctx: type) type {
             const tag_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 4\n", .{ tag_ptr, hdr_reg });
             defer self.allocator.free(tag_gep);
             try w.writeAll(tag_gep);
-            const store_tag = try std.fmt.allocPrint(self.allocator, "  store i32 {d}, ptr {s}\n", .{ elem_tag, tag_ptr });
+            const store_tag = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ elem_tag, tag_ptr });
             defer self.allocator.free(store_tag);
             try w.writeAll(store_tag);
 

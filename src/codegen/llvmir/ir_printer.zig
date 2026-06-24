@@ -117,6 +117,7 @@ pub const IRPrinter = struct {
     pub const handleStoreVarGlobal = SharedHandlers.handleStoreVarGlobal;
     pub const handleLoadVarGlobal = SharedHandlers.handleLoadVarGlobal;
     pub const handlePushStorageIdGlobal = SharedHandlers.handlePushStorageIdGlobal;
+    pub const wrapFixedArrayHeader = SharedHandlers.wrapFixedArrayHeader;
 
     const StructsEnumsEmitMethods = @import("./ir_printer/structs_enums_emit.zig").Methods(Ctx);
     pub const emitStructNew = StructsEnumsEmitMethods.emitStructNew;
