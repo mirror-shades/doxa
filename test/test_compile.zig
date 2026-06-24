@@ -273,6 +273,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const expressions_path = try getBinaryPath(allocator, "./test/out/expressions");
     const brainfuck_path = try getBinaryPath(allocator, "./test/out/brainfuck");
     const array_storage_migration_path = try getBinaryPath(allocator, "./test/out/array_storage_migration");
+    const alias_arrays_path = try getBinaryPath(allocator, "./test/out/alias_arrays");
     const methods_path = try getBinaryPath(allocator, "./test/out/methods");
     const union_enum_return_path = try getBinaryPath(allocator, "./test/out/union_enum_return");
     const inline_zig_string_path = try getBinaryPath(allocator, "./test/out/inline_zig_string");
@@ -320,6 +321,14 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .mode = .PRINT,
             .input = null,
             .expected_print = answers.expected_array_storage_results[0..],
+            .expected_peek = null,
+        },
+        .{
+            .name = "alias arrays",
+            .binary_path = alias_arrays_path,
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_alias_arrays_results[0..],
             .expected_peek = null,
         },
         .{

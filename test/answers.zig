@@ -24,6 +24,12 @@ pub const expected_array_storage_results = [_]print_result{
     .{ .value = "2 3" },
 };
 
+pub const expected_alias_arrays_results = [_]print_result{
+    .{ .value = "1 3 5 7" },
+    .{ .value = "20.0" },
+    .{ .value = "alpha beta" },
+};
+
 pub const expected_inline_zig_test_results = [_]print_result{
     .{ .value = "42" },
     .{ .value = "49" },
