@@ -1,4 +1,5 @@
 const std = @import("std");
+const DoxaTag = @import("../../../runtime/doxa_rt.zig").DoxaTag;
 const GroupTable = @import("../../../common/group_table.zig").GroupTable;
 const EnumTable = @import("../../../common/enum_table.zig").EnumTable;
 
@@ -280,8 +281,10 @@ pub fn Methods(comptime Ctx: type) type {
                             try w.writeAll(ret_line);
                         } else {
                             if (std.mem.indexOf(u8, return_type_str, "%DoxaValue") != null) {
+                                // A value-less `return` yields `nothing`; tag the union
+                                // value accordingly so `as nothing` narrowing matches.
                                 const zero = try self.nextTemp(&id);
-                                const zero_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} undef, i32 0, 0\n", .{ zero, return_type_str });
+                                const zero_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} undef, i32 {d}, 0\n", .{ zero, return_type_str, @intFromEnum(DoxaTag.Nothing) });
                                 defer self.allocator.free(zero_line);
                                 try w.writeAll(zero_line);
                                 const zero2 = try self.nextTemp(&id);
@@ -749,11 +752,16 @@ pub fn Methods(comptime Ctx: type) type {
                                 }
                             }
                             const target_local_ty = info_ptr.?.stack_type;
-                            value = try self.coerceForStore(value, target_local_ty, &id, w);
-                            const target_llvm_ty = self.stackTypeToLLVMType(target_local_ty);
-                            const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ target_llvm_ty, value.name, info_ptr.?.ptr_name });
-                            defer self.allocator.free(store_line);
-                            try w.writeAll(store_line);
+                            // `nothing` is zero-sized, so there is nothing to store. This
+                            // arises when a value is bound through `as nothing` narrowing,
+                            // whose success result carries no data.
+                            if (target_local_ty != .Nothing) {
+                                value = try self.coerceForStore(value, target_local_ty, &id, w);
+                                const target_llvm_ty = self.stackTypeToLLVMType(target_local_ty);
+                                const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ target_llvm_ty, value.name, info_ptr.?.ptr_name });
+                                defer self.allocator.free(store_line);
+                                try w.writeAll(store_line);
+                            }
                         }
                         last_instruction_was_terminator = false;
                     },
@@ -797,11 +805,14 @@ pub fn Methods(comptime Ctx: type) type {
                                 }
                             }
                             const target_ty = info_ptr.?.stack_type;
-                            value = try self.coerceForStore(value, target_ty, &id, w);
-                            const target_llvm_ty = self.stackTypeToLLVMType(target_ty);
-                            const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ target_llvm_ty, value.name, info_ptr.?.ptr_name });
-                            defer self.allocator.free(store_line);
-                            try w.writeAll(store_line);
+                            // `nothing` is zero-sized; skip the store (no data to write).
+                            if (target_ty != .Nothing) {
+                                value = try self.coerceForStore(value, target_ty, &id, w);
+                                const target_llvm_ty = self.stackTypeToLLVMType(target_ty);
+                                const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ target_llvm_ty, value.name, info_ptr.?.ptr_name });
+                                defer self.allocator.free(store_line);
+                                try w.writeAll(store_line);
+                            }
                         }
                         last_instruction_was_terminator = false;
                     },
