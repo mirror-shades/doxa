@@ -6,7 +6,9 @@ function fib(n :: int) returns int {
 }
 
 public entry function main() {
-    var result is fib(44)
-    std.io.println("{result}")
+    const start_time is std.time.monotonic()
+    const result is fib(44)
+    const end_time is std.time.monotonic()
+    std.io.println("{end_time - start_time}, {result}")
 }
 

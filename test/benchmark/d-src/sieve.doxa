@@ -1,9 +1,11 @@
 module std from @std()
 
 public entry function main() {
-    const limit is 100000000;
+    const limit is 130000000;
 
     var prime :: byte[limit + 1]
+
+    const t0 is std.time.monotonic()
 
     for i while i <= limit do i++ {
         prime[i] is 0x01
@@ -28,5 +30,7 @@ public entry function main() {
         }
     }
 
-    std.io.println("{count}");
+    const t1 is std.time.monotonic()
+
+    std.io.println("{t1 - t0}, {count}")
 }

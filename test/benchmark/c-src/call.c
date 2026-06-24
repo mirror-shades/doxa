@@ -1,5 +1,4 @@
 #include <stdio.h>
-#include <stdlib.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -21,39 +20,35 @@ static long long monotonic_ns(void) {
 #endif
 }
 
-int main(void) {
-    const long limit = 130000000;
+static long long leaf_add(long long a, long long b) {
+    return a + b;
+}
 
-    char* prime = malloc(limit + 1);
+#define ITERS 350000000LL
+
+long long leaf_sum(long long iters) {
+    long long sum = 0;
+    long long i;
+
+    for (i = 0; i < iters; i++) {
+        long long a = leaf_add(i, (sum % 997) + 1);
+        sum += a;
+    }
+    return sum;
+}
+
+int main(void) {
+    volatile long long sink = 0;
+    long long i;
+
+    for (i = 0; i < 35000000; i++)
+        sink += leaf_add(i, (sink % 997) + 1);
 
     long long t0 = monotonic_ns();
-
-    for (long i = 0; i <= limit; i++) {
-        prime[i] = 1;
-    }
-
-    prime[0] = 0;
-    prime[1] = 0;
-
-    for (long i = 2; i * i <= limit; i++) {
-        if (prime[i]) {
-            for (long j = i * i; j <= limit; j += i) {
-                prime[j] = 0;
-            }
-        }
-    }
-
-    long count = 0;
-    for (long i = 2; i <= limit; i++) {
-        if (prime[i]) {
-            count++;
-        }
-    }
-
+    long long result = leaf_sum(ITERS);
     long long t1 = monotonic_ns();
 
-    printf("%lld, %ld\n", t1 - t0, count);
-
-    free(prime);
+    long long elapsed = t1 - t0;
+    printf("%lld, %lld\n", elapsed, result);
     return 0;
 }

@@ -1,0 +1,45 @@
+module std from @std()
+
+const N is 2_000_000
+const OUTER is 600
+
+public entry function main() {
+    var x :: float[N]
+    var y :: float[N]
+
+    for i while i < N do i++ {
+        x[i] is i % 128
+        y[i] is 0.0
+    }
+
+    for r while r < 3 do r++ {
+        for i while i < N do i++ {
+            y[i] += 1.5 * x[i]
+        }
+
+        var warm is 0.0
+        for i while i < N do i++ {
+            warm += y[i]
+        }
+
+        for i while i < N do i++ {
+            y[i] is 0.0
+        }
+    }
+
+    const t0 is std.time.monotonic()
+    for r while r < OUTER do r++ {
+        for i while i < N do i++ {
+            y[i] += 1.5 * x[i]
+        }
+    }
+    const t1 is std.time.monotonic()
+
+    var checksum is 0.0
+    for i while i < N do i++ {
+        checksum += y[i]
+    }
+
+    const elapsed is t1 - t0
+    std.io.println("{elapsed}, {checksum}")
+}

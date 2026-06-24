@@ -1,10 +1,19 @@
 module std from @std()
 
+
+const ns_per_s is 1_000_000_000
+
 const tests is [
+    # smoke tests
     "fib",
     "sieve",
     "matrix",
     "mb",
+    # performance tests
+    "arr",
+    "call",
+    "struct",
+    "vec"
 ]
 
 struct Result {
@@ -18,8 +27,10 @@ struct Result {
         return $Result {
             test is test,
             runs is runs,
-            time_d is time_d,
-            time_c is time_c,
+            user_time_d is user_time_d,
+            user_time_c is user_time_c,
+            kernal_time_d is kernal_time_d,
+            kernal_time_c is kernal_time_c,
             is_match is is_match,
         }
     }
@@ -39,17 +50,22 @@ function runSuite(runs :: int) {
     std.io.println("Running benchmarks...")
 
     each test in tests {
-        var time_d is 0
+        var user_time_d is 0
+        var user_time_c is 0
         var time_c is 0
         var is_match is false
         each run in 0 to runs - 1 {
-            const output_d is timeExec("./test/benchmark/d-bin/{test}", ^time_d)
-            const output_c is timeExec("./test/benchmark/c-bin/{test}", ^time_c)
+            # user time is measured within timeExec
+            # kernal time is returned by the benchmark binary itself
+            const output_d is timeExec("./test/benchmark/d-bin/{test}", ^user_time_d)
+            const output_c is timeExec("./test/benchmark/c-bin/{test}", ^user_time_c)
+            const split_d_output is split(output_d)
+            const split_c_output is split(output_c)
             if run == 0 then {
-                is_match is matchOutput(output_c, output_d)
+                is_match is matchOutput(split_c_output[1], split_d_output[1])
             }
         }
-        @push(results, Result.new(test, runs, time_d, time_c, is_match))
+        @push(results, Result.new(test, runs, user_time_d, user_time_c, split_d_output[0], split_c_output[0], is_match))
     }
 
     std.io.println("test\t| lang\t| runtime")
@@ -58,9 +74,26 @@ function runSuite(runs :: int) {
     }
 }
 
+function split(output :: string) returns string[] {
+    var result :: string[]
+    var current is ""
+    each c in output {
+        if c == "," then {
+            @push(result, current)
+            current is ""
+        }
+        else if c == " " then {}
+        else {
+            current += c
+        }
+    }
+    @push(result, current)
+    return result
+}
+
 function compare(result :: Result) {
-    const c_total_time is result.time_c / 1000000000
-    const d_total_time is result.time_d / 1000000000
+    const c_total_time is result.time_c / ns_per_s
+    const d_total_time is result.time_d / ns_per_s
     const c_average_time is c_total_time / result.runs
     const d_average_time is d_total_time / result.runs
     std.io.println("--------------------------------")
@@ -127,7 +160,6 @@ function writeStats(results :: Result[]) {
     if not std.file.exists(path) then {
         std.file.write(path, header)
     }
-    const ns_per_s is 1_000_000_000
     each result in results {
         const c_raw is result.time_c / result.runs / ns_per_s
         const d_raw is result.time_d / result.runs / ns_per_s

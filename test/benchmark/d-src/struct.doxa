@@ -1,0 +1,56 @@
+module std from @std()
+
+struct Vec4 {
+    public x :: int,
+    public y :: int,
+    public z :: int,
+    public w :: int,
+}
+
+function sum_vec4(v :: Vec4) returns int {
+    return v.x + v.y + v.z + v.w;
+}
+
+const ITERS is 1_100_000_000
+
+function sum_vec4_loop(iters :: int) returns int {
+    var v is $Vec4 {
+        x is 0,
+        y is 1,
+        z is 2,
+        w is 3,
+    }
+    var sum is 0
+    for i while i < iters do i++ {
+        v.x is i % 16
+        v.y is (i + 1) % 16
+        v.z is (i + 2) % 16
+        v.w is (i + 3) % 16
+        sum += sum_vec4(v)
+    }
+    return sum
+}
+
+public entry function main() {
+    var v is $Vec4 {
+        x is 0,
+        y is 1,
+        z is 2,
+        w is 3,
+    }
+    var sink is 0
+    for i while i < 110000000 do i++ {
+        v.x is i % 16
+        v.y is (i + 1) % 16
+        v.z is (i + 2) % 16
+        v.w is (i + 3) % 16
+        sink += sum_vec4(v)
+    }
+
+    const t0 is std.time.monotonic()
+    const result is sum_vec4_loop(ITERS)
+    const t1 is std.time.monotonic()
+
+    const elapsed is t1 - t0
+    std.io.println("{elapsed}, {result}")
+}
