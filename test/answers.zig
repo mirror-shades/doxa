@@ -28,6 +28,7 @@ pub const expected_alias_arrays_results = [_]print_result{
     .{ .value = "1 3 5 7" },
     .{ .value = "20.0" },
     .{ .value = "alpha beta" },
+    .{ .value = "k0k1k2" },
 };
 
 pub const expected_inline_zig_test_results = [_]print_result{

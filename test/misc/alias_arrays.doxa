@@ -15,6 +15,27 @@ function tag(^names :: string[]) {
     names[1] is "beta"
 }
 
+struct Item {
+    public name :: string,
+    public val :: int
+
+    function new(name :: string, val :: int) returns Item {
+        return $Item {
+            name is name,
+            val is val,
+        }
+    }
+}
+
+# Pushes reference-typed (struct) elements into a `^`-aliased array from a
+# callee. The pushed structs are built in the callee's scope; they must be
+# re-homed into the caller's array so they survive the callee's teardown.
+function collect(n :: int, ^items :: Item[]) {
+    for i while i < n do i++ {
+        @push(items, Item.new("k", i))
+    }
+}
+
 public entry function main() {
     var ints :: int[4]
     for i while i < 4 do i++ {
@@ -41,4 +62,13 @@ public entry function main() {
     names[1] is "y"
     tag(^names)
     @print("{names[0]} {names[1]}\n")
+
+    var items :: Item[]
+    collect(3, ^items)
+    var summary is ""
+    each item in items {
+        summary += item.name
+        summary += @string(item.val)
+    }
+    @print("{summary}\n")
 }
