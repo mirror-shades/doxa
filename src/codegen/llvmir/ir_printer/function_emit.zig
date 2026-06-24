@@ -56,37 +56,54 @@ pub fn Methods(comptime Ctx: type) type {
             for (hir.instructions[start_idx..end_idx]) |inst| {
                 switch (inst) {
                     .StoreVar => |sv| {
-                        if (variables_to_allocate.get(sv.var_name) == null) {
-                            // We need to determine the type from the HIR context
-                            // TODO: determine type from full HIR context rather than expected type alone
-                            const declared_stack_type = if (sv.expected_type != .Unknown)
-                                self.hirTypeToStackType(sv.expected_type)
-                            else
-                                .I64;
+                        const declared_stack_type = if (sv.expected_type != .Unknown)
+                            self.hirTypeToStackType(sv.expected_type)
+                        else
+                            .I64;
+                        if (variables_to_allocate.getPtr(sv.var_name)) |existing| {
+                            // Upgrade a placeholder i64 slot to a concrete, possibly
+                            // wider type (e.g. a string bound first as a raw value and
+                            // then narrowed). The alloca must be sized for the widest
+                            // value the variable holds or stores overflow the slot.
+                            if (existing.stack_type == .I64 and declared_stack_type != .I64) {
+                                existing.stack_type = declared_stack_type;
+                            }
+                        } else {
                             const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sv.var_name});
                             const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = declared_stack_type, .array_type = null };
                             try variables_to_allocate.put(sv.var_name, info);
                         }
                     },
                     .StoreDecl => |sd| {
-                        if (variables_to_allocate.get(sd.var_name) == null) {
-                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sd.var_name});
-                            const declared_stack_type = self.hirTypeToStackType(sd.declared_type);
-                            const array_hint: ?HIR.HIRType = switch (sd.declared_type) {
-                                .Array => |inner| inner.*,
-                                else => null,
-                            };
-                            var struct_field_types: ?[]HIR.HIRType = null;
-                            var struct_field_names: ?[]const []const u8 = null;
-                            var struct_type_name: ?[]const u8 = null;
-                            if (sd.declared_type == .Struct) {
-                                const sid = sd.declared_type.Struct;
-                                struct_field_types = self.struct_fields_by_id.get(sid);
-                                struct_type_name = self.struct_type_names_by_id.get(sid);
-                                if (struct_type_name) |tn| {
-                                    struct_field_names = self.struct_field_names_by_type.get(tn);
-                                }
+                        const declared_stack_type = self.hirTypeToStackType(sd.declared_type);
+                        const array_hint: ?HIR.HIRType = switch (sd.declared_type) {
+                            .Array => |inner| inner.*,
+                            else => null,
+                        };
+                        var struct_field_types: ?[]HIR.HIRType = null;
+                        var struct_field_names: ?[]const []const u8 = null;
+                        var struct_type_name: ?[]const u8 = null;
+                        if (sd.declared_type == .Struct) {
+                            const sid = sd.declared_type.Struct;
+                            struct_field_types = self.struct_fields_by_id.get(sid);
+                            struct_type_name = self.struct_type_names_by_id.get(sid);
+                            if (struct_type_name) |tn| {
+                                struct_field_names = self.struct_field_names_by_type.get(tn);
                             }
+                        }
+                        if (variables_to_allocate.getPtr(sd.var_name)) |existing| {
+                            // A declaration carries the authoritative type; upgrade a
+                            // placeholder i64 slot so the alloca is sized for the real
+                            // (possibly wider) value.
+                            if (existing.stack_type == .I64 and declared_stack_type != .I64) {
+                                existing.stack_type = declared_stack_type;
+                                if (existing.array_type == null) existing.array_type = array_hint;
+                                if (existing.struct_field_types == null) existing.struct_field_types = struct_field_types;
+                                if (existing.struct_field_names == null) existing.struct_field_names = struct_field_names;
+                                if (existing.struct_type_name == null) existing.struct_type_name = struct_type_name;
+                            }
+                        } else {
+                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sd.var_name});
                             const info = VariableInfo{
                                 .ptr_name = ptr_name,
                                 .stack_type = declared_stack_type,
