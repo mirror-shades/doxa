@@ -471,7 +471,40 @@ pub fn Methods(comptime Ctx: type) type {
                         if (psid.scope_kind == .GlobalLocal) {
                             try self.handlePushStorageIdGlobal(w, &stack, &id, psid.var_name);
                         } else if (variables.get(psid.var_name)) |entry| {
-                            try stack.append(.{ .name = entry.ptr_name, .ty = .PTR, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name, .struct_field_types = entry.struct_field_types, .struct_field_names = entry.struct_field_names, .struct_type_name = entry.struct_type_name });
+                            if (entry.fixed_array_depth > 0) {
+                                // Fixed-size arrays live as raw stack buffers, so the
+                                // variable slot holds a pointer to the element storage
+                                // rather than an ArrayHeader. Callees treat an array
+                                // alias parameter as the address of a slot holding an
+                                // ArrayHeader pointer, so build a non-owning header that
+                                // views the caller's storage and pass a slot referencing
+                                // it. Element mutations through the alias then land
+                                // directly in the caller's array.
+                                const raw_data = try self.nextTemp(&id);
+                                const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ raw_data, entry.ptr_name });
+                                defer self.allocator.free(load_line);
+                                try w.writeAll(load_line);
+
+                                const hdr = try self.wrapFixedArrayHeader(w, .{
+                                    .name = raw_data,
+                                    .ty = .PTR,
+                                    .array_type = entry.array_type,
+                                    .fixed_array_depth = entry.fixed_array_depth,
+                                    .fixed_array_sizes = entry.fixed_array_sizes,
+                                }, &id);
+
+                                const slot = try self.nextTemp(&id);
+                                const slot_alloca = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{slot});
+                                defer self.allocator.free(slot_alloca);
+                                try w.writeAll(slot_alloca);
+                                const store_slot = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ hdr.name, slot });
+                                defer self.allocator.free(store_slot);
+                                try w.writeAll(store_slot);
+
+                                try stack.append(.{ .name = slot, .ty = .PTR, .array_type = entry.array_type });
+                            } else {
+                                try stack.append(.{ .name = entry.ptr_name, .ty = .PTR, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name, .struct_field_types = entry.struct_field_types, .struct_field_names = entry.struct_field_names, .struct_type_name = entry.struct_type_name });
+                            }
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
