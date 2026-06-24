@@ -26,12 +26,12 @@ pub fn parseExpressionStmt(self: *Parser) ErrorList!ast.Stmt {
     } else false;
 
     if (!is_block_like) {
-        if (self.peek().type == .SEMICOLON) {
-            self.advance();
-        }
         const next_type = self.peek().type;
         if (next_type == .NEWLINE) {
-            self.advance();
+            // `;` and newlines are interchangeable separators (peek/advance skip
+            // semicolons); consume the trailing separator(s) so a `stmt;` doesn't
+            // leave a newline behind that parses as a spurious empty statement.
+            while (self.peek().type == .NEWLINE) self.advance();
         } else if (next_type == .EOF or next_type == .RIGHT_BRACE) {} else {
             std.debug.print("DEBUG parseExpressionStmt ExpectedNewline next_type={s} lexeme={s} file={s}\n", .{ @tagName(next_type), self.peek().lexeme, self.current_file });
             if (expr) |e| {
@@ -97,12 +97,14 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
         value = try expression_parser.parseExpression(self);
     }
 
-    if (self.peek().type == .SEMICOLON) {
-        self.advance();
-    }
     const next_type = self.peek().type;
     if (next_type == .NEWLINE) {
-        self.advance();
+        // `;` and newlines are interchangeable statement separators, and
+        // peek()/advance() treat semicolons as transparent. Consume the
+        // trailing separator(s) in a loop so a `return x;` doesn't leave the
+        // newline behind (which would parse as a spurious empty statement and
+        // trip the unreachable-code check).
+        while (self.peek().type == .NEWLINE) self.advance();
     } else if (next_type != .RIGHT_BRACE and next_type != .EOF) {
         const location = Reporting.Location{
             .file = self.current_file,
