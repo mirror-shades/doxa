@@ -3,15 +3,15 @@ module std from @std()
 const N is 400
 const REPEATS is 35
 
-var a :: float[N][N];
-var b :: float[N][N];
-var c :: float[N][N];
+var a :: float[N][N]
+var b :: float[N][N]
+var c :: float[N][N]
 
 public entry function main() {
     for i while i < N do i++ {
         for j while j < N do j++ {
-            a[i][j] is i + j;
-            b[i][j] is i - j;
+            a[i][j] is i + j
+            b[i][j] is i - j
         }
     }
 
@@ -21,13 +21,13 @@ public entry function main() {
         for i while i < N do i++ {
             for j while j < N do j++ {
 
-                var sum is 0.0;
+                var sum is 0.0
 
                 for k while k < N do k++ {
-                    sum += a[i][k] * b[k][j];
+                    sum += a[i][k] * b[k][j]
                 }
 
-                c[i][j] is sum;
+                c[i][j] is sum
             }
         }
     }
