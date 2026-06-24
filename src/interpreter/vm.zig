@@ -685,6 +685,20 @@ pub const VM = struct {
         return ValueOwner.Runtime;
     }
 
+    /// Returns true when `ptr` addresses a slot in the current (top) frame's
+    /// locals. This distinguishes a genuine same-frame in-place mutation from a
+    /// store that writes through a `^` alias into a *caller's* frame, which is
+    /// what gates the array load-mutate-store fast path (see storeValueAtPtr).
+    fn currentFrameOwnsPointer(self: *VM, ptr: runtime.SlotPointer) bool {
+        if (self.frames.items.len == 0) return false;
+        const frame = &self.frames.items[self.frames.items.len - 1];
+        if (frame.locals.len == 0) return false;
+        const base = @intFromPtr(frame.locals.ptr);
+        const end = base + frame.locals.len * @sizeOf(HIRValue);
+        const addr = @intFromPtr(ptr.value);
+        return addr >= base and addr < end;
+    }
+
     fn allocatorForPointer(self: *VM, ptr: runtime.SlotPointer) VmError!std.mem.Allocator {
         const addr = @intFromPtr(ptr.value);
 
@@ -757,7 +771,21 @@ pub const VM = struct {
         // Deep-copying it would be both redundant and O(n) per store, which turns
         // element-wise array fills into O(n^2). Slots are always initialized to
         // `nothing` (see runtime.zig), so reading the current slot value is safe.
-        if (value == .array and value.array.backingLen() > 0) {
+        //
+        // The shortcut is only sound when nothing in the array can outlive the
+        // destination. For packed (non-boxed) arrays — Int/Byte/Float/Tetra —
+        // elements are inline scalars, so it is always safe. For boxed arrays the
+        // elements may be reference-typed (structs, strings, nested collections)
+        // whose backing was allocated in the *current* scope/frame. When such an
+        // array is written through a `^` alias into a caller's frame, taking the
+        // shortcut would leave the caller holding elements that are freed when the
+        // callee's scope is torn down. In that cross-frame case we fall through to
+        // the deep-copy path, which re-homes the still-live elements into the
+        // destination's arena. Same-frame stores keep the O(1) shortcut.
+        const fast_path_safe = value == .array and
+            value.array.backingLen() > 0 and
+            (!value.array.isBoxed() or self.currentFrameOwnsPointer(ptr));
+        if (fast_path_safe) {
             const existing = ptr.load();
             if (existing == .array and existing.array.backingPtr() == value.array.backingPtr()) {
                 ptr.store(value);
