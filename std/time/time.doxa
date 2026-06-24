@@ -1,5 +1,6 @@
 zig Time {
     const std = @import("std");
+    const builtin = @import("builtin");
 
     pub fn unixSeconds() i64 {
         return std.time.timestamp();
@@ -7,6 +8,17 @@ zig Time {
 
     pub fn tickNs() i64 {
         return @intCast(std.time.nanoTimestamp());
+    }
+
+    pub fn monotonicNs() i64 {
+        if (builtin.os.tag == .windows) {
+            const counter: u128 = std.os.windows.QueryPerformanceCounter();
+            const freq: u128 = std.os.windows.QueryPerformanceFrequency();
+            return @intCast(counter * std.time.ns_per_s / freq);
+        } else {
+            const ts = std.posix.clock_gettime(std.posix.CLOCK.MONOTONIC) catch return 0;
+            return @as(i64, @intCast(ts.sec)) * std.time.ns_per_s + @as(i64, @intCast(ts.nsec));
+        }
     }
 
     pub fn unixMillis() i64 {
@@ -32,6 +44,10 @@ public function unix() returns int {
 
 public function tick() returns int {
     return Time.tickNs();
+}
+
+public function monotonic() returns int {
+    return Time.monotonicNs();
 }
 
 public function unixMs() returns int {
