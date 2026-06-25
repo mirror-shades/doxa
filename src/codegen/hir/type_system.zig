@@ -586,39 +586,41 @@ pub const TypeSystem = struct {
                 // zoo[0].name), use the struct_id and field metadata from there.
                 if (self.struct_table) |const_table| {
                     const obj_type = self.inferTypeFromExpression(fa.object, symbol_table);
-                    if (obj_type == .Struct) {
-                        const sid: StructId = obj_type.Struct;
-                        if (const_table.fields(sid)) |fields| {
-                            for (fields) |f| {
-                                if (std.mem.eql(u8, f.name, fa.field.lexeme)) {
-                                    // Prefer enum type name when this field is an enum,
-                                    // so that peek on zoo[0].animal_type can report
-                                    // "Species" instead of generic "enum".
-                                    var result_name: ?[]const u8 = null;
+                    switch (obj_type) {
+                        .Struct => |sid| {
+                            if (const_table.fields(sid)) |fields| {
+                                for (fields) |f| {
+                                    if (std.mem.eql(u8, f.name, fa.field.lexeme)) {
+                                        // Prefer enum type name when this field is an enum,
+                                        // so that peek on zoo[0].animal_type can report
+                                        // "Species" instead of generic "enum".
+                                        var result_name: ?[]const u8 = null;
 
-                                    // For enum-typed fields, use the AST custom_type
-                                    // when available (e.g., "Species").
-                                    const ti = f.type_info.*;
-                                    if (f.hir_type == .Enum) {
-                                        if (ti.custom_type) |ct_name| {
-                                            result_name = ct_name;
+                                        // For enum-typed fields, use the AST custom_type
+                                        // when available (e.g., "Species").
+                                        const ti = f.type_info.*;
+                                        if (f.hir_type == .Enum) {
+                                            if (ti.custom_type) |ct_name| {
+                                                result_name = ct_name;
+                                            }
+                                        } else if (f.nested_struct_id) |nested_id| {
+                                            // Otherwise, for nested structs, recover the
+                                            // nested struct's qualified name.
+                                            var table = const_table.*;
+                                            if (table.getEntryById(nested_id)) |nested_entry| {
+                                                result_name = nested_entry.qualified_name;
+                                            }
                                         }
-                                    } else if (f.nested_struct_id) |nested_id| {
-                                        // Otherwise, for nested structs, recover the
-                                        // nested struct's qualified name.
-                                        var table = const_table.*;
-                                        if (table.getEntryById(nested_id)) |nested_entry| {
-                                            result_name = nested_entry.qualified_name;
-                                        }
+
+                                        return FieldResolveResult{
+                                            .t = f.hir_type,
+                                            .custom_type_name = result_name,
+                                        };
                                     }
-
-                                    return FieldResolveResult{
-                                        .t = f.hir_type,
-                                        .custom_type_name = result_name,
-                                    };
                                 }
                             }
-                        }
+                        },
+                        else => {},
                     }
                 }
 
@@ -695,11 +697,17 @@ pub const TypeSystem = struct {
                 if (self.resolveFieldAccessType(expr, symbol_table)) |res| {
                     return res.t;
                 }
-                const obj_type = self.inferTypeFromExpression(field.object, symbol_table);
-                if (std.mem.eql(u8, field.field.lexeme, "value")) return .String;
-                if (std.mem.eql(u8, field.field.lexeme, "token_type")) return HIRType{ .Enum = 0 };
-                if (obj_type == .Struct) return .Unknown;
-                return .Unknown;
+            const obj_type = self.inferTypeFromExpression(field.object, symbol_table);
+            if (std.mem.eql(u8, field.field.lexeme, "token_type")) return HIRType{ .Enum = 0 };
+            switch (obj_type) {
+                .Struct => return .Unknown,
+                .String => return .String,
+                .Int => return .Int,
+                .Float => return .Float,
+                .Byte => return .Byte,
+                .Nothing => return .Nothing,
+                else => return .Unknown,
+            }
             },
             .EnumMember => |member| {
                 // For enum members, try to find the parent enum type
