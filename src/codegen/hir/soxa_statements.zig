@@ -338,7 +338,9 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         const call = init_expr.data.FunctionCall;
                         if (call.callee.data == .FieldAccess) {
                             const callee_field = call.callee.data.FieldAccess;
-                            if (callee_field.object.data == .Variable and std.mem.eql(u8, callee_field.field.lexeme, "New")) {
+                            if (callee_field.object.data == .Variable and
+                                (std.mem.eql(u8, callee_field.field.lexeme, "New") or std.mem.eql(u8, callee_field.field.lexeme, "new")))
+                            {
                                 const type_name = callee_field.object.data.Variable.lexeme;
                                 if (self.isCustomType(type_name)) |ct_new| {
                                     if (ct_new.kind == .Struct) {

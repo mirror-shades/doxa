@@ -512,77 +512,7 @@ pub const HIRGenerator = struct {
                 .Expression => |maybe_expr| {
                     if (maybe_expr) |expr| {
                         if (expr.data == .StructDecl) {
-                            const s = expr.data.StructDecl;
-                            for (s.methods) |method| {
-                                const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name.lexeme, method.name.lexeme });
-                                var eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method.return_type_info, method.body, &self.type_system);
-                                var return_type = self.convertTypeInfo(eff_method_rti);
-
-                                if (self.struct_methods.get(s.name.lexeme)) |method_table| {
-                                    if (method_table.get(method.name.lexeme)) |method_info| {
-                                        eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method_info.return_type.*, method.body, &self.type_system);
-                                        return_type = self.convertTypeInfo(eff_method_rti);
-                                    }
-                                }
-
-                                if (return_type == .Nothing) {
-                                    const inferred_type = self.inferMethodReturnType(method, s.name.lexeme);
-                                    if (inferred_type != .Nothing) {
-                                        return_type = inferred_type;
-                                    }
-                                }
-                                const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified}));
-
-                                var arity: u32 = @intCast(method.params.len);
-                                if (!method.is_static) arity += 1;
-
-                                // For non-static methods, prepend 'this' parameter
-                                var param_is_alias = try self.allocator.alloc(bool, arity);
-                                var param_types = try self.allocator.alloc(HIRType, arity);
-                                var param_idx: usize = 0;
-                                if (!method.is_static) {
-                                    param_is_alias[param_idx] = true;
-                                    param_types[param_idx] = HIRType{ .Struct = 0 };
-                                    param_idx += 1;
-                                }
-                                for (method.params) |param| {
-                                    param_is_alias[param_idx] = param.is_alias;
-                                    param_types[param_idx] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
-                                    // Sanitize param types: keep only simple primitives/markers for signature
-                                    param_types[param_idx] = switch (param_types[param_idx]) {
-                                        .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[param_idx],
-                                        .Struct, .Enum => param_types[param_idx],
-                                        .Array, .Map, .Function, .Union => param_types[param_idx],
-                                        else => .Int,
-                                    };
-                                    param_idx += 1;
-                                }
-
-                                const function_info = FunctionInfo{
-                                    .name = qualified,
-                                    .arity = arity,
-                                    .return_type = return_type,
-                                    .start_label = start_label,
-                                    .local_var_count = 0,
-                                    .is_entry = false,
-                                    .param_is_alias = param_is_alias,
-                                    .param_types = param_types,
-                                };
-
-                                if (!self.function_signatures.contains(qualified)) {
-                                    try self.function_signatures.put(qualified, function_info);
-                                    try self.function_bodies.append(FunctionBody{
-                                        .function_info = function_info,
-                                        .statements = method.body,
-                                        .start_instruction_index = 0,
-                                        .function_name = qualified,
-                                        .function_params = method.params,
-                                        .return_type_info = eff_method_rti,
-                                        .param_is_alias = param_is_alias,
-                                        .param_types = param_types,
-                                    });
-                                }
-                            }
+                            try self.registerStructMethodSignatures(expr.data.StructDecl);
                         }
                     }
                 },
@@ -647,6 +577,13 @@ pub const HIRGenerator = struct {
                                     .param_is_alias = param_is_alias_imported,
                                     .param_types = param_types_imported,
                                 });
+                            },
+                            .Expression => |maybe_expr| {
+                                if (maybe_expr) |mod_expr| {
+                                    if (mod_expr.data == .StructDecl) {
+                                        try self.registerStructMethodSignatures(mod_expr.data.StructDecl);
+                                    }
+                                }
                             },
                             else => {},
                         }
@@ -761,6 +698,8 @@ pub const HIRGenerator = struct {
 
             const params = function_body.function_params;
 
+            const is_method = function_body.function_info.arity > params.len;
+
             var param_index = params.len;
             while (param_index > 0) {
                 param_index -= 1;
@@ -771,7 +710,9 @@ pub const HIRGenerator = struct {
                 const declared_type_info = resolved.type_info;
                 defer if (declared_type_info) |info| self.allocator.destroy(info);
 
-                if (function_body.param_is_alias[param_index]) {
+                const alias_lookup = if (is_method) param_index + 1 else param_index;
+
+                if (function_body.param_is_alias[alias_lookup]) {
                     switch (param_type) {
                         .Map, .Function => return error.InvalidAliasType,
                         else => {},
@@ -847,27 +788,36 @@ pub const HIRGenerator = struct {
             if (std.mem.indexOfScalar(u8, function_body.function_info.name, '.')) |dot_idx| {
                 const struct_name = function_body.function_info.name[0..dot_idx];
                 const method_name = function_body.function_info.name[dot_idx + 1 ..];
+
+                var is_instance_method = false;
                 if (self.struct_methods.get(struct_name)) |method_table| {
                     if (method_table.get(method_name)) |mi| {
-                        if (!mi.is_static) {
-                            try self.trackVariableType("this", HIRType{ .Struct = 0 });
-                            try self.symbol_table.trackAliasParameter("this");
-
-                            const struct_type_name = struct_name;
-                            try self.trackVariableCustomType("this", struct_type_name);
-
-                            const alias_slot = try self.slot_manager.allocateAliasSlot("this", HIRType{ .Struct = 0 });
-
-                            try self.instructions.append(.{
-                                .BindAlias = .{
-                                    .alias_name = "this",
-                                    .target_variable_name = "this",
-                                    .alias_slot = alias_slot,
-                                    .target_type = HIRType{ .Struct = 0 },
-                                },
-                            });
-                        }
+                        is_instance_method = !mi.is_static;
                     }
+                }
+                if (!is_instance_method) {
+                    if (self.function_signatures.get(function_body.function_info.name)) |func_info| {
+                        is_instance_method = func_info.arity > 0 and func_info.param_is_alias.len > 0 and func_info.param_is_alias[0];
+                    }
+                }
+
+                if (is_instance_method) {
+                    try self.trackVariableType("this", HIRType{ .Struct = 0 });
+                    try self.symbol_table.trackAliasParameter("this");
+
+                    const struct_type_name = struct_name;
+                    try self.trackVariableCustomType("this", struct_type_name);
+
+                    const alias_slot = try self.slot_manager.allocateAliasSlot("this", HIRType{ .Struct = 0 });
+
+                    try self.instructions.append(.{
+                        .BindAlias = .{
+                            .alias_name = "this",
+                            .target_variable_name = "this",
+                            .alias_slot = alias_slot,
+                            .target_type = HIRType{ .Struct = 0 },
+                        },
+                    });
                 }
             }
 
@@ -1386,6 +1336,77 @@ pub const HIRGenerator = struct {
         return id;
     }
 
+    fn registerStructMethodSignatures(self: *HIRGenerator, s: ast.StructDecl) !void {
+        for (s.methods) |method| {
+            const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name.lexeme, method.name.lexeme });
+            var eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method.return_type_info, method.body, &self.type_system);
+            var return_type = self.convertTypeInfo(eff_method_rti);
+
+            if (self.struct_methods.get(s.name.lexeme)) |method_table| {
+                if (method_table.get(method.name.lexeme)) |method_info| {
+                    eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method_info.return_type.*, method.body, &self.type_system);
+                    return_type = self.convertTypeInfo(eff_method_rti);
+                }
+            }
+
+            if (return_type == .Nothing) {
+                const inferred_type = self.inferMethodReturnType(method, s.name.lexeme);
+                if (inferred_type != .Nothing) {
+                    return_type = inferred_type;
+                }
+            }
+            const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified}));
+
+            var arity: u32 = @intCast(method.params.len);
+            if (!method.is_static) arity += 1;
+
+            var param_is_alias = try self.allocator.alloc(bool, arity);
+            var param_types = try self.allocator.alloc(HIRType, arity);
+            var param_idx: usize = 0;
+            if (!method.is_static) {
+                param_is_alias[param_idx] = true;
+                param_types[param_idx] = HIRType{ .Struct = 0 };
+                param_idx += 1;
+            }
+            for (method.params) |param| {
+                param_is_alias[param_idx] = param.is_alias;
+                param_types[param_idx] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
+                param_types[param_idx] = switch (param_types[param_idx]) {
+                    .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[param_idx],
+                    .Struct, .Enum => param_types[param_idx],
+                    .Array, .Map, .Function, .Union => param_types[param_idx],
+                    else => .Int,
+                };
+                param_idx += 1;
+            }
+
+            const function_info = FunctionInfo{
+                .name = qualified,
+                .arity = arity,
+                .return_type = return_type,
+                .start_label = start_label,
+                .local_var_count = 0,
+                .is_entry = false,
+                .param_is_alias = param_is_alias,
+                .param_types = param_types,
+            };
+
+            if (!self.function_signatures.contains(qualified)) {
+                try self.function_signatures.put(qualified, function_info);
+                try self.function_bodies.append(FunctionBody{
+                    .function_info = function_info,
+                    .statements = method.body,
+                    .start_instruction_index = 0,
+                    .function_name = qualified,
+                    .function_params = method.params,
+                    .return_type_info = eff_method_rti,
+                    .param_is_alias = param_is_alias,
+                    .param_types = param_types,
+                });
+            }
+        }
+    }
+
     fn extractSimpleComparison(self: *HIRGenerator, condition: *ast.Expr) !HIRValue {
         _ = self;
         switch (condition.data) {
@@ -1504,6 +1525,75 @@ pub const HIRGenerator = struct {
                         });
                         return;
                     }
+                }
+            }
+
+            if (receiver.data == .This) {
+                const struct_name = blk: {
+                    if (self.current_function) |func_name| {
+                        if (std.mem.indexOfScalar(u8, func_name, '.')) |dot| {
+                            break :blk func_name[0..dot];
+                        }
+                    }
+                    break :blk "this";
+                };
+
+                const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ struct_name, name });
+                const fn_index = self.getFunctionIndex(qualified_name);
+                const has_function = fn_index != null;
+
+                var ret_type: HIRType = .Nothing;
+                var is_static = false;
+                if (self.struct_methods.get(struct_name)) |method_table| {
+                    if (method_table.get(name)) |mi| {
+                        ret_type = self.convertTypeInfo(mi.return_type.*);
+                        is_static = mi.is_static;
+                    }
+                }
+
+                if (ret_type == .Nothing and has_function) {
+                    if (self.function_signatures.get(qualified_name)) |func_info| {
+                        ret_type = func_info.return_type;
+                        is_static = func_info.arity == 0;
+                    }
+                }
+
+                if (has_function) {
+                    if (!is_static) {
+                        if (self.slot_manager.getAliasSlot("this")) |alias_slot| {
+                            try self.instructions.append(.{
+                                .PushStorageId = .{
+                                    .var_index = alias_slot,
+                                    .var_name = "this",
+                                    .scope_kind = .Local,
+                                },
+                            });
+                        } else {
+                            try self.generateExpression(receiver, true, false);
+                        }
+                    }
+                    for (args) |arg| {
+                        try self.generateExpression(arg.expr, true, false);
+                    }
+
+                    if (ret_type == .Nothing) {
+                        ret_type = self.inferCallReturnType(qualified_name, .LocalFunction) catch .Nothing;
+                    }
+
+                    var arg_count: u32 = @intCast(args.len);
+                    if (!is_static) arg_count += 1;
+
+                    try self.instructions.append(.{
+                        .Call = .{
+                            .function_index = fn_index,
+                            .qualified_name = qualified_name,
+                            .arg_count = arg_count,
+                            .call_kind = .LocalFunction,
+                            .target_module = null,
+                            .return_type = ret_type,
+                        },
+                    });
+                    return;
                 }
             }
         }

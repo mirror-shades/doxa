@@ -269,6 +269,20 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                 if (field_access.object.data == .Variable) {
                     const object_name = field_access.object.data.Variable.lexeme;
+
+                    if (object_type.base == .Custom) {
+                        if (object_type.custom_type) |ct_name| {
+                            if (self.struct_methods.get(ct_name)) |method_table| {
+                                if (method_table.get(method_name)) |method_info| {
+                                    if (!method_info.is_static) {
+                                        type_info.* = method_info.return_type.*;
+                                        return type_info;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     const imported_module_fn = blk: {
                         if (self.parser) |p| {
                             if (p.imported_symbols) |symbols| {

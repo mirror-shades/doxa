@@ -525,6 +525,8 @@ pub fn Methods(comptime Ctx: type) type {
                             } else {
                                 try stack.append(.{ .name = entry.ptr_name, .ty = .PTR, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name, .struct_field_types = entry.struct_field_types, .struct_field_names = entry.struct_field_names, .struct_type_name = entry.struct_type_name });
                             }
+                        } else if (alias_slots.get(psid.var_index)) |info| {
+                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .enum_type_name = info.enum_type_name, .struct_field_types = info.struct_field_types, .struct_field_names = info.struct_field_names, .struct_type_name = info.struct_type_name });
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;

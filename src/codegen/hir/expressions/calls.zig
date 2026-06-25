@@ -14,6 +14,7 @@ const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const builtin_methods = @import("../../../runtime/builtin_methods.zig");
 const ModuleCall = @import("../module_call.zig");
+const StructsHandler = @import("structs.zig").StructsHandler;
 
 pub const CallsHandler = struct {
     generator: *HIRGenerator,
@@ -560,6 +561,30 @@ pub const CallsHandler = struct {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
                 try self.storeVariableOrAlias(var_name, expected_type);
+            } else if (builtin_data.arguments[0].data == .FieldAccess) {
+                const fa = builtin_data.arguments[0].data.FieldAccess;
+                try self.generator.generateExpression(fa.object, true, false);
+                try self.generator.instructions.append(.Swap);
+                const container_type = self.generator.inferTypeFromExpression(fa.object);
+                var structs_handler = StructsHandler.init(self.generator);
+                const resolved = structs_handler.resolveFieldIndexAndStructName(fa.object, fa.field.lexeme);
+                const struct_id = structs_handler.resolveStructIdFromType(container_type, resolved.struct_name);
+                try self.generator.instructions.append(.{
+                    .SetField = .{
+                        .field_name = fa.field.lexeme,
+                        .container_type = container_type,
+                        .struct_id = struct_id,
+                        .field_index = resolved.field_index,
+                        .field_type = .Unknown,
+                        .nested_struct_id = null,
+                    },
+                });
+                if (fa.object.data == .Variable) {
+                    const var_name = fa.object.data.Variable.lexeme;
+                    try self.storeVariableOrAlias(var_name, container_type);
+                } else if (fa.object.data == .This) {
+                    try self.storeVariableOrAlias("this", HIRType{ .Struct = 0 });
+                }
             }
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
@@ -679,8 +704,7 @@ pub const CallsHandler = struct {
                     .return_type = .Int,
                 },
             });
-        } else if (std.mem.eql(u8, name, "exit"))
-        {
+        } else if (std.mem.eql(u8, name, "exit")) {
             // Use centralized data structure for simple builtin calls
             _ = try self.generateSimpleBuiltinCall(name, builtin_data.arguments);
         } else if (std.mem.eql(u8, name, "print")) {
@@ -779,6 +803,30 @@ pub const CallsHandler = struct {
                 const var_name = internal_data.receiver.data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
                 try self.storeVariableOrAlias(var_name, expected_type);
+            } else if (internal_data.receiver.data == .FieldAccess) {
+                const fa = internal_data.receiver.data.FieldAccess;
+                try self.generator.generateExpression(fa.object, true, false);
+                try self.generator.instructions.append(.Swap);
+                const container_type = self.generator.inferTypeFromExpression(fa.object);
+                var structs_handler = StructsHandler.init(self.generator);
+                const resolved = structs_handler.resolveFieldIndexAndStructName(fa.object, fa.field.lexeme);
+                const struct_id = structs_handler.resolveStructIdFromType(container_type, resolved.struct_name);
+                try self.generator.instructions.append(.{
+                    .SetField = .{
+                        .field_name = fa.field.lexeme,
+                        .container_type = container_type,
+                        .struct_id = struct_id,
+                        .field_index = resolved.field_index,
+                        .field_type = .Unknown,
+                        .nested_struct_id = null,
+                    },
+                });
+                if (fa.object.data == .Variable) {
+                    const var_name = fa.object.data.Variable.lexeme;
+                    try self.storeVariableOrAlias(var_name, container_type);
+                } else if (fa.object.data == .This) {
+                    try self.storeVariableOrAlias("this", HIRType{ .Struct = 0 });
+                }
             }
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
@@ -870,12 +918,14 @@ pub const CallsHandler = struct {
         });
 
         var i: usize = func_body.function_params.len;
+        const is_method = func_body.function_info.arity > func_body.function_params.len;
         while (i > 0) {
             i -= 1;
             const param = func_body.function_params[i];
-            const expected_t = func_body.param_types[i];
+            const alias_lookup = if (is_method) i + 1 else i;
+            const expected_t = func_body.param_types[alias_lookup];
 
-            if (func_body.param_is_alias[i]) {
+            if (func_body.param_is_alias[alias_lookup]) {
                 try self.generator.instructions.append(.{
                     .BindAlias = .{
                         .alias_name = param.name.lexeme,

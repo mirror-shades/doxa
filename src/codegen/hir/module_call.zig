@@ -112,6 +112,23 @@ pub fn classifyCallTarget(generator: *HIRGenerator, callee: *ast.Expr) !CallTarg
 }
 
 fn classifyFieldAccessCall(generator: *HIRGenerator, field_access: ast.FieldAccess) !CallTarget {
+    if (field_access.object.data == .Variable) {
+        const var_name = field_access.object.data.Variable.lexeme;
+        const struct_name = structNameForReceiver(generator, var_name);
+        if (!std.mem.eql(u8, struct_name, var_name)) {
+            if (generator.struct_methods.get(struct_name)) |method_table| {
+                if (method_table.get(field_access.field.lexeme)) |_| {
+                    return .{
+                        .struct_method = .{
+                            .struct_name = struct_name,
+                            .field_access = field_access,
+                        },
+                    };
+                }
+            }
+        }
+    }
+
     if (try resolveModuleFieldCall(generator, field_access)) |resolved| {
         return .{ .function = resolved };
     }

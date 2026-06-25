@@ -1427,7 +1427,7 @@ pub const VM = struct {
 
             value_pool[idx] = field_value_frame.value;
             fields[idx] = HIRStructField{
-                .name = name_str,
+                .name = try alloc.dupe(u8, name_str),
                 .value = &value_pool[idx],
                 .field_type = payload.field_types[idx],
                 .path = null,
