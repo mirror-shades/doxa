@@ -40,8 +40,13 @@ pub const ConstantManager = struct {
             return existing;
         }
 
+        const owned_value = switch (value) {
+            .string => |s| HIRValue{ .string = try self.allocator.dupe(u8, s) },
+            else => value,
+        };
+
         const index = @as(u32, @intCast(self.constants.items.len));
-        try self.constants.append(value);
+        try self.constants.append(owned_value);
 
         if (makeKey(self.allocator, value)) |key| {
             // Store key -> index; keep key allocated for map lifetime

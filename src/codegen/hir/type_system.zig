@@ -814,7 +814,14 @@ pub const TypeSystem = struct {
                 return .Unknown;
             },
             .Logical => .Tetra,
-            .Unary => {
+            .Unary => |unary| {
+                if (unary.operator.type == .MINUS) {
+                    if (unary.right) |right| {
+                        const operand_type = self.inferTypeFromExpression(right, symbol_table);
+                        return if (operand_type == .Unknown) .Int else operand_type;
+                    }
+                    return .Int;
+                }
                 return .Tetra;
             },
             .Grouping => |grouping| {
@@ -886,6 +893,19 @@ pub const TypeSystem = struct {
                     return then_type;
                 }
                 return .Unknown;
+            },
+            .This => blk: {
+                if (symbol_table.current_function) |func_name| {
+                    if (std.mem.indexOfScalar(u8, func_name, '.')) |dot_idx| {
+                        const struct_name = func_name[0..dot_idx];
+                        if (self.isCustomType(struct_name)) |ct| {
+                            if (ct.kind == .Struct) {
+                                break :blk self.structTypeForName(struct_name);
+                            }
+                        }
+                    }
+                }
+                break :blk .Unknown;
             },
             else => .String,
         };

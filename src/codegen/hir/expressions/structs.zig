@@ -10,7 +10,6 @@ const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const import_parser = @import("../../../parser/import_parser.zig");
 
-
 /// Handle struct operations, field access, and type declarations
 pub const StructsHandler = struct {
     generator: *HIRGenerator,
@@ -25,7 +24,7 @@ pub const StructsHandler = struct {
         return 0;
     }
 
-    fn resolveStructIdFromType(self: *StructsHandler, container_type: HIRType, fallback_name: ?[]const u8) u32 {
+    pub fn resolveStructIdFromType(self: *StructsHandler, container_type: HIRType, fallback_name: ?[]const u8) u32 {
         if (container_type == .Struct and container_type.Struct != 0) return container_type.Struct;
         if (fallback_name) |name| return self.resolveStructIdFromName(name);
         return 0;
@@ -101,7 +100,7 @@ pub const StructsHandler = struct {
     }
 
     /// Helper function to resolve field index and struct name from struct type and field name
-    fn resolveFieldIndexAndStructName(self: *StructsHandler, object_expr: *ast.Expr, field_name: []const u8) struct { field_index: u32, struct_name: ?[]const u8 } {
+    pub fn resolveFieldIndexAndStructName(self: *StructsHandler, object_expr: *ast.Expr, field_name: []const u8) struct { field_index: u32, struct_name: ?[]const u8 } {
         // 1) Prefer a precise resolution path using the object's concrete struct name
         //    when we have one (plain struct variables, `this`, etc.).
         if (self.generator.type_system.resolveFieldAccessType(object_expr, &self.generator.symbol_table)) |resolve_result| {
@@ -610,11 +609,16 @@ pub const StructsHandler = struct {
                 else => {},
             }
         } else {
-            // Regular field assignment - generate object expression
-            try self.generator.generateExpression(assign_data.object, true, false);
+            const is_this_target = assign_data.object.data == .This;
 
-            // Generate value expression
-            try self.generator.generateExpression(assign_data.value, true, false);
+            if (is_this_target) {
+                try self.generator.generateExpression(assign_data.value, true, false);
+                try self.generator.generateExpression(assign_data.object, true, false);
+                try self.generator.instructions.append(.Swap);
+            } else {
+                try self.generator.generateExpression(assign_data.object, true, false);
+                try self.generator.generateExpression(assign_data.value, true, false);
+            }
 
             // Resolve field index and struct name from type system
             const resolved = self.resolveFieldIndexAndStructName(assign_data.object, assign_data.field.lexeme);
@@ -650,16 +654,39 @@ pub const StructsHandler = struct {
                     });
                 },
                 .This => {
-                    const var_index = try self.generator.getOrCreateVariable("this");
-                    try self.generator.instructions.append(.{
-                        .StoreVar = .{
-                            .var_index = var_index,
-                            .var_name = "this",
-                            .scope_kind = .Local,
-                            .module_context = null,
-                            .expected_type = HIRType{ .Struct = 0 },
-                        },
-                    });
+                    if (self.generator.symbol_table.isAliasParameter("this")) {
+                        if (self.generator.slot_manager.getAliasSlot("this")) |alias_slot| {
+                            try self.generator.instructions.append(.{
+                                .StoreAlias = .{
+                                    .slot_index = alias_slot,
+                                    .var_name = "this",
+                                    .expected_type = HIRType{ .Struct = 0 },
+                                },
+                            });
+                        } else {
+                            const var_index = try self.generator.getOrCreateVariable("this");
+                            try self.generator.instructions.append(.{
+                                .StoreVar = .{
+                                    .var_index = var_index,
+                                    .var_name = "this",
+                                    .scope_kind = .Local,
+                                    .module_context = null,
+                                    .expected_type = HIRType{ .Struct = 0 },
+                                },
+                            });
+                        }
+                    } else {
+                        const var_index = try self.generator.getOrCreateVariable("this");
+                        try self.generator.instructions.append(.{
+                            .StoreVar = .{
+                                .var_index = var_index,
+                                .var_name = "this",
+                                .scope_kind = .Local,
+                                .module_context = null,
+                                .expected_type = HIRType{ .Struct = 0 },
+                            },
+                        });
+                    }
                 },
                 else => {},
             }
