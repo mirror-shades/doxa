@@ -259,6 +259,14 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected_print = null,
             .expected_peek = answers.expected_module_private_call_results[0..],
         },
+        .{
+            .name = "list",
+            .path = "./test/misc/list.doxa",
+            .mode = .PEEK,
+            .input = null,
+            .expected_print = null,
+            .expected_peek = answers.expected_list_results[0..],
+        },
     };
 
     harness.printSection("RUN");

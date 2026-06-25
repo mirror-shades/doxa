@@ -64,6 +64,28 @@ pub const calculator_io_tests = [_]IOTest{
     .{ .input = "20-16\n", .expected_output = "Output: 4" },
 };
 
+pub const expected_list_results = [_]peek_result{
+    .{ .type = "int | >nothing", .value = "nothing" },
+    .{ .type = "int | >nothing", .value = "nothing" },
+    .{ .type = "int | >nothing", .value = "nothing" },
+    .{ .type = "int | >nothing", .value = "nothing" },
+    .{ .type = ">int | nothing", .value = "42" },
+    .{ .type = ">int | nothing", .value = "42" },
+    .{ .type = "int | >nothing", .value = "nothing" },
+    .{ .type = ">int | nothing", .value = "42" },
+    .{ .type = "int | >nothing", .value = "nothing" },
+    .{ .type = ">int | nothing", .value = "1" },
+    .{ .type = ">int | nothing", .value = "1000000000" },
+    .{ .type = ">int | nothing", .value = "1000000000" },
+    .{ .type = ">int | nothing", .value = "-100" },
+    .{ .type = ">int | nothing", .value = "42" },
+    .{ .type = ">int | nothing", .value = "42" },
+    .{ .type = ">int | nothing", .value = "1" },
+    .{ .type = "int | >nothing", .value = "nothing" },
+    .{ .type = ">int | nothing", .value = "1000000000" },
+    .{ .type = ">int | nothing", .value = "-100" },
+};
+
 pub const expected_expressions_results = [_]peek_result{
     .{ .type = "int", .value = "25" },
     .{ .type = "int", .value = "30" },

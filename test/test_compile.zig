@@ -281,6 +281,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const module_private_call_path = try getBinaryPath(allocator, "./test/out/module_private_call");
     const calculator_path = try getBinaryPath(allocator, "./test/out/calculator");
     const http_link_path = try getBinaryPath(allocator, "./test/out/http_link_test");
+    const list_path = try getBinaryPath(allocator, "./test/out/list");
 
     const test_cases = [_]TestCase{
         .{
@@ -381,6 +382,14 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = &[_]print_result{},
             .expected_peek = null,
+        },
+        .{
+            .name = "list",
+            .binary_path = list_path,
+            .mode = .PEEK,
+            .input = null,
+            .expected_print = null,
+            .expected_peek = answers.expected_list_results[0..],
         },
     };
 
