@@ -8,50 +8,30 @@ on:
 
 jobs:
   test:
-    name: Test (${{ matrix.os }}, ${{ matrix.zig_version }}, ${{ matrix.arch }})
+    name: Test (${{ matrix.arch }} ${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            zig_version: '0.15.2'
-            arch: x86_64
-            target: x86_64-linux-gnu
-          - os: ubuntu-latest
-            zig_version: '0.15.2'
-            arch: aarch64
-            target: aarch64-linux-gnu
-          - os: macos-latest
-            zig_version: '0.15.2'
-            arch: x86_64
-            target: x86_64-macos-none
-          - os: macos-latest
-            zig_version: '0.15.2'
-            arch: aarch64
-            target: aarch64-macos-none
-          - os: windows-latest
-            zig_version: '0.15.2'
-            arch: x86_64
-            target: x86_64-windows-gnu
+          - { os: ubuntu-latest,    arch: x86_64 }   # x86_64 Linux
+          - { os: ubuntu-24.04-arm, arch: aarch64 }  # aarch64 Linux
+          - { os: macos-13,         arch: x86_64 }   # Intel macOS
+          - { os: macos-14,         arch: aarch64 }  # Apple Silicon macOS
+          - { os: windows-latest,   arch: x86_64 }   # x86_64 Windows
 
     runs-on: ${{ matrix.os }}
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Setup Zig
-      uses: goto-bus-stop/setup-zig@v2
-      with:
-        version: ${{ matrix.zig_version }}
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
 
-    - name: Check Zig version
-      run: zig version
+      - name: Build
+        run: zig build
 
-    - name: Build project
-      run: zig build -Dtarget=${{ matrix.target }}
-
-    - name: Run tests
-      run: zig build test -Dtarget=${{ matrix.target }}
-
-
+      - name: Test
+        run: zig build test
