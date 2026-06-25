@@ -15,7 +15,7 @@ jobs:
         include:
           - { os: ubuntu-latest,    arch: x86_64 }   # x86_64 Linux
           - { os: ubuntu-24.04-arm, arch: aarch64 }  # aarch64 Linux
-          - { os: macos-13,         arch: x86_64 }   # Intel macOS
+          # - { os: macos-13,         arch: x86_64 }   # Intel macOS lack of github runners blocks CI
           - { os: macos-14,         arch: aarch64 }  # Apple Silicon macOS
           - { os: windows-latest,   arch: x86_64 }   # x86_64 Windows
 
