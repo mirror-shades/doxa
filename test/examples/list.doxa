@@ -1,0 +1,93 @@
+struct Node {
+    value :: int
+    next  :: int
+}
+
+public struct LinkedList {
+    nodes  :: Node[]
+    head   :: int # -1 if empty
+    free   :: int # -1 if none
+    cursor :: int # -1 if past end or empty
+
+    public function new() returns LinkedList {
+        return $LinkedList { nodes is [], head is -1, free is -1, cursor is -1 }
+    }
+
+    method alloc(value :: int, next :: int) returns int {
+        if this.free < 0 then {
+            @push(this.nodes, $Node { value is value, next is next })
+            return @length(this.nodes) - 1
+        }
+        const slot is this.free
+        this.free is this.nodes[slot].next
+        this.nodes[slot] is $Node { value is value, next is next }
+        return slot
+    }
+
+    method removeSlot(slot :: int) returns int {
+        const value is this.nodes[slot].value
+        const next_slot is this.nodes[slot].next
+        if slot equals this.head then {
+            this.head is next_slot
+        } else {
+            var prev is this.head
+            while prev >= 0 and this.nodes[prev].next != slot {
+                prev is this.nodes[prev].next
+            }
+            if prev >= 0 then {
+                this.nodes[prev].next is next_slot
+            }
+        }
+        if this.cursor equals slot then this.cursor is next_slot
+        this.nodes[slot] is $Node { value is 0, next is this.free }
+        this.free is slot
+        return value
+    }
+
+    public method pushFront(value :: int) {
+        this.head is this.alloc(value, this.head)
+    }
+
+    public method popFront() returns int | nothing {
+        if this.head < 0 then return nothing
+        const slot is this.head
+        return this.removeSlot(slot)
+    }
+
+    public method front() returns int | nothing {
+        if this.head < 0 then return nothing
+        return this.nodes[this.head].value
+    }
+
+    public method find(value :: int) returns int | nothing {
+        var cur is this.head
+        while cur >= 0 {
+            if this.nodes[cur].value equals value then {
+                this.cursor is cur
+                return cur
+            }
+            cur is this.nodes[cur].next
+        }
+        return nothing
+    }
+
+    public method rewind() {
+        this.cursor is this.head
+    }
+
+    public method get() returns int | nothing {
+        if this.cursor < 0 then return nothing
+        return this.nodes[this.cursor].value
+    }
+
+    public method advance() {
+        if this.cursor < 0 then return
+        this.cursor is this.nodes[this.cursor].next
+    }
+
+    public method removeHere() returns int | nothing {
+        if this.cursor < 0 then return nothing
+        const slot is this.cursor
+        return this.removeSlot(slot)
+    }
+}

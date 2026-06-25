@@ -1,0 +1,47 @@
+import LinkedList from "../examples/list.doxa"
+
+
+
+public entry function main() {
+    const list is LinkedList.new()
+
+    list.rewind()
+    list.get()? # nothing
+    list.advance()
+    list.front()? # nothing
+    list.popFront()? # nothing
+    list.find(42)? # nothing
+
+    list.pushFront(42)
+    list.front()? # 42
+    list.rewind()
+    list.get()? # 42
+    list.advance()
+    list.get()? # nothing
+    list.popFront()? # 42
+    list.front()? # nothing
+
+    list.pushFront(1)
+    list.pushFront(42)
+    list.pushFront(-100)
+    list.pushFront(1_000_000_000)
+
+    list.find(42)? # 1
+    list.front()? # 1_000_000_000
+
+    list.rewind()
+    list.get()? # 1_000_000_000
+    list.advance()
+    list.get()? # -100
+    list.advance()
+    list.get()? # 42
+
+    list.removeHere()? # 42
+    list.get()? # 1
+    list.find(42)? # nothing
+
+    list.rewind()
+    list.popFront()? # 1_000_000_000
+    list.front()? # -100
+
+}
