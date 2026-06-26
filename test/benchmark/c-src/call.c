@@ -38,7 +38,7 @@ long long leaf_sum(long long iters) {
 }
 
 int main(void) {
-    volatile long long sink = 0;
+    long long sink = 0;
     long long i;
 
     for (i = 0; i < 35000000; i++)
@@ -49,6 +49,6 @@ int main(void) {
     long long t1 = monotonic_ns();
 
     long long elapsed = t1 - t0;
-    printf("%lld, %lld\n", elapsed, result);
+    printf("%lld, %lld\n", elapsed, result + sink);
     return 0;
 }

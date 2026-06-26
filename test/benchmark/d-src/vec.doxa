@@ -12,6 +12,7 @@ public entry function main() {
         y[i] is 0.0
     }
 
+    var warm_total is 0.0
     for r while r < 3 do r++ {
         for i while i < N do i++ {
             y[i] += 1.5 * x[i]
@@ -21,6 +22,7 @@ public entry function main() {
         for i while i < N do i++ {
             warm += y[i]
         }
+        warm_total += warm
 
         for i while i < N do i++ {
             y[i] is 0.0
@@ -41,5 +43,6 @@ public entry function main() {
     }
 
     const elapsed is t1 - t0
-    std.io.println("{elapsed}, {checksum}")
+    const out is checksum + warm_total
+    std.io.println("{elapsed}, {out}")
 }

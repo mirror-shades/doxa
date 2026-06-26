@@ -42,17 +42,15 @@ int main(void) {
     for (i = 0; i < N; i++)
         arr[i] = i % 997;
 
-    {
-        volatile long long sink = 0;
-        for (i = 0; i < 75000000; i++)
-            sink += arr[i % N];
-    }
+    long long sink = 0;
+    for (i = 0; i < 75000000; i++)
+        sink += arr[i % N];
 
     long long t0 = monotonic_ns();
     long long result = arr_reduce(arr, N);
     long long t1 = monotonic_ns();
 
     long long elapsed = t1 - t0;
-    printf("%lld, %lld\n", elapsed, result);
+    printf("%lld, %lld\n", elapsed, result + sink);
     return 0;
 }
