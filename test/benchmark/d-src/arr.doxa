@@ -3,7 +3,7 @@ module std from @std()
 const N is 1_000_000
 const OUTER is 7500
 
-function arr_reduce(arr :: int[], n :: int) returns int {
+function arr_reduce(arr :: int[]) returns int {
     var sum is 0
 
     for r while r < OUTER do r++ {
@@ -27,9 +27,10 @@ public entry function main() {
     }
 
     const t0 is std.time.monotonic()
-    const result is arr_reduce(arr, N)
+    const result is arr_reduce(arr)
     const t1 is std.time.monotonic()
 
     const elapsed is t1 - t0
-    std.io.println("{elapsed}, {result}")
+    const out is result + sink
+    std.io.println("{elapsed}, {out}")
 }

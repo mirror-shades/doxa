@@ -52,5 +52,6 @@ public entry function main() {
     const t1 is std.time.monotonic()
 
     const elapsed is t1 - t0
-    std.io.println("{elapsed}, {result}")
+    const out is result + sink
+    std.io.println("{elapsed}, {out}")
 }

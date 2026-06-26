@@ -33,6 +33,7 @@ int main(void) {
         y[i] = 0.0;
     }
 
+    double warm_total = 0.0;
     for (r = 0; r < 3; r++) {
         for (i = 0; i < N; i++)
             y[i] += 1.5 * x[i];
@@ -40,6 +41,7 @@ int main(void) {
         double warm = 0.0;
         for (i = 0; i < N; i++)
             warm += y[i];
+        warm_total += warm;
 
         for (i = 0; i < N; i++)
             y[i] = 0.0;
@@ -56,6 +58,6 @@ int main(void) {
     for (i = 0; i < N; i++)
         checksum += y[i];
 
-    printf("%lld, %.1f\n", t1 - t0, checksum);
+    printf("%lld, %.1f\n", t1 - t0, checksum + warm_total);
     return 0;
 }
