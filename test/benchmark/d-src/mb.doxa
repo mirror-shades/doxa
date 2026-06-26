@@ -1,6 +1,25 @@
 module std from @std()
 
 public entry function main() {
+    # Warm-up: a smaller mandelbrot pass before timing.
+    var warm is 0
+    for y while y < 256 do y++ {
+        for x while x < 256 do x++ {
+            var cr is (x - 128.0) / 64.0
+            var ci is (y - 128.0) / 64.0
+            var zr is 0.0
+            var zi is 0.0
+            var iter is 0
+            while zr * zr + zi * zi < 4.0 and iter < 1000 {
+                var tmp is zr * zr - zi * zi + cr
+                zi is 2.0 * zr * zi + ci
+                zr is tmp
+                iter += 1
+            }
+            warm += iter
+        }
+    }
+
     var count :: int
 
     const t0 is std.time.monotonic()
@@ -29,5 +48,6 @@ public entry function main() {
 
     const t1 is std.time.monotonic()
 
-    std.io.println("{t1 - t0}, {count}")
+    const out is count + warm
+    std.io.println("{t1 - t0}, {out}")
 }

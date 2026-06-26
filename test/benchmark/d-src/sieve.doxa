@@ -5,11 +5,13 @@ public entry function main() {
 
     var prime :: byte[limit + 1]
 
-    const t0 is std.time.monotonic()
-
+    # Initialization (and first-touch of the buffer) happens before the timer,
+    # mirroring the C version so neither side pays page faults inside the timer.
     for i while i <= limit do i++ {
         prime[i] is 0x01
     }
+
+    const t0 is std.time.monotonic()
 
     prime[0] is 0x00
     prime[1] is 0x00

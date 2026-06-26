@@ -11,8 +11,9 @@ static long long monotonic_ns(void) {
     if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
-    return (long long)((unsigned long long)c.QuadPart * 1000000000ULL /
-                       (unsigned long long)freq.QuadPart);
+    unsigned long long ticks = (unsigned long long)c.QuadPart;
+    unsigned long long f = (unsigned long long)freq.QuadPart;
+    return (long long)((ticks / f) * 1000000000ULL + (ticks % f) * 1000000000ULL / f);
 #else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -28,29 +29,44 @@ double b[N][N];
 double c[N][N];
 
 int main(void) {
-    for (int i = 0; i < N; i++) {
-        for (int j = 0; j < N; j++) {
-            a[i][j] = i + j;
-            b[i][j] = i - j;
+    long long i, j, k, r;
+
+    for (i = 0; i < N; i++) {
+        for (j = 0; j < N; j++) {
+            a[i][j] = (double)(i + j);
+            b[i][j] = (double)(i - j);
         }
+    }
+
+    /* Warm-up: a cheap pass over a and b (the matmul read pattern) before timing. */
+    double warm = 0.0;
+    for (i = 0; i < N; i++) {
+        double s = 0.0;
+        for (k = 0; k < N; k++) {
+            s += a[i][k] * b[k][i];
+        }
+        warm += s;
     }
 
     long long t0 = monotonic_ns();
 
-    for (int r = 0; r < REPEATS; r++) {
-        for (int i = 0; i < N; i++) {
-            for (int j = 0; j < N; j++) {
+    double acc = 0.0;
+    for (r = 0; r < REPEATS; r++) {
+        a[r % N][r % N] += 1.0;
+        for (i = 0; i < N; i++) {
+            for (j = 0; j < N; j++) {
                 double sum = 0.0;
-                for (int k = 0; k < N; k++) {
+                for (k = 0; k < N; k++) {
                     sum += a[i][k] * b[k][j];
                 }
                 c[i][j] = sum;
             }
         }
+        acc += c[r % N][r % N];
     }
 
     long long t1 = monotonic_ns();
 
-    printf("%lld, %.1f\n", t1 - t0, c[N - 1][N - 1]);
+    printf("%lld, %.1f\n", t1 - t0, acc + warm);
     return 0;
 }
