@@ -24,45 +24,47 @@ typedef struct {
     long long x, y, z, w;
 } Vec4;
 
-static long long sum_vec4(Vec4 v) {
-    return v.x + v.y + v.z + v.w;
-}
+#define N 250000
+#define STEPS 550
+#define MOD 65536LL
 
-#define ITERS 1100000000LL
-
-long long sum_vec4_loop(long long iters) {
-    Vec4 v = {0, 1, 2, 3};
-    long long sum = 0;
-    long long i;
-
-    for (i = 0; i < iters; i++) {
-        v.x = i % 16;
-        v.y = (i + 1) % 16;
-        v.z = (i + 2) % 16;
-        v.w = (i + 3) % 16;
-        sum += sum_vec4(v);
-    }
-    return sum;
-}
+static Vec4 arr[N];
 
 int main(void) {
-    Vec4 v = {0, 1, 2, 3};
-    long long sink = 0;
-    long long i;
+    long long i, s;
 
-    for (i = 0; i < 110000000; i++) {
-        v.x = i % 16;
-        v.y = (i + 1) % 16;
-        v.z = (i + 2) % 16;
-        v.w = (i + 3) % 16;
-        sink += sum_vec4(v);
+    for (i = 0; i < N; i++) {
+        arr[i].x = (i * 1) % MOD;
+        arr[i].y = (i * 3 + 1) % MOD;
+        arr[i].z = (i * 5 + 2) % MOD;
+        arr[i].w = (i * 7 + 3) % MOD;
     }
 
+    long long sink = 0;
+    for (i = 0; i < N; i++)
+        sink += arr[i].x + arr[i].y + arr[i].z + arr[i].w;
+
     long long t0 = monotonic_ns();
-    long long result = sum_vec4_loop(ITERS);
+    long long carry = 1;
+    for (s = 0; s < STEPS; s++) {
+        for (i = 0; i < N; i++) {
+            long long nx = (arr[i].x + carry) % MOD;
+            long long ny = (arr[i].y + nx) % MOD;
+            long long nz = (arr[i].z + ny) % MOD;
+            long long nw = (arr[i].w + nz) % MOD;
+            arr[i].x = nx;
+            arr[i].y = ny;
+            arr[i].z = nz;
+            arr[i].w = nw;
+            carry = (nw + 1) % MOD;
+        }
+    }
     long long t1 = monotonic_ns();
 
-    long long elapsed = t1 - t0;
-    printf("%lld, %lld\n", elapsed, result + sink);
+    long long checksum = 0;
+    for (i = 0; i < N; i++)
+        checksum += arr[i].x + arr[i].y + arr[i].z + arr[i].w;
+
+    printf("%lld, %lld\n", t1 - t0, checksum + sink);
     return 0;
 }

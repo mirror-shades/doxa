@@ -42,8 +42,10 @@ function runSuite(runs :: int, ^results :: Result[]) {
 
     std.io.println("Compiling benchmarks...")
 
-    # Compile C with clang so both backends are LLVM
-    # clang on Windows-msvc does not auto-append .exe, so add it explicitly there.
+    # Compile C with `zig cc` — the exact toolchain Doxa uses internally for
+    # .ll -> .o (see main.zig). This shares the same LLVM version and default
+    # native -mcpu (e.g. AVX2) as Doxa, avoiding compiler/SIMD-target confounds.
+    # zig cc does not auto-append .exe on Windows, so add it explicitly there.
     var exe_suffix is ""
     if std.host.isWindows() then {
         exe_suffix is ".exe"
@@ -51,7 +53,7 @@ function runSuite(runs :: int, ^results :: Result[]) {
 
     each test in tests {
         std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test} --opt=2")
-        std.process.exec("clang test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2")
+        std.process.exec("zig cc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2")
     }
 
     std.io.println("Running benchmarks...")
