@@ -7,51 +7,50 @@ struct Vec4 {
     public w :: int,
 }
 
-function sum_vec4(v :: Vec4) returns int {
-    return v.x + v.y + v.z + v.w
-}
-
-const ITERS is 1_100_000_000
-
-function sum_vec4_loop(iters :: int) returns int {
-    var v is $Vec4 {
-        x is 0,
-        y is 1,
-        z is 2,
-        w is 3,
-    }
-    var sum is 0
-    for i while i < iters do i++ {
-        v.x is i % 16
-        v.y is (i + 1) % 16
-        v.z is (i + 2) % 16
-        v.w is (i + 3) % 16
-        sum += sum_vec4(v)
-    }
-    return sum
-}
+const N is 250000
+const STEPS is 550
+const MOD is 65536
 
 public entry function main() {
-    var v is $Vec4 {
-        x is 0,
-        y is 1,
-        z is 2,
-        w is 3,
+    var arr :: Vec4[N]
+
+    for i while i < N do i++ {
+        arr[i] is $Vec4 {
+            x is (i * 1) % MOD,
+            y is (i * 3 + 1) % MOD,
+            z is (i * 5 + 2) % MOD,
+            w is (i * 7 + 3) % MOD,
+        }
     }
+
     var sink is 0
-    for i while i < 110000000 do i++ {
-        v.x is i % 16
-        v.y is (i + 1) % 16
-        v.z is (i + 2) % 16
-        v.w is (i + 3) % 16
-        sink += sum_vec4(v)
+    for i while i < N do i++ {
+        sink += arr[i].x + arr[i].y + arr[i].z + arr[i].w
     }
 
     const t0 is std.time.monotonic()
-    const result is sum_vec4_loop(ITERS)
+    var carry is 1
+    for s while s < STEPS do s++ {
+        for i while i < N do i++ {
+            const nx is (arr[i].x + carry) % MOD
+            const ny is (arr[i].y + nx) % MOD
+            const nz is (arr[i].z + ny) % MOD
+            const nw is (arr[i].w + nz) % MOD
+            arr[i].x is nx
+            arr[i].y is ny
+            arr[i].z is nz
+            arr[i].w is nw
+            carry is (nw + 1) % MOD
+        }
+    }
     const t1 is std.time.monotonic()
 
+    var checksum is 0
+    for i while i < N do i++ {
+        checksum += arr[i].x + arr[i].y + arr[i].z + arr[i].w
+    }
+
     const elapsed is t1 - t0
-    const out is result + sink
+    const out is checksum + sink
     std.io.println("{elapsed}, {out}")
 }
