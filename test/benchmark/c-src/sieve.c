@@ -12,8 +12,9 @@ static long long monotonic_ns(void) {
     if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
-    return (long long)((unsigned long long)c.QuadPart * 1000000000ULL /
-                       (unsigned long long)freq.QuadPart);
+    unsigned long long ticks = (unsigned long long)c.QuadPart;
+    unsigned long long f = (unsigned long long)freq.QuadPart;
+    return (long long)((ticks / f) * 1000000000ULL + (ticks % f) * 1000000000ULL / f);
 #else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -22,29 +23,32 @@ static long long monotonic_ns(void) {
 }
 
 int main(void) {
-    const long limit = 130000000;
+    const long long limit = 130000000;
 
     char* prime = malloc(limit + 1);
 
-    long long t0 = monotonic_ns();
-
-    for (long i = 0; i <= limit; i++) {
+    /* Initialization (and first-touch of the buffer) happens before the timer,
+       mirroring Doxa's array declaration so neither side pays page faults inside
+       the timed region. */
+    for (long long i = 0; i <= limit; i++) {
         prime[i] = 1;
     }
+
+    long long t0 = monotonic_ns();
 
     prime[0] = 0;
     prime[1] = 0;
 
-    for (long i = 2; i * i <= limit; i++) {
+    for (long long i = 2; i * i <= limit; i++) {
         if (prime[i]) {
-            for (long j = i * i; j <= limit; j += i) {
+            for (long long j = i * i; j <= limit; j += i) {
                 prime[j] = 0;
             }
         }
     }
 
-    long count = 0;
-    for (long i = 2; i <= limit; i++) {
+    long long count = 0;
+    for (long long i = 2; i <= limit; i++) {
         if (prime[i]) {
             count++;
         }
@@ -52,7 +56,7 @@ int main(void) {
 
     long long t1 = monotonic_ns();
 
-    printf("%lld, %ld\n", t1 - t0, count);
+    printf("%lld, %lld\n", t1 - t0, count);
 
     free(prime);
     return 0;

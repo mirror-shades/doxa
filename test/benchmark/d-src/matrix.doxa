@@ -15,9 +15,21 @@ public entry function main() {
         }
     }
 
+    # Warm-up: a cheap pass over a and b (the matmul read pattern) before timing.
+    var warm is 0.0
+    for i while i < N do i++ {
+        var s is 0.0
+        for k while k < N do k++ {
+            s += a[i][k] * b[k][i]
+        }
+        warm += s
+    }
+
     const t0 is std.time.monotonic()
 
+    var acc is 0.0
     for r while r < REPEATS do r++ {
+        a[r % N][r % N] is a[r % N][r % N] + 1.0
         for i while i < N do i++ {
             for j while j < N do j++ {
 
@@ -30,9 +42,11 @@ public entry function main() {
                 c[i][j] is sum
             }
         }
+        acc += c[r % N][r % N]
     }
 
     const t1 is std.time.monotonic()
 
-    std.io.println("{t1 - t0}, {c[N-1][N-1]}")
+    const out is acc + warm
+    std.io.println("{t1 - t0}, {out}")
 }

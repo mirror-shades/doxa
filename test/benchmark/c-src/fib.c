@@ -11,8 +11,9 @@ static long long monotonic_ns(void) {
     if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
-    return (long long)((unsigned long long)c.QuadPart * 1000000000ULL /
-                       (unsigned long long)freq.QuadPart);
+    unsigned long long ticks = (unsigned long long)c.QuadPart;
+    unsigned long long f = (unsigned long long)freq.QuadPart;
+    return (long long)((ticks / f) * 1000000000ULL + (ticks % f) * 1000000000ULL / f);
 #else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -20,7 +21,7 @@ static long long monotonic_ns(void) {
 #endif
 }
 
-long fib(long n) {
+long long fib(long long n) {
     if (n < 2) {
         return n;
     }
@@ -28,10 +29,12 @@ long fib(long n) {
 }
 
 int main(void) {
+    long long warm = fib(36);
+
     long long t0 = monotonic_ns();
-    long result = fib(44);
+    long long result = fib(44);
     long long t1 = monotonic_ns();
 
-    printf("%lld, %ld\n", t1 - t0, result);
+    printf("%lld, %lld\n", t1 - t0, result + warm);
     return 0;
 }

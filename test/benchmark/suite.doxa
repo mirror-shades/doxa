@@ -45,6 +45,8 @@ function runSuite(runs :: int, ^results :: Result[]) {
     # Compile C with `zig cc` — the exact toolchain Doxa uses internally for
     # .ll -> .o (see main.zig). This shares the same LLVM version and default
     # native -mcpu (e.g. AVX2) as Doxa, avoiding compiler/SIMD-target confounds.
+    # -ffp-contract=off stops C from forming FMAs that Doxa's codegen never
+    # forms, so floating-point results stay bit-identical between the two.
     # zig cc does not auto-append .exe on Windows, so add it explicitly there.
     var exe_suffix is ""
     if std.host.isWindows() then {
@@ -53,7 +55,7 @@ function runSuite(runs :: int, ^results :: Result[]) {
 
     each test in tests {
         std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test} --opt=2")
-        std.process.exec("zig cc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2")
+        std.process.exec("zig cc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2 -ffp-contract=off")
     }
 
     std.io.println("Running benchmarks...")
@@ -64,7 +66,7 @@ function runSuite(runs :: int, ^results :: Result[]) {
         var user_time_c is 0
         var kernel_time_d is 0
         var kernel_time_c is 0
-        var is_match is false
+        var is_match is true
         each run in 0 to runs - 1 {
             # user time: wall time of the whole exec, measured by timeExec
             # kernel time: the elapsed time the benchmark binary reports itself
@@ -74,9 +76,7 @@ function runSuite(runs :: int, ^results :: Result[]) {
             const split_c_output is split(output_c)
             kernel_time_d += @int(split_d_output[0])
             kernel_time_c += @int(split_c_output[0])
-            if run == 0 then {
-                is_match is matchOutput(split_c_output[1], split_d_output[1])
-            }
+            is_match is is_match and matchOutput(split_c_output[1], split_d_output[1])
         }
         @push(results, Result.new(test, runs, user_time_d, user_time_c, kernel_time_d, kernel_time_c, is_match))
     }

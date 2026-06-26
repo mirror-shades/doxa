@@ -11,8 +11,9 @@ static long long monotonic_ns(void) {
     if (freq.QuadPart == 0) QueryPerformanceFrequency(&freq);
     LARGE_INTEGER c;
     QueryPerformanceCounter(&c);
-    return (long long)((unsigned long long)c.QuadPart * 1000000000ULL /
-                       (unsigned long long)freq.QuadPart);
+    unsigned long long ticks = (unsigned long long)c.QuadPart;
+    unsigned long long f = (unsigned long long)freq.QuadPart;
+    return (long long)((ticks / f) * 1000000000ULL + (ticks % f) * 1000000000ULL / f);
 #else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -21,12 +22,31 @@ static long long monotonic_ns(void) {
 }
 
 int main(void) {
-    int count = 0;
+    /* Warm-up: a smaller mandelbrot pass before timing. */
+    long long warm = 0;
+    for (long long y = 0; y < 256; y++) {
+        for (long long x = 0; x < 256; x++) {
+            double cr = (x - 128.0) / 64.0;
+            double ci = (y - 128.0) / 64.0;
+            double zr = 0.0;
+            double zi = 0.0;
+            long long iter = 0;
+            while (zr * zr + zi * zi < 4.0 && iter < 1000) {
+                double tmp = zr * zr - zi * zi + cr;
+                zi = 2.0 * zr * zi + ci;
+                zr = tmp;
+                iter++;
+            }
+            warm += iter;
+        }
+    }
+
+    long long count = 0;
 
     long long t0 = monotonic_ns();
 
-    for (int y = 0; y < 2000; y++) {
-        for (int x = 0; x < 2000; x++) {
+    for (long long y = 0; y < 2000; y++) {
+        for (long long x = 0; x < 2000; x++) {
 
             double cr = (x - 1000.0) / 500.0;
             double ci = (y - 1000.0) / 500.0;
@@ -34,7 +54,7 @@ int main(void) {
             double zr = 0.0;
             double zi = 0.0;
 
-            int iter = 0;
+            long long iter = 0;
 
             while (zr * zr + zi * zi < 4.0 && iter < 1000) {
                 double tmp = zr * zr - zi * zi + cr;
@@ -49,6 +69,6 @@ int main(void) {
 
     long long t1 = monotonic_ns();
 
-    printf("%lld, %d\n", t1 - t0, count);
+    printf("%lld, %lld\n", t1 - t0, count + warm);
     return 0;
 }
