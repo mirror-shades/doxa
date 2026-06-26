@@ -228,6 +228,14 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected_peek = null,
         },
         .{
+            .name = "zig import test",
+            .path = "./test/misc/zig_import_test.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_zig_import_test_results[0..],
+            .expected_peek = null,
+        },
+        .{
             .name = "expressions",
             .path = "./test/misc/expressions.doxa",
             .mode = .PEEK,

@@ -1,0 +1,11 @@
+module ZigMath from "zig_module.zig"
+
+const doubled is ZigMath.double(21)
+const summed is ZigMath.sum2(20, 22)
+const halved is ZigMath.half(10.0)
+const msg is ZigMath.greet()
+
+@print("{doubled}\n")
+@print("{summed}\n")
+@print("{halved}\n")
+@print("{msg}\n")

@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #ifdef _WIN32
 #include <windows.h>
 #else
@@ -24,12 +25,15 @@ static long long monotonic_ns(void) {
 #define N 400
 #define REPEATS 35
 
-double a[N][N];
-double b[N][N];
-double c[N][N];
-
 int main(void) {
     long long i, j, k, r;
+
+    /* Heap-allocate the three matrices (separately) so placement matches Doxa's
+       arrays rather than landing adjacent in BSS, which biases the cache-conflict
+       behaviour of this memory-bound matmul. */
+    double (*a)[N] = malloc(sizeof(double[N][N]));
+    double (*b)[N] = malloc(sizeof(double[N][N]));
+    double (*c)[N] = malloc(sizeof(double[N][N]));
 
     for (i = 0; i < N; i++) {
         for (j = 0; j < N; j++) {
@@ -68,5 +72,9 @@ int main(void) {
     long long t1 = monotonic_ns();
 
     printf("%lld, %.1f\n", t1 - t0, acc + warm);
+
+    free(a);
+    free(b);
+    free(c);
     return 0;
 }

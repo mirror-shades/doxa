@@ -4,6 +4,7 @@ const ast = @import("../ast/ast.zig");
 const ModuleInfo = ast.ModuleInfo;
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const import_parser = @import("import_parser.zig");
+const inline_zig = @import("inline_zig.zig");
 
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -18,6 +19,10 @@ const ModuleResolutionStatus = @import("parser_types.zig").ModuleResolutionStatu
 const ImportStackEntry = @import("parser_types.zig").ImportStackEntry;
 
 pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.ModuleInfo {
+    if (isZigModulePath(module_name)) {
+        return resolveZigModule(self, module_name, zigModuleStem(module_name));
+    }
+
     const normalized_path = try normalizeModulePath(self, module_name);
     defer self.allocator.free(normalized_path);
 
@@ -138,13 +143,86 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
     return info;
 }
 
+pub fn isZigModulePath(module_path: []const u8) bool {
+    return std.mem.endsWith(u8, module_path, ".zig");
+}
+
+fn zigModuleStem(module_path: []const u8) []const u8 {
+    var last = module_path;
+    var it = std.mem.splitSequence(u8, module_path, "/");
+    while (it.next()) |part| last = part;
+    if (std.mem.endsWith(u8, last, ".zig")) {
+        return last[0 .. last.len - ".zig".len];
+    }
+    return last;
+}
+
+// Resolve an imported `.zig` file into a module. The file is validated through
+// the same restricted-subset extractor used for inline `zig { ... }` blocks, then
+// surfaced as a synthetic `ZigDecl` so that the existing inline-zig codegen and VM
+// paths (`collectInlineZigDecls`, `execInlineZigModuleFunction`) pick it up unchanged.
+// `display_name` becomes the module name used in calls (the import alias).
+pub fn resolveZigModule(self: *Parser, module_path: []const u8, display_name: []const u8) ErrorList!ast.ModuleInfo {
+    const module_data = try self.loadModuleSourceWithPath(module_path);
+
+    if (self.reporter.source_cache) |sc| {
+        sc.load(module_data.resolved_path, module_data.source) catch {};
+    }
+
+    const sigs = sigs_blk: {
+        const extracted = inline_zig.sanitizeAndExtract(self.allocator, module_data.source) catch {
+            self.reporter.reportCompileError(
+                null,
+                ErrorCode.INVALID_IMPORT,
+                "Invalid Zig module '{s}': top-level may contain only `const X = @import(...)` and functions with Doxa-compatible signatures",
+                .{module_path},
+            );
+            // Recover with an empty module so the resolver phase can finish and the
+            // reported compile error is surfaced cleanly at the next phase boundary.
+            break :sigs_blk try self.allocator.alloc(ast.ZigFnSig, 0);
+        };
+        break :sigs_blk extracted;
+    };
+
+    const name_owned = try self.allocator.dupe(u8, display_name);
+    const source_owned = try self.allocator.dupe(u8, module_data.source);
+
+    const statements = try self.allocator.alloc(ast.Stmt, 1);
+    statements[0] = ast.Stmt{
+        .base = .{ .id = ast.generateNodeId(), .span = null },
+        .data = .{ .ZigDecl = .{
+            .name = token.Token.init(.IDENTIFIER, name_owned, .{ .string = name_owned }, 0, 0),
+            .source = source_owned,
+            .sigs = sigs,
+        } },
+    };
+
+    const module_block = try self.allocator.create(ast.Expr);
+    module_block.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = null },
+        .data = .{ .Block = .{
+            .statements = statements,
+            .value = null,
+        } },
+    };
+
+    return ast.ModuleInfo{
+        .name = name_owned,
+        .imports = &[_]ast.ImportInfo{},
+        .ast = module_block,
+        .file_path = try self.allocator.dupe(u8, module_data.resolved_path),
+        .symbols = null,
+        .is_inline_zig = true,
+    };
+}
+
 fn normalizeModulePath(self: *Parser, module_path: []const u8) ![]const u8 {
     var clean_path = module_path;
     if (std.mem.startsWith(u8, clean_path, "./")) {
         clean_path = clean_path[2..];
     }
 
-    if (!std.mem.endsWith(u8, clean_path, ".doxa")) {
+    if (!std.mem.endsWith(u8, clean_path, ".doxa") and !std.mem.endsWith(u8, clean_path, ".zig")) {
         return try std.fmt.allocPrint(self.allocator, "{s}.doxa", .{clean_path});
     }
 
@@ -222,7 +300,8 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     }
 
     const has_doxa_ext = std.mem.endsWith(u8, clean_name, ".doxa");
-    const has_extension = has_doxa_ext;
+    const has_zig_ext = std.mem.endsWith(u8, clean_name, ".zig");
+    const has_extension = has_doxa_ext or has_zig_ext;
 
     const current_dir = std.fs.path.dirname(self.current_file) orelse ".";
 

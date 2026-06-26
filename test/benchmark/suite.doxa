@@ -16,6 +16,11 @@ const tests is [
     "vec"
 ]
 
+struct CompileStats {
+    public c_compile_time :: int[],
+    public d_compile_time :: int[],
+}
+
 struct Result {
     public test :: string,
     public runs :: int,
@@ -23,8 +28,8 @@ struct Result {
     public user_time_c :: int,
     public kernel_time_d :: int,
     public kernel_time_c :: int,
-    public is_match :: tetra
-
+    public is_match :: tetra,
+    public compile_stats :: CompileStats,
     function new(test :: string, runs :: int, user_time_d :: int, user_time_c :: int, kernel_time_d :: int, kernel_time_c :: int, is_match :: tetra) returns Result {
         return $Result {
             test is test,
@@ -36,6 +41,12 @@ struct Result {
             is_match is is_match,
         }
     }
+}
+
+#handle globally because we will reuse the same stats for all results
+var compile_stats is $CompileStats {
+    c_compile_time is [],
+    d_compile_time is [],
 }
 
 function runSuite(runs :: int, ^results :: Result[]) {
@@ -54,8 +65,14 @@ function runSuite(runs :: int, ^results :: Result[]) {
     }
 
     each test in tests {
+        const d_compile_start_time is std.time.monotonic()
         std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test} --opt=2")
+        const d_compile_end_time is std.time.monotonic()
+        @push(compile_stats.d_compile_time, d_compile_end_time - d_compile_start_time)
+        const c_compile_start_time is std.time.monotonic()
         std.process.exec("zig cc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2 -ffp-contract=off")
+        const c_compile_end_time is std.time.monotonic()
+        @push(compile_stats.c_compile_time, c_compile_end_time - c_compile_start_time)
     }
 
     std.io.println("Running benchmarks...")
@@ -80,6 +97,7 @@ function runSuite(runs :: int, ^results :: Result[]) {
         }
         @push(results, Result.new(test, runs, user_time_d, user_time_c, kernel_time_d, kernel_time_c, is_match))
     }
+    std.io.println("Completed {runs} runs")
 }
 
 function split(output :: string) returns string[] {
@@ -112,7 +130,7 @@ function percentVsC(c_value :: float, d_value :: float) returns float {
     return 0.0
 }
 
-function compare(result :: Result) {
+function compare(result :: Result, index :: int) {
     # kernel time is the benchmark's own measured compute time (apples-to-apples)
     const c_compute is averageSeconds(result.kernel_time_c, result.runs)
     const d_compute is averageSeconds(result.kernel_time_d, result.runs)
@@ -120,30 +138,26 @@ function compare(result :: Result) {
     const c_overhead is averageSeconds(result.user_time_c - result.kernel_time_c, result.runs)
     const d_overhead is averageSeconds(result.user_time_d - result.kernel_time_d, result.runs)
 
-    std.io.println("--------------------------------")
-    std.io.println("{result.test}\t| avg of {result.runs} run(s)\t| match: {result.is_match}")
-    std.io.println("{result.test}\t| Doxa compute\t| {roundTo(d_compute, 4)}s")
-    std.io.println("{result.test}\t| C compute\t| {roundTo(c_compute, 4)}s")
-    if c_compute > 0.0 and d_compute > 0.0 then {
-        if c_compute < d_compute then {
-            std.io.println("Doxa is {roundTo(((d_compute - c_compute) / c_compute) * 100, 2)}% slower than C")
-        }
-        else if c_compute > d_compute then {
-            std.io.println("Doxa is {roundTo(((c_compute - d_compute) / c_compute) * 100, 2)}% faster than C")
-        }
-        else {
-            std.io.println("Doxa compute time is equal to C")
-        }
-    }
-    else {
-        std.io.println("compute time too small to compare")
-    }
-    std.io.println("{result.test}\t| Doxa overhead\t| {roundTo(d_overhead, 4)}s")
-    std.io.println("{result.test}\t| C overhead\t| {roundTo(c_overhead, 4)}s")
+    const d_compute_pct is percentVsC(c_compute, d_compute)
+
+    # name, matches, doxa runtime, c runtime, +-%, doxa overhead n(%), c overhead n(%), doxa compile time, c compile time, +-%
+    @print("{result.test}\t| ")
+    @print("match: {result.is_match}\t| ")
+    @print("{roundToString(d_compute, 4)}s\t| ")
+    @print("{roundToString(c_compute, 4)}s\t| ")
+    @print("{roundToString(d_compute_pct, 2)}%   \t| ")
+    @print("{roundToString(d_overhead, 4)}s ({roundToString((result.user_time_d - result.kernel_time_d) / result.kernel_time_d * 100, 2)}%)\t| ")
+    @print("{roundToString(c_overhead, 4)}s ({roundToString((result.user_time_c - result.kernel_time_c) / result.kernel_time_c * 100, 2)}%)\t| ")
+    # compile time is measured once per test (not per run), so convert ns -> s with runs = 1
+    const d_compile is averageSeconds(compile_stats.d_compile_time[index], 1)
+    const c_compile is averageSeconds(compile_stats.c_compile_time[index], 1)
+    @print("{roundToString(d_compile, 4)}s\t| ")
+    @print("{roundToString(c_compile, 4)}s\t| ")
+    std.io.println("{roundToString(percentVsC(c_compile, d_compile), 2)}%")
 }
 
-function roundTo(value :: float, precision :: int) returns float {
-    const str_value is @string(value)
+function roundToString(value :: float, precision :: int) returns string {
+    var str_value is @string(value)
     var decimal_index is -1
     each char at i in str_value {
         if decimal_index < 0 then {
@@ -151,9 +165,14 @@ function roundTo(value :: float, precision :: int) returns float {
         }
     }
     if(@length(str_value) < decimal_index + precision + 1) then {
-        return @float(str_value)
+        const diff is decimal_index + precision + 1 - @length(str_value)
+        each i in 0 to diff - 1 {
+            str_value += "0"
+        }
+        return str_value
     }
-    return @float(@slice(str_value, 0, decimal_index+precision+1))
+    # otherwise just slice the string and return the truncated value
+    return @slice(str_value, 0, decimal_index+precision+1)
 }
 
 function matchOutput(c_output :: string, d_output :: string) returns tetra {
@@ -199,7 +218,7 @@ function writeStats(^results :: Result[]) {
         const d_overhead is averageSeconds(result.user_time_d - result.kernel_time_d, result.runs)
         const compute_pct is percentVsC(c_compute, d_compute)
         const compute_delta is d_compute - c_compute
-        std.file.append(path, "{result.test}, {result.runs}, {roundTo(c_compute, 4)}, {roundTo(d_compute, 4)}, {roundTo(c_overhead, 4)}, {roundTo(d_overhead, 4)}, {roundTo(compute_pct, 2)}, {roundTo(compute_delta, 4)}, {std.time.unix()}\n")
+        std.file.append(path, "{result.test}, {result.runs}, {@float(roundToString(c_compute, 4))}, {@float(roundToString(d_compute, 4))}, {@float(roundToString(c_overhead, 4))}, {@float(roundToString(d_overhead, 4))}, {@float(roundToString(compute_pct, 2))}, {@float(roundToString(compute_delta, 4))}, {std.time.unix()}\n")
     }
 
 }
@@ -228,9 +247,10 @@ function prepareEnv() {
 }
 
 function printResults(^results :: Result[]) {
-    std.io.println("test\t| metric\t| value")
-    each result in results {
-        compare(result)
+    std.io.println("test\t| matches\t| doxa runtime\t| c runtime\t| runtime %\t| doxa overhead\t\t| c overhead\t\t| doxa compile\t| c compile\t| compile %")
+    std.io.println("---------------------------------------------------------------------------------------------------------------------------------------------------------------")
+    each result at index in results {
+        compare(result, index)
     }
 }
 

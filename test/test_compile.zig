@@ -278,6 +278,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const union_enum_return_path = try getBinaryPath(allocator, "./test/out/union_enum_return");
     const inline_zig_string_path = try getBinaryPath(allocator, "./test/out/inline_zig_string");
     const inline_zig_test_path = try getBinaryPath(allocator, "./test/out/inline_zig_test");
+    const zig_import_test_path = try getBinaryPath(allocator, "./test/out/zig_import_test");
     const module_private_call_path = try getBinaryPath(allocator, "./test/out/module_private_call");
     const calculator_path = try getBinaryPath(allocator, "./test/out/calculator");
     const http_link_path = try getBinaryPath(allocator, "./test/out/http_link_test");
@@ -365,6 +366,14 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .mode = .PRINT,
             .input = null,
             .expected_print = answers.expected_inline_zig_test_results[0..],
+            .expected_peek = null,
+        },
+        .{
+            .name = "zig import test",
+            .binary_path = zig_import_test_path,
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_zig_import_test_results[0..],
             .expected_peek = null,
         },
         .{
