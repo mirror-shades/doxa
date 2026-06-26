@@ -1628,12 +1628,44 @@ pub const Parser = struct {
     }
 
     pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!ast.ModuleInfo {
+        if (module_resolver.isZigModulePath(module_path)) {
+            const module_info = try module_resolver.resolveZigModule(self, module_path, namespace);
+            try self.module_namespaces.put(namespace, module_info);
+            try self.registerZigModuleSymbols(namespace, module_info);
+            return module_info;
+        }
+
         const module_info = try module_resolver.resolveModule(self, module_path);
 
         try self.module_namespaces.put(namespace, module_info);
         try self.registerPublicSymbols(module_info, module_path, namespace, specific_symbol);
 
         return module_info;
+    }
+
+    // Register the exported functions of an imported `.zig` module under the import
+    // alias, mirroring the inline `zig { ... }` registration so that `Alias.fn(...)`
+    // type-checks with exact parameter/return types.
+    fn registerZigModuleSymbols(self: *Parser, namespace: []const u8, module_info: ast.ModuleInfo) ErrorList!void {
+        const module_ast = module_info.ast orelse return;
+        if (module_ast.data != .Block) return;
+
+        const imported_symbols = self.getImportedSymbols();
+        for (module_ast.data.Block.statements) |stmt| {
+            if (stmt.data != .ZigDecl) continue;
+            for (stmt.data.ZigDecl.sigs) |sig| {
+                const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, sig.name });
+                try imported_symbols.put(full_name, .{
+                    .kind = .Function,
+                    .name = sig.name,
+                    .original_module = namespace,
+                    .namespace_alias = null,
+                    .param_count = @intCast(sig.param_types.len),
+                    .param_types = sig.param_types,
+                    .return_type_info = sig.return_type,
+                });
+            }
+        }
     }
 
     fn registerPublicSymbols(self: *Parser, module_info: ast.ModuleInfo, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
