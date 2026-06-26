@@ -13,7 +13,7 @@ const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 pub fn parseExpression(self: *Parser) ErrorList!?*ast.Expr {
-    if (self.peek().type == .ARRAY_TYPE) {
+    if (self.peek().type == .ARRAY_KEYWORD) {
         self.advance();
 
         const array_expr = try self.allocator.create(ast.Expr);
@@ -677,7 +677,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 .Basic = basic,
             },
         };
-    } else if (type_token.type == .ARRAY_TYPE) {
+    } else if (type_token.type == .ARRAY_KEYWORD) {
         self.advance();
         consumed_token = true;
 
@@ -718,7 +718,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 },
             },
         };
-    } else if (type_token.type == .STRUCT_TYPE) {
+    } else if (type_token.type == .STRUCT_KEYWORD) {
         self.advance();
         consumed_token = true;
 

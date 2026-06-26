@@ -662,6 +662,10 @@ pub fn createModuleNamespaceVariable(self: *SemanticAnalyzer, name: []const u8) 
     if (self.current_scope) |scope| {
         const placeholder_value = TokenLiteral{ .nothing = {} };
         const variable = scope.createValueBinding(name, placeholder_value, token_type, type_info, false) catch return null;
+        // The namespace binding is created lazily on an actual reference, so it
+        // is used by construction. Unused imports are reported separately via
+        // reportUnusedImports, so this never hides a real diagnostic.
+        variable.used = true;
         return variable;
     }
     return null;

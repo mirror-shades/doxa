@@ -777,7 +777,7 @@ fn isPropagatableVar(variable: *const Memory.Variable, storage: *const Memory.Va
     if (!storage.constant) return false;
     return switch (storage.value) {
         .int => switch (variable.type) {
-            .FUNCTION, .STRUCT, .ENUM, .GROUP_TYPE, .MODULE => false,
+            .FUNCTION, .STRUCT, .ENUM, .GROUP_KEYWORD, .MODULE => false,
             else => true,
         },
         else => false,

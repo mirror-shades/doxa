@@ -1453,7 +1453,9 @@ pub const SemanticAnalyzer = struct {
             }
         }
 
-        return try infer_type.inferTypeFromExpr(self, case.body);
+        const case_body_type = try infer_type.inferTypeFromExpr(self, case.body);
+        if (matched_var_name) |name| case_scope.propagateUsedToParent(name);
+        return case_body_type;
     }
 
     fn resolveTypeInfo(self: *SemanticAnalyzer, type_info: ast.TypeInfo) !ast.TypeInfo {
@@ -2016,7 +2018,9 @@ pub const SemanticAnalyzer = struct {
                                 false,
                             ) catch {};
 
-                            return try self.evaluateExpression(be);
+                            const branch_result = try self.evaluateExpression(be);
+                            branch_scope.propagateUsedToParent(decl_name);
+                            return branch_result;
                         }
                         return try self.evaluateExpression(be);
                     }

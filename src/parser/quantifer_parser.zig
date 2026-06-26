@@ -24,7 +24,7 @@ pub fn existentialQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorL
     }
     self.advance();
 
-    if (self.peek().type == .ARRAY_TYPE) {
+    if (self.peek().type == .ARRAY_KEYWORD) {
         self.advance();
         const array_expr = try self.allocator.create(ast.Expr);
         array_expr.* = .{
@@ -120,7 +120,7 @@ pub fn universalQuantifier(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorLis
     }
     self.advance();
 
-    if (self.peek().type == .ARRAY_TYPE) {
+    if (self.peek().type == .ARRAY_KEYWORD) {
         self.advance();
         const array_expr = try self.allocator.create(ast.Expr);
         array_expr.* = .{

@@ -93,7 +93,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("this", .THIS);
         try self.keywords.put("const", .CONST);
         try self.keywords.put("var", .VAR);
-        try self.keywords.put("struct", .STRUCT);
         try self.keywords.put("break", .BREAK);
         try self.keywords.put("continue", .CONTINUE);
         try self.keywords.put("and", .AND);
@@ -102,7 +101,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("import", .IMPORT);
         try self.keywords.put("module", .MODULE);
         try self.keywords.put("match", .MATCH);
-        try self.keywords.put("enum", .ENUM);
         try self.keywords.put("async", .ASYNC);
         try self.keywords.put("await", .AWAIT);
         try self.keywords.put("entry", .ENTRY);
@@ -116,11 +114,11 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("float", .FLOAT_TYPE);
         try self.keywords.put("string", .STRING_TYPE);
         try self.keywords.put("tetra", .TETRA_TYPE);
-        try self.keywords.put("array", .ARRAY_TYPE);
-        try self.keywords.put("struct", .STRUCT_TYPE);
-        try self.keywords.put("enum", .ENUM_TYPE);
-        try self.keywords.put("group", .GROUP_TYPE);
-        try self.keywords.put("map", .MAP_TYPE);
+        try self.keywords.put("array", .ARRAY_KEYWORD);
+        try self.keywords.put("struct", .STRUCT_KEYWORD);
+        try self.keywords.put("enum", .ENUM_KEYWORD);
+        try self.keywords.put("group", .GROUP_KEYWORD);
+        try self.keywords.put("map", .MAP_KEYWORD);
         try self.keywords.put("xor", .XOR);
         try self.keywords.put("exists", .EXISTS);
         try self.keywords.put("forall", .FORALL);

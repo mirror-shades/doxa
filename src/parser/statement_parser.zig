@@ -243,13 +243,12 @@ pub fn parseStatement(self: *Parser) ErrorList!ast.Stmt {
                 }, .data = .{ .Expression = null } };
             break :blk block_expr;
         },
-        .STRUCT_TYPE => if (self.peekAhead(1).type == .LEFT_BRACE)
+        .STRUCT_KEYWORD => if (self.peekAhead(1).type == .LEFT_BRACE)
             try parseStructDeclStmt(self)
         else
             try parseExpressionStmt(self),
-        .ENUM_TYPE => declaration_parser.parseEnumDecl(self),
+        .ENUM_KEYWORD => declaration_parser.parseEnumDecl(self),
         .ASSERT => try parseAssertStmt(self),
-        .MAP => try parseMapStatement(self),
         else => try parseExpressionStmt(self),
     };
 }
@@ -525,75 +524,6 @@ pub fn parseEachStmt(self: *Parser) ErrorList!ast.Stmt {
         },
         .data = .{
             .Expression = loop_expr,
-        },
-    };
-}
-
-pub fn parseMapStatement(self: *Parser) ErrorList!ast.Stmt {
-    if (self.peek().type != .MAP) {
-        return error.ExpectedMapKeyword;
-    }
-    const map_token = self.peek();
-    self.advance();
-
-    if (self.peek().type != .LEFT_BRACE) {
-        return error.ExpectedLeftBrace;
-    }
-    self.advance();
-    var entries = std.array_list.Managed(*ast.MapEntry).init(self.allocator);
-    errdefer {
-        for (entries.items) |entry| {
-            entry.key.deinit(self.allocator);
-            self.allocator.destroy(entry.key);
-            entry.value.deinit(self.allocator);
-            self.allocator.destroy(entry.value);
-            self.allocator.destroy(entry);
-        }
-        entries.deinit();
-    }
-
-    while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-        const key = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-
-        if (self.peek().type != .ASSIGN) {
-            key.deinit(self.allocator);
-            self.allocator.destroy(key);
-            return error.UseIsForAssignment;
-        }
-        self.advance();
-
-        const value = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-
-        const entry = try self.allocator.create(ast.MapEntry);
-        entry.* = .{
-            .key = key,
-            .value = value,
-        };
-        try entries.append(entry);
-
-        if (self.peek().type == .COMMA) {
-            self.advance();
-        }
-        while (self.peek().type == .NEWLINE) self.advance();
-    }
-
-    if (self.peek().type != .RIGHT_BRACE) {
-        return error.ExpectedRightBrace;
-    }
-    self.advance();
-
-    return ast.Stmt{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(map_token),
-        },
-        .data = .{
-            .MapLiteral = .{
-                .entries = try entries.toOwnedSlice(),
-                .key_type = null,
-                .value_type = null,
-                .else_value = null,
-            },
         },
     };
 }
