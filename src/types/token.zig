@@ -123,33 +123,33 @@ pub const TokenType = enum {
     NEWLINE, // newline
     CONTINUE_LINE, // continue line
 
-    // atomic types
+    // scalar types
     INT, // integer
     BYTE, // hex literal u8
     FLOAT, // float
     STRING, // double-quoted string
     TETRA, // tetra
+    ENUM, // enum
     NOTHING, // nothing
     INT_TYPE, // int type declaration
     BYTE_TYPE, // 8-bit unsigned integer type declaration
     FLOAT_TYPE, // float type declaration
     STRING_TYPE, // string type declaration
     TETRA_TYPE, // tetra type declaration
+    ENUM_KEYWORD, // 'enum' keyword
     NOTHING_TYPE, // nothing type declaration
 
-    // molecular types
+    // composite types
     STRUCT, // struct
-    ENUM, // enum
     MAP, // map
     UNION, // union
     ARRAY, // array
-    ARRAY_TYPE, // array type declaration
-    STRUCT_TYPE, // struct type declaration
+    ARRAY_KEYWORD, // 'array' keyword
+    STRUCT_KEYWORD, // 'struct' keyword
     STRUCT_INSTANCE, // struct instance
-    ENUM_TYPE, // enum type declaration
-    GROUP_TYPE, // group type declaration
-    MAP_TYPE, // map type declaration
-    UNION_TYPE, // union type declaration
+    GROUP_KEYWORD, // 'group' keyword
+    MAP_KEYWORD, // 'map' keyword
+    UNION_KEYWORD, // 'union' keyword
 
     // type helpers
     FIELD_ACCESS, // field access

@@ -144,7 +144,7 @@ pub const rules = blk: {
     r.set(.STRUCT_INSTANCE, .{ .prefix = structLiteralExpr });
     r.set(.THIS, .{ .prefix = variable });
     r.set(.ASSIGN, .{ .infix = assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
-    r.set(.ARRAY_TYPE, .{ .prefix = variable, .infix = fieldAccess });
+    r.set(.ARRAY_KEYWORD, .{ .prefix = variable, .infix = fieldAccess });
 
     // Control flow
     r.set(.IF, .{ .prefix = parseIfExpr });
@@ -168,22 +168,15 @@ pub const rules = blk: {
     r.set(.DO, .{ .prefix = expr_parser.doExpr });
     r.set(.FOR, .{ .prefix = forExpr });
 
-    // Add struct support
-    r.set(.STRUCT, .{ .prefix = parseStructDecl });
-    r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
-
     // Add struct declaration rule in the rules block
-    r.set(.STRUCT_TYPE, .{ .prefix = parseStructDecl });
-
-    // Add struct declaration rule in the rules block
-    r.set(.DOT, .{ .infix = fieldAccess, .precedence = .CALL });
+    r.set(.STRUCT_KEYWORD, .{ .prefix = parseStructDecl });
 
     // Add quantifier operators
     r.set(.EXISTS, .{ .prefix = existentialQuantifier, .precedence = .QUANTIFIER });
     r.set(.FORALL, .{ .prefix = universalQuantifier, .precedence = .QUANTIFIER });
 
     // Add array type support
-    r.set(.ARRAY_TYPE, .{ .prefix = arrayType });
+    r.set(.ARRAY_KEYWORD, .{ .prefix = arrayType });
 
     // Add 'in' keyword support for quantifiers
     r.set(.IN, .{ .infix = inOperator, .precedence = .TERM });
@@ -192,7 +185,7 @@ pub const rules = blk: {
     r.set(.RANGE, .{ .infix = rangeExpr, .precedence = .TERM });
 
     // Add enum declaration support using the wrapper
-    r.set(.ENUM_TYPE, .{ .prefix = enumDeclPrefix });
+    r.set(.ENUM_KEYWORD, .{ .prefix = enumDeclPrefix });
 
     // Add dot prefix rule for enum member access
     r.set(.DOT, .{ .prefix = enumMember, .infix = fieldAccess, .precedence = .CALL });

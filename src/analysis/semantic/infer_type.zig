@@ -2364,6 +2364,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (then_expr.data != .Block) {
                     then_type = inferred_then;
                 }
+
+                if (cast_decl_name) |name| then_scope.propagateUsedToParent(name);
+                if (castValueBindingName(cast.value)) |name| then_scope.propagateUsedToParent(name);
             }
 
             var else_diverges = false;
@@ -2396,6 +2399,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         }
                     }
                 }
+
+                if (cast_decl_name) |name| else_scope.propagateUsedToParent(name);
+                if (castValueBindingName(cast.value)) |name| else_scope.propagateUsedToParent(name);
             }
 
             if (else_type) |et| {
@@ -2745,6 +2751,18 @@ fn assignValueOrNothingUnion(self: *SemanticAnalyzer, dest: *ast.TypeInfo, value
         .union_type = union_info,
         .is_mutable = value_type.is_mutable,
     };
+}
+
+/// Returns the variable name that `bindNarrowedCastType` would shadow for the
+/// given cast value, so usage of that narrowed binding can be propagated to the
+/// original variable when the narrowing scope is torn down.
+fn castValueBindingName(cast_value: *ast.Expr) ?[]const u8 {
+    if (cast_value.data == .Variable) return cast_value.data.Variable.lexeme;
+    if (cast_value.data == .FieldAccess) {
+        const field_access = cast_value.data.FieldAccess;
+        if (field_access.object.data == .Variable) return field_access.object.data.Variable.lexeme;
+    }
+    return null;
 }
 
 fn bindNarrowedName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInfo) !void {

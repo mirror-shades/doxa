@@ -204,6 +204,18 @@ pub const Scope = struct {
         }
         if (self.parent) |p| p.markUsed(name);
     }
+
+    /// When a narrowed shadow binding in this scope has been used, propagate the
+    /// usage to the original variable of the same name in an ancestor scope.
+    /// This keeps usage tracking correct across `as`/`else`/`match` narrowing
+    /// blocks, whose shadow scopes are deinited before reporting runs.
+    pub fn propagateUsedToParent(self: *Scope, name: []const u8) void {
+        if (self.name_map.get(name)) |v| {
+            if (v.used) {
+                if (self.parent) |p| p.markUsed(name);
+            }
+        }
+    }
 };
 
 pub const ScopeManager = struct {

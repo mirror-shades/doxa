@@ -946,7 +946,7 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
             defer std.heap.page_allocator.free(ir_filename);
             const obj_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.o", .{stem_for_derivatives});
             defer std.heap.page_allocator.free(obj_filename);
-            try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-c", ir_filename, "-o", obj_filename });
+            try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-Wno-override-module", "-Wno-unused-command-line-argument", "-c", ir_filename, "-o", obj_filename });
             if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
                 try args.append("-target");
                 const arch = cli_options.target_arch orelse "";

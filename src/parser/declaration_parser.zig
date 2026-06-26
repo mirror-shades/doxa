@@ -245,7 +245,7 @@ pub fn parseGroupDecl(self: *Parser) ErrorList!ast.Stmt {
 }
 
 pub fn parseMapDecl(self: *Parser, is_public: bool) ErrorList!ast.Stmt {
-    // We already know peek().type == .MAP_TYPE
+    // We already know peek().type == .MAP_KEYWORD
     self.advance();
 
     if (self.peek().type != .IDENTIFIER) return error.ExpectedIdentifier;
@@ -474,7 +474,7 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
                 const map_const = self.peek().type == .CONST;
                 self.advance();
 
-                if (self.peek().type != .MAP_TYPE) {
+                if (self.peek().type != .MAP_KEYWORD) {
                     return error.ExpectedMapKeyword;
                 }
                 self.advance();
@@ -961,7 +961,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         type_info.is_mutable = !is_const;
     }
 
-    if (self.peek().type == .ARRAY_TYPE) {
+    if (self.peek().type == .ARRAY_KEYWORD) {
         type_info.base = .Array;
         self.advance();
 
@@ -1009,7 +1009,7 @@ pub fn parseVarDecl(self: *Parser) ErrorList!ast.Stmt {
         };
     }
 
-    if (self.peek().type == .MAP_TYPE) {
+    if (self.peek().type == .MAP_KEYWORD) {
         return try parseMapDecl(self, is_public);
     }
 

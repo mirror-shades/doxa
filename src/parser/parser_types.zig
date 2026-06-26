@@ -347,7 +347,7 @@ pub const Parser = struct {
                     }
                     try statements.append(decl);
                 },
-                .MAP_TYPE => {
+                .MAP_KEYWORD => {
                     const map_stmt = try declaration_parser.parseMapDecl(self, is_public);
                     if (is_entry) {
                         return error.InvalidEntryPoint;
@@ -395,7 +395,7 @@ pub const Parser = struct {
                     }
                     _ = try import_parser.parseModuleStmt(self, is_public);
                 },
-                .STRUCT_TYPE => {
+                .STRUCT_KEYWORD => {
                     const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
                     if (expr) |non_null_expr| {
                         switch (non_null_expr.data) {
@@ -418,7 +418,7 @@ pub const Parser = struct {
                         });
                     }
                 },
-                .ENUM_TYPE => {
+                .ENUM_KEYWORD => {
                     var enum_decl = try declaration_parser.parseEnumDecl(self);
                     enum_decl.data.EnumDecl.is_public = is_public;
                     if (is_entry) {
@@ -426,7 +426,7 @@ pub const Parser = struct {
                     }
                     try statements.append(enum_decl);
                 },
-                .GROUP_TYPE => {
+                .GROUP_KEYWORD => {
                     var group_decl = try declaration_parser.parseGroupDecl(self);
                     group_decl.data.GroupDecl.is_public = is_public;
                     if (is_entry) {
