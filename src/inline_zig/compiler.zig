@@ -11,7 +11,7 @@ const VM = @import("../interpreter/vm.zig").VM;
 const bc = @import("../codegen/bytecode/module.zig");
 const abi_source = @embedFile("abi.zig");
 
-const inline_zig_cache_version = "__doxa_inlinezig_v5__";
+const inline_zig_cache_version = "__doxa_inlinezig_v6__";
 
 fn zigOptimizationFlag(opt_level: i32) []const u8 {
     return switch (opt_level) {
@@ -66,6 +66,151 @@ fn appendZigSourceSanitized(buf: *std.array_list.Managed(u8), source: []const u8
         try buf.append(source[i]);
         i += 1;
     }
+}
+
+// Native build directives a Zig module declares via `//doxa:` line comments:
+//   //doxa:include <dir>   -> -I<dir>   (C header search path)
+//   //doxa:libdir  <dir>   -> -L<dir>   (library search path)
+//   //doxa:link    <name>  -> -l<name>  (link a library, e.g. raylib, gdi32)
+// A `@cImport` in the source (or `//doxa:link c`) implies libc (`-lc`).
+const ZigBuildDirectives = struct {
+    includes: std.array_list.Managed([]const u8),
+    lib_dirs: std.array_list.Managed([]const u8),
+    libs: std.array_list.Managed([]const u8),
+    needs_libc: bool,
+
+    fn init(allocator: std.mem.Allocator) ZigBuildDirectives {
+        return .{
+            .includes = std.array_list.Managed([]const u8).init(allocator),
+            .lib_dirs = std.array_list.Managed([]const u8).init(allocator),
+            .libs = std.array_list.Managed([]const u8).init(allocator),
+            .needs_libc = false,
+        };
+    }
+};
+
+// Values are slices into `zig_source`; keep it alive while the result is used.
+fn parseZigBuildDirectives(allocator: std.mem.Allocator, zig_source: []const u8) !ZigBuildDirectives {
+    var d = ZigBuildDirectives.init(allocator);
+
+    if (std.mem.indexOf(u8, zig_source, "@cImport") != null) d.needs_libc = true;
+
+    var lines = std.mem.splitScalar(u8, zig_source, '\n');
+    while (lines.next()) |raw| {
+        const line = std.mem.trim(u8, raw, " \t\r");
+        const prefix = "//doxa:";
+        if (!std.mem.startsWith(u8, line, prefix)) continue;
+        const body = std.mem.trim(u8, line[prefix.len..], " \t");
+        const sep = std.mem.indexOfAny(u8, body, " \t") orelse continue;
+        const kw = body[0..sep];
+        const val = std.mem.trim(u8, body[sep..], " \t");
+        if (val.len == 0) continue;
+        if (std.mem.eql(u8, kw, "include")) {
+            try d.includes.append(val);
+        } else if (std.mem.eql(u8, kw, "libdir")) {
+            try d.lib_dirs.append(val);
+        } else if (std.mem.eql(u8, kw, "link")) {
+            if (std.mem.eql(u8, val, "c")) d.needs_libc = true else try d.libs.append(val);
+        }
+        // Unknown directives are ignored so older compilers tolerate newer files.
+    }
+    return d;
+}
+
+fn fileAccessible(path: []const u8) bool {
+    if (std.fs.path.isAbsolute(path)) {
+        std.fs.accessAbsolute(path, .{}) catch return false;
+    } else {
+        std.fs.cwd().access(path, .{}) catch return false;
+    }
+    return true;
+}
+
+// Find a static archive for `name` in the given library directories. Preferring
+// the static archive avoids a runtime dependency on the matching shared library
+// (e.g. link `libraylib.a` directly instead of importing `raylib.dll`, which the
+// GNU linker would otherwise prefer when both are present). Returns a path
+// (arena-owned) suitable to pass to the linker as a positional input.
+fn findStaticArchive(arena: std.mem.Allocator, lib_dirs: []const []const u8, name: []const u8) ?[]const u8 {
+    for (lib_dirs) |dir| {
+        const a = std.fmt.allocPrint(arena, "lib{s}.a", .{name}) catch return null;
+        const b = std.fmt.allocPrint(arena, "{s}.lib", .{name}) catch return null;
+        const c = std.fmt.allocPrint(arena, "lib{s}.lib", .{name}) catch return null;
+        for ([_][]const u8{ a, b, c }) |fname| {
+            const full = std.fs.path.join(arena, &.{ dir, fname }) catch continue;
+            if (fileAccessible(full)) return full;
+        }
+    }
+    return null;
+}
+
+// Append compile/link flags for one module. Include paths are always added
+// (needed when building the object). Library search paths and libraries are added
+// only for a self-contained `build-lib`; for `build-obj` they are deferred to the
+// final executable link.
+fn appendZigBuildFlags(
+    args: *std.array_list.Managed([]const u8),
+    arena: std.mem.Allocator,
+    d: *const ZigBuildDirectives,
+    include_link: bool,
+) !void {
+    for (d.includes.items) |inc| try args.append(try std.fmt.allocPrint(arena, "-I{s}", .{inc}));
+    if (include_link) {
+        for (d.lib_dirs.items) |ld| try args.append(try std.fmt.allocPrint(arena, "-L{s}", .{ld}));
+        for (d.libs.items) |lib| {
+            if (findStaticArchive(arena, d.lib_dirs.items, lib)) |archive| {
+                try args.append(archive);
+            } else {
+                try args.append(try std.fmt.allocPrint(arena, "-l{s}", .{lib}));
+            }
+        }
+    }
+}
+
+// Aggregate the link flags (`-L`/`-l`) of every reachable Zig module, de-duplicated.
+// Used by the native compile path to link the final executable against the C
+// libraries the inline/imported Zig modules depend on.
+pub fn collectZigLinkFlags(allocator: std.mem.Allocator, statements: []ast.Stmt, parser: *Parser) ![]const []const u8 {
+    const zig_decls = try collectInlineZigDecls(allocator, statements, parser);
+    defer allocator.free(zig_decls);
+
+    var flags = std.array_list.Managed([]const u8).init(allocator);
+    errdefer {
+        for (flags.items) |f| allocator.free(@constCast(f));
+        flags.deinit();
+    }
+
+    var seen = std.StringHashMap(void).init(allocator);
+    defer seen.deinit();
+
+    for (zig_decls) |decl| {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const d = try parseZigBuildDirectives(arena.allocator(), decl.zig_source);
+        for (d.lib_dirs.items) |ld| {
+            const flag = try std.fmt.allocPrint(allocator, "-L{s}", .{ld});
+            if (seen.contains(flag)) {
+                allocator.free(flag);
+                continue;
+            }
+            try seen.put(flag, {});
+            try flags.append(flag);
+        }
+        for (d.libs.items) |lib| {
+            const flag = if (findStaticArchive(arena.allocator(), d.lib_dirs.items, lib)) |archive|
+                try allocator.dupe(u8, archive)
+            else
+                try std.fmt.allocPrint(allocator, "-l{s}", .{lib});
+            if (seen.contains(flag)) {
+                allocator.free(flag);
+                continue;
+            }
+            try seen.put(flag, {});
+            try flags.append(flag);
+        }
+    }
+
+    return try flags.toOwnedSlice();
 }
 
 pub fn collectInlineZigDecls(
@@ -609,6 +754,14 @@ pub fn compileInlineZigModules(
                 try args_list.append("-lc");
             }
 
+            var dir_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer dir_arena.deinit();
+            const directives = try parseZigBuildDirectives(dir_arena.allocator(), decl.zig_source);
+            try appendZigBuildFlags(&args_list, dir_arena.allocator(), &directives, true);
+            if (directives.needs_libc and builtin.os.tag != .linux) {
+                try args_list.append("-lc");
+            }
+
             var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
             child.cwd = ".";
             child.stdout_behavior = .Inherit;
@@ -700,6 +853,14 @@ pub fn compileInlineZigObjects(
                 emit_flag,
                 zigOptimizationFlag(opt_level),
             });
+
+            var dir_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer dir_arena.deinit();
+            const directives = try parseZigBuildDirectives(dir_arena.allocator(), decl.zig_source);
+            try appendZigBuildFlags(&args_list, dir_arena.allocator(), &directives, false);
+            if (directives.needs_libc) {
+                try args_list.append("-lc");
+            }
 
             var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
             child.cwd = ".";

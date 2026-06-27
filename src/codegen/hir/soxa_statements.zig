@@ -199,11 +199,15 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
                 const previous_override = self.array_storage_override;
                 defer self.array_storage_override = previous_override;
+                const previous_element_override = self.array_element_type_override;
+                defer self.array_element_type_override = previous_element_override;
 
                 if (decl.type_info.base == .Array) {
                     self.array_storage_override = self.storageKindFromTypeInfo(decl.type_info);
+                    self.array_element_type_override = resolveArrayElementInfo(self, decl.type_info.array_type).element_type;
                 } else {
                     self.array_storage_override = null;
+                    self.array_element_type_override = null;
                 }
 
                 // If the initializer is an `as` cast, pre-create the variable slot
@@ -242,8 +246,16 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                             var_type = self.convertTypeInfo(decl.type_info);
                         }
                     } else {
-                        // Non-empty array - use the inferred type from the init expression
-                        var_type = self.inferTypeFromExpression(init_expr);
+                        // Non-empty array: prefer the declared element type when the
+                        // declaration carries an explicit annotation; fall back to
+                        // inference from the literal otherwise.
+                        const resolved = resolveArrayElementInfo(self, decl.type_info.array_type);
+                        if (resolved.element_type != .Unknown and resolved.element_type != .Nothing) {
+                            try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
+                            var_type = self.convertTypeInfo(decl.type_info);
+                        } else {
+                            var_type = self.inferTypeFromExpression(init_expr);
+                        }
                     }
                 }
 

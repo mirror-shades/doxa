@@ -357,6 +357,7 @@ pub const ErrorCode = struct {
     pub const ALIAS_ARGUMENT_NOT_NEEDED = "E1028";
     pub const RANGE_REQUIRES_NUMERIC_OPERANDS = "E1029";
     pub const ENUM_REQUIRES_INITIALIZER = "E1030";
+    pub const BYTE_VALUE_OUT_OF_RANGE = "E1031";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";

@@ -540,8 +540,30 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
     // ── Phase 4: Non-union structural equality + implicit conversions ──
     if (!typesEqual(self, expected, actual)) {
         if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) return;
-        if (expected.base == .Byte and actual.base == .Int) return;
+        // Narrowing int -> byte is implicit only for comptime numeric literals
+        // (bounds-checked in the value/codegen layers). Runtime ints must be
+        // narrowed explicitly with @byte().
+        if (expected.base == .Byte and actual.base == .Int) {
+            if (actual.comptime_int != null) return;
+            self.reporter.reportCompileError(
+                span.location,
+                ErrorCode.TYPE_MISMATCH,
+                "int is not implicitly assignable to byte; use @byte() to narrow",
+                .{},
+            );
+            self.fatal_error = true;
+            return;
+        }
         if (expected.base == .Int and actual.base == .Byte) return;
+
+        // Arrays: recurse into element types so element-level implicit
+        // conversions (e.g. Int literal -> Byte) apply to array literals.
+        if (expected.base == .Array and actual.base == .Array) {
+            if (expected.array_type) |e|
+                if (actual.array_type) |a|
+                    try unifyTypes(self, e, a, span);
+            return;
+        }
 
         if (expected.base == .Enum and actual.base == .Enum) {
             if (expected.custom_type != null and actual.custom_type != null and

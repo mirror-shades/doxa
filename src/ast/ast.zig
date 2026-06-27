@@ -1016,6 +1016,10 @@ pub const TypeInfo = struct {
     map_key_type: ?*TypeInfo = null,
     map_value_type: ?*TypeInfo = null,
     map_has_else_value: bool = false,
+    // Value of a comptime numeric literal (set during inference for int/byte
+    // literals and unary-negated literals). Lets the type checker allow
+    // literal-coerce-if-fits while requiring explicit casts for runtime narrowing.
+    comptime_int: ?i64 = null,
 
     pub fn deinit(self: *TypeInfo, allocator: std.mem.Allocator) void {
         if (self.array_type) |array_type| {

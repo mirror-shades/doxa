@@ -24,6 +24,18 @@ const Tokenizer = struct {
         return .{ .input = input };
     }
 
+    const Snapshot = struct { i: usize, block_comment_depth: usize, peeked: ?Token };
+
+    fn save(self: *Tokenizer) Snapshot {
+        return .{ .i = self.i, .block_comment_depth = self.block_comment_depth, .peeked = self.peeked };
+    }
+
+    fn restore(self: *Tokenizer, snap: Snapshot) void {
+        self.i = snap.i;
+        self.block_comment_depth = snap.block_comment_depth;
+        self.peeked = snap.peeked;
+    }
+
     fn peek(self: *Tokenizer) ErrorList!?Token {
         if (self.peeked == null) {
             self.peeked = try self.nextInternal();
@@ -351,16 +363,69 @@ fn skipTopLevelFnHeader(ts: *Tokenizer) ErrorList!void {
     }
 }
 
-fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList![]ast.ZigFnSig {
+const TopLevelKind = enum { other, fn_exported, fn_plain };
+
+// Classify the upcoming top-level declaration without consuming input.
+fn classifyTopLevel(ts: *Tokenizer) ErrorList!TopLevelKind {
+    const snap = ts.save();
+    defer ts.restore(snap);
+    var exported = false;
+    while (try ts.peek()) |t| {
+        if (isFnQualifier(t)) {
+            if (std.mem.eql(u8, t.lexeme, "pub") or std.mem.eql(u8, t.lexeme, "public") or std.mem.eql(u8, t.lexeme, "export")) {
+                exported = true;
+            }
+            _ = try ts.next();
+            continue;
+        }
+        if (tokenIs(t, .ident, "fn")) return if (exported) .fn_exported else .fn_plain;
+        return .other;
+    }
+    return .other;
+}
+
+// Skip a single top-level declaration of any form: a brace-bodied block
+// (`fn ... {}`, `comptime {}`, `pub const S = struct {}`, ...) or a
+// `;`-terminated declaration (`const x = ...;`, `extern fn f(...) T;`).
+// Braces always balance in valid Zig, so terminating at a depth-0 close or a
+// depth-0 `;` never desyncs; any leftover tokens are absorbed by the next call.
+fn skipDeclLenient(ts: *Tokenizer) ErrorList!void {
+    var brace: usize = 0;
+    var saw_brace = false;
+    while (try ts.next()) |t| {
+        if (t.kind == .symbol and t.lexeme.len == 1) {
+            switch (t.lexeme[0]) {
+                '{' => {
+                    brace += 1;
+                    saw_brace = true;
+                },
+                '}' => {
+                    if (brace > 0) brace -= 1;
+                    if (brace == 0 and saw_brace) return;
+                },
+                ';' => {
+                    if (brace == 0) return;
+                },
+                else => {},
+            }
+        }
+    }
+}
+
+fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8, lenient: bool) ErrorList![]ast.ZigFnSig {
     const trimmed = std.mem.trim(u8, input, " \t\n");
     if (trimmed.len == 0) return error.EmptyInput;
 
     var ts = Tokenizer.init(trimmed);
 
-    // Rules (docs/inline.md):
-    // - Top-level: only `const X = @import("...");` and `fn ... { ... }` declarations (and comments/blank lines)
-    // - No other global statements/declarations.
-    // - Function param/return types must be from allowed set.
+    // Strict (inline blocks, docs/zig.md):
+    // - Top-level: only `const X = @import("...");` and `fn ... { ... }` (plus comments/blank lines).
+    // - Function param/return types must be from the allowed scalar set.
+    //
+    // Lenient (file imports): tolerate any valid Zig top-level (`@cImport`, helper
+    // consts/structs, non-Doxa functions); extract only the exported functions whose
+    // signatures are Doxa-compatible, and skip everything else. `zig build-lib`
+    // validates the remainder of the file.
     var depth: usize = 0;
 
     var out = std.array_list.Managed(ast.ZigFnSig).init(allocator);
@@ -379,7 +444,13 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList
             continue;
         }
         if (tok.kind == .symbol and std.mem.eql(u8, tok.lexeme, "}")) {
-            if (depth == 0) return error.InlineZigNotValid;
+            if (depth == 0) {
+                if (lenient) {
+                    _ = try ts.next();
+                    continue;
+                }
+                return error.InlineZigNotValid;
+            }
             depth -= 1;
             _ = try ts.next();
             continue;
@@ -390,7 +461,26 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList
             continue;
         }
 
-        // depth == 0: enforce the restricted top-level set.
+        // depth == 0
+        if (lenient) {
+            switch (try classifyTopLevel(&ts)) {
+                .fn_exported => {
+                    const snap = ts.save();
+                    if (parseTopLevelFnSig(allocator, &ts)) |sig| {
+                        try out.append(sig);
+                        depth = 1; // opening `{` of the body was consumed
+                    } else |_| {
+                        // Signature isn't Doxa-compatible: skip the whole function.
+                        ts.restore(snap);
+                        try skipDeclLenient(&ts);
+                    }
+                },
+                .fn_plain, .other => try skipDeclLenient(&ts),
+            }
+            continue;
+        }
+
+        // strict: enforce the restricted top-level set.
         if (tokenIs(tok, .ident, "const")) {
             try parseTopLevelImportConst(&ts);
             continue;
@@ -410,11 +500,11 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList
         return error.InlineZigNotValid;
     }
 
-    if (depth != 0) return error.InlineZigNotValid;
+    if (depth != 0 and !lenient) return error.InlineZigNotValid;
 
     return try out.toOwnedSlice();
 }
 
-pub fn sanitizeAndExtract(allocator: std.mem.Allocator, input: []const u8) ErrorList![]ast.ZigFnSig {
-    return try validateAndExtract(allocator, input);
+pub fn sanitizeAndExtract(allocator: std.mem.Allocator, input: []const u8, lenient: bool) ErrorList![]ast.ZigFnSig {
+    return try validateAndExtract(allocator, input, lenient);
 }

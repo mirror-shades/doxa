@@ -41,7 +41,7 @@ pub fn parseZigDecl(self: *Parser) ErrorList!ast.Stmt {
     const source_owned = try self.allocator.dupe(u8, source);
     errdefer self.allocator.free(source_owned);
 
-    const sigs = try inline_zig.sanitizeAndExtract(self.allocator, source_owned);
+    const sigs = try inline_zig.sanitizeAndExtract(self.allocator, source_owned, false);
     // If sanitizeAndExtract fails, source_owned is freed by errdefer above.
     // Sigs are now owned by the ZigDecl AST node.
 
