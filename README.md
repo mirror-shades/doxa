@@ -62,7 +62,7 @@ zig build test
 
 Doxa is based upon a very small number of types with enums, structs, and type unions providing a huge degree of flexibility to how these core types can be used. Exhaustive match statements and union type narrowing allow for extremly simple yet powerful error handling patterns that takes the idea of errors as values very literally.
 
-### Atomic
+### Scalar
 
 - int (64-bit integer)
 - float (64-bit float)
@@ -72,7 +72,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - tetra (four-value logic unit)
 - nothing (void type)
 
-### Molecular
+### Composite
 
 - array (homogeneous)
 - struct
