@@ -841,7 +841,19 @@ pub const SemanticAnalyzer = struct {
                     }
 
                     // Convert value to match the declared type
-                    value = try eval.convertValueToType(value, type_info.base);
+                    value = eval.convertValueToTypeInfo(self.allocator, value, type_info) catch |err| switch (err) {
+                        error.byteOverflow, error.byteUnderflow => {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(stmt.base),
+                                ErrorCode.BYTE_VALUE_OUT_OF_RANGE,
+                                "byte value out of range (must be 0-255)",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                            continue;
+                        },
+                        else => return err,
+                    };
 
                     // ENFORCE: nothing types must be const (unless they have an initializer)
                     if (type_info.base == .Nothing and type_info.is_mutable and decl.initializer == null) {
@@ -1172,7 +1184,19 @@ pub const SemanticAnalyzer = struct {
                             }
 
                             // Convert value to match the declared type
-                            value = try eval.convertValueToType(value, type_info.base);
+                            value = eval.convertValueToTypeInfo(self.allocator, value, type_info) catch |err| switch (err) {
+                                error.byteOverflow, error.byteUnderflow => {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(stmt.base),
+                                        ErrorCode.BYTE_VALUE_OUT_OF_RANGE,
+                                        "byte value out of range (must be 0-255)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    continue;
+                                },
+                                else => return err,
+                            };
 
                             _ = scope.createValueBinding(
                                 decl.name.lexeme,

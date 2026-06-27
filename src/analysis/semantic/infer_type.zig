@@ -51,6 +51,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         },
         .Literal => |lit| {
             type_info.inferFrom(lit);
+            switch (lit) {
+                .int => |i| type_info.comptime_int = i,
+                .byte => |b| type_info.comptime_int = @as(i64, b),
+                else => {},
+            }
         },
         .Break => {
             type_info.base = .Nothing;
@@ -260,6 +265,15 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         .Unary => |unary| {
             const operand_type = try inferTypeFromExpr(self, unary.right.?);
             type_info.* = operand_type.*;
+            // Preserve comptime-literal-ness through unary minus (value negated)
+            // so negative literals stay comptime constants; clear it otherwise.
+            if (unary.operator.type == .MINUS) {
+                if (operand_type.comptime_int) |v| {
+                    type_info.comptime_int = -v;
+                }
+            } else {
+                type_info.comptime_int = null;
+            }
         },
         .FunctionCall => |function_call| {
             if (function_call.callee.data == .FieldAccess) {

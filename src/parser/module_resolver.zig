@@ -170,7 +170,7 @@ pub fn resolveZigModule(self: *Parser, module_path: []const u8, display_name: []
     }
 
     const sigs = sigs_blk: {
-        const extracted = inline_zig.sanitizeAndExtract(self.allocator, module_data.source) catch {
+        const extracted = inline_zig.sanitizeAndExtract(self.allocator, module_data.source, true) catch {
             self.reporter.reportCompileError(
                 null,
                 ErrorCode.INVALID_IMPORT,

@@ -33,6 +33,34 @@ fn collectLiteralNestedSizes(
     collectLiteralNestedSizes(inner, sizes, depth);
 }
 
+const NumLit = union(enum) { integral: i64, floating: f64 };
+
+/// Extract a comptime numeric value from a plain or unary-negated numeric
+/// literal expression. Returns null for anything else, so callers can fall
+/// back to normal expression lowering.
+fn numericLiteralOf(element: *const ast.Expr) ?NumLit {
+    switch (element.data) {
+        .Literal => |l| return switch (l) {
+            .int => |i| NumLit{ .integral = i },
+            .byte => |b| NumLit{ .integral = b },
+            .float => |f| NumLit{ .floating = f },
+            else => null,
+        },
+        .Unary => |u| {
+            if (u.operator.type != .MINUS) return null;
+            const inner = u.right orelse return null;
+            if (inner.data != .Literal) return null;
+            return switch (inner.data.Literal) {
+                .int => |i| NumLit{ .integral = -i },
+                .byte => |b| NumLit{ .integral = -@as(i64, b) },
+                .float => |f| NumLit{ .floating = -f },
+                else => null,
+            };
+        },
+        else => return null,
+    }
+}
+
 /// Handle collection operations: arrays, maps, indexing
 pub const CollectionsHandler = struct {
     generator: *HIRGenerator,
@@ -48,10 +76,24 @@ pub const CollectionsHandler = struct {
 
     /// Internal array generation with nesting control
     pub fn generateArrayInternal(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
+        // Consume the declared element type (if the enclosing declaration had an
+        // explicit array annotation). Reset the field so it doesn't leak into
+        // unrelated sub-expressions; we re-thread it explicitly for nested arrays.
+        const expected_element = self.generator.array_element_type_override;
+        self.generator.array_element_type_override = null;
+        defer self.generator.array_element_type_override = expected_element;
+
+        const have_expected = if (expected_element) |e| (e != .Unknown and e != .Nothing) else false;
+
         var element_type: HIRType = .Unknown;
         var nested_element_type: ?HIRType = null;
 
-        if (elements.len > 0) {
+        if (have_expected) {
+            // The declared type is authoritative for the element type. Nested
+            // element typing is handled by the per-element recursion below, so
+            // (matching the inference path) nested_element_type stays null here.
+            element_type = expected_element.?;
+        } else if (elements.len > 0) {
             // Try to infer type from first element
             const first = elements[0];
             switch (first.data) {
@@ -111,6 +153,12 @@ pub const CollectionsHandler = struct {
             .nested_depth = nested_depth,
         } });
 
+        // Declared element type to apply to direct (non-nested) literal elements.
+        const inner_override: ?HIRType = if (have_expected) switch (element_type) {
+            .Array => |inner| inner.*,
+            else => element_type,
+        } else null;
+
         // Generate each element and ArraySet
         for (elements, 0..) |element, i| {
             // Push index
@@ -120,14 +168,25 @@ pub const CollectionsHandler = struct {
 
             // Generate the element value
             if (element.data == .Array) {
-                // Set nested context flag before generating nested array
+                // Set nested context flag and thread the inner declared element
+                // type down before generating the nested array.
+                const prev_override = self.generator.array_element_type_override;
+                self.generator.array_element_type_override = inner_override;
+                defer self.generator.array_element_type_override = prev_override;
+
                 const prev_nested_flag = self.generator.is_generating_nested_array;
                 self.generator.is_generating_nested_array = true;
                 defer self.generator.is_generating_nested_array = prev_nested_flag;
 
                 try self.generator.generateExpression(element, true, false);
             } else {
-                try self.generator.generateExpression(element, true, false);
+                var emitted = false;
+                if (have_expected) {
+                    emitted = try self.emitCoercedLiteral(element, inner_override.?);
+                }
+                if (!emitted) {
+                    try self.generator.generateExpression(element, true, false);
+                }
             }
 
             // ArraySet pops: value, index, array; and pushes updated array back
@@ -138,6 +197,48 @@ pub const CollectionsHandler = struct {
         if (!preserve_result) {
             try self.generator.instructions.append(.Pop);
         }
+    }
+
+    /// Emit a comptime numeric literal element coerced to the declared element
+    /// type, with a compile-time bounds check for byte. Handles plain and
+    /// unary-negated numeric literals; returns false for anything else so the
+    /// normal lowering path handles it.
+    fn emitCoercedLiteral(self: *CollectionsHandler, element: *ast.Expr, target: HIRType) !bool {
+        const num = numericLiteralOf(element) orelse return false;
+
+        const coerced: ?HIRValue = switch (target) {
+            .Byte => switch (num) {
+                .integral => |i| blk: {
+                    if (i < 0 or i > 255) {
+                        self.generator.reporter.reportCompileError(
+                            element.base.location(),
+                            ErrorCode.BYTE_VALUE_OUT_OF_RANGE,
+                            "byte value out of range (must be 0-255)",
+                            .{},
+                        );
+                        return ErrorList.TypeError;
+                    }
+                    break :blk HIRValue{ .byte = @intCast(i) };
+                },
+                .floating => null,
+            },
+            .Int => switch (num) {
+                .integral => |i| HIRValue{ .int = i },
+                .floating => null,
+            },
+            .Float => switch (num) {
+                .integral => |i| HIRValue{ .float = @floatFromInt(i) },
+                .floating => |f| HIRValue{ .float = f },
+            },
+            else => null,
+        };
+
+        if (coerced) |value| {
+            const cid = try self.generator.addConstant(value);
+            try self.generator.instructions.append(.{ .Const = .{ .value = value, .constant_id = cid } });
+            return true;
+        }
+        return false;
     }
 
     /// Generate HIR for range expressions (e.g., 1 to 6)

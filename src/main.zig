@@ -44,7 +44,6 @@ const EXIT_CODE_RUNTIME = constants.EXIT_CODE_RUNTIME;
 const DOXA_EXTENSION = ".doxa";
 const DEFAULT_CACHE_DIR = ".doxa-cache";
 const DEFAULT_BIN_DIR = "bin";
-const RUNTIME_SOURCE_PATH = "src/runtime/doxa_rt.zig";
 
 var compile_file: bool = false;
 var is_safe_repl: bool = false;
@@ -277,17 +276,88 @@ fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt
     return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, opt_level);
 }
 
-fn generateZigRoot(
-    allocator: std.mem.Allocator,
-) ![]const u8 {
-    const root_path = "__doxa_main.zig";
+fn openDirMaybeAbs(path: []const u8, opts: std.fs.Dir.OpenOptions) !std.fs.Dir {
+    return if (std.fs.path.isAbsolute(path))
+        std.fs.openDirAbsolute(path, opts)
+    else
+        std.fs.cwd().openDir(path, opts);
+}
+
+fn dirContainsFile(dir: []const u8, name: []const u8) bool {
+    const joined = std.fs.path.join(std.heap.page_allocator, &.{ dir, name }) catch return false;
+    defer std.heap.page_allocator.free(joined);
+    const file = (if (std.fs.path.isAbsolute(joined))
+        std.fs.openFileAbsolute(joined, .{})
+    else
+        std.fs.cwd().openFile(joined, .{})) catch return false;
+    file.close();
+    return true;
+}
+
+// Locate the directory holding the Doxa runtime source (`doxa_rt.zig` and its
+// self-contained siblings). Tries the installed layout next to the executable
+// first, then repo-relative layouts, then a CWD-relative fallback (running from
+// the repo root). Returns an owned path to the directory.
+fn resolveRuntimeSourceDir(allocator: std.mem.Allocator) ![]u8 {
+    if (std.fs.selfExeDirPathAlloc(allocator)) |exe_dir| {
+        defer allocator.free(exe_dir);
+        const candidates = [_][]const []const u8{
+            &.{ exe_dir, "..", "lib", "runtime" }, // installed / shipped
+            &.{ exe_dir, "..", "..", "src", "runtime" }, // exe under <repo>/doxa/bin
+            &.{ exe_dir, "..", "..", "..", "src", "runtime" },
+        };
+        for (candidates) |parts| {
+            const dir = try std.fs.path.join(allocator, parts);
+            if (dirContainsFile(dir, "doxa_rt.zig")) return dir;
+            allocator.free(dir);
+        }
+    } else |_| {}
+
+    const cwd_relative = try allocator.dupe(u8, "src/runtime");
+    if (dirContainsFile(cwd_relative, "doxa_rt.zig")) return cwd_relative;
+    allocator.free(cwd_relative);
+
+    return error.RuntimeSourceNotFound;
+}
+
+// Copy the runtime `.zig` sources into `<cache_dir>/runtime/` so the generated
+// root can `@import` them as a subpath (Zig forbids imports outside the root
+// file's directory). Returns the owned destination directory path.
+fn copyRuntimeToCache(allocator: std.mem.Allocator, src_dir: []const u8, cache_dir: []const u8) ![]u8 {
+    const dst_dir = try std.fs.path.join(allocator, &.{ cache_dir, "runtime" });
+    errdefer allocator.free(dst_dir);
+    try std.fs.cwd().makePath(dst_dir);
+
+    var src = try openDirMaybeAbs(src_dir, .{ .iterate = true });
+    defer src.close();
+    var dst = try openDirMaybeAbs(dst_dir, .{});
+    defer dst.close();
+
+    var it = src.iterate();
+    while (try it.next()) |entry| {
+        if (entry.kind != .file) continue;
+        if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
+        try src.copyFile(entry.name, dst, entry.name, .{});
+    }
+
+    return dst_dir;
+}
+
+// Stage the runtime under the cache dir and write the generated Zig root that owns
+// the platform entry point. Returns the owned path to the root file.
+fn prepareZigRoot(allocator: std.mem.Allocator, cache_dir: []const u8) ![]const u8 {
+    const runtime_src = try resolveRuntimeSourceDir(allocator);
+    defer allocator.free(runtime_src);
+    const runtime_dst = try copyRuntimeToCache(allocator, runtime_src, cache_dir);
+    defer allocator.free(runtime_dst);
+
+    const root_path = try std.fmt.allocPrint(allocator, "{s}/__doxa_main.zig", .{cache_dir});
+    errdefer allocator.free(root_path);
 
     var content = std.array_list.Managed(u8).init(allocator);
     defer content.deinit();
     try content.appendSlice("const std = @import(\"std\");\n");
-    try content.appendSlice("const doxa_rt = @import(\"");
-    try appendZigPath(&content, RUNTIME_SOURCE_PATH);
-    try content.appendSlice("\");\n");
+    try content.appendSlice("const doxa_rt = @import(\"runtime/doxa_rt.zig\");\n");
 
     try content.appendSlice("\nextern fn doxa_program_main() callconv(.c) void;\n");
     try content.appendSlice("\npub fn main() void {\n");
@@ -301,14 +371,7 @@ fn generateZigRoot(
     try content.appendSlice("}\n");
 
     try std.fs.cwd().writeFile(.{ .sub_path = root_path, .data = content.items });
-    return try allocator.dupe(u8, root_path);
-}
-
-fn appendZigPath(content: *std.array_list.Managed(u8), path: []const u8) !void {
-    // Zig string literals treat \ as escape — normalize to forward slashes
-    for (path) |c| {
-        try content.append(if (c == '\\') '/' else c);
-    }
+    return root_path;
 }
 
 fn resolveBundledZigExecutable(allocator: std.mem.Allocator) ![]u8 {
@@ -985,8 +1048,9 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
 
         // Generate a Zig root file that imports the Doxa runtime and inline Zig
         // wrappers, then provides `pub fn main()` to own the platform entry point.
-        const root_path = try generateZigRoot(
+        const root_path = try prepareZigRoot(
             memoryManager.getAllocator(),
+            cli_options.cache_dir,
         );
         defer memoryManager.getAllocator().free(root_path);
 
@@ -1032,6 +1096,15 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
             if (builtin.os.tag == .windows and inline_zig_wrapper_paths.len > 0) {
                 try args_ln.appendSlice(&.{ "-lws2_32", "-lcrypt32" });
             }
+
+            // Link the native C libraries declared by imported/inline Zig modules
+            // via `//doxa:libdir` / `//doxa:link` directives.
+            const zig_link_flags = try inline_zig_compiler.collectZigLinkFlags(memoryManager.getAllocator(), parsedStatements, &parser);
+            defer {
+                for (zig_link_flags) |f| memoryManager.getAllocator().free(@constCast(f));
+                memoryManager.getAllocator().free(zig_link_flags);
+            }
+            try args_ln.appendSlice(zig_link_flags);
 
             var child_ln = std.process.Child.init(args_ln.items, std.heap.page_allocator);
             child_ln.cwd = ".";

@@ -210,6 +210,26 @@ pub fn convertValueToType(value: TokenLiteral, expected_type: ast.Type) !TokenLi
     };
 }
 
+/// Coerce a comptime value to a declared type, recursing into array elements so
+/// that array literals adopt their declared element type (and are bounds-checked).
+/// Scalars defer to convertValueToType.
+pub fn convertValueToTypeInfo(allocator: std.mem.Allocator, value: TokenLiteral, type_info: *const TypeInfo) !TokenLiteral {
+    if (type_info.base == .Array) {
+        switch (value) {
+            .array => |elements| {
+                const element_type = type_info.array_type orelse return value;
+                const converted = try allocator.alloc(TokenLiteral, elements.len);
+                for (elements, 0..) |element, i| {
+                    converted[i] = try convertValueToTypeInfo(allocator, element, element_type);
+                }
+                return TokenLiteral{ .array = converted };
+            },
+            else => return value,
+        }
+    }
+    return convertValueToType(value, type_info.base);
+}
+
 pub fn defaultTypeLiteral(allocator: std.mem.Allocator, type_info: *const TypeInfo) !TokenLiteral {
     return switch (type_info.base) {
         .Int => TokenLiteral{ .int = 0 },

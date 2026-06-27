@@ -179,6 +179,10 @@ pub const HIRGenerator = struct {
     string_pool: std.array_list.Managed([]const u8),
     reporter: *Reporter,
     array_storage_override: ?SoxaTypes.ArrayStorageKind = null,
+    // Declared element type for the array literal currently being lowered, when the
+    // enclosing declaration has an explicit array annotation (e.g. byte[4]). Drives
+    // comptime coercion + bounds-checking of literal elements. Null otherwise.
+    array_element_type_override: ?SoxaTypes.HIRType = null,
 
     symbol_table: SymbolTable,
     constant_manager: ConstantManager,
@@ -297,6 +301,7 @@ pub const HIRGenerator = struct {
             .string_pool = std.array_list.Managed([]const u8).init(allocator),
             .reporter = reporter,
             .array_storage_override = null,
+            .array_element_type_override = null,
             .symbol_table = SymbolTable.init(allocator),
             .constant_manager = ConstantManager.init(allocator),
             .label_generator = LabelGenerator.init(allocator),
