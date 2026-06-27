@@ -104,6 +104,15 @@ pub fn build(b: *std.Build) void {
     });
     b.getInstallStep().dependOn(&install_std.step);
 
+    // Ship the Doxa runtime sources so `doxa compile` can stage and compile them
+    // from any working directory (resolved relative to the executable).
+    const install_runtime = b.addInstallDirectory(.{
+        .source_dir = b.path("src/runtime"),
+        .install_dir = .prefix,
+        .install_subdir = "lib/runtime",
+    });
+    b.getInstallStep().dependOn(&install_runtime.step);
+
     if (getZigDependencyForTarget(target.result)) |zig_dep| {
         const archive_path = b.pathJoin(&.{ "external", b.fmt("{s}{s}", .{ zig_dep.folder_name, zig_dep.archive_ext }) });
         const destination_lib_dir = b.getInstallPath(.prefix, "lib");
