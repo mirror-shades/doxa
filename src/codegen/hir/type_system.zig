@@ -730,6 +730,44 @@ pub const TypeSystem = struct {
                 // which correctly handles division (always Float) and other type promotions
                 return self.inferBinaryOpResultType(binary.operator.type, binary.left.?, binary.right.?, symbol_table);
             },
+            .FunctionCall => |call| {
+                // Resolve a call's return type from the registered function signatures.
+                // The HIRGenerator wrapper handles top-level calls, but nested calls
+                // (e.g. `f() + g()`) recurse through here, so this must agree with it.
+                if (self.function_signatures) |sigs| {
+                    switch (call.callee.data) {
+                        // Local function: `foo()`
+                        .Variable => |v| {
+                            if (sigs.get(v.lexeme)) |info| return info.return_type;
+                        },
+                        .FieldAccess => |fa| {
+                            // Module function (`m.sq`) or, via the last two segments,
+                            // a module-qualified struct static / constructor
+                            // (`rl.RGBA.new` -> `RGBA.new`).
+                            if (self.buildDottedName(call.callee)) |dotted| {
+                                defer self.allocator.free(dotted);
+                                if (sigs.get(dotted)) |info| return info.return_type;
+                                if (lastTwoSegments(dotted)) |last2| {
+                                    if (sigs.get(last2)) |info| return info.return_type;
+                                }
+                            }
+                            // Instance method on a struct receiver: `inst.method()`.
+                            const recv_type = self.inferTypeFromExpression(fa.object, symbol_table);
+                            if (recv_type == .Struct) {
+                                if (self.struct_table) |st| {
+                                    if (st.getName(recv_type.Struct)) |sname| {
+                                        const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ sname, fa.field.lexeme }) catch return .Unknown;
+                                        defer self.allocator.free(qualified);
+                                        if (sigs.get(qualified)) |info| return info.return_type;
+                                    }
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+                return .Unknown;
+            },
             .Array => {
                 const elements = expr.data.Array;
                 if (elements.len > 0) {
@@ -918,6 +956,31 @@ pub const TypeSystem = struct {
             else => .String,
         };
         return result;
+    }
+
+    /// Build a dotted qualified name from a nested `Variable`/`FieldAccess`
+    /// callee (e.g. `m.sq` -> "m.sq", `rl.RGBA.new` -> "rl.RGBA.new").
+    /// Returns an allocator-owned slice the caller must free, or null.
+    fn buildDottedName(self: *TypeSystem, expr: *ast.Expr) ?[]const u8 {
+        return switch (expr.data) {
+            .Variable => |v| self.allocator.dupe(u8, v.lexeme) catch null,
+            .FieldAccess => |fa| blk: {
+                const parent = self.buildDottedName(fa.object) orelse break :blk null;
+                defer self.allocator.free(parent);
+                break :blk std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ parent, fa.field.lexeme }) catch null;
+            },
+            else => null,
+        };
+    }
+
+    /// The trailing `Type.method` of a 3+ segment dotted name (e.g.
+    /// "rl.RGBA.new" -> "RGBA.new"); null for names with fewer than two dots.
+    /// Returns a slice into `name` (no allocation).
+    fn lastTwoSegments(name: []const u8) ?[]const u8 {
+        const last_dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return null;
+        const before = name[0..last_dot];
+        const prev_dot = std.mem.lastIndexOfScalar(u8, before, '.') orelse return null;
+        return name[prev_dot + 1 ..];
     }
 
     pub fn inferBinaryOpResultType(self: *TypeSystem, operator_type: TokenType, left_expr: *ast.Expr, right_expr: *ast.Expr, symbol_table: *SymbolTable) HIRType {
