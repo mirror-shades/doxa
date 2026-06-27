@@ -17,7 +17,7 @@ test "inline zig: accepts import consts and function bodies" {
         \\}
     ;
 
-    const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src);
+    const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src, false);
     defer {
         for (sigs) |sig| {
             testing.allocator.free(sig.name);
@@ -45,7 +45,7 @@ test "inline zig: accepts multiline signatures" {
         \\}
     ;
 
-    const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src);
+    const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src, false);
     defer {
         for (sigs) |sig| {
             testing.allocator.free(sig.name);
@@ -64,17 +64,17 @@ test "inline zig: accepts multiline signatures" {
 
 test "inline zig: rejects non-import const at top level" {
     const src = "const x = 123;";
-    try testing.expectError(error.InlineZigNotValid, inline_zig.sanitizeAndExtract(testing.allocator, src));
+    try testing.expectError(error.InlineZigNotValid, inline_zig.sanitizeAndExtract(testing.allocator, src, false));
 }
 
 test "inline zig: rejects invalid parameter type on pub fn" {
     const src = "pub fn bad(x: i32) i64 { _ = x; return 0; }";
-    try testing.expectError(error.InvalidParamType, inline_zig.sanitizeAndExtract(testing.allocator, src));
+    try testing.expectError(error.InvalidParamType, inline_zig.sanitizeAndExtract(testing.allocator, src, false));
 }
 
 test "inline zig: rejects invalid return type on pub fn" {
     const src = "pub fn bad(x: i64) i32 { _ = x; return 0; }";
-    try testing.expectError(error.InvalidReturnType, inline_zig.sanitizeAndExtract(testing.allocator, src));
+    try testing.expectError(error.InvalidReturnType, inline_zig.sanitizeAndExtract(testing.allocator, src, false));
 }
 
 test "inline zig: rejects pub const struct at top level" {
@@ -82,12 +82,67 @@ test "inline zig: rejects pub const struct at top level" {
         \\pub const S = struct { x: i64 };
         \\pub fn f() i64 { return 1; }
     ;
-    try testing.expectError(error.InlineZigNotValid, inline_zig.sanitizeAndExtract(testing.allocator, src));
+    try testing.expectError(error.InlineZigNotValid, inline_zig.sanitizeAndExtract(testing.allocator, src, false));
 }
 
 test "inline zig: rejects extern declarations without bodies" {
     const src = "extern fn f(x: i64) i64;";
-    try testing.expectError(error.InlineZigNotValid, inline_zig.sanitizeAndExtract(testing.allocator, src));
+    try testing.expectError(error.InlineZigNotValid, inline_zig.sanitizeAndExtract(testing.allocator, src, false));
+}
+
+test "inline zig: lenient mode tolerates arbitrary top-level and extracts only Doxa-compatible pub fns" {
+    const src =
+        \\const std = @import("std");
+        \\const c = @cImport({
+        \\    @cInclude("raylib.h");
+        \\});
+        \\
+        \\pub const Color = extern struct { r: u8, g: u8, b: u8, a: u8 };
+        \\
+        \\fn helper(x: i64) i32 {
+        \\    return @intCast(x);
+        \\}
+        \\
+        \\pub fn initWindow(w: i64, h: i64, title: []const u8) void {
+        \\    _ = w;
+        \\    _ = h;
+        \\    _ = title;
+        \\}
+        \\
+        \\pub fn drawCircle(x: i64, y: i64, color: [4]u8) void {
+        \\    _ = x;
+        \\    _ = y;
+        \\    _ = color;
+        \\}
+        \\
+        \\pub fn windowShouldClose() bool {
+        \\    return false;
+        \\}
+    ;
+
+    const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src, true);
+    defer {
+        for (sigs) |sig| {
+            testing.allocator.free(sig.name);
+            testing.allocator.free(sig.param_types);
+        }
+        testing.allocator.free(sigs);
+    }
+
+    // `Color`, `c` (@cImport), `std`, `helper`, and `drawCircle` (unsupported
+    // `[4]u8` param) are all skipped; only the two Doxa-compatible pub fns remain.
+    try testing.expectEqual(@as(usize, 2), sigs.len);
+
+    try testing.expectEqualStrings("initWindow", sigs[0].name);
+    try testing.expectEqual(@as(usize, 3), sigs[0].param_types.len);
+    try testing.expectEqual(ast.Type.Int, sigs[0].param_types[0].base);
+    try testing.expectEqual(ast.Type.Int, sigs[0].param_types[1].base);
+    try testing.expectEqual(ast.Type.String, sigs[0].param_types[2].base);
+    try testing.expectEqual(ast.Type.Nothing, sigs[0].return_type.base);
+
+    try testing.expectEqualStrings("windowShouldClose", sigs[1].name);
+    try testing.expectEqual(@as(usize, 0), sigs[1].param_types.len);
+    try testing.expectEqual(ast.Type.Tetra, sigs[1].return_type.base);
 }
 
 test "inline zig: collectInlineZigDecls only sees reachable modules" {
