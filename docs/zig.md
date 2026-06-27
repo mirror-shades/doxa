@@ -1,5 +1,25 @@
 `zig` blocks are embedded Zig modules.
 
+Zig can be brought into a Doxa program two ways, both subject to the same rules below:
+
+- **Inline block** — `zig <Name> { ... }` defines module `<Name>` directly in the `.doxa` source.
+- **File import** — `module <Alias> from "<path>.zig"` imports an external `.zig` file as module `<Alias>`.
+
+Both forms are validated by the same extractor and lower to the same code generation and ABI path, so `<Name>.func(...)` calls behave identically regardless of form.
+
+## File imports
+
+```doxa
+module Math from "mathutil.zig"
+
+const n is Math.double(21)
+```
+
+- The import alias (`Math`) names the module; calls use `Alias.func(...)`.
+- The path resolves relative to the importing `.doxa` file, like any other `module ... from` import.
+- The imported file must obey the restricted subset below; violations are reported as a compile error (`E7010`).
+- Edits to the imported `.zig` are picked up automatically on the next build — the generated module is content-hashed and rebuilt whenever its source changes, so no manual cache clearing is needed.
+
 ## Current source-level rules
 
 1. Top-level is restricted to:
