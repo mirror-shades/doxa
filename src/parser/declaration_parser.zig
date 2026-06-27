@@ -439,7 +439,19 @@ pub fn parseStructDecl(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*
             while (self.peek().type == .NEWLINE) self.advance();
 
             if (self.peek().type != .LEFT_BRACE) {
-                return error.ExpectedLeftBrace;
+                const current_token = self.peek();
+                const location = Location{
+                    .file = self.current_file,
+                    .file_uri = self.current_file_uri,
+                    .range = .{
+                        .start_line = current_token.line,
+                        .start_col = current_token.column,
+                        .end_line = current_token.line,
+                        .end_col = current_token.column,
+                    },
+                };
+                self.reporter.reportCompileError(location, ErrorCode.EXPECTED_LEFT_BRACE_OR_RETURNS_KEYWORD, "expected '{{' to start method body; declare a return type with `returns <type>`", .{});
+                return error.ExpectedLeftBraceOrReturnsKeyword;
             }
             self.advance();
 

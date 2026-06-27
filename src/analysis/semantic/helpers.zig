@@ -922,10 +922,10 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                             type_info.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
                         }
                     },
-                    .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false },
+                    .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false, .custom_type = try self.allocator.dupe(u8, field_name) },
                     .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
                     .Group => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-                    .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
+                    .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try self.allocator.dupe(u8, field_name) },
                     .Import => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
                 }
                 return type_info;

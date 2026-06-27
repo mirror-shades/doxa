@@ -578,10 +578,76 @@ pub const SemanticAnalyzer = struct {
                     }
                 }
             }
+
+            // Eagerly register public structs from every imported module namespace so
+            // that module-qualified access (e.g. `rl.RGBA`) resolves its type and that
+            // static/instance methods (e.g. `rl.RGBA.new(...)`) can be dispatched. The
+            // imported-symbols pass above only covers direct symbol imports; namespace
+            // imports reach their structs through `module_namespaces`, the authoritative
+            // map whose ASTs are guaranteed populated (the HIR generator relies on it too).
+            var ns_it = p.module_namespaces.iterator();
+            while (ns_it.next()) |entry| {
+                const module_info = entry.value_ptr.*;
+                const module_ast = module_info.ast orelse continue;
+                if (module_ast.data != .Block) continue;
+                for (module_ast.data.Block.statements) |mod_stmt| {
+                    if (mod_stmt.data != .Expression) continue;
+                    const mod_expr = mod_stmt.data.Expression orelse continue;
+                    if (mod_expr.data != .StructDecl) continue;
+                    const sd = mod_expr.data.StructDecl;
+                    if (!sd.is_public) continue;
+                    try self.registerImportedStruct(sd);
+                }
+            }
         }
 
         // Restore previous scope
         self.current_scope = prev_scope;
+    }
+
+    /// Register an imported public struct's type and public methods (static and
+    /// instance) under its bare name, idempotently. No scope binding is created:
+    /// imported structs are reached through module-qualified access, not bare names.
+    fn registerImportedStruct(self: *SemanticAnalyzer, sd: ast.StructDecl) ErrorList!void {
+        const field_types = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
+        for (sd.fields, 0..) |field, i| {
+            field_types[i] = ast.StructFieldType{
+                .name = field.name.lexeme,
+                .type_info = try self.typeExprToTypeInfo(field.type_expr),
+                .is_public = field.is_public,
+            };
+        }
+        try helpers.registerStructType(self, sd.name.lexeme, field_types);
+
+        var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
+        for (sd.methods) |m| {
+            if (!m.is_public) continue;
+            var ret_type_ptr: *ast.TypeInfo = undefined;
+            if (m.return_type_info.base != .Nothing) {
+                const rtp = try ast.TypeInfo.createDefault(self.allocator);
+                rtp.* = try self.resolveTypeInfo(m.return_type_info);
+                ret_type_ptr = rtp;
+            } else {
+                const rtp = try ast.TypeInfo.createDefault(self.allocator);
+                rtp.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                ret_type_ptr = rtp;
+            }
+            const mi = @This().StructMethodInfo{
+                .name = m.name.lexeme,
+                .is_public = m.is_public,
+                .is_static = m.is_static,
+                .return_type = ret_type_ptr,
+            };
+            _ = try method_table.put(m.name.lexeme, mi);
+        }
+        if (self.struct_methods.getPtr(sd.name.lexeme)) |existing| {
+            var mit = method_table.iterator();
+            while (mit.next()) |e| {
+                _ = try existing.put(e.key_ptr.*, e.value_ptr.*);
+            }
+        } else {
+            try self.struct_methods.put(sd.name.lexeme, method_table);
+        }
     }
 
     fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {

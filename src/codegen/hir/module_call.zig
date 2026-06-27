@@ -129,6 +129,41 @@ fn classifyFieldAccessCall(generator: *HIRGenerator, field_access: ast.FieldAcce
         }
     }
 
+    // Module-qualified struct static method / constructor: ns.Struct.method(...).
+    // The object is itself a field access (`ns.Struct`) where `ns` is a module
+    // namespace and `Struct` is an imported struct type. Struct methods are emitted
+    // under their bare `Struct.method` name, so resolve them here before treating
+    // the call as a plain module function (`ns.Struct.method`, which does not exist).
+    if (field_access.object.data == .FieldAccess) {
+        const inner = field_access.object.data.FieldAccess;
+        if (try moduleNamespaceFromExpr(generator, inner.object)) |ns| {
+            defer generator.allocator.free(ns);
+            const type_name = inner.field.lexeme;
+            const method_name = field_access.field.lexeme;
+
+            if (generator.isCustomType(type_name)) |ct| {
+                if (ct.kind == .Struct and std.mem.eql(u8, method_name, "New")) {
+                    return .{ .struct_constructor = type_name };
+                }
+            }
+
+            if (generator.struct_methods.get(type_name)) |method_table| {
+                if (method_table.get(method_name)) |mi| {
+                    if (mi.is_static) {
+                        const qualified = try std.fmt.allocPrint(generator.allocator, "{s}.{s}", .{ type_name, method_name });
+                        return .{
+                            .struct_static = .{
+                                .qualified_name = qualified,
+                                .name_allocated = true,
+                                .function_index = generator.getFunctionIndex(qualified),
+                            },
+                        };
+                    }
+                }
+            }
+        }
+    }
+
     if (try resolveModuleFieldCall(generator, field_access)) |resolved| {
         return .{ .function = resolved };
     }
