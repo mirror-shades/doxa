@@ -804,7 +804,16 @@ pub fn main() !void {
     var profiler = Profiler.init(gpa.allocator(), cli_options.profile);
     defer profiler.deinit();
 
-    const source = try std.fs.cwd().readFileAlloc(memoryManager.getAnalysisAllocator(), script_path, MAX_FILE_SIZE);
+    const source = std.fs.cwd().readFileAlloc(memoryManager.getAnalysisAllocator(), script_path, MAX_FILE_SIZE) catch |err| {
+        switch (err) {
+            error.FileNotFound => std.debug.print("Error: could not find script '{s}' (looked relative to {s})\n", .{ script_path, std.fs.cwd().realpathAlloc(gpa.allocator(), ".") catch "the current directory" }),
+            error.AccessDenied => std.debug.print("Error: permission denied reading script '{s}'\n", .{script_path}),
+            error.IsDir => std.debug.print("Error: '{s}' is a directory, not a Doxa source file\n", .{script_path}),
+            error.FileTooBig => std.debug.print("Error: script '{s}' exceeds the maximum size of {d} bytes\n", .{ script_path, MAX_FILE_SIZE }),
+            else => std.debug.print("Error: could not read script '{s}': {s}\n", .{ script_path, @errorName(err) }),
+        }
+        std.process.exit(EXIT_CODE_USAGE);
+    };
     defer memoryManager.getAnalysisAllocator().free(source);
     try sourceCache.load(script_path, source);
     isDoxaFile(script_path, try reporter.ensureFileUri(script_path), &reporter);
