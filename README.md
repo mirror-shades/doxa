@@ -105,8 +105,6 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 
 module std from @std()
 
-const symbols is [ ">", "<", "+", "-", ".", ",", "[", "]" ]
-
 function getInput() returns byte {
     const input is std.io.input() as string else {
         @print("Failed to get input: {input}")
@@ -150,7 +148,8 @@ function checkClosingBracket(scan :: string) returns tetra {
 }
 
 function interpret(scan :: string) {
-    var tape :: byte[10] # increase if needed
+    const tapeSize is 30000
+    var tape :: byte[tapeSize]
     var loops :: int
     var loopSpot :: int[]
     var tp :: int
@@ -162,19 +161,17 @@ function interpret(scan :: string) {
     @assert(closedBrackets, "Unmatched brackets")
 
     while(ip < scanLength) do ip += 1 {
-        var currentInstruction is scan[ip]
-        if currentInstruction == ">" then tp += 1
-        if currentInstruction == "<" then tp -= 1
-        if currentInstruction == "+" then tape[tp] += 0x01
-        if currentInstruction == "-" then tape[tp] -= 0x01
-        if currentInstruction == "." then @print("Output: {tape[tp]}\n")
-        if currentInstruction == "," then tape[tp] is getInput()
-        if currentInstruction == "[" then startLoop(^loopSpot, ^loops, ip)
-        if currentInstruction == "]" then endLoop(loopSpot, ^loops, ^ip, tape, tp)
+        match scan[ip] {
+            ">" then tp += 1,
+            "<" then tp -= 1,
+            "+" then tape[tp] += 0x01,
+            "-" then tape[tp] -= 0x01,
+            "." then @print("Output: {tape[tp]}\n"),
+            "," then tape[tp] is getInput(),
+            "[" then startLoop(^loopSpot, ^loops, ip),
+            "]" then endLoop(loopSpot, ^loops, ^ip, tape, tp),
+            else @print("Unrecognized Token: {scan[ip]}"),
+        }
     }
-}
-
-public entry function main() {
-    interpret(",+.")
 }
 ```
