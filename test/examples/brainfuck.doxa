@@ -68,7 +68,7 @@ function interpret(scan :: string) {
             "," then tape[tp] is getInput(),
             "[" then startLoop(^loopSpot, ^loops, ip),
             "]" then endLoop(loopSpot, ^loops, ^ip, tape, tp),
-            else @print("Unrecognized Token: {scan[ip]}"),
+            else @print("Unrecognized Token: {scan[ip]}\n"),
         }
     }
 }
