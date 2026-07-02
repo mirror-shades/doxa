@@ -495,6 +495,22 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         .program_args = &[_][]const u8{},
     };
 
+    if (stringEquals(args[1], "init")) {
+        const project_name: ?[]const u8 = if (args.len > 2) blk: {
+            if (args.len > 3) {
+                std.debug.print("Error: `doxa init` takes at most one project name\n", .{});
+                printUsage();
+                std.process.exit(EXIT_CODE_USAGE);
+            }
+            break :blk args[2];
+        } else null;
+        runInit(project_name) catch |err| {
+            std.debug.print("Error: could not initialize project: {s}\n", .{@errorName(err)});
+            std.process.exit(EXIT_CODE_USAGE);
+        };
+        std.process.exit(0);
+    }
+
     if (stringEquals(args[1], "--lsp")) {
         options.lsp_mode = .stdio;
         if (args.len > 2) {
@@ -684,9 +700,78 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
     return options;
 }
 
+fn runInit(project_name: ?[]const u8) !void {
+    const cwd = std.fs.cwd();
+
+    var dir = if (project_name) |name| dir: {
+        cwd.makeDir(name) catch |err| switch (err) {
+            error.PathAlreadyExists => {
+                std.debug.print("Error: '{s}' already exists\n", .{name});
+                std.process.exit(EXIT_CODE_USAGE);
+            },
+            else => return err,
+        };
+        break :dir try cwd.openDir(name, .{});
+    } else dir: {
+        if (!try isDirEmpty(cwd)) {
+            if (!try promptYesNo("Current directory is not empty. Create project here?")) {
+                std.debug.print("Aborted.\n", .{});
+                std.process.exit(0);
+            }
+        }
+        break :dir try cwd.openDir(".", .{});
+    };
+    defer if (project_name != null) dir.close();
+
+    try dir.makePath("src");
+    var src_dir = try dir.openDir("src", .{});
+    defer src_dir.close();
+
+    (try src_dir.createFile("main.doxa", .{})).close();
+    (try dir.createFile("build.doxa", .{})).close();
+
+    if (project_name) |name| {
+        std.debug.print("Initialized Doxa project in {s}/\n", .{name});
+    } else {
+        std.debug.print("Initialized Doxa project in current directory\n", .{});
+    }
+}
+
+fn isDirEmpty(dir: std.fs.Dir) !bool {
+    var iterable = try dir.openDir(".", .{ .iterate = true });
+    defer iterable.close();
+    var it = iterable.iterate();
+    return (try it.next()) == null;
+}
+
+fn promptYesNo(question: []const u8) !bool {
+    std.debug.print("{s} [Y/n] ", .{question});
+
+    var stdin_buffer: [256]u8 = undefined;
+    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    const reader = &stdin_reader.interface;
+
+    var line: [256]u8 = undefined;
+    var len: usize = 0;
+    while (len < line.len) {
+        const byte = std.io.Reader.takeByte(reader) catch |err| switch (err) {
+            error.EndOfStream => break,
+            else => return err,
+        };
+        if (byte == '\n') break;
+        line[len] = byte;
+        len += 1;
+    }
+
+    const trimmed = std.mem.trim(u8, line[0..len], " \t\r");
+    if (trimmed.len == 0) return true;
+    return trimmed[0] == 'y' or trimmed[0] == 'Y';
+}
+
 fn printUsage() void {
     std.debug.print("Doxa Programming Language\n", .{});
     std.debug.print("\nUsage:\n", .{});
+    std.debug.print("  doxa init [project-name]        # Scaffold a new Doxa project\n", .{});
     std.debug.print("  doxa run [general options] <file.doxa>\n", .{});
     std.debug.print("  doxa compile [general options] <file.doxa> -o <output> [compile options]\n", .{});
     std.debug.print("  doxa --lsp [--lsp-debug-io]     # Start the Language Server Protocol loop\n", .{});

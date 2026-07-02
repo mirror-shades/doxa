@@ -81,6 +81,10 @@ pub const Parser = struct {
     module_cache: std.StringHashMap(ModuleInfo),
     module_namespaces: std.StringHashMap(ModuleInfo),
 
+    // Compile-time module-namespace aliases created by `const alias is std.io`.
+    // Maps the alias name to the canonical namespace it refers to (e.g. "std.io").
+    namespace_aliases: std.StringHashMap([]const u8),
+
     module_imports: std.StringHashMap(std.StringHashMap(ModuleImportEntry)),
     specific_imports: std.array_list.Managed(SpecificImportEntry),
 
@@ -104,6 +108,7 @@ pub const Parser = struct {
             .current_file_uri = current_file_uri,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
+            .namespace_aliases = std.StringHashMap([]const u8).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap(ModuleImportEntry)).init(allocator),
             .specific_imports = std.array_list.Managed(SpecificImportEntry).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
@@ -117,6 +122,7 @@ pub const Parser = struct {
     pub fn deinit(self: *Parser) void {
         self.module_cache.deinit();
         self.module_namespaces.deinit();
+        self.namespace_aliases.deinit();
         self.module_imports.deinit();
         self.specific_imports.deinit();
         if (self.imported_symbols) |*imported_symbols| {
@@ -131,6 +137,19 @@ pub const Parser = struct {
             self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
         }
         return &self.imported_symbols.?;
+    }
+
+    /// Resolve a module-namespace alias to its canonical namespace name. Follows
+    /// alias chains and returns the input name unchanged when it is not an alias.
+    pub fn canonicalNamespace(self: *const Parser, name: []const u8) []const u8 {
+        var current = name;
+        var hops: usize = 0;
+        while (self.namespace_aliases.get(current)) |target| {
+            current = target;
+            hops += 1;
+            if (hops > 64) break;
+        }
+        return current;
     }
 
     pub fn peek(self: *Parser) token.Token {

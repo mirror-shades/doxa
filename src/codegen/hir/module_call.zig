@@ -33,6 +33,9 @@ pub const CallTarget = union(enum) {
 pub fn moduleNamespaceFromExpr(generator: *HIRGenerator, expr: *ast.Expr) !?[]const u8 {
     return switch (expr.data) {
         .Variable => |var_tok| blk: {
+            if (generator.resolveNamespaceAlias(var_tok.lexeme)) |canonical| {
+                break :blk try generator.allocator.dupe(u8, canonical);
+            }
             if (generator.isModuleNamespace(var_tok.lexeme)) {
                 break :blk try generator.allocator.dupe(u8, var_tok.lexeme);
             }
