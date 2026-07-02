@@ -2138,7 +2138,16 @@ pub const HIRGenerator = struct {
         }
     }
 
+    /// Resolve a compile-time module-namespace alias (`const io is std.io`) to its
+    /// canonical namespace name, or null when `name` is not an alias.
+    pub fn resolveNamespaceAlias(self: *HIRGenerator, name: []const u8) ?[]const u8 {
+        const sa = self.semantic_analyzer orelse return null;
+        const parser = sa.parser orelse return null;
+        return parser.namespace_aliases.get(name);
+    }
+
     pub fn isModuleNamespace(self: *HIRGenerator, name: []const u8) bool {
+        if (self.resolveNamespaceAlias(name) != null) return true;
         if (self.module_namespaces.contains(name)) return true;
         var it = self.module_namespaces.iterator();
         while (it.next()) |entry| {
