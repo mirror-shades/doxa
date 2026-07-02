@@ -118,12 +118,28 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
 
     const info = try extractModuleInfoWithParser(self, module_block, module_data.resolved_path, null, &new_parser);
 
-    // Propagate child parser's module_namespaces to the parent so that
-    // dependencies discovered during parsing (e.g. `module error from "..."`)
-    // are visible to the parent parser and can be lazy-loaded later.
+    // Propagate the child's *private* module dependencies to the parent so the
+    // module's own flattened code can still resolve them (e.g. io.doxa's private
+    // `module error from ...`). Public re-exports are intentionally NOT propagated:
+    // they are reached via qualified access (`std.io`) or an explicit
+    // `import io from ...`, so leaking them as bare names would be namespace
+    // pollution.
     {
+        var public_reexports = std.StringHashMap(void).init(self.allocator);
+        defer public_reexports.deinit();
+        var importer_it = new_parser.module_imports.iterator();
+        while (importer_it.next()) |importer| {
+            var alias_it = importer.value_ptr.iterator();
+            while (alias_it.next()) |alias_entry| {
+                if (alias_entry.value_ptr.is_public) {
+                    try public_reexports.put(alias_entry.key_ptr.*, {});
+                }
+            }
+        }
+
         var child_ns_it = new_parser.module_namespaces.iterator();
         while (child_ns_it.next()) |child_ns| {
+            if (public_reexports.contains(child_ns.key_ptr.*)) continue;
             if (!self.module_namespaces.contains(child_ns.key_ptr.*)) {
                 try self.module_namespaces.put(child_ns.key_ptr.*, child_ns.value_ptr.*);
             }

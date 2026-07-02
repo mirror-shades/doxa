@@ -140,10 +140,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
         },
         .VarDecl => |decl| {
-            // `const alias is std.io` is a compile-time namespace alias resolved by
-            // the semantic analyzer; it produces no runtime binding or code.
-            if (self.resolveNamespaceAlias(decl.name.lexeme) != null) return;
-
             var var_type: HIRType = .Nothing;
             var precreated_cast_idx: ?u32 = null;
 

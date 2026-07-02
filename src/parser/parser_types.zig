@@ -81,10 +81,6 @@ pub const Parser = struct {
     module_cache: std.StringHashMap(ModuleInfo),
     module_namespaces: std.StringHashMap(ModuleInfo),
 
-    // Compile-time module-namespace aliases created by `const alias is std.io`.
-    // Maps the alias name to the canonical namespace it refers to (e.g. "std.io").
-    namespace_aliases: std.StringHashMap([]const u8),
-
     module_imports: std.StringHashMap(std.StringHashMap(ModuleImportEntry)),
     specific_imports: std.array_list.Managed(SpecificImportEntry),
 
@@ -108,7 +104,6 @@ pub const Parser = struct {
             .current_file_uri = current_file_uri,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
-            .namespace_aliases = std.StringHashMap([]const u8).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap(ModuleImportEntry)).init(allocator),
             .specific_imports = std.array_list.Managed(SpecificImportEntry).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
@@ -122,7 +117,6 @@ pub const Parser = struct {
     pub fn deinit(self: *Parser) void {
         self.module_cache.deinit();
         self.module_namespaces.deinit();
-        self.namespace_aliases.deinit();
         self.module_imports.deinit();
         self.specific_imports.deinit();
         if (self.imported_symbols) |*imported_symbols| {
@@ -137,19 +131,6 @@ pub const Parser = struct {
             self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
         }
         return &self.imported_symbols.?;
-    }
-
-    /// Resolve a module-namespace alias to its canonical namespace name. Follows
-    /// alias chains and returns the input name unchanged when it is not an alias.
-    pub fn canonicalNamespace(self: *const Parser, name: []const u8) []const u8 {
-        var current = name;
-        var hops: usize = 0;
-        while (self.namespace_aliases.get(current)) |target| {
-            current = target;
-            hops += 1;
-            if (hops > 64) break;
-        }
-        return current;
     }
 
     pub fn peek(self: *Parser) token.Token {
@@ -1732,19 +1713,21 @@ pub const Parser = struct {
             }
         };
 
-        if (self.module_cache.get(module_path)) |module_info| {
-            const alias = deriveAlias.fromPath(self.allocator, module_path);
-            if (!self.module_namespaces.contains(alias)) {
-                try self.module_namespaces.put(alias, module_info);
-            }
+        const module_info = if (self.module_cache.get(module_path)) |cached|
+            cached
+        else
+            try module_resolver.resolveModule(self, module_path);
 
-            if (module_info.ast) |module_ast| {
-                try self.registerSpecificSymbol(module_ast, module_path, symbol_name);
-            }
+        // If the requested symbol is a public module re-exported by this module
+        // (`public module io from ...`), bind it directly as a namespace so
+        // `io.println(...)` resolves, without exposing the parent module itself.
+        for (module_info.imports) |import_info| {
+            if (import_info.import_type != .Module or !import_info.is_public) continue;
+            const reexport_alias = import_info.namespace_alias orelse continue;
+            if (!std.mem.eql(u8, reexport_alias, symbol_name)) continue;
+            try self.registerReexportedSubmodule(module_info.file_path, import_info.module_path, symbol_name);
             return;
         }
-
-        const module_info = try module_resolver.resolveModule(self, module_path);
 
         const alias = deriveAlias.fromPath(self.allocator, module_path);
         if (!self.module_namespaces.contains(alias)) {
@@ -1864,5 +1847,24 @@ pub const Parser = struct {
             },
             else => {},
         }
+    }
+
+    /// Load a submodule re-exported by `parent_path` (via `public module <name> from
+    /// child_rel_path`) and register it directly under `bind_name` as a namespace.
+    fn registerReexportedSubmodule(self: *Parser, parent_path: []const u8, child_rel_path: []const u8, bind_name: []const u8) ErrorList!void {
+        if (self.module_namespaces.get(bind_name)) |existing| {
+            if (existing.ast != null) return;
+        }
+
+        const previous_current_file = self.current_file;
+        const previous_current_file_uri = self.current_file_uri;
+        self.current_file = parent_path;
+        self.current_file_uri = try self.reporter.ensureFileUri(parent_path);
+        defer {
+            self.current_file = previous_current_file;
+            self.current_file_uri = previous_current_file_uri;
+        }
+
+        _ = try self.loadAndRegisterModule(child_rel_path, bind_name, null);
     }
 };

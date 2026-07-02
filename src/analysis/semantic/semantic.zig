@@ -180,53 +180,6 @@ pub const SemanticAnalyzer = struct {
         return current;
     }
 
-    /// If `expr` is a pure module-namespace path (e.g. `std` or `std.io`), return
-    /// its canonical namespace name (analysis-allocator owned). Nested namespaces
-    /// are lazily resolved so `std.io` is recognised even before first use.
-    fn moduleNamespacePathOf(self: *SemanticAnalyzer, expr: *ast.Expr) ?[]const u8 {
-        const parser_const = self.parser orelse return null;
-        const parser: *Parser = @constCast(parser_const);
-        switch (expr.data) {
-            .Variable => |v| {
-                const canon = parser.canonicalNamespace(v.lexeme);
-                _ = parser.ensureModuleNamespace(canon) catch return null;
-                if (parser.module_namespaces.contains(canon)) {
-                    return self.allocator.dupe(u8, canon) catch null;
-                }
-                return null;
-            },
-            .FieldAccess => |fa| {
-                const parent = self.moduleNamespacePathOf(fa.object) orelse return null;
-                defer self.allocator.free(parent);
-                _ = parser.ensureNestedModuleNamespace(parent, fa.field.lexeme) catch return null;
-                const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ parent, fa.field.lexeme }) catch return null;
-                if (parser.module_namespaces.contains(qualified)) return qualified;
-                self.allocator.free(qualified);
-                return null;
-            },
-            else => return null,
-        }
-    }
-
-    /// Detect `const alias is <module-namespace>` declarations and record them as
-    /// compile-time namespace aliases. Returns true when the declaration was an
-    /// alias (and therefore should not create a runtime variable binding).
-    fn tryRegisterModuleAlias(self: *SemanticAnalyzer, decl: anytype) !bool {
-        const init_expr = decl.initializer orelse return false;
-        const parser_const = self.parser orelse return false;
-        const parser: *Parser = @constCast(parser_const);
-
-        const canonical = self.moduleNamespacePathOf(init_expr) orelse return false;
-
-        if (parser.namespace_aliases.contains(decl.name.lexeme)) {
-            self.allocator.free(canonical);
-            return true;
-        }
-        const alias_key = try self.allocator.dupe(u8, decl.name.lexeme);
-        try parser.namespace_aliases.put(alias_key, canonical);
-        return true;
-    }
-
 
 
     // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo
@@ -862,9 +815,6 @@ pub const SemanticAnalyzer = struct {
         for (statements, 0..) |stmt, i| {
             switch (stmt.data) {
                 .VarDecl => |decl| {
-                    // `const alias is std.io` binds a module namespace, not a value.
-                    if (try self.tryRegisterModuleAlias(decl)) continue;
-
                     // Create TypeInfo
                     const type_info = try ast.TypeInfo.createDefault(self.allocator);
                     errdefer self.allocator.destroy(type_info);
@@ -1215,8 +1165,6 @@ pub const SemanticAnalyzer = struct {
                         self.tryResolveArraySizes(&statements[i].data.VarDecl.type_info, te);
                     }
                     const decl = statements[i].data.VarDecl;
-                    // `const alias is std.io` binds a module namespace, not a value.
-                    if (try self.tryRegisterModuleAlias(decl)) continue;
                     const prev_bve = self.block_value_expected;
                     self.block_value_expected = decl.initializer != null;
                     defer self.block_value_expected = prev_bve;
