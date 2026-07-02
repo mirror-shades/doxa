@@ -24,6 +24,43 @@ pub const ImportedSymbol = struct {
     used: bool = false,
 };
 
+/// Parse the module source that follows a `from` keyword: either a `"string"`
+/// path or the `@std()` intrinsic. Assumes the caller has consumed `from`.
+fn parseModuleSource(self: *Parser) ErrorList![]const u8 {
+    if (self.peek().type != .STRING and self.peek().type != .STD) {
+        const current_token = self.peek();
+        const location = Location{
+            .file = self.current_file,
+            .file_uri = self.current_file_uri,
+            .range = .{
+                .start_line = current_token.line,
+                .start_col = current_token.column,
+                .end_line = current_token.line,
+                .end_col = current_token.column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_MODULE_PATH, "expected string literal with module path after 'from' keyword", .{});
+        return error.ExpectedModulePath;
+    }
+
+    if (self.peek().type == .STRING) {
+        var module_path = self.peek().lexeme;
+        if (module_path.len >= 2) {
+            module_path = module_path[1 .. module_path.len - 1];
+        }
+        self.advance();
+        return module_path;
+    }
+
+    // @std()
+    self.advance(); // @std
+    if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
+    self.advance(); // (
+    if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
+    self.advance(); // )
+    return try resolveStdPath(self.allocator);
+}
+
 pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
     self.advance();
 
@@ -62,37 +99,7 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
     }
     self.advance();
 
-    if (self.peek().type != .STRING and self.peek().type != .STD) {
-        const current_token = self.peek();
-        const location = Location{
-            .file = self.current_file,
-            .file_uri = self.current_file_uri,
-            .range = .{
-                .start_line = current_token.line,
-                .start_col = current_token.column,
-                .end_line = current_token.line,
-                .end_col = current_token.column,
-            },
-        };
-        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_MODULE_PATH, "expected string literal with module path after 'from' keyword", .{});
-        return error.ExpectedModulePath;
-    }
-
-    var module_path: []const u8 = undefined;
-    if (self.peek().type == .STRING) {
-        module_path = self.peek().lexeme;
-        if (module_path.len >= 2) {
-            module_path = module_path[1 .. module_path.len - 1];
-        }
-        self.advance();
-    } else if (self.peek().type == .STD) {
-        self.advance(); // @std
-        if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
-        self.advance(); // (
-        if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
-        self.advance(); // )
-        module_path = try resolveStdPath(self.allocator);
-    }
+    const module_path = try parseModuleSource(self);
 
     if (self.peek().type == .SEMICOLON) {
         self.advance();
@@ -187,27 +194,7 @@ pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
     }
     self.advance();
 
-    if (self.peek().type != .STRING) {
-        const current_token = self.peek();
-        const location = Location{
-            .file = self.current_file,
-            .file_uri = self.current_file_uri,
-            .range = .{
-                .start_line = current_token.line,
-                .start_col = current_token.column,
-                .end_line = current_token.line,
-                .end_col = current_token.column,
-            },
-        };
-        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_MODULE_PATH, "expected string literal with module path after 'from' keyword", .{});
-        return error.ExpectedModulePath;
-    }
-
-    var module_path = self.peek().lexeme;
-    if (module_path.len >= 2) {
-        module_path = module_path[1 .. module_path.len - 1];
-    }
-    self.advance();
+    const module_path = try parseModuleSource(self);
 
     if (self.peek().type == .SEMICOLON) {
         self.advance();

@@ -651,12 +651,6 @@ pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
         }
     }
     if (self.parser) |parser| {
-        // Compile-time namespace alias (`const io is std.io`): expose it as a
-        // namespace-typed binding pointing at the canonical namespace.
-        if (parser.namespace_aliases.get(name)) |canonical| {
-            return createModuleNamespaceAlias(self, name, canonical);
-        }
-
         const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
         _ = parser_mut.ensureImportedSymbol(name) catch |err| {
             reportLazyModuleError(self, null, err);
@@ -676,26 +670,6 @@ pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
         if (parser.module_namespaces.contains(name)) {
             return createModuleNamespaceVariable(self, name);
         }
-    }
-    return null;
-}
-
-pub fn createModuleNamespaceAlias(self: *SemanticAnalyzer, alias_name: []const u8, canonical: []const u8) ?*Variable {
-    const type_info = ast.TypeInfo.createDefault(self.allocator) catch return null;
-    errdefer self.allocator.destroy(type_info);
-
-    type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = canonical };
-    const token_type = eval.convertTypeToTokenType(type_info.base);
-
-    if (self.current_scope) |scope| {
-        if (scope.lookupVariable(alias_name)) |existing| {
-            scope.markUsed(alias_name);
-            return existing;
-        }
-        const placeholder_value = TokenLiteral{ .nothing = {} };
-        const variable = scope.createValueBinding(alias_name, placeholder_value, token_type, type_info, true) catch return null;
-        variable.used = true;
-        return variable;
     }
     return null;
 }
@@ -738,7 +712,6 @@ fn reportLazyModuleError(self: *SemanticAnalyzer, loc: ?Reporting.Location, err:
 
 pub fn isModuleNamespace(self: *SemanticAnalyzer, name: []const u8) bool {
     if (self.parser) |parser| {
-        if (parser.namespace_aliases.contains(name)) return true;
         const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
         _ = parser_mut.ensureModuleNamespace(name) catch |err| {
             reportLazyModuleError(self, null, err);
@@ -764,13 +737,11 @@ pub fn isModuleNamespace(self: *SemanticAnalyzer, name: []const u8) bool {
 }
 
 /// unchanged domain logic (minor nits left as-is)
-pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name_in: []const u8, field_name: []const u8, span: ast.SourceSpan) !*ast.TypeInfo {
+pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8, field_name: []const u8, span: ast.SourceSpan) !*ast.TypeInfo {
     var type_info = try ast.TypeInfo.createDefault(self.allocator);
     errdefer self.allocator.destroy(type_info);
 
     if (self.parser) |parser| {
-        // Resolve compile-time namespace aliases (e.g. `const io is std.io`).
-        const module_name = parser.canonicalNamespace(module_name_in);
         const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
         _ = parser_mut.ensureModuleNamespace(module_name) catch |err| {
             reportLazyModuleError(self, span.location, err);
@@ -967,7 +938,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name_in: []const 
         span.location,
         ErrorCode.FIELD_NOT_FOUND,
         "Field '{s}' not found in module '{s}'",
-        .{ field_name, module_name_in },
+        .{ field_name, module_name },
     );
     self.fatal_error = true;
     type_info.base = .Nothing;
