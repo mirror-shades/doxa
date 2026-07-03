@@ -280,6 +280,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const inline_zig_test_path = try getBinaryPath(allocator, "./test/out/inline_zig_test");
     const zig_import_test_path = try getBinaryPath(allocator, "./test/out/zig_import_test");
     const module_private_call_path = try getBinaryPath(allocator, "./test/out/module_private_call");
+    const import_submodule_path = try getBinaryPath(allocator, "./test/out/import_submodule");
     const calculator_path = try getBinaryPath(allocator, "./test/out/calculator");
     const http_link_path = try getBinaryPath(allocator, "./test/out/http_link_test");
     const list_path = try getBinaryPath(allocator, "./test/out/list");
@@ -383,6 +384,17 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = null,
             .expected_peek = answers.expected_module_private_call_results[0..],
+        },
+        .{
+            .name = "import submodule",
+            .binary_path = import_submodule_path,
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = &[_]print_result{
+                .{ .value = "submodule import works" },
+                .{ .value = "true" },
+            },
+            .expected_peek = null,
         },
         .{
             .name = "http link test",

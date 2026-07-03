@@ -156,7 +156,10 @@ pub fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.a
     var outputs = std.array_list.Managed([]const u8).init(allocator);
 
     var lines = std.mem.splitScalar(u8, output, '\n');
-    while (lines.next()) |line| {
+    while (lines.next()) |raw_line| {
+        // Normalize Windows line endings: stdlib `io.println` emits the OS-native
+        // terminator (`\r\n`), so strip a trailing `\r` before comparing.
+        const line = std.mem.trimRight(u8, raw_line, "\r");
         if (line.len == 0) continue;
         try outputs.append(line);
     }

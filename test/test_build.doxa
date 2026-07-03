@@ -12,6 +12,7 @@ build.compile("./test/misc/inline_zig_string.doxa", "./test/out/inline_zig_strin
 build.compile("./test/misc/inline_zig_test.doxa", "./test/out/inline_zig_test", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/zig_import_test.doxa", "./test/out/zig_import_test", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/module_private_call.doxa", "./test/out/module_private_call", host.arch(), host.os(), host.abi(), true)
+build.compile("./test/misc/import_submodule.doxa", "./test/out/import_submodule", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/examples/brainfuck.doxa", "./test/out/brainfuck", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/examples/calculator.doxa", "./test/out/calculator", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/http_link_test.doxa", "./test/out/http_link_test", host.arch(), host.os(), host.abi(), true)

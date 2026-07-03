@@ -1,0 +1,8 @@
+import io, time from @std()
+
+const t1 is time.monotonic()
+const t2 is time.monotonic()
+const ordered is t2 >= t1
+
+io.println("submodule import works")
+io.println("{ordered}")
