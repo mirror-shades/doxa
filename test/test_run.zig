@@ -268,6 +268,17 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected_peek = answers.expected_module_private_call_results[0..],
         },
         .{
+            .name = "import submodule",
+            .path = "./test/misc/import_submodule.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = &[_]print_result{
+                .{ .value = "submodule import works" },
+                .{ .value = "true" },
+            },
+            .expected_peek = null,
+        },
+        .{
             .name = "list",
             .path = "./test/misc/list.doxa",
             .mode = .PEEK,
