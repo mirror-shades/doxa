@@ -180,6 +180,48 @@ pub const SemanticAnalyzer = struct {
         return current;
     }
 
+    /// If `expr` is a pure module-namespace path (`std` or `std.io`), return its
+    /// canonical namespace name; otherwise null. Resolves lazily but performs no
+    /// type inference, so it has no side effects on later analysis.
+    fn moduleNamespacePathOf(self: *SemanticAnalyzer, expr: *ast.Expr) ?[]const u8 {
+        const parser_const = self.parser orelse return null;
+        const parser: *Parser = @constCast(parser_const);
+        switch (expr.data) {
+            .Variable => |v| {
+                _ = parser.ensureModuleNamespace(v.lexeme) catch return null;
+                if (parser.module_namespaces.contains(v.lexeme)) return v.lexeme;
+                return null;
+            },
+            .FieldAccess => |fa| {
+                const parent = self.moduleNamespacePathOf(fa.object) orelse return null;
+                _ = parser.ensureNestedModuleNamespace(parent, fa.field.lexeme) catch return null;
+                const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ parent, fa.field.lexeme }) catch return null;
+                if (parser.module_namespaces.contains(qualified)) return qualified;
+                self.allocator.free(qualified);
+                return null;
+            },
+            else => return null,
+        }
+    }
+
+    /// A module namespace (`std`, `std.io`) is a compile-time construct, not a
+    /// value, so it cannot be bound to a variable. Detect `const x is std.io`
+    /// and report a clear error steering the user toward `import`. Returns true
+    /// when a namespace binding was detected and reported.
+    fn reportNamespaceBinding(self: *SemanticAnalyzer, decl: anytype, base: ast.Base) bool {
+        const init_expr = decl.initializer orelse return false;
+        const namespace = self.moduleNamespacePathOf(init_expr) orelse return false;
+
+        self.reporter.reportCompileError(
+            getLocationFromBase(base),
+            ErrorCode.MODULE_NAMESPACE_NOT_A_VALUE,
+            "Cannot bind module namespace '{s}' to a variable; use 'import {s} from ...' instead",
+            .{ namespace, decl.name.lexeme },
+        );
+        self.fatal_error = true;
+        return true;
+    }
+
 
 
     // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo
@@ -815,6 +857,9 @@ pub const SemanticAnalyzer = struct {
         for (statements, 0..) |stmt, i| {
             switch (stmt.data) {
                 .VarDecl => |decl| {
+                    // A module namespace is not a value and cannot be bound to a variable.
+                    if (self.reportNamespaceBinding(decl, stmt.base)) continue;
+
                     // Create TypeInfo
                     const type_info = try ast.TypeInfo.createDefault(self.allocator);
                     errdefer self.allocator.destroy(type_info);
@@ -1165,6 +1210,8 @@ pub const SemanticAnalyzer = struct {
                         self.tryResolveArraySizes(&statements[i].data.VarDecl.type_info, te);
                     }
                     const decl = statements[i].data.VarDecl;
+                    // A module namespace is not a value and cannot be bound to a variable.
+                    if (self.reportNamespaceBinding(decl, stmt.base)) continue;
                     const prev_bve = self.block_value_expected;
                     self.block_value_expected = decl.initializer != null;
                     defer self.block_value_expected = prev_bve;
