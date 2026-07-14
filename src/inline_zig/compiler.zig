@@ -10,8 +10,11 @@ const MemoryManager = @import("../utils/memory.zig").MemoryManager;
 const VM = @import("../interpreter/vm.zig").VM;
 const bc = @import("../codegen/bytecode/module.zig");
 const abi_source = @embedFile("abi.zig");
+const generator_source = @embedFile("compiler.zig");
 
-const inline_zig_cache_version = "__doxa_inlinezig_v6__";
+fn cacheSeed() []const u8 {
+    return abi_source ++ generator_source;
+}
 
 const ZigDeclInfo = struct {
     module_name: []const u8,
@@ -263,7 +266,7 @@ fn generateWrapperZigFile(
 
     var h: [Sha256.digest_length]u8 = undefined;
     var hasher = Sha256.init(.{});
-    hasher.update(inline_zig_cache_version);
+    hasher.update(cacheSeed());
     hasher.update("\n");
     hasher.update(decl.module_name);
     hasher.update("\n");
@@ -390,6 +393,9 @@ fn generateWrapperZigFile(
         try sig_buf.appendSlice(expected_argc);
         try sig_buf.appendSlice(") return .bad_arity;\n");
 
+        var string_param_indices = std.ArrayListUnmanaged(usize){};
+        defer string_param_indices.deinit(allocator);
+
         for (sig.param_types, 0..) |pt, i| {
             const bytecode_t = zigTypeName.toBytecodeType(pt);
             if (bytecode_t == .Array or bytecode_t == .Struct or bytecode_t == .Map or bytecode_t == .Enum or bytecode_t == .Function or bytecode_t == .Union) {
@@ -397,6 +403,9 @@ fn generateWrapperZigFile(
                 return error.NotImplemented;
             }
             param_types_bc[i] = bytecode_t;
+            if (pt.base == .String) {
+                try string_param_indices.append(allocator, i);
+            }
 
             const idx_str = try std.fmt.allocPrint(allocator, "{}", .{i});
             defer allocator.free(idx_str);
@@ -472,7 +481,7 @@ fn generateWrapperZigFile(
                     try sig_buf.appendSlice(".payload1 != 0) return .bad_value;\n");
                     try sig_buf.appendSlice("    const __doxa_a");
                     try sig_buf.appendSlice(idx_str);
-                    try sig_buf.appendSlice(": []const u8 = if (__doxa_v");
+                    try sig_buf.appendSlice("_raw: []const u8 = if (__doxa_v");
                     try sig_buf.appendSlice(idx_str);
                     try sig_buf.appendSlice(".payload1 == 0) \"\" else blk: {\n");
                     try sig_buf.appendSlice("        const __doxa_p: [*]const u8 = @ptrFromInt(__doxa_v");
@@ -483,12 +492,37 @@ fn generateWrapperZigFile(
                     try sig_buf.appendSlice(".payload1);\n");
                     try sig_buf.appendSlice("        break :blk __doxa_p[0..__doxa_n];\n");
                     try sig_buf.appendSlice("    };\n");
+                    try sig_buf.appendSlice("    const __doxa_a");
+                    try sig_buf.appendSlice(idx_str);
+                    try sig_buf.appendSlice(": ?[*:0]u8 = if (__doxa_a");
+                    try sig_buf.appendSlice(idx_str);
+                    try sig_buf.appendSlice("_raw.len == 0) null else __doxa_to_cstr(__doxa_a");
+                    try sig_buf.appendSlice(idx_str);
+                    try sig_buf.appendSlice("_raw) orelse return .internal;\n");
                 },
                 else => {
                     reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
                     return error.NotImplemented;
                 },
             }
+        }
+
+        if (string_param_indices.items.len > 0) {
+            try sig_buf.appendSlice("    defer {\n");
+            for (string_param_indices.items) |si| {
+                const si_str = try std.fmt.allocPrint(allocator, "{}", .{si});
+                defer allocator.free(si_str);
+                try sig_buf.appendSlice("        if (__doxa_a");
+                try sig_buf.appendSlice(si_str);
+                try sig_buf.appendSlice("_raw.len > 0) {\n");
+                try sig_buf.appendSlice("            if (__doxa_a");
+                try sig_buf.appendSlice(si_str);
+                try sig_buf.appendSlice(") |__doxa_p| __doxa_std.heap.page_allocator.free(__doxa_p[0 .. __doxa_a");
+                try sig_buf.appendSlice(si_str);
+                try sig_buf.appendSlice("_raw.len + 1]);\n");
+                try sig_buf.appendSlice("        }\n");
+            }
+            try sig_buf.appendSlice("    }\n");
         }
 
         var call_buf = std.array_list.Managed(u8).init(allocator);
