@@ -498,7 +498,7 @@ pub const SemanticAnalyzer = struct {
 
                                                                 // Create scope binding so static calls like Type.method work
                                                                 const struct_type_info = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
-                                                                struct_type_info.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                                                                struct_type_info.* = .{ .base = .Custom, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
                                                                 const placeholder = @import("../../types/types.zig").TokenLiteral{ .string = sd.name.lexeme };
                                                                 _ = self.current_scope.?.createValueBinding(sd.name.lexeme, placeholder, .STRUCT, struct_type_info, true) catch {}; // duplicate is benign on circular/repeat import
 
@@ -513,7 +513,7 @@ pub const SemanticAnalyzer = struct {
                                                                         ret_type_ptr = rtp;
                                                                     } else {
                                                                         const rtp = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
-                                                                        rtp.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                                                                        rtp.* = .{ .base = .Nothing, .is_mutable = false };
                                                                         ret_type_ptr = rtp;
                                                                     }
                                                                     const mi2 = @This().StructMethodInfo{
@@ -671,7 +671,7 @@ pub const SemanticAnalyzer = struct {
                 ret_type_ptr = rtp;
             } else {
                 const rtp = try ast.TypeInfo.createDefault(self.allocator);
-                rtp.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                rtp.* = .{ .base = .Nothing, .is_mutable = false };
                 ret_type_ptr = rtp;
             }
             const mi = @This().StructMethodInfo{
@@ -1111,7 +1111,7 @@ pub const SemanticAnalyzer = struct {
                                 } else {
                                     // Heuristic: if instance method without explicit return, default to this struct type
                                     const rtp = try ast.TypeInfo.createDefault(self.allocator);
-                                    rtp.* = .{ .base = .Struct, .custom_type = struct_decl.name.lexeme, .struct_fields = struct_fields, .is_mutable = false };
+                                    rtp.* = .{ .base = .Nothing, .is_mutable = false };
                                     ret_type_ptr = rtp;
                                 }
 
@@ -1697,7 +1697,7 @@ pub const SemanticAnalyzer = struct {
                 }
             },
             .Struct => |fields| {
-                if (type_info.base == .Struct) {
+                if (type_info.base == .Struct or type_info.base == .Custom) {
                     if (type_info.struct_fields) |struct_fields| {
                         for (fields, struct_fields) |field, *sf| {
                             try self.resolveArraySizes(sf.type_info, field.type_expr);
@@ -2677,7 +2677,7 @@ pub const SemanticAnalyzer = struct {
                                                 ret_type_ptr = rtp;
                                             } else {
                                                 const rtp = try ast.TypeInfo.createDefault(self.allocator);
-                                                rtp.* = .{ .base = .Struct, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
+                                                rtp.* = .{ .base = .Nothing, .is_mutable = false };
                                                 ret_type_ptr = rtp;
                                             }
                                             const mi2 = @This().StructMethodInfo{
@@ -3217,18 +3217,6 @@ pub const SemanticAnalyzer = struct {
                         if (member_type.base == actual.base) {
                             found_match = true;
                             break;
-                        }
-                        // Allow Custom and Struct types to be compatible when they refer to the same user-defined struct
-                        if ((member_type.base == .Custom and actual.base == .Struct) or
-                            (member_type.base == .Struct and actual.base == .Custom))
-                        {
-                            // Check if they refer to the same custom type
-                            if (member_type.custom_type != null and actual.custom_type != null and
-                                std.mem.eql(u8, member_type.custom_type.?, actual.custom_type.?))
-                            {
-                                found_match = true;
-                                break;
-                            }
                         }
                         // Allow enum literal (Enum) to match a Custom enum member in the expected union
                         if (member_type.base == .Custom and actual.base == .Enum) {

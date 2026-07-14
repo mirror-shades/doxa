@@ -596,7 +596,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         const field_access = index.array.data.FieldAccess;
                         const object_type = try inferTypeFromExpr(self, field_access.object);
 
-                        if (object_type.base == .Struct) {
+                        if (object_type.base == .Struct or object_type.base == .Custom) {
                             if (object_type.struct_fields) |fields| {
                                 for (fields) |field| {
                                     if (std.mem.eql(u8, field.name, field_access.field.lexeme)) {
@@ -726,7 +726,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                                             }
                                                             const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
                                                             resolved_type_info.* = ast.TypeInfo{
-                                                                .base = .Struct,
+                                                                .base = .Custom,
                                                                 .custom_type = resolved_custom_name,
                                                                 .struct_fields = struct_fields,
                                                                 .is_mutable = object_type.is_mutable,
@@ -774,7 +774,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                                                 }
                                                                 const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
                                                                 resolved_type_info.* = ast.TypeInfo{
-                                                                    .base = .Struct,
+                                                                    .base = .Custom,
                                                                     .custom_type = resolved_custom_name,
                                                                     .struct_fields = struct_fields,
                                                                     .is_mutable = object_type.is_mutable,
@@ -809,7 +809,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             }
                             const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
                             resolved_type_info.* = ast.TypeInfo{
-                                .base = .Struct,
+                                .base = .Custom,
                                 .custom_type = resolved_custom_name,
                                 .struct_fields = struct_fields,
                                 .is_mutable = object_type.is_mutable,
@@ -840,7 +840,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
             }
 
-            if (resolved_object_type.base == .Struct) {
+            if (resolved_object_type.base == .Struct or resolved_object_type.base == .Custom) {
                 if (resolved_object_type.struct_fields) |fields| {
                     for (fields) |struct_field| {
                         if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
@@ -857,7 +857,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                                 .is_public = custom_field.is_public,
                                             };
                                         }
-                                        type_info.* = .{ .base = .Struct, .custom_type = type_info.custom_type, .struct_fields = struct_fields_inner, .is_mutable = false };
+                                        type_info.* = .{ .base = .Custom, .custom_type = type_info.custom_type, .struct_fields = struct_fields_inner, .is_mutable = false };
                                     }
                                 }
                             }
@@ -1998,7 +1998,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 return type_info;
             }
 
-            if (object_type.base == .Struct and object_type.struct_fields != null) {
+            if ((object_type.base == .Struct or object_type.base == .Custom) and object_type.struct_fields != null) {
                 const fields = object_type.struct_fields.?;
                 for (fields) |struct_field| {
                     if (std.mem.eql(u8, struct_field.name, field_assign.field.lexeme)) {
@@ -2521,7 +2521,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 // Look up the struct type information
                 if (self.custom_types.get(struct_name)) |custom_type| {
                     if (custom_type.kind == .Struct) {
-                        type_info.* = .{ .base = .Struct, .custom_type = struct_name, .is_mutable = false };
+                        type_info.* = .{ .base = .Custom, .custom_type = struct_name, .is_mutable = false };
                         return type_info;
                     }
                 }

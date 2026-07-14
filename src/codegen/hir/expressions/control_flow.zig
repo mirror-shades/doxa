@@ -226,6 +226,28 @@ pub const ControlFlowHandler = struct {
             else => {},
         }
 
+        // Fallback: when the subject's enum type can't be determined from its
+        // declaration (e.g. it came from a field access or an untyped binding),
+        // infer it from the arm patterns. Enum-variant patterns carry the type
+        // in their dotted path (`E.A` -> [E, A]; `ns.E.A` -> [ns, E, A]), so the
+        // enum type is the token immediately before the variant. Without this,
+        // enum patterns fall through to literal comparison and never match.
+        if (match_enum_type == null) {
+            outer: for (match_expr.cases) |case| {
+                for (case.path_patterns) |pp| {
+                    if (pp.tokens.len >= 2) {
+                        const candidate = pp.tokens[pp.tokens.len - 2].lexeme;
+                        if (self.generator.type_system.custom_types.get(candidate)) |ct| {
+                            if (ct.kind == .Enum) {
+                                match_enum_type = candidate;
+                                break :outer;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Track whether any pattern is an explicit else (wildcard) to know if falling through is possible.
         var has_else_case = false;
         for (match_expr.cases) |case| {

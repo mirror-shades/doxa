@@ -334,30 +334,63 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         }
                     }
 
-                    if (var_type == .Enum and init_expr.data == .FieldAccess) {
+                    // Track the enum type for `x is E.Variant` initializers even
+                    // when there is no explicit annotation. Without the tracked
+                    // type, `match x { E.Variant then ... }` cannot resolve the
+                    // variant patterns and silently falls through to `else`.
+                    if (init_expr.data == .FieldAccess) {
                         const fa = init_expr.data.FieldAccess;
                         if (fa.object.data == .Variable) {
                             const enum_type_name = fa.object.data.Variable.lexeme;
                             if (self.isCustomType(enum_type_name)) |ct_enum| {
                                 if (ct_enum.kind == .Enum) {
                                     try self.trackVariableCustomType(decl.name.lexeme, enum_type_name);
+                                    var_type = HIRType{ .Enum = 0 };
                                 }
                             }
                         }
                     }
 
+                    // A variable initialized from a struct static method call
+                    // (e.g. `var b is Builder.executable(...)`) must record the
+                    // concrete struct type so instance-method dispatch and struct
+                    // peeks resolve. The type is taken from the static method's
+                    // declared return type; `New`/`new` constructors fall back to
+                    // the receiver type. Without this, only literally-named
+                    // `New`/`new` constructors were tracked and every other
+                    // factory method left the receiver untyped, causing method
+                    // calls to be misclassified as internal (returning `this`).
                     if (init_expr.data == .FunctionCall) {
                         const call = init_expr.data.FunctionCall;
                         if (call.callee.data == .FieldAccess) {
                             const callee_field = call.callee.data.FieldAccess;
-                            if (callee_field.object.data == .Variable and
-                                (std.mem.eql(u8, callee_field.field.lexeme, "New") or std.mem.eql(u8, callee_field.field.lexeme, "new")))
-                            {
-                                const type_name = callee_field.object.data.Variable.lexeme;
-                                if (self.isCustomType(type_name)) |ct_new| {
-                                    if (ct_new.kind == .Struct) {
-                                        try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                                        var_type = HIRType{ .Struct = 0 };
+                            const recv_type_name: ?[]const u8 = switch (callee_field.object.data) {
+                                .Variable => |v| v.lexeme,
+                                .FieldAccess => |inner| inner.field.lexeme,
+                                else => null,
+                            };
+                            if (recv_type_name) |type_name| {
+                                if (self.isCustomType(type_name)) |ct_recv| {
+                                    if (ct_recv.kind == .Struct) {
+                                        var tracked: ?[]const u8 = null;
+                                        if (self.struct_methods.get(type_name)) |method_table| {
+                                            if (method_table.get(callee_field.field.lexeme)) |mi| {
+                                                if (mi.return_type.custom_type) |rt_name| {
+                                                    if (self.isCustomType(rt_name)) |rct| {
+                                                        if (rct.kind == .Struct) tracked = rt_name;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        if (tracked == null and
+                                            (std.mem.eql(u8, callee_field.field.lexeme, "New") or std.mem.eql(u8, callee_field.field.lexeme, "new")))
+                                        {
+                                            tracked = type_name;
+                                        }
+                                        if (tracked) |tn| {
+                                            try self.trackVariableCustomType(decl.name.lexeme, tn);
+                                            var_type = HIRType{ .Struct = 0 };
+                                        }
                                     }
                                 }
                             }

@@ -71,7 +71,14 @@ const CLI = struct {
     target_arch: ?[]const u8,
     target_os: ?[]const u8,
     target_abi: ?[]const u8,
-    opt_level: i32, // -1 for debug-peek, 0..3 for optimization
+    opt: OptMode,
+    // Native linking directives forwarded to the final `zig build-exe` link
+    // step (and the object `cc` step for includes). Each `--link/--libdir/
+    // --framework/--include` occurrence appends one entry.
+    link_libs: std.array_list.Managed([]const u8),
+    lib_dirs: std.array_list.Managed([]const u8),
+    frameworks: std.array_list.Managed([]const u8),
+    include_dirs: std.array_list.Managed([]const u8),
     emit_opt_ir: bool,
     emit_asm: bool,
     lsp_mode: LspMode,
@@ -86,6 +93,14 @@ const CLI = struct {
         if (self.target_arch) |p| allocator.free(p);
         if (self.target_os) |p| allocator.free(p);
         if (self.target_abi) |p| allocator.free(p);
+        for (self.link_libs.items) |p| allocator.free(p);
+        for (self.lib_dirs.items) |p| allocator.free(p);
+        for (self.frameworks.items) |p| allocator.free(p);
+        for (self.include_dirs.items) |p| allocator.free(p);
+        @constCast(&self.link_libs).deinit();
+        @constCast(&self.lib_dirs).deinit();
+        @constCast(&self.frameworks).deinit();
+        @constCast(&self.include_dirs).deinit();
         if (self.lsp_debug_file) |p| allocator.free(p);
         for (self.program_args) |arg| allocator.free(arg);
         if (self.program_args.len > 0) allocator.free(self.program_args);
@@ -264,16 +279,16 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, mod
     return hir_program;
 }
 
-fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, opt_level: i32) !?std.StringHashMap(VM.ZigRuntimeModule) {
+fn compileInlineZigModules(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8) !?std.StringHashMap(VM.ZigRuntimeModule) {
     const zig_exe_path = try resolveBundledZigExecutable(memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
-    return inline_zig_compiler.compileInlineZigModules(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, opt_level);
+    return inline_zig_compiler.compileInlineZigModules(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag);
 }
 
-fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, opt_level: i32) ![]const []const u8 {
+fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8) ![]const []const u8 {
     const zig_exe_path = try resolveBundledZigExecutable(memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
-    return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, opt_level);
+    return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag);
 }
 
 fn openDirMaybeAbs(path: []const u8, opts: std.fs.Dir.OpenOptions) !std.fs.Dir {
@@ -387,14 +402,52 @@ fn resolveBundledZigExecutable(allocator: std.mem.Allocator) ![]u8 {
     return zig_path;
 }
 
-fn clangOptFlag(opt_level: i32) []const u8 {
-    return if (opt_level <= -1) "-O0" else if (opt_level >= 3) "-O3" else switch (opt_level) {
-        0 => "-O0",
-        1 => "-O1",
-        2 => "-O2",
-        else => "-O0",
-    };
-}
+// Optimization mode as a wrapper over the backend's four release modes. Doxa's
+// `Optimization` enum (None/Some/Speed/Size) maps directly onto these, and the
+// numeric `-O` / `--opt=` flags are folded in for direct command-line use.
+const OptMode = enum {
+    debug,
+    safe,
+    fast,
+    small,
+
+    fn fromLevel(level: i32) OptMode {
+        return if (level <= 0) .debug else switch (level) {
+            1 => .safe,
+            2 => .fast,
+            else => .fast, // 3+
+        };
+    }
+
+    fn parse(text: []const u8) ?OptMode {
+        if (std.mem.eql(u8, text, "debug")) return .debug;
+        if (std.mem.eql(u8, text, "safe")) return .safe;
+        if (std.mem.eql(u8, text, "fast")) return .fast;
+        if (std.mem.eql(u8, text, "small")) return .small;
+        return null;
+    }
+
+    // clang `cc` optimization flag for the `.ll` -> `.o` object step.
+    fn clangFlag(self: OptMode) []const u8 {
+        return switch (self) {
+            .debug => "-O0",
+            .safe => "-O2",
+            .fast => "-O3",
+            .small => "-Oz",
+        };
+    }
+
+    // `zig build-exe` / `zig build-obj` optimization mode flag. Debug is the
+    // default and passed explicitly for clarity.
+    fn zigFlag(self: OptMode) []const u8 {
+        return switch (self) {
+            .debug => "-ODebug",
+            .safe => "-OReleaseSafe",
+            .fast => "-OReleaseFast",
+            .small => "-OReleaseSmall",
+        };
+    }
+};
 
 const EmitKind = enum { opt_ir, asm_ };
 
@@ -434,7 +487,7 @@ fn emitInspectionArtifact(zig_exe_path: []const u8, cli_options: *const CLI, ste
         });
         try args.append(triple);
     }
-    try args.append(clangOptFlag(cli_options.opt_level));
+    try args.append(cli_options.opt.clangFlag());
 
     var child = std.process.Child.init(args.items, std.heap.page_allocator);
     child.cwd = cli_options.cache_dir;
@@ -486,7 +539,11 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         .target_arch = null,
         .target_os = null,
         .target_abi = null,
-        .opt_level = 0,
+        .opt = .debug,
+        .link_libs = std.array_list.Managed([]const u8).init(allocator),
+        .lib_dirs = std.array_list.Managed([]const u8).init(allocator),
+        .frameworks = std.array_list.Managed([]const u8).init(allocator),
+        .include_dirs = std.array_list.Managed([]const u8).init(allocator),
         .emit_opt_ir = false,
         .emit_asm = false,
         .lsp_mode = .none,
@@ -634,18 +691,37 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         } else if (std.mem.startsWith(u8, arg, "--abi=")) {
             options.target_abi = try allocator.dupe(u8, arg[6..]);
             continue;
-        } else if (std.mem.startsWith(u8, arg, "--opt=")) {
-            options.opt_level = std.fmt.parseInt(i32, arg[6..], 10) catch {
-                std.debug.print("Error: invalid --opt level: {s}\n", .{arg});
+        } else if (std.mem.startsWith(u8, arg, "--link=")) {
+            try options.link_libs.append(try allocator.dupe(u8, arg["--link=".len..]));
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--libdir=")) {
+            try options.lib_dirs.append(try allocator.dupe(u8, arg["--libdir=".len..]));
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--framework=")) {
+            try options.frameworks.append(try allocator.dupe(u8, arg["--framework=".len..]));
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--include=")) {
+            try options.include_dirs.append(try allocator.dupe(u8, arg["--include=".len..]));
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--opt-mode=")) {
+            options.opt = OptMode.parse(arg["--opt-mode=".len..]) orelse {
+                std.debug.print("Error: invalid --opt-mode (expected debug|safe|fast|small): {s}\n", .{arg});
                 std.process.exit(EXIT_CODE_USAGE);
             };
             continue;
+        } else if (std.mem.startsWith(u8, arg, "--opt=")) {
+            const level = std.fmt.parseInt(i32, arg[6..], 10) catch {
+                std.debug.print("Error: invalid --opt level: {s}\n", .{arg});
+                std.process.exit(EXIT_CODE_USAGE);
+            };
+            options.opt = OptMode.fromLevel(level);
+            continue;
         } else if (arg.len >= 3 and arg[0] == '-' and arg[1] == 'O') {
-            const lvl_str = arg[2..];
-            options.opt_level = std.fmt.parseInt(i32, lvl_str, 10) catch {
+            const level = std.fmt.parseInt(i32, arg[2..], 10) catch {
                 std.debug.print("Error: invalid optimization flag: {s}\n", .{arg});
                 std.process.exit(EXIT_CODE_USAGE);
             };
+            options.opt = OptMode.fromLevel(level);
             continue;
         } else if (stringEquals(arg, "--emit-opt-ir")) {
             options.emit_opt_ir = true;
@@ -788,8 +864,12 @@ fn printUsage() void {
     std.debug.print("  --arch=<arch>                     # Target CPU architecture (default: host)\n", .{});
     std.debug.print("  --os=<os>                         # Target operating system (default: host)\n", .{});
     std.debug.print("  --abi=<abi>                       # Target ABI (optional)\n", .{});
-    std.debug.print("  -O-1 | --opt=-1                   # Debug-aware codegen (peek dumps)\n", .{});
-    std.debug.print("  -O0..-O3 | --opt=0..3             # LLVM and codegen optimization level\n", .{});
+    std.debug.print("  --link=<name>                     # Link a native library (-l<name>); repeatable\n", .{});
+    std.debug.print("  --libdir=<dir>                    # Library search path (-L<dir>); repeatable\n", .{});
+    std.debug.print("  --framework=<name>                # Link a macOS framework; repeatable\n", .{});
+    std.debug.print("  --include=<dir>                   # Header search path (-I<dir>); repeatable\n", .{});
+    std.debug.print("  --opt-mode=<debug|safe|fast|small># Optimization mode (wraps backend release modes)\n", .{});
+    std.debug.print("  -O0..-O3 | --opt=0..3             # Optimization level (0=debug,1=safe,2/3=fast)\n", .{});
     std.debug.print("  --emit-opt-ir                     # Also write optimized LLVM IR (<stem>.opt.ll) to cache\n", .{});
     std.debug.print("  --emit-asm                        # Also write target assembly (<stem>.s) to cache\n", .{});
     std.debug.print("  --lsp-debug-io                    # Trace raw LSP I/O when used with --lsp\n", .{});
@@ -991,7 +1071,7 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
 
         profiler.startPhase(Phase.EXECUTION);
 
-        const zig_modules = try compileInlineZigModules(memoryManager, parsedStatements, &parser, reporter, cli_options.cache_dir, cli_options.opt_level);
+        const zig_modules = try compileInlineZigModules(memoryManager, parsedStatements, &parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag());
 
         runBytecodeModule(memoryManager, &bytecode_module, reporter, zig_modules, cli_options.program_args) catch |err| switch (err) {
             error.RuntimeTrap => std.process.exit(EXIT_CODE_RUNTIME),
@@ -1119,7 +1199,18 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
                 });
                 try args.append(triple);
             }
-            try args.append(clangOptFlag(cli_options.opt_level));
+            try args.append(cli_options.opt.clangFlag());
+            // Header search paths for any C interop referenced by the IR.
+            var include_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+            defer {
+                for (include_flags.items) |f| std.heap.page_allocator.free(f);
+                include_flags.deinit();
+            }
+            for (cli_options.include_dirs.items) |dir| {
+                const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-I{s}", .{dir});
+                try include_flags.append(flag);
+                try args.append(flag);
+            }
             var child = std.process.Child.init(args.items, std.heap.page_allocator);
             child.cwd = cli_options.cache_dir;
             child.stdout_behavior = .Inherit;
@@ -1134,7 +1225,7 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
         if (cli_options.emit_opt_ir) try emitInspectionArtifact(zig_exe_path, &cli_options, stem_for_derivatives, .opt_ir);
         if (cli_options.emit_asm) try emitInspectionArtifact(zig_exe_path, &cli_options, stem_for_derivatives, .asm_);
 
-        const inline_zig_wrapper_paths = try compileInlineZigObjects(memoryManager, parsedStatements, &parser, reporter, cli_options.cache_dir, cli_options.opt_level);
+        const inline_zig_wrapper_paths = try compileInlineZigObjects(memoryManager, parsedStatements, &parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag());
         defer {
             for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
             memoryManager.getAllocator().free(inline_zig_wrapper_paths);
@@ -1176,15 +1267,7 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
                 });
                 try args_ln.append(triple2);
             }
-            const olvl = cli_options.opt_level;
-            if (olvl >= 1) {
-                const omode = if (olvl >= 3) "-OReleaseFast" else switch (olvl) {
-                    1 => "-OReleaseSafe",
-                    2 => "-OReleaseFast",
-                    else => "-OReleaseSafe",
-                };
-                try args_ln.append(omode);
-            }
+            try args_ln.append(cli_options.opt.zigFlag());
             // LLVM IR references malloc and other C runtime symbols.
             try args_ln.append("-lc");
             if (builtin.os.tag == .windows and inline_zig_wrapper_paths.len > 0) {
@@ -1199,6 +1282,29 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
                 memoryManager.getAllocator().free(zig_link_flags);
             }
             try args_ln.appendSlice(zig_link_flags);
+
+            // Native linking directives from the build manifest (or `--libdir/
+            // --link/--framework` on the command line): library search paths,
+            // libraries, and macOS frameworks.
+            var manifest_link_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+            defer {
+                for (manifest_link_flags.items) |f| std.heap.page_allocator.free(f);
+                manifest_link_flags.deinit();
+            }
+            for (cli_options.lib_dirs.items) |dir| {
+                const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-L{s}", .{dir});
+                try manifest_link_flags.append(flag);
+                try args_ln.append(flag);
+            }
+            for (cli_options.link_libs.items) |lib| {
+                const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-l{s}", .{lib});
+                try manifest_link_flags.append(flag);
+                try args_ln.append(flag);
+            }
+            for (cli_options.frameworks.items) |fw| {
+                try args_ln.append("-framework");
+                try args_ln.append(fw);
+            }
 
             var child_ln = std.process.Child.init(args_ln.items, std.heap.page_allocator);
             child_ln.cwd = ".";
