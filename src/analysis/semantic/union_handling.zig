@@ -203,17 +203,6 @@ pub fn isTypeCompatibleWithUnion(
             if (member_type.base == actual.base) {
                 return true;
             }
-            // Allow Custom and Struct types to be compatible when they refer to the same user-defined struct
-            if ((member_type.base == .Custom and actual.base == .Struct) or
-                (member_type.base == .Struct and actual.base == .Custom))
-            {
-                // Check if they refer to the same custom type
-                if (member_type.custom_type != null and actual.custom_type != null and
-                    std.mem.eql(u8, member_type.custom_type.?, actual.custom_type.?))
-                {
-                    return true;
-                }
-            }
         }
     }
     return false;

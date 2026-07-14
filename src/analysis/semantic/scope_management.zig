@@ -433,7 +433,7 @@ fn findModuleVariableTypeInfo(
                 },
                 .Array => return ast.TypeInfo{ .base = .Array, .is_mutable = false },
                 .StructLiteral => |struct_lit| return ast.TypeInfo{
-                    .base = .Struct,
+                    .base = .Custom,
                     .is_mutable = false,
                     .custom_type = struct_lit.name.lexeme,
                 },

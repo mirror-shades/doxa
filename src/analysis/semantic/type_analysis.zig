@@ -514,7 +514,7 @@ pub fn inferTypeFromExpr(ctx: *TypeAnalysisContext, expr: *ast.Expr) !*ast.TypeI
         .FieldAccess => |field_access| {
             const object_type = try inferTypeFromExpr(ctx, field_access.object);
 
-            if (object_type.base == .Struct) {
+            if (object_type.base == .Struct or (object_type.base == .Custom and object_type.struct_fields != null)) {
                 if (object_type.struct_fields) |fields| {
                     // Look for the field in the struct
                     for (fields) |field| {
@@ -719,8 +719,8 @@ pub fn resolveTypeInfo(ctx: *TypeAnalysisContext, type_info: ast.TypeInfo) !ast.
         if (type_info.custom_type) |custom_type_name| {
             if (ctx.custom_types.get(custom_type_name)) |custom_type| {
                 switch (custom_type.kind) {
-                    .Struct => return ast.TypeInfo{ .base = .Struct, .is_mutable = false },
-                    .Enum => return ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+                    .Struct => return type_info,
+                    .Enum => return type_info,
                 }
             }
         }

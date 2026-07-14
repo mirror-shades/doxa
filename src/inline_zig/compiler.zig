@@ -13,15 +13,6 @@ const abi_source = @embedFile("abi.zig");
 
 const inline_zig_cache_version = "__doxa_inlinezig_v6__";
 
-fn zigOptimizationFlag(opt_level: i32) []const u8 {
-    return switch (opt_level) {
-        0 => "-ODebug",
-        1 => "-OReleaseSafe",
-        2 => "-OReleaseFast",
-        else => "-OReleaseSmall",
-    };
-}
-
 const ZigDeclInfo = struct {
     module_name: []const u8,
     zig_source: []const u8,
@@ -706,7 +697,7 @@ pub fn compileInlineZigModules(
     reporter: *Reporter,
     zig_exe_path: []const u8,
     cache_dir: []const u8,
-    opt_level: i32,
+    zig_opt_flag: []const u8,
 ) !?std.StringHashMap(VM.ZigRuntimeModule) {
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
@@ -748,7 +739,7 @@ pub fn compileInlineZigModules(
                 "-dynamic",
                 gen.zig_path,
                 emit_flag,
-                zigOptimizationFlag(opt_level),
+                zig_opt_flag,
             });
             if (builtin.os.tag == .linux) {
                 try args_list.append("-lc");
@@ -810,7 +801,7 @@ pub fn compileInlineZigObjects(
     reporter: *Reporter,
     zig_exe_path: []const u8,
     cache_dir: []const u8,
-    opt_level: i32,
+    zig_opt_flag: []const u8,
 ) ![]const []const u8 {
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
@@ -851,7 +842,7 @@ pub fn compileInlineZigObjects(
                 "build-obj",
                 gen.zig_path,
                 emit_flag,
-                zigOptimizationFlag(opt_level),
+                zig_opt_flag,
             });
 
             var dir_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

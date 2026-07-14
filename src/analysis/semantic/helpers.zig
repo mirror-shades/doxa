@@ -922,7 +922,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                             type_info.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
                         }
                     },
-                    .Struct => type_info.* = ast.TypeInfo{ .base = .Struct, .is_mutable = false, .custom_type = try self.allocator.dupe(u8, field_name) },
+                    .Struct => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try self.allocator.dupe(u8, field_name) },
                     .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
                     .Group => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
                     .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try self.allocator.dupe(u8, field_name) },
@@ -1026,7 +1026,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
             break :blk ast.TypeInfo{ .base = .Function, .is_mutable = false, .function_type = built_func_type };
         },
         .Variable => ast.TypeInfo{ .base = .Nothing, .is_mutable = false },
-        .Struct => ast.TypeInfo{ .base = .Struct, .is_mutable = false },
+        .Struct => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
         .Enum => ast.TypeInfo{ .base = .Enum, .is_mutable = false },
         .Group => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
         .Type => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
