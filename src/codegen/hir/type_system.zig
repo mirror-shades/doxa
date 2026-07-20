@@ -441,6 +441,12 @@ pub const TypeSystem = struct {
                 }
                 break :blk .Unknown;
             },
+            .Struct => {
+                if (type_info.custom_type) |cn| {
+                    return self.customTypeFromOptional(cn);
+                }
+                return .Nothing;
+            },
             .Custom => self.customTypeFromOptional(type_info.custom_type),
             else => .Nothing,
         };

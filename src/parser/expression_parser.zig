@@ -1510,7 +1510,7 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
                 .array => return .{ .base = .Array, .is_mutable = false },
                 .map => return .{ .base = .Map, .is_mutable = false },
                 .enum_variant => return .{ .base = .Enum, .is_mutable = false },
-                .struct_value => return .{ .base = .Struct, .is_mutable = false },
+                .struct_value => |sv| return .{ .base = .Custom, .custom_type = sv.type_name, .is_mutable = false },
                 .function => return .{ .base = .Function, .is_mutable = false },
             }
         },

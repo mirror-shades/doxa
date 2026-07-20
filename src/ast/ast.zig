@@ -1076,7 +1076,10 @@ pub const TypeInfo = struct {
             .tetra => .Tetra,
             .nothing => .Nothing,
             .array => .Array,
-            .struct_value => .Struct,
+            .struct_value => |sv| label: {
+                self.custom_type = sv.type_name;
+                break :label .Custom;
+            },
             .function => .Function,
             .enum_variant => .Enum,
             .map => .Map,
