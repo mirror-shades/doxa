@@ -494,11 +494,18 @@ fn generateWrapperZigFile(
                     try sig_buf.appendSlice("    };\n");
                     try sig_buf.appendSlice("    const __doxa_a");
                     try sig_buf.appendSlice(idx_str);
-                    try sig_buf.appendSlice(": ?[*:0]u8 = if (__doxa_a");
+                    try sig_buf.appendSlice("_nul: ?[*:0]u8 = if (__doxa_a");
                     try sig_buf.appendSlice(idx_str);
                     try sig_buf.appendSlice("_raw.len == 0) null else __doxa_to_cstr(__doxa_a");
                     try sig_buf.appendSlice(idx_str);
                     try sig_buf.appendSlice("_raw) orelse return .internal;\n");
+                    try sig_buf.appendSlice("    const __doxa_a");
+                    try sig_buf.appendSlice(idx_str);
+                    try sig_buf.appendSlice(": []const u8 = if (__doxa_a");
+                    try sig_buf.appendSlice(idx_str);
+                    try sig_buf.appendSlice("_nul) |p| p[0..__doxa_a");
+                    try sig_buf.appendSlice(idx_str);
+                    try sig_buf.appendSlice("_raw.len] else \"\";\n");
                 },
                 else => {
                     reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
@@ -517,7 +524,7 @@ fn generateWrapperZigFile(
                 try sig_buf.appendSlice("_raw.len > 0) {\n");
                 try sig_buf.appendSlice("            if (__doxa_a");
                 try sig_buf.appendSlice(si_str);
-                try sig_buf.appendSlice(") |__doxa_p| __doxa_std.heap.page_allocator.free(__doxa_p[0 .. __doxa_a");
+                try sig_buf.appendSlice("_nul) |__doxa_p| __doxa_std.heap.page_allocator.free(__doxa_p[0 .. __doxa_a");
                 try sig_buf.appendSlice(si_str);
                 try sig_buf.appendSlice("_raw.len + 1]);\n");
                 try sig_buf.appendSlice("        }\n");
