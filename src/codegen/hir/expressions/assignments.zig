@@ -249,6 +249,9 @@ pub const AssignmentsHandler = struct {
             // Implicitly convert RHS Int to Byte for byte arithmetic
             try self.generator.instructions.append(.{ .Convert = .{ .from_type = .Int, .to_type = .Byte } });
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Byte } });
+        } else if (left_type == .Float and (right_type == .Int or right_type == .Byte)) {
+            try self.generator.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = .Float } });
         } else if (left_type == .String and right_type == .String) {
             try self.generator.instructions.append(.Swap);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
@@ -282,6 +285,9 @@ pub const AssignmentsHandler = struct {
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = .Float } });
         } else if (left_type == .Byte and right_type == .Byte) {
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = .Byte } });
+        } else if (left_type == .Float and (right_type == .Int or right_type == .Byte)) {
+            try self.generator.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = .Float } });
         } else {
             const location = Location{
                 .file = name.file,
@@ -310,6 +316,9 @@ pub const AssignmentsHandler = struct {
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Mul, .operand_type = .Float } });
         } else if (left_type == .Byte and right_type == .Byte) {
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Mul, .operand_type = .Byte } });
+        } else if (left_type == .Float and (right_type == .Int or right_type == .Byte)) {
+            try self.generator.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .Mul, .operand_type = .Float } });
         } else {
             const location = Location{
                 .file = name.file,
@@ -355,6 +364,9 @@ pub const AssignmentsHandler = struct {
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Pow, .operand_type = .Float } });
         } else if (left_type == .Byte and right_type == .Byte) {
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Pow, .operand_type = .Byte } });
+        } else if (left_type == .Float and (right_type == .Int or right_type == .Byte)) {
+            try self.generator.instructions.append(.{ .Convert = .{ .from_type = right_type, .to_type = .Float } });
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .Pow, .operand_type = .Float } });
         } else {
             const location = Location{
                 .file = name.file,

@@ -1929,6 +1929,17 @@ pub fn Methods(comptime Ctx: type) type {
                     arg_ptr.* = arg;
                 }
 
+                if (declared_type) |decl| {
+                    if (decl == .Int and arg.ty == .I8) {
+                        const widened = try self.nextTemp(id);
+                        const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i8 {s} to i64\n", .{ widened, arg.name });
+                        defer self.allocator.free(zext_line);
+                        try w.writeAll(zext_line);
+                        arg = .{ .name = widened, .ty = .I64 };
+                        arg_ptr.* = arg;
+                    }
+                }
+
                 const llvm_ty = blk: {
                     if (is_alias) {
                         const ty = declared_type orelse .Int;
@@ -1939,7 +1950,7 @@ pub fn Methods(comptime Ctx: type) type {
                             break :blk self.hirTypeToLLVMType(decl, false);
                         }
                     }
-                    break :blk self.stackTypeToLLVMType(arg.ty);
+                    unreachable;
                 };
                 const arg_str = try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ llvm_ty, arg.name });
                 try arg_strings.append(arg_str);
