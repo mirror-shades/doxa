@@ -543,12 +543,12 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
 
     // ── Phase 4: Non-union structural equality + implicit conversions ──
     if (!typesEqual(self, expected, actual)) {
-        // Widening int/byte -> float: implicit only for comptime numeric literals.
-        // When accepted, the literal is rewritten in the AST to a float literal
-        // so no runtime conversion is ever needed.
+        // Widening int/byte -> float: implicit only for comptime numeric literals
+        // in value positions (where actual_expr is provided). Operator-like positions
+        // (index assignments, binary ops) allow it unconditionally.
         if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) {
-            if (actual.comptime_int) |lit_val| {
-                if (actual_expr) |expr| {
+            if (actual_expr) |expr| {
+                if (actual.comptime_int) |lit_val| {
                     switch (expr.data) {
                         .Literal => {
                             expr.data.Literal = ast.TokenLiteral{ .float = @floatFromInt(lit_val) };
@@ -572,17 +572,18 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
                         },
                         else => {},
                     }
+                    actual.base = .Float;
+                    return;
                 }
-                actual.base = .Float;
+                self.reporter.reportCompileError(
+                    span.location,
+                    ErrorCode.TYPE_MISMATCH,
+                    "int is not implicitly assignable to float; use @float() to widen",
+                    .{},
+                );
+                self.fatal_error = true;
                 return;
             }
-            self.reporter.reportCompileError(
-                span.location,
-                ErrorCode.TYPE_MISMATCH,
-                "int is not implicitly assignable to float; use @float() to widen",
-                .{},
-            );
-            self.fatal_error = true;
             return;
         }
         // Narrowing int -> byte is implicit only for comptime numeric literals
