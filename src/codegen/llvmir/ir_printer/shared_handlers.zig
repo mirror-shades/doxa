@@ -1860,6 +1860,12 @@ pub fn Methods(comptime Ctx: type) type {
                     if (i < info.param_is_alias.len) {
                         is_alias = info.param_is_alias[i];
                     }
+                } else if (c.call_kind == .ModuleFunction) {
+                    if (self.zig_fn_param_types.get(c.qualified_name)) |param_types| {
+                        if (i < param_types.len) {
+                            declared_type = param_types[i];
+                        }
+                    }
                 }
                 if (!is_alias) {
                     if (arg.fixed_array_depth > 0 and declared_type != null and declared_type.? == .Array) {
