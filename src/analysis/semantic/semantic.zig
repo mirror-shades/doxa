@@ -1164,7 +1164,7 @@ pub const SemanticAnalyzer = struct {
                         func_type.return_type.* = .{ .base = .Nothing, .is_mutable = false };
                     } else {
                         const inferred = try self.inferFunctionReturnType(func);
-                        try self.validateReturnTypeCompatibility(&func.return_type_info, inferred, .{ .location = getLocationFromBase(stmt.base) });
+                        try self.validateReturnTypeCompatibility(&func.return_type_info, inferred, null, .{ .location = getLocationFromBase(stmt.base) });
                         func_type.return_type.* = func.return_type_info;
                     }
                     try self.function_return_types.put(stmt.base.id, func_type.return_type);
@@ -1342,7 +1342,7 @@ pub const SemanticAnalyzer = struct {
                             // Resolve the declared type first, then create a mutable copy for unifyTypes
                             const resolved_type = try self.resolveTypeInfo(decl.type_info);
                             var decl_type_copy = resolved_type;
-                            try helpers.unifyTypes(self, &decl_type_copy, init_type, .{ .location = getLocationFromBase(stmt.base) });
+                            try helpers.unifyTypesExpr(self, &decl_type_copy, init_type, init_expr, .{ .location = getLocationFromBase(stmt.base) });
                         }
                     }
                 },
@@ -2397,7 +2397,7 @@ pub const SemanticAnalyzer = struct {
                         } else {
                             // Multiple return statements - check if types are compatible
                             // TODO: validate against expected type (multi-return compat check)
-                            try self.validateReturnTypeCompatibility(&expected_return_type, return_type, .{ .location = getLocationFromBase(stmt.base) });
+                            try self.validateReturnTypeCompatibility(&expected_return_type, return_type, value, .{ .location = getLocationFromBase(stmt.base) });
                         }
                     } else {
                         // Return without value - should be Nothing type
@@ -2533,7 +2533,7 @@ pub const SemanticAnalyzer = struct {
             .ReturnExpr => |return_expr| {
                 if (return_expr.value) |value| {
                     const return_type = try infer_type.inferTypeFromExpr(self, value);
-                    try self.validateReturnTypeCompatibility(&expected_return_type, return_type, .{ .location = getLocationFromBase(expr.base) });
+                    try self.validateReturnTypeCompatibility(&expected_return_type, return_type, value, .{ .location = getLocationFromBase(expr.base) });
                     return true;
                 } else {
                     return expected_return_type.base == .Nothing;
@@ -3162,7 +3162,7 @@ pub const SemanticAnalyzer = struct {
         return false;
     }
 
-    fn validateReturnTypeCompatibility(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
+    fn validateReturnTypeCompatibility(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, actual_expr: ?*ast.Expr, span: ast.SourceSpan) !void {
         // Treat Nothing as a bottom type that is compatible with any expected return type
         if (actual.base == .Nothing) {
             return;
@@ -3254,7 +3254,7 @@ pub const SemanticAnalyzer = struct {
             }
         } else {
             // Non-union expected type - use regular type unification
-            try helpers.unifyTypes(self, expected, actual, span);
+            try helpers.unifyTypesExpr(self, expected, actual, actual_expr, span);
         }
     }
 };

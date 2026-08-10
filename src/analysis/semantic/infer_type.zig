@@ -529,7 +529,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                             const arg_type = try inferTypeFromExpr(self, arg_expr_it.expr);
                             if (func_type.params[param_index].base != .Nothing) {
-                                try helpers.unifyTypes(self, &func_type.params[param_index], arg_type, .{ .location = getLocationFromBase(expr.base) });
+                                try helpers.unifyTypesExpr(self, &func_type.params[param_index], arg_type, arg_expr_it.expr, .{ .location = getLocationFromBase(expr.base) });
                             }
                             param_index += 1;
                         }
@@ -936,7 +936,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 const first_type = try inferTypeFromExpr(self, elements[0]);
                 for (elements[1..]) |element| {
                     const element_type = try inferTypeFromExpr(self, element);
-                    try helpers.unifyTypes(self, first_type, element_type, .{ .location = getLocationFromBase(expr.base) });
+                    try helpers.unifyTypesExpr(self, first_type, element_type, element, .{ .location = getLocationFromBase(expr.base) });
                 }
                 const array_type = try ast.TypeInfo.createDefault(self.allocator);
                 array_type.* = first_type.*;
@@ -1123,7 +1123,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             type_info.base = .Nothing;
                             return type_info;
                         }
-                        try helpers.unifyTypes(self, storage.type_info, value_type, .{ .location = getLocationFromBase(expr.base) });
+                        try helpers.unifyTypesExpr(self, storage.type_info, value_type, value, .{ .location = getLocationFromBase(expr.base) });
                     }
                 } else {
                     self.reporter.reportCompileError(
@@ -1155,7 +1155,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             type_info.base = .Nothing;
                             return type_info;
                         }
-                        try helpers.unifyTypes(self, storage.type_info, value_type, .{ .location = getLocationFromBase(expr.base) });
+                        try helpers.unifyTypesExpr(self, storage.type_info, value_type, value, .{ .location = getLocationFromBase(expr.base) });
                     }
                 } else {
                     self.reporter.reportCompileError(
@@ -2002,7 +2002,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 const fields = object_type.struct_fields.?;
                 for (fields) |struct_field| {
                     if (std.mem.eql(u8, struct_field.name, field_assign.field.lexeme)) {
-                        try helpers.unifyTypes(self, struct_field.type_info, value_type, .{ .location = getLocationFromBase(expr.base) });
+                        try helpers.unifyTypesExpr(self, struct_field.type_info, value_type, field_assign.value, .{ .location = getLocationFromBase(expr.base) });
                         break;
                     }
                 } else {
@@ -2244,10 +2244,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                     if (std.mem.eql(u8, decl_field.name, lit_field.name.lexeme)) {
                                         found = true;
                                         const lit_type = try inferTypeFromExpr(self, lit_field.value);
-                                        try helpers.unifyTypes(
+                                        try helpers.unifyTypesExpr(
                                             self,
                                             decl_field.type_info,
                                             lit_type,
+                                            lit_field.value,
                                             ast.SourceSpan.fromToken(lit_field.name),
                                         );
                                         break;
@@ -2634,7 +2635,7 @@ fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, argum
         const arg_type = try inferTypeFromExpr(self, arg_expr_it.expr);
         if (func_type.params[param_index].base != .Nothing) {
             var expected_type = func_type.params[param_index];
-            try helpers.unifyTypes(self, &expected_type, arg_type, .{ .location = getLocationFromBase(expr.base) });
+            try helpers.unifyTypesExpr(self, &expected_type, arg_type, arg_expr_it.expr, .{ .location = getLocationFromBase(expr.base) });
         }
         param_index += 1;
     }
@@ -2701,14 +2702,14 @@ fn validateMapEntries(
     if (key_type) |expected_key| {
         for (entries) |entry| {
             const entry_key_type = try inferTypeFromExpr(self, entry.key);
-            try helpers.unifyTypes(self, expected_key, entry_key_type, .{ .location = getLocationFromBase(entry.key.base) });
+            try helpers.unifyTypesExpr(self, expected_key, entry_key_type, entry.key, .{ .location = getLocationFromBase(entry.key.base) });
         }
     }
 
     if (value_type) |expected_value| {
         for (entries) |entry| {
             const entry_value_type = try inferTypeFromExpr(self, entry.value);
-            try helpers.unifyTypes(self, expected_value, entry_value_type, .{ .location = getLocationFromBase(entry.value.base) });
+            try helpers.unifyTypesExpr(self, expected_value, entry_value_type, entry.value, .{ .location = getLocationFromBase(entry.value.base) });
         }
     }
 }

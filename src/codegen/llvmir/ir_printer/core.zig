@@ -335,6 +335,30 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     else => {},
                 },
+                .F64 => switch (incoming.ty) {
+                    .I64 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .F64 };
+                    },
+                    .I8 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i8 {s} to double\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .F64 };
+                    },
+                    .I2 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i2 {s} to double\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .F64 };
+                    },
+                    else => {},
+                },
                 .PTR => switch (incoming.ty) {
                     .I64 => {
                         const as_ptr = try self.nextTemp(id);
@@ -499,6 +523,30 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(line);
                         try w.writeAll(line);
                         return .{ .name = as_i64, .ty = .I64 };
+                    },
+                    else => {},
+                },
+                .F64 => switch (incoming.ty) {
+                    .I64 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i64 {s} to double\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .F64 };
+                    },
+                    .I8 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i8 {s} to double\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .F64 };
+                    },
+                    .I2 => {
+                        const widened = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp i2 {s} to double\n", .{ widened, incoming.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        return .{ .name = widened, .ty = .F64 };
                     },
                     else => {},
                 },

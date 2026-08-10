@@ -447,6 +447,10 @@ pub fn subtractTypeFromUnion(self: *SemanticAnalyzer, union_type_info: *const as
 }
 
 pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, span: ast.SourceSpan) !void {
+    return unifyTypesExpr(self, expected, actual, null, span);
+}
+
+pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, actual_expr: ?*ast.Expr, span: ast.SourceSpan) !void {
     // ── Phase 1: Group widening ──
     // If expected is a group, any member type (or union of members) is assignable.
     if (expected.base == .Custom and expected.custom_type != null) {
@@ -539,7 +543,48 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
 
     // ── Phase 4: Non-union structural equality + implicit conversions ──
     if (!typesEqual(self, expected, actual)) {
-        if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) return;
+        // Widening int/byte -> float: implicit only for comptime numeric literals.
+        // When accepted, the literal is rewritten in the AST to a float literal
+        // so no runtime conversion is ever needed.
+        if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) {
+            if (actual.comptime_int) |lit_val| {
+                if (actual_expr) |expr| {
+                    switch (expr.data) {
+                        .Literal => {
+                            expr.data.Literal = ast.TokenLiteral{ .float = @floatFromInt(lit_val) };
+                        },
+                        .Unary => |unary| {
+                            if (unary.operator.type == .MINUS) {
+                                if (unary.right) |right| {
+                                    switch (right.data) {
+                                        .Literal => |lit| {
+                                            const inner_val: f64 = switch (lit) {
+                                                .int => |i| @floatFromInt(i),
+                                                .byte => |b| @floatFromInt(b),
+                                                else => @floatFromInt(lit_val),
+                                            };
+                                            right.data.Literal = ast.TokenLiteral{ .float = inner_val };
+                                        },
+                                        else => {},
+                                    }
+                                }
+                            }
+                        },
+                        else => {},
+                    }
+                }
+                actual.base = .Float;
+                return;
+            }
+            self.reporter.reportCompileError(
+                span.location,
+                ErrorCode.TYPE_MISMATCH,
+                "int is not implicitly assignable to float; use @float() to widen",
+                .{},
+            );
+            self.fatal_error = true;
+            return;
+        }
         // Narrowing int -> byte is implicit only for comptime numeric literals
         // (bounds-checked in the value/codegen layers). Runtime ints must be
         // narrowed explicitly with @byte().
@@ -561,7 +606,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
         if (expected.base == .Array and actual.base == .Array) {
             if (expected.array_type) |e|
                 if (actual.array_type) |a|
-                    try unifyTypes(self, e, a, span);
+                    try unifyTypesExpr(self, e, a, null, span);
             return;
         }
 
@@ -606,7 +651,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
         .Array => {
             if (expected.array_type) |e|
                 if (actual.array_type) |a|
-                    try unifyTypes(self, e, a, span);
+                    try unifyTypesExpr(self, e, a, null, span);
         },
         .Struct, .Custom => {
             if (expected.struct_fields) |efs| {
@@ -632,7 +677,7 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
                             self.fatal_error = true;
                             return;
                         }
-                        try unifyTypes(self, ef.type_info, af.type_info, span);
+                        try unifyTypesExpr(self, ef.type_info, af.type_info, null, span);
                     }
                 }
             }

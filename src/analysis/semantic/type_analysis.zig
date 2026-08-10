@@ -684,8 +684,30 @@ pub fn unifyTypes(ctx: *TypeAnalysisContext, expected: *const ast.TypeInfo, actu
 
     // Non-union comparison: base type equality + implicit numeric conversions
     if (expected.base != actual.base) {
-        if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) return;
-        if (expected.base == .Byte and actual.base == .Int) return;
+        // Widening int/byte -> float: implicit only for comptime numeric literals
+        if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) {
+            if (actual.comptime_int != null) return;
+            ctx.reporter.reportCompileError(
+                span.location,
+                ErrorCode.TYPE_MISMATCH,
+                "int is not implicitly assignable to float; use @float() to widen",
+                .{},
+            );
+            ctx.fatal_error.* = true;
+            return;
+        }
+        // Narrowing int -> byte: implicit only for comptime numeric literals
+        if (expected.base == .Byte and actual.base == .Int) {
+            if (actual.comptime_int != null) return;
+            ctx.reporter.reportCompileError(
+                span.location,
+                ErrorCode.TYPE_MISMATCH,
+                "int is not implicitly assignable to byte; use @byte() to narrow",
+                .{},
+            );
+            ctx.fatal_error.* = true;
+            return;
+        }
         if (expected.base == .Int and actual.base == .Byte) return;
 
         if (expected.base == .Custom) {
