@@ -53,6 +53,8 @@ Here is a list of our intrinsic methods and an explaination of what they do.
 - `@byte(value :: int | float | string)` -> `byte`
 - `@type(value :: any)` -> `string`
 
+These are required in value positions (assignment, function arguments, return values) whenever a runtime or named-const value needs to cross type boundaries that aren't lossless. Literals written directly in source widen implicitly (for example `var x :: float is 60`), but `const LIT is 60; takesFloat(LIT)` is an error — write `takesFloat(@float(LIT))` instead. The rule mirrors how `int` → `byte` already works. Operators and array literals promote automatically and don't need explicit casts.
+
 ### Diagnostics / Output
 
 - `@print(format :: string)` -> `nothing`
@@ -100,6 +102,7 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
   - Fails at runtime for invalid parse, non-finite values, overflow, or unsupported source type.
 - `@float(value)`
   - Fails at runtime for invalid parse, non-finite values, or unsupported source type.
+  - Required for any non-literal `int` or `byte` value used where a `float` is expected; literals widen implicitly. See [Types](../getstarted/3-types.md#numeric-conversions).
 - `@byte(value)`
   - String conversion path fails at runtime for invalid parse or out-of-range values.
   - Numeric conversion path can clamp/zero out some invalid values (for example, `@byte(999)` currently yields `0x00`).

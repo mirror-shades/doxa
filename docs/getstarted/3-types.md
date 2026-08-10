@@ -38,3 +38,35 @@ A **group** is a **nominal** umbrella over existing `enum`, `struct`, and other 
 **Typed unions** are written with **`|`** between types, for example `int | float` or `string | nothing` for an optional string. A union variable holds **one** member type at a time; if you do not initialize it, it defaults to the **first** type in the union with that type’s default value.
 
 To react to which member is active, use **`match`** (exhaustive branches narrow the type), **`value as T else { ... }`** for a single-arm cast with a fallback, or **`@istype`** in `if` / `else if` chains when you need imperative style. See [Typed unions](../unions.md) for patterns, including error-style returns.
+
+## Numeric conversions
+
+Numeric types (`int`, `float`, `byte`) convert implicitly in some contexts and require explicit casts in others. The goal is to prevent silent data loss while avoiding noise for obviously-safe conversions.
+
+| Direction | Operator position | Value position | Requires |
+|---|---|---|---|
+| `byte` → `int` | implicit | implicit | nothing — always lossless |
+| `int` → `byte` | — | comptime literals only | `@byte()` for runtime values |
+| `int` → `float` | implicit | comptime literals only | `@float()` for runtime or named const values |
+| `byte` → `float` | implicit | comptime literals only | `@float()` for runtime or named const values |
+
+**Operator positions** (binary `+`, `-`, `*`, `/`, etc.) promote automatically via the numeric lattice: `float` > `int` > `byte`.
+
+**Value positions** (assignment, function arguments, return values, struct fields) allow widening only when the right-hand side is a literal written directly in source. Named constants and runtime variables must use the explicit intrinsic.
+
+```doxa
+var f :: float is 10          # allowed — literal 10 widens to 10.0
+takesFloat(10)                # allowed — literal 10 widens to 10.0
+float[] is [1, 2, 3]         # allowed — each element is a literal
+
+const LIT is 10
+takesFloat(LIT)               # error — use @float(LIT)
+
+var i :: int is 10
+takesFloat(i)                 # error — use @float(i)
+
+var b :: byte is 200
+var i2 :: int is b            # allowed — byte → int is always lossless
+```
+
+Conversion intrinsics: `@float()`, `@int()`, `@byte()`, `@string()`. See [Intrinsic Methods](../methods.md).
