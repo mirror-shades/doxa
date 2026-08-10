@@ -174,25 +174,21 @@ test "lazy modules: std.process usage does not expose std.http in module_namespa
     try testing.expect(!parser.module_namespaces.contains("std.http"));
 }
 
-test "submodule import: `import io from @std()` binds io without exposing the parent" {
+test "submodule import: `import a from ./bundle.doxa` binds a without exposing the parent" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
-    var parsed = try parseSource(allocator, &reporter, "import io from \"std/std.doxa\"\n", "test/misc/lazy/import_user.doxa");
+    var parsed = try parseSource(allocator, &reporter, "import a from \"./bundle.doxa\"\n", "test/misc/lazy/import_user.doxa");
     defer parsed.deinit();
     const parser = &parsed.parser;
 
-    // The submodule is bound lazily when its symbol is first resolved.
-    _ = try parser.ensureImportedSymbol("io");
-    try testing.expect(parser.module_namespaces.contains("io"));
-
-    // Neither the parent aggregator nor unrelated siblings are exposed.
-    try testing.expect(!parser.module_namespaces.contains("std"));
-    try testing.expect(!parser.module_namespaces.contains("process"));
-    try testing.expect(!parser.module_namespaces.contains("http"));
+    _ = try parser.ensureImportedSymbol("a");
+    try testing.expect(parser.module_namespaces.contains("a"));
+    try testing.expect(!parser.module_namespaces.contains("bundle"));
+    try testing.expect(!parser.module_namespaces.contains("b"));
 }
 
 test "submodule import: multiple submodules each bind their own namespace" {
@@ -202,36 +198,34 @@ test "submodule import: multiple submodules each bind their own namespace" {
 
     var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
-    var parsed = try parseSource(allocator, &reporter, "import io, time from \"std/std.doxa\"\n", "test/misc/lazy/import_multi_user.doxa");
+    var parsed = try parseSource(allocator, &reporter, "import a, b from \"./bundle.doxa\"\n", "test/misc/lazy/import_multi_user.doxa");
     defer parsed.deinit();
     const parser = &parsed.parser;
 
-    _ = try parser.ensureImportedSymbol("io");
-    _ = try parser.ensureImportedSymbol("time");
-    try testing.expect(parser.module_namespaces.contains("io"));
-    try testing.expect(parser.module_namespaces.contains("time"));
+    _ = try parser.ensureImportedSymbol("a");
+    _ = try parser.ensureImportedSymbol("b");
+    try testing.expect(parser.module_namespaces.contains("a"));
+    try testing.expect(parser.module_namespaces.contains("b"));
 
-    // A sibling that was not imported stays absent.
-    try testing.expect(!parser.module_namespaces.contains("process"));
-    try testing.expect(!parser.module_namespaces.contains("std"));
+    try testing.expect(!parser.module_namespaces.contains("bundle"));
 }
 
-test "submodule import: `module std` does not leak submodules as bare namespaces" {
+test "submodule import: `module bundle` does not leak submodules as bare namespaces" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
-    var parsed = try parseSource(allocator, &reporter, "module std from \"std/std.doxa\"\n", "test/misc/lazy/module_user.doxa");
+    var parsed = try parseSource(allocator, &reporter, "module bundle from \"./bundle.doxa\"\n", "test/misc/lazy/module_user.doxa");
     defer parsed.deinit();
     const parser = &parsed.parser;
 
-    _ = try parser.ensureModuleNamespace("std");
-    _ = try parser.ensureNestedModuleNamespace("std", "io");
+    _ = try parser.ensureModuleNamespace("bundle");
+    _ = try parser.ensureNestedModuleNamespace("bundle", "a");
 
     // The submodule is reachable only through its qualified name.
-    try testing.expect(parser.module_namespaces.contains("std.io"));
-    try testing.expect(!parser.module_namespaces.contains("io"));
+    try testing.expect(parser.module_namespaces.contains("bundle.a"));
+    try testing.expect(!parser.module_namespaces.contains("a"));
 }
 

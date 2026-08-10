@@ -427,6 +427,32 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
         err = e;
     }
 
+    var dir = if (std.fs.path.dirname(current_dir)) |parent|
+        try self.allocator.dupe(u8, parent)
+    else
+        try self.allocator.dupe(u8, "");
+    defer self.allocator.free(dir);
+    while (true) {
+        var dir_path = std.array_list.Managed(u8).init(self.allocator);
+        defer dir_path.deinit();
+        if (dir.len > 0) {
+            try dir_path.appendSlice(dir);
+            try dir_path.append('/');
+        }
+        try dir_path.appendSlice(clean_name);
+        if (!has_extension) try dir_path.appendSlice(".doxa");
+
+        if (readFileContentsWithPath(self.allocator, dir_path.items)) |data| {
+            return data;
+        } else |_| {}
+
+        if (dir.len == 0) break;
+        const parent = std.fs.path.dirname(dir) orelse "";
+        const new_dir = try self.allocator.dupe(u8, parent);
+        self.allocator.free(dir);
+        dir = new_dir;
+    }
+
     return error.ModuleNotFound;
 }
 

@@ -63,10 +63,13 @@ pub fn repoRootFromEnv(allocator: std.mem.Allocator) !?[]const u8 {
 
 pub fn doxaExePath(allocator: std.mem.Allocator) ![]const u8 {
     if (process.getEnvVarOwned(allocator, "DOXA_BIN") catch null) |custom| {
-        return custom;
+        defer allocator.free(custom);
+        return try std.fs.cwd().realpathAlloc(allocator, custom);
     }
     const exe_name = if (builtin.os.tag == .windows) "doxa.exe" else "doxa";
-    return try std.fs.path.join(allocator, &[_][]const u8{ "zig-out", "bin", exe_name });
+    const joined = try std.fs.path.join(allocator, &[_][]const u8{ "doxa", "test-bin", exe_name });
+    defer allocator.free(joined);
+    return try std.fs.cwd().realpathAlloc(allocator, joined);
 }
 
 pub fn runCommandCapture(
