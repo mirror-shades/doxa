@@ -1,12 +1,26 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const MapRuntime = @import("map_runtime.zig");
+const scope_arena = @import("scope_arena.zig");
 
-// Force the arena scope C-ABI exports (doxa_scope_enter/exit/alloc) into the
-// compiled runtime. They live in arena.zig but are referenced only by emitted
-// IR, so without this they would be dropped from the link.
-comptime {
-    _ = @import("arena.zig");
+/// Push a child arena for a new block scope. Emitted by the IR printer at each
+/// `EnterScope` HIR instruction and once for the program root scope.
+pub export fn doxa_scope_enter() callconv(.c) void {
+    scope_arena.enter();
+}
+
+/// Free the current scope's arena in O(1). Emitted at each `ExitScope`.
+pub export fn doxa_scope_exit() callconv(.c) void {
+    scope_arena.exit();
+}
+
+/// Heap allocation entry point used by the emitted IR. Allocates from the
+/// current scope arena; reclaimed when that scope exits.
+pub export fn doxa_scope_alloc(size: i64, alignment: i64) callconv(.c) ?*anyopaque {
+    const sz: usize = @intCast(size);
+    const align_val: u29 = if (alignment > 0) @intCast(alignment) else @alignOf(u64);
+    const alignment_enum = std.mem.Alignment.fromByteUnits(align_val);
+    return scope_arena.allocator().rawAlloc(sz, alignment_enum, @returnAddress());
 }
 
 var peek_output_active: bool = false;
@@ -54,6 +68,35 @@ fn writeStderr(slice: []const u8) void {
     _ = stderr.flush() catch return;
 }
 
+pub export fn doxa_trap_unreachable() callconv(.c) void {
+    writeStderr("Reached unreachable code\n");
+    std.process.exit(2);
+}
+
+/// Write a byte slice to stderr. Used by assertion failures and other
+/// diagnostics that must not pollute stdout.
+pub export fn doxa_write_stderr(ptr: ?[*]const u8, len: usize) callconv(.c) void {
+    if (ptr) |p| {
+        writeStderr(p[0..len]);
+    }
+}
+
+/// Terminate the process with the given status code. Declared `noreturn` so the
+/// optimizer treats every `@exit` site as a genuine control-flow end.
+pub export fn doxa_exit(code: i64) callconv(.c) void {
+    std.process.exit(@intCast(code));
+}
+
+/// User-facing panic: write the message to stderr and terminate with code 1.
+/// Code 2 is reserved for compiler-internal traps (`doxa_trap_unreachable`).
+pub export fn doxa_panic(ptr: ?[*]const u8, len: usize) callconv(.c) void {
+    if (ptr) |p| {
+        writeStderr(p[0..len]);
+    }
+    writeStderr("\n");
+    std.process.exit(1);
+}
+
 pub export fn doxa_write_cstr(ptr: ?[*]const u8, len: usize) callconv(.c) void {
     if (ptr) |p| {
         doxaWrite(p[0..len]);
@@ -61,18 +104,12 @@ pub export fn doxa_write_cstr(ptr: ?[*]const u8, len: usize) callconv(.c) void {
 }
 
 /// Write a null-terminated string to the active output sink. Used for
-/// user-provided error messages and legacy pointer values where the
+/// user-provided error messages and C-string values where the
 /// length is not known statically.
 pub export fn doxa_write_raw(ptr: ?[*:0]const u8) callconv(.c) void {
     if (ptr) |p| {
         doxaWrite(std.mem.span(p));
     }
-}
-
-pub export fn doxa_write_quoted_string(s: DoxaString) callconv(.c) void {
-    doxaWrite("\"");
-    doxaWrite(sliceFromDoxaString(s));
-    doxaWrite("\"");
 }
 
 pub export fn doxa_peek_string(ptr: ?[*]const u8, len: usize) callconv(.c) void {
@@ -93,7 +130,7 @@ pub export fn doxa_str_eq(a_ptr: ?[*]const u8, a_len: usize, b_ptr: ?[*]const u8
 
 /// Canonical string representation: pointer + byte length.
 ///
-/// This is the internal model for every layer (parser, HIR, VM, LLVM IR).
+/// This is the internal model for every layer (parser, HIR, LLVM IR).
 /// It matches Zig's `[]const u8` slice semantics: valid indices are `0..len`,
 /// embedded U+0000 is permitted, and length is O(1) without scanning.
 ///
@@ -110,7 +147,7 @@ pub const DoxaString = extern struct {
 
 fn allocDoxaString(bytes: []const u8) DoxaString {
     if (bytes.len == 0) return .{ .ptr = null, .len = 0 };
-    const buf = std.heap.page_allocator.alloc(u8, bytes.len) catch return .{ .ptr = null, .len = 0 };
+    const buf = scope_arena.allocator().alloc(u8, bytes.len) catch return .{ .ptr = null, .len = 0 };
     @memcpy(buf, bytes);
     return .{ .ptr = buf.ptr, .len = bytes.len };
 }
@@ -118,14 +155,6 @@ fn allocDoxaString(bytes: []const u8) DoxaString {
 fn sliceFromDoxaString(s: DoxaString) []const u8 {
     if (s.ptr) |p| return p[0..s.len];
     return "";
-}
-
-fn doxaStringFromBits(bits: i64) DoxaString {
-    const addr: u64 = @bitCast(bits);
-    if (addr == 0) return .{ .ptr = null, .len = 0 };
-    const ptr: [*:0]const u8 = @ptrFromInt(@as(usize, addr));
-    const slice = std.mem.span(ptr);
-    return .{ .ptr = slice.ptr, .len = slice.len };
 }
 
 fn ds_ptr(s: DoxaString) ?[*]const u8 { return s.ptr; }
@@ -306,7 +335,7 @@ pub export fn doxa_pack_bytes(hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len: *us
         return;
     }
     const arr = hdr.?;
-    const buf = std.heap.page_allocator.alloc(u8, arr.len) catch {
+    const buf = scope_arena.allocator().alloc(u8, arr.len) catch {
         out_ptr.* = null;
         out_len.* = 0;
         return;
@@ -336,7 +365,7 @@ pub export fn doxa_str_concat(a_ptr: ?[*]const u8, a_len: usize, b_ptr: ?[*]cons
         out_len.* = 0;
         return;
     }
-    const buf = std.heap.page_allocator.alloc(u8, total_len) catch {
+    const buf = scope_arena.allocator().alloc(u8, total_len) catch {
         out_ptr.* = null;
         out_len.* = 0;
         return;
@@ -347,8 +376,9 @@ pub export fn doxa_str_concat(a_ptr: ?[*]const u8, a_len: usize, b_ptr: ?[*]cons
     out_len.* = total_len;
 }
 
-/// Recover a DoxaString from a legacy null-terminated C-string pointer.
-/// Used when reading struct fields that store only a raw pointer.
+/// Recover a DoxaString from a null-terminated C-string pointer. This is the
+/// one remaining raw C-string boundary: inline-Zig/module globals loaded via
+/// `LoadModule` and map string values still arrive as C-strings.
 pub export fn doxa_str_from_cstr(ptr: ?[*:0]const u8, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
     if (ptr) |p| {
         const slice = std.mem.span(p);
@@ -361,19 +391,35 @@ pub export fn doxa_str_from_cstr(ptr: ?[*:0]const u8, out_ptr: *?[*]u8, out_len:
     }
 }
 
-pub export fn doxa_str_clone(ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+/// Clone a string into the arena `levels` scopes above the current one. Used
+/// when a value is stored into a variable declared in an outer scope.
+fn strCloneInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) void {
     const bytes: []const u8 = if (ptr) |p| p[0..len] else "";
-    const ds = allocDoxaString(bytes);
-    out_ptr.* = @constCast(ds.ptr);
-    out_len.* = ds.len;
+    // Allocate at least one byte so an empty string keeps a non-null pointer;
+    // string indexing assumes the backing pointer is valid even when len == 0.
+    const alloc_len: usize = if (bytes.len == 0) 1 else bytes.len;
+    const buf = scope_arena.allocInScope(scope, alloc_len, .fromByteUnits(@alignOf(u8)), @returnAddress()) orelse {
+        out_ptr.* = null;
+        out_len.* = 0;
+        return;
+    };
+    @memset(buf[0..alloc_len], 0);
+    @memcpy(buf[0..bytes.len], bytes);
+    out_ptr.* = buf;
+    out_len.* = bytes.len;
 }
 
-/// Clone with a null terminator, returning the raw C-string pointer.
-/// Used for struct field storage where only an 8-byte pointer slot is available.
+pub export fn doxa_str_clone_at(levels: i64, ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+    strCloneInto(scope_arena.scopeAt(@intCast(levels)), ptr, len, out_ptr, out_len);
+}
+
+/// Clone with a null terminator, returning the raw C-string pointer. Maps are
+/// the only remaining consumer: they store string keys/values as a single i64
+/// pointer slot and recover the length via `std.mem.span`.
 pub export fn doxa_str_clone_raw(ptr: ?[*]const u8, len: usize) callconv(.c) ?[*:0]u8 {
     if (ptr) |p| {
         const slice: []const u8 = p[0..len];
-        const out = std.heap.page_allocator.allocSentinel(u8, slice.len, 0) catch return null;
+        const out = scope_arena.allocator().allocSentinel(u8, slice.len, 0) catch return null;
         @memcpy(out[0..slice.len], slice);
         return out.ptr;
     }
@@ -381,7 +427,7 @@ pub export fn doxa_str_clone_raw(ptr: ?[*]const u8, len: usize) callconv(.c) ?[*
 }
 
 pub export fn doxa_char_to_string(ch: u8, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
-    const buf = std.heap.page_allocator.alloc(u8, 1) catch {
+    const buf = scope_arena.allocator().alloc(u8, 1) catch {
         out_ptr.* = null;
         out_len.* = 0;
         return;
@@ -436,29 +482,8 @@ fn getEnumVariantName(type_name: []const u8, variant_index: i64) []const u8 {
     return "Unknown";
 }
 
-var rng_state: ?std.Random.DefaultPrng = null;
-
-pub export fn doxa_dice_roll() callconv(.c) i64 {
-    if (rng_state == null) {
-        const seed = @as(u64, @intCast(std.time.timestamp()));
-        rng_state = std.Random.DefaultPrng.init(seed);
-    }
-    return rng_state.?.random().intRangeAtMost(i64, 1, 6);
-}
-
 pub export fn doxa_int(value: f64) callconv(.c) i64 {
     return @intFromFloat(value);
-}
-
-pub export fn doxa_find(collection: ?*anyopaque, value: i64) callconv(.c) i64 {
-    if (collection == null) return -1;
-
-    const maybe_hdr = asArrayHeader(collection);
-    if (maybe_hdr) |hdr| {
-        return doxa_find_array(hdr, value);
-    }
-
-    return -1;
 }
 
 pub export fn doxa_find_array(hdr: ?*ArrayHeader, value: i64) callconv(.c) i64 {
@@ -467,6 +492,20 @@ pub export fn doxa_find_array(hdr: ?*ArrayHeader, value: i64) callconv(.c) i64 {
     while (idx < h.len) : (idx += 1) {
         const elem = doxa_array_get_i64(h, idx);
         if (elem == value) return @intCast(idx);
+    }
+    return -1;
+}
+
+pub export fn doxa_find_array_str(hdr: ?*ArrayHeader, n_ptr: ?[*]const u8, n_len: usize) callconv(.c) i64 {
+    const h = hdr orelse return -1;
+    const ndl = sliceFromDoxaString(.{ .ptr = n_ptr, .len = n_len });
+    var idx: u64 = 0;
+    while (idx < h.len) : (idx += 1) {
+        var elem_ptr: ?[*]u8 = null;
+        var elem_len: usize = 0;
+        doxa_array_get_str(h, idx, &elem_ptr, &elem_len);
+        const elem = sliceFromDoxaString(.{ .ptr = elem_ptr, .len = elem_len });
+        if (std.mem.eql(u8, elem, ndl)) return @intCast(idx);
     }
     return -1;
 }
@@ -510,11 +549,126 @@ pub const DoxaPeekInfo = extern struct {
     column: u32,
 };
 
-pub const DoxaValueC = extern struct {
+/// Canonical runtime representation for Doxa values. This is the shared value
+/// model for the native (LLVM) backend and any C callers. The layout must stay
+/// in sync with `%DoxaValue` in `src/codegen/llvmir/ir_printer.zig`.
+///
+/// Tag values:
+///   0 = Int      (payload_bits = i64)
+///   1 = Float    (payload_bits = bitcast f64)
+///   2 = Byte     (payload_bits[0..8] = u8)
+///   3 = String   (payload_bits = pointer bits, payload_len = byte length)
+///   4 = Array    (payload_bits = *ArrayHeader as bits)
+///   5 = Struct   (payload_bits = pointer to struct instance)
+///   6 = Enum     (payload_bits = i64 variant index; type via metadata)
+///   7 = Tetra    (payload_bits[0..2] = u2)
+///   8 = Nothing  (payload_bits ignored)
+///   9 = Function (payload_bits = pointer to function closure/descriptor)
+///  10 = Map      (payload_bits = *MapHeader as bits)
+///
+/// All non-String tags leave `payload_len = 0`; only String uses it.
+///
+/// Boxing rules:
+///   - Unboxed: Int, Float, Byte, Tetra, Enum discriminant
+///   - Boxed:   String, Array, Struct, Function, Map
+///   - Sentinel: Nothing (tag = 8, payload_bits = 0)
+///
+/// Union encoding:
+///   - For non-union values, `reserved == 0`.
+///   - For union values, `reserved` packs:
+///       bit 31        : is_union flag
+///       bits 16..30   : union_id (up to 32k unions)
+///       bits 0..15    : active_member_index (0-based, up to 65k members)
+///   - `tag` always describes the active payload kind (Int, Float, Struct, …).
+pub const DoxaValue = extern struct {
     tag: u32,
     reserved: u32,
     payload_bits: i64,
+    payload_len: i64,
 };
+
+/// High-level tag enumeration for `DoxaValue.tag`. The numeric values are part
+/// of the ABI and must stay in sync with the documentation above.
+pub const DoxaTag = enum(u32) {
+    Int = 0,
+    Float = 1,
+    Byte = 2,
+    String = 3,
+    Array = 4,
+    Struct = 5,
+    Enum = 6,
+    Tetra = 7,
+    Nothing = 8,
+    Function = 9,
+    Map = 10,
+};
+
+/// Helpers for encoding and decoding union metadata into the `reserved` field
+/// of a `DoxaValue`. Kept in sync with the union encoding emitted by the IR
+/// printer (`buildDoxaValue`).
+pub const DoxaUnionMeta = struct {
+    pub const is_union_bit: u32 = 1 << 31;
+    pub const union_id_shift: u5 = 16;
+    pub const union_id_mask: u32 = 0x7FFF << union_id_shift; // 15 bits
+    pub const member_index_mask: u32 = 0xFFFF; // 16 bits
+
+    pub fn pack(union_id: u32, member_index: u32) u32 {
+        const uid: u32 = union_id & 0x7FFF;
+        const mid: u32 = member_index & member_index_mask;
+        return is_union_bit | (uid << union_id_shift) | mid;
+    }
+
+    pub fn isUnion(reserved: u32) bool {
+        return (reserved & is_union_bit) != 0;
+    }
+
+    pub fn unionId(reserved: u32) u32 {
+        return (reserved & union_id_mask) >> union_id_shift;
+    }
+
+    pub fn memberIndex(reserved: u32) u32 {
+        return reserved & member_index_mask;
+    }
+};
+
+/// Re-home the heap payload of a boxed `DoxaValue` (String/Array/Struct) into
+/// the arena `levels` scopes above the current one, so a union returned from a
+/// function survives the callee scope being freed. Unboxed payloads (Int,
+/// Float, Byte, Tetra, Enum, Nothing) are left unchanged.
+pub export fn doxa_clone_doxa_value_at(levels: i64, val: *DoxaValue) callconv(.c) void {
+    const tag: DoxaTag = @enumFromInt(val.tag);
+    const scope = scope_arena.scopeAt(@intCast(levels));
+    switch (tag) {
+        .String => {
+            const addr: u64 = @bitCast(val.payload_bits);
+            if (addr != 0) {
+                const ptr: [*]const u8 = @ptrFromInt(@as(usize, addr));
+                const len: usize = @intCast(val.payload_len);
+                var cloned_ptr: ?[*]u8 = null;
+                var cloned_len: usize = 0;
+                strCloneInto(scope, ptr, len, &cloned_ptr, &cloned_len);
+                val.payload_bits = @bitCast(@as(u64, if (cloned_ptr) |p| @intFromPtr(p) else 0));
+                val.payload_len = @intCast(cloned_len);
+            }
+        },
+        .Array => {
+            const addr: u64 = @bitCast(val.payload_bits);
+            if (addr != 0) {
+                const hdr: *ArrayHeader = @ptrFromInt(@as(usize, addr));
+                val.payload_bits = @intCast(@intFromPtr(arrayCloneIn(scope, hdr)));
+            }
+        },
+        .Struct => {
+            const addr: u64 = @bitCast(val.payload_bits);
+            if (addr != 0) {
+                if (structCloneInto(scope, @ptrFromInt(@as(usize, addr)))) |cloned| {
+                    val.payload_bits = @intCast(@intFromPtr(cloned));
+                }
+            }
+        },
+        else => {},
+    }
+}
 
 pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void {
     const info = info_ptr orelse return;
@@ -613,11 +767,6 @@ pub export fn doxa_byte_from_string(ptr: ?[*]const u8, len: usize) callconv(.c) 
     return 0;
 }
 
-pub export fn doxa_byte_from_i64(value: i64) callconv(.c) i64 {
-    if (value >= 0 and value <= 255) return value;
-    return 0;
-}
-
 pub export fn doxa_byte_from_f64(value: f64) callconv(.c) i64 {
     if (!std.math.isFinite(value)) return 0;
     const rounded: i64 = @intFromFloat(value);
@@ -660,7 +809,7 @@ pub export fn doxa_str_insert(s_ptr: ?[*]const u8, s_len: usize, idx: i64, ins_p
         out_len.* = 0;
         return;
     }
-    const out = std.heap.page_allocator.alloc(u8, total_len) catch {
+    const out = scope_arena.allocator().alloc(u8, total_len) catch {
         out_ptr.* = null;
         out_len.* = 0;
         return;
@@ -693,7 +842,7 @@ pub export fn doxa_str_remove(
     }
     out_removed.* = allocDoxaString(src[iu .. iu + 1]);
     const out_len = src.len - 1;
-    const out = std.heap.page_allocator.alloc(u8, out_len) catch {
+    const out = scope_arena.allocator().alloc(u8, out_len) catch {
         out_remaining.* = allocDoxaString(src);
         return 0;
     };
@@ -741,6 +890,9 @@ pub const ArrayHeader = extern struct {
     cap: u64,
     elem_size: u64,
     elem_tag: u64,
+    /// The scope arena this array was allocated in. Heap elements pushed into
+    /// the array are re-homed here so they survive the pushing scope's teardown.
+    scope: ?*scope_arena.Scope,
 };
 
 pub const StructDesc = extern struct {
@@ -758,6 +910,74 @@ pub export fn doxa_struct_register(instance: ?*anyopaque, desc: ?*const StructDe
     const sd = desc orelse return;
     // Best-effort registration; OOM in a runtime struct registry is non-recoverable
     struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), sd) catch {};
+}
+
+/// Word count of a single struct field given its runtime tag. String fields
+/// (tag 3) occupy two `i64` words (ptr + len); everything else occupies one.
+fn structFieldWordCount(tag: u64) usize {
+    return if (tag == 3) 2 else 1;
+}
+
+/// Total number of `i64` words occupied by a struct's fields. When the tag
+/// list is absent (defensive fallback), every field is treated as one word.
+fn structTotalWords(tags: []const u64, field_count: usize) usize {
+    var total: usize = field_count;
+    var i: usize = 0;
+    while (i < tags.len and i < field_count) : (i += 1) {
+        if (tags[i] == 3) total += 1;
+    }
+    return total;
+}
+
+fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
+    const src = ptr orelse return null;
+    const desc = struct_registry.get(@intFromPtr(src)) orelse return null;
+    const field_count: usize = @intCast(desc.field_count);
+    const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
+    const dst = scope_arena.allocSliceInScope(scope, i64, structTotalWords(tags, field_count));
+    const src_fields: [*]const i64 = @ptrCast(@alignCast(src));
+    var word: usize = 0;
+    for (0..field_count) |i| {
+        const tag: u64 = if (i < tags.len) tags[i] else 255;
+        const bits = src_fields[word];
+        if (tag == 3) {
+            const len_bits = src_fields[word + 1];
+            const addr: u64 = @bitCast(bits);
+            const len: usize = @intCast(@as(u64, @bitCast(len_bits)));
+            if (addr != 0) {
+                var cloned_ptr: ?[*]u8 = null;
+                var cloned_len: usize = 0;
+                strCloneInto(scope, @ptrFromInt(@as(usize, addr)), len, &cloned_ptr, &cloned_len);
+                dst[word] = @bitCast(@as(u64, if (cloned_ptr) |p| @intFromPtr(p) else 0));
+                dst[word + 1] = @bitCast(@as(u64, cloned_len));
+            } else {
+                dst[word] = 0;
+                dst[word + 1] = 0;
+            }
+            word += 2;
+        } else if (tag == 6 and bits != 0) {
+            const hdr: *ArrayHeader = @ptrFromInt(@as(usize, @intCast(bits)));
+            const cloned = arrayCloneIn(scope, hdr);
+            dst[word] = @intCast(@intFromPtr(cloned));
+            word += 1;
+        } else {
+            dst[word] = bits;
+            word += 1;
+        }
+    }
+    const result: ?*anyopaque = @ptrCast(dst.ptr);
+    // Register the clone so its fields can be introspected/printed (and cloned
+    // again) under the same descriptor as the source.
+    struct_registry.put(std.heap.page_allocator, @intFromPtr(dst.ptr), desc) catch {};
+    return result;
+}
+
+/// Deep-copy a struct into the arena `levels` scopes above the current one.
+/// String (tag 3) and array (tag 6) fields are cloned recursively so their
+/// storage outlives the scope that constructed the struct; other fields are
+/// copied verbatim.
+pub export fn doxa_struct_clone_at(levels: i64, ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
+    return structCloneInto(scope_arena.scopeAt(@intCast(levels)), ptr);
 }
 
 pub const EnumDesc = extern struct {
@@ -822,7 +1042,7 @@ fn ensureArrayCapacity(hdr: *ArrayHeader, required_len: u64) bool {
     }
 
     if (hdr.elem_size == 8) {
-        const new_slice = std.heap.page_allocator.alloc(i64, @intCast(new_cap)) catch return false;
+        const new_slice = scope_arena.allocSliceInScope(hdr.scope, i64, @intCast(new_cap));
         @memset(new_slice, 0);
 
         if (hdr.data) |old_data| {
@@ -830,7 +1050,6 @@ fn ensureArrayCapacity(hdr: *ArrayHeader, required_len: u64) bool {
             const old_slice = old_slice_ptr[0..@intCast(hdr.cap)];
             const copy_len: usize = @intCast(@min(hdr.len, hdr.cap));
             @memcpy(new_slice[0..copy_len], old_slice[0..copy_len]);
-            std.heap.page_allocator.free(old_slice);
         }
 
         hdr.data = @ptrCast(new_slice.ptr);
@@ -843,8 +1062,9 @@ fn ensureArrayCapacity(hdr: *ArrayHeader, required_len: u64) bool {
     if (new_bytes_u64 > std.math.maxInt(usize)) return false;
     if (old_bytes_u64 > std.math.maxInt(usize)) return false;
 
-    const new_buf = std.heap.page_allocator.alloc(u8, @intCast(new_bytes_u64)) catch return false;
-    @memset(new_buf, 0);
+    // 8-byte aligned so string elements (16-byte slots) stay aligned.
+    const new_buf = scope_arena.allocInScope(hdr.scope, @intCast(new_bytes_u64), .fromByteUnits(8), @returnAddress()) orelse return false;
+    @memset(new_buf[0..@intCast(new_bytes_u64)], 0);
 
     if (hdr.data) |old_data| {
         const old_buf_ptr: [*]u8 = @ptrCast(old_data);
@@ -852,34 +1072,31 @@ fn ensureArrayCapacity(hdr: *ArrayHeader, required_len: u64) bool {
         const used_bytes_u64 = std.math.mul(u64, hdr.elem_size, @min(hdr.len, hdr.cap)) catch 0;
         const used_bytes: usize = @intCast(@min(used_bytes_u64, new_bytes_u64));
         @memcpy(new_buf[0..used_bytes], old_buf[0..used_bytes]);
-        std.heap.page_allocator.free(old_buf);
     }
 
-    hdr.data = @ptrCast(new_buf.ptr);
+    hdr.data = @ptrCast(new_buf);
     hdr.cap = new_cap;
     return true;
 }
 
 /// 0=int(i64), 1=byte(u8), 2=float(f64), 3=string(i8*), 4=tetra(u8 lower 2 bits),
 /// 5=nothing, 6=array(*ArrayHeader), 7=struct(ptr), 8=enum(i64 variant index).
-pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *ArrayHeader {
+fn arrayNewIn(scope: ?*scope_arena.Scope, elem_size: u64, elem_tag: u64, init_len: u64) *ArrayHeader {
     const cap = clampMin(init_len, ARRAY_MIN_CAPACITY);
-    const hdr_ptr = std.heap.page_allocator.create(ArrayHeader) catch @panic("oom allocating ArrayHeader");
+    const hdr_ptr = scope_arena.createInScope(scope, ArrayHeader);
     const data_bytes: usize = @intCast(elem_size * cap);
     var data_ptr: ?*anyopaque = null;
     if (data_bytes != 0) {
         if (elem_size == 8) {
-            const slice = std.heap.page_allocator.alloc(i64, @intCast(cap)) catch null;
-            if (slice) |s| {
-                @memset(s, 0);
-                data_ptr = @ptrCast(s.ptr);
-            }
+            const slice = scope_arena.allocSliceInScope(scope, i64, @intCast(cap));
+            @memset(slice, 0);
+            data_ptr = @ptrCast(slice.ptr);
         } else {
-            const buf = std.heap.page_allocator.alloc(u8, data_bytes) catch null;
-            if (buf) |b| {
-                @memset(b, 0);
-                data_ptr = @ptrCast(b.ptr);
-            }
+            // Allocate with 8-byte alignment so string elements (16-byte slots)
+            // can be read/written as (ptr, i64) pairs without misalignment.
+            const buf = scope_arena.allocInScope(scope, data_bytes, .fromByteUnits(8), @returnAddress()) orelse @panic("oom allocating array data");
+            @memset(buf[0..data_bytes], 0);
+            data_ptr = @ptrCast(buf);
         }
     }
     hdr_ptr.* = ArrayHeader{
@@ -888,8 +1105,17 @@ pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callc
         .cap = cap,
         .elem_size = elem_size,
         .elem_tag = elem_tag,
+        .scope = scope,
     };
     return hdr_ptr;
+}
+
+fn arrayNewAt(levels: usize, elem_size: u64, elem_tag: u64, init_len: u64) *ArrayHeader {
+    return arrayNewIn(scope_arena.scopeAt(levels), elem_size, elem_tag, init_len);
+}
+
+pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *ArrayHeader {
+    return arrayNewAt(0, elem_size, elem_tag, init_len);
 }
 
 pub export fn doxa_array_range(start: i64, end: i64) callconv(.c) *ArrayHeader {
@@ -939,10 +1165,10 @@ pub export fn doxa_array_new_nested(
     return outer;
 }
 
-pub export fn doxa_array_clone(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
-    const src = hdr orelse return doxa_array_new(8, 0, 0);
-    const result = doxa_array_new(src.elem_size, src.elem_tag, src.len);
-    if (src.elem_tag == 3 and src.elem_size >= 16) {
+fn arrayCloneIn(scope: ?*scope_arena.Scope, hdr: ?*ArrayHeader) *ArrayHeader {
+    const src = hdr orelse return arrayNewIn(scope, 8, 0, 0);
+    const result = arrayNewIn(scope, src.elem_size, src.elem_tag, src.len);
+    if (src.elem_tag == 3) {
         var idx: u64 = 0;
         while (idx < src.len) : (idx += 1) {
             var str_ptr: ?[*]u8 = undefined;
@@ -958,6 +1184,19 @@ pub export fn doxa_array_clone(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
         }
     }
     return result;
+}
+
+fn arrayCloneAt(levels: usize, hdr: ?*ArrayHeader) *ArrayHeader {
+    return arrayCloneIn(scope_arena.scopeAt(levels), hdr);
+}
+
+pub export fn doxa_array_clone(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
+    return arrayCloneAt(0, hdr);
+}
+
+/// Clone an array into the arena `levels` scopes above the current one.
+pub export fn doxa_array_clone_at(levels: i64, hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
+    return arrayCloneAt(@intCast(levels), hdr);
 }
 
 pub export fn doxa_array_len(hdr: *ArrayHeader) callconv(.c) u64 {
@@ -985,7 +1224,7 @@ pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
             const bits: i64 = @bitCast(fp.*);
             break :blk_float bits;
         },
-         3 => blk_str: { // string: elem_size 8 = legacy C-string ptr; 16 = DoxaString
+         3 => blk_str: { // string: 16-byte DoxaString, first word is the pointer
             const ip: *const i64 = @ptrCast(@alignCast(p));
             break :blk_str ip.*;
         },
@@ -1046,10 +1285,29 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
             ap.* = if (addr == 0)
                 null
             else
-                @ptrFromInt(@as(usize, addr));
+                arrayCloneIn(hdr.scope, @ptrFromInt(@as(usize, addr)));
         },
-        // Default: store raw 64-bit payload (pointers/unknown)
+        7 => { // struct (pointer encoded as bits)
+            const sp: *?*anyopaque = @ptrCast(@alignCast(p));
+            const addr: u64 = @bitCast(value);
+            sp.* = if (addr == 0)
+                null
+            else
+                structCloneInto(hdr.scope, @ptrFromInt(@as(usize, addr)));
+        },
+        // Default: store raw 64-bit payload (pointers/unknown).
+        // When the element type is unknown (e.g. an empty `[]` literal) and the
+        // payload is a registered struct pointer, re-home it into this array's
+        // scope so it survives the source scope being freed.
         else => {
+            const addr: u64 = @bitCast(value);
+            if (addr != 0) {
+                if (structCloneInto(hdr.scope, @ptrFromInt(@as(usize, addr)))) |cloned| {
+                    const ip: *i64 = @ptrCast(@alignCast(p));
+                    ip.* = @intCast(@intFromPtr(cloned));
+                    return;
+                }
+            }
             const ip: *i64 = @ptrCast(@alignCast(p));
             ip.* = value;
         },
@@ -1066,16 +1324,14 @@ pub export fn doxa_array_get_str(hdr: *ArrayHeader, idx: u64, out_ptr: *?[*]u8, 
     const off: usize = @intCast(idx * hdr.elem_size);
     const p = base + off;
     if (hdr.elem_tag == 3) {
-        if (hdr.elem_size >= 16) {
-            const ptr_slot: *const i64 = @ptrCast(@alignCast(p));
-            const len_slot: *const i64 = @ptrCast(@alignCast(p + 8));
-            const addr: u64 = @bitCast(ptr_slot.*);
-            const ptr: ?[*]const u8 = if (addr == 0) null else @ptrFromInt(@as(usize, addr));
-            const len_u64: u64 = @bitCast(len_slot.*);
-            out_ptr.* = @constCast(ptr);
-            out_len.* = @intCast(len_u64);
-            return;
-        }
+        const ptr_slot: *const i64 = @ptrCast(@alignCast(p));
+        const len_slot: *const i64 = @ptrCast(@alignCast(p + 8));
+        const addr: u64 = @bitCast(ptr_slot.*);
+        const ptr: ?[*]const u8 = if (addr == 0) null else @ptrFromInt(@as(usize, addr));
+        const len_u64: u64 = @bitCast(len_slot.*);
+        out_ptr.* = @constCast(ptr);
+        out_len.* = @intCast(len_u64);
+        return;
     }
     out_ptr.* = null;
     out_len.* = 0;
@@ -1086,15 +1342,18 @@ pub export fn doxa_array_set_str(hdr: *ArrayHeader, idx: u64, str_ptr: ?[*]const
     if (!ensureArrayCapacity(hdr, needed_len)) return;
     if (hdr.data == null and hdr.elem_size != 0) return;
     if (idx >= hdr.len) hdr.len = idx + 1;
-    if (hdr.elem_tag != 3 or hdr.elem_size < 16) return;
+    if (hdr.elem_tag != 3) return;
+    var cloned_ptr: ?[*]u8 = null;
+    var cloned_len: usize = 0;
+    strCloneInto(hdr.scope, str_ptr, str_len, &cloned_ptr, &cloned_len);
     const base: [*]u8 = @ptrCast(hdr.data.?);
     const off: usize = @intCast(idx * hdr.elem_size);
     const p = base + off;
     const ptr_slot: *i64 = @ptrCast(@alignCast(p));
     const len_slot: *i64 = @ptrCast(@alignCast(p + 8));
-    const addr: u64 = if (str_ptr) |vp| @intFromPtr(vp) else 0;
+    const addr: u64 = if (cloned_ptr) |vp| @intFromPtr(vp) else 0;
     ptr_slot.* = @bitCast(addr);
-    len_slot.* = @bitCast(@as(u64, str_len));
+    len_slot.* = @bitCast(@as(u64, cloned_len));
 }
 
 pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u64, elem_tag: u64) callconv(.c) *ArrayHeader {
@@ -1102,7 +1361,7 @@ pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u
     const len_b: u64 = if (b) |hdr| hdr.len else 0;
     const result = doxa_array_new(elem_size, elem_tag, len_a + len_b);
 
-    if (elem_tag == 3 and elem_size >= 16) {
+    if (elem_tag == 3) {
         if (a) |hdr_a| {
             var idx: u64 = 0;
             while (idx < len_a) : (idx += 1) {
@@ -1150,7 +1409,7 @@ pub export fn doxa_array_insert(hdr: ?*ArrayHeader, idx: i64, value: i64) callco
     const old_len = h.len;
     if (!ensureArrayCapacity(h, old_len + 1)) return h;
     h.len = old_len + 1;
-    if (h.elem_tag == 3 and h.elem_size >= 16) {
+    if (h.elem_tag == 3) {
         var i: u64 = old_len;
         while (i > pos) : (i -= 1) {
             var str_ptr: ?[*]u8 = undefined;
@@ -1177,7 +1436,7 @@ pub export fn doxa_array_remove(hdr: ?*ArrayHeader, idx: i64, out_removed: *i64)
     if (pos >= h.len) return h;
 
     out_removed.* = doxa_array_get_i64(h, pos);
-    if (h.elem_tag == 3 and h.elem_size >= 16) {
+    if (h.elem_tag == 3) {
         var i: u64 = pos;
         while (i + 1 < h.len) : (i += 1) {
             var str_ptr: ?[*]u8 = undefined;
@@ -1205,7 +1464,7 @@ pub export fn doxa_array_insert_str(hdr: ?*ArrayHeader, idx: i64, str_ptr: ?[*]c
     const old_len = h.len;
     if (!ensureArrayCapacity(h, old_len + 1)) return h;
     h.len = old_len + 1;
-    if (h.elem_tag == 3 and h.elem_size >= 16) {
+    if (h.elem_tag == 3) {
         var i: u64 = old_len;
         while (i > pos) : (i -= 1) {
             var prev_ptr: ?[*]u8 = undefined;
@@ -1227,7 +1486,7 @@ pub export fn doxa_array_remove_str(hdr: ?*ArrayHeader, idx: i64, out_ptr: *?[*]
     if (pos >= h.len) return h;
 
     doxa_array_get_str(h, pos, out_ptr, out_len);
-    if (h.elem_tag == 3 and h.elem_size >= 16) {
+    if (h.elem_tag == 3) {
         var i: u64 = pos;
         while (i + 1 < h.len) : (i += 1) {
             var next_ptr: ?[*]u8 = undefined;
@@ -1249,7 +1508,7 @@ pub export fn doxa_array_slice(hdr: ?*ArrayHeader, start: i64, length: i64) call
     const max_len = h.len - s;
     const out_len: u64 = if (n > max_len) max_len else n;
     const out = doxa_array_new(h.elem_size, h.elem_tag, out_len);
-    if (h.elem_tag == 3 and h.elem_size >= 16) {
+    if (h.elem_tag == 3) {
         var i: u64 = 0;
         while (i < out_len) : (i += 1) {
             var str_ptr: ?[*]u8 = undefined;
@@ -1289,7 +1548,7 @@ fn asArrayHeader(ptr: ?*anyopaque) ?*ArrayHeader {
 
     // Validate minimal invariants to avoid treating C strings as ArrayHeaders.
     if (hdr.elem_tag > 8) return null;
-    if (!(hdr.elem_size == 0 or hdr.elem_size == 1 or hdr.elem_size == 8)) return null;
+    if (!(hdr.elem_size == 0 or hdr.elem_size == 1 or hdr.elem_size == 8 or hdr.elem_size == 16)) return null;
     if (hdr.len > hdr.cap) return null;
     if (hdr.elem_size == 0) return hdr;
     if (hdr.cap == 0) return hdr;
@@ -1322,11 +1581,6 @@ fn printTaggedBitsImpl(out: anytype, tag: u64, bits: i64) anyerror!void {
                 try out.print("{d}.0", .{f})
             else
                 try out.print("{d}", .{f});
-        },
-         3 => { // string (i8* + len stored separately in array or as DoxaString)
-            const ds = doxaStringFromBits(bits);
-            const s = sliceFromDoxaString(ds);
-            try out.print("\"{s}\"", .{s});
         },
         4 => { // tetra (2-bit stored in u8)
             const t: u2 = asTetra(bits);
@@ -1417,9 +1671,13 @@ fn printStructImpl(out: anytype, addr: u64) anyerror!void {
 
     try out.print("{{ ", .{});
     var first: bool = true;
+    var word: usize = structTotalWords(tags, field_count);
     var idx: usize = field_count;
     while (idx > 0) {
         idx -= 1;
+        const tag: u64 = if (idx < tags.len) tags[idx] else 255;
+        word -= structFieldWordCount(tag);
+        const bits: i64 = fields[word];
         if (!first) try out.print(", ", .{});
 
         const name_slice: []const u8 = if (idx < names.len) blk: {
@@ -1429,9 +1687,12 @@ fn printStructImpl(out: anytype, addr: u64) anyerror!void {
 
         try out.print("{s}: ", .{name_slice});
 
-        const tag: u64 = if (idx < tags.len) tags[idx] else 255;
-        const bits: i64 = fields[idx];
-        if (tag == 8 and idx < enum_type_names.len) {
+        if (tag == 3) {
+            const str_addr: u64 = @bitCast(bits);
+            const len: usize = @intCast(@as(u64, @bitCast(fields[word + 1])));
+            const s: []const u8 = if (str_addr == 0) "" else @as([*]const u8, @ptrFromInt(@as(usize, str_addr)))[0..len];
+            try out.print("\"{s}\"", .{s});
+        } else if (tag == 8 and idx < enum_type_names.len) {
             const etn: []const u8 = if (enum_type_names[idx]) |n| std.mem.span(n) else "";
             try printEnumImpl(out, etn, bits);
         } else {
@@ -1453,7 +1714,7 @@ fn printArrayHdrImpl(out: anytype, hdr: *ArrayHeader) anyerror!void {
     var i: u64 = 0;
     while (i < hdr.len) : (i += 1) {
         if (i != 0) try out.print(", ", .{});
-        if (hdr.elem_tag == 3 and hdr.elem_size >= 16) {
+        if (hdr.elem_tag == 3) {
             var str_ptr: ?[*]u8 = undefined;
             var str_len: usize = undefined;
             doxa_array_get_str(hdr, i, &str_ptr, &str_len);
@@ -1497,12 +1758,6 @@ fn satisfiesQuantifier(tag: u64, elem_bits: i64, comparison_bits: i64, mode: Qua
             const rhs = asFloat(comparison_bits);
             break :blk_float if (mode == .Equal) lhs == rhs else lhs > rhs;
         },
-         3 => blk_str: {
-            if (mode != .Equal) break :blk_str false;
-            const lhs = sliceFromDoxaString(doxaStringFromBits(elem_bits));
-            const rhs = sliceFromDoxaString(doxaStringFromBits(comparison_bits));
-            break :blk_str std.mem.eql(u8, lhs, rhs);
-        },
         4 => blk_tetra: {
             const lhs = @as(i64, asTetra(elem_bits));
             const rhs = @as(i64, asTetra(comparison_bits));
@@ -1512,10 +1767,10 @@ fn satisfiesQuantifier(tag: u64, elem_bits: i64, comparison_bits: i64, mode: Qua
     };
 }
 
-fn existsQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: QuantifierMode) u8 {
+fn existsQuantifier(hdr_opt: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize, mode: QuantifierMode) u8 {
     const hdr = hdr_opt orelse return 0;
-    if (hdr.elem_tag == 3 and hdr.elem_size >= 16) {
-        const cs = sliceFromDoxaString(doxaStringFromBits(comparison_bits));
+    if (hdr.elem_tag == 3) {
+        const cs = sliceFromDoxaString(.{ .ptr = comparison_ptr, .len = comparison_len });
         var idx: u64 = 0;
         while (idx < hdr.len) : (idx += 1) {
             var str_ptr: ?[*]u8 = undefined;
@@ -1528,6 +1783,7 @@ fn existsQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: Quantifi
         }
         return 0;
     }
+    const comparison_bits: i64 = if (comparison_ptr) |p| @bitCast(@as(u64, @intFromPtr(p))) else 0;
     var idx: u64 = 0;
     while (idx < hdr.len) : (idx += 1) {
         const elem_bits = doxa_array_get_i64(hdr, idx);
@@ -1538,18 +1794,18 @@ fn existsQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: Quantifi
     return 0;
 }
 
-pub export fn doxa_exists_quantifier_gt(hdr: ?*ArrayHeader, comparison_bits: i64) callconv(.c) u8 {
-    return existsQuantifier(hdr, comparison_bits, .Greater);
+pub export fn doxa_exists_quantifier_gt(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize) callconv(.c) u8 {
+    return existsQuantifier(hdr, comparison_ptr, comparison_len, .Greater);
 }
 
-pub export fn doxa_exists_quantifier_eq(hdr: ?*ArrayHeader, comparison_bits: i64) callconv(.c) u8 {
-    return existsQuantifier(hdr, comparison_bits, .Equal);
+pub export fn doxa_exists_quantifier_eq(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize) callconv(.c) u8 {
+    return existsQuantifier(hdr, comparison_ptr, comparison_len, .Equal);
 }
 
-fn forallQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: QuantifierMode) u8 {
+fn forallQuantifier(hdr_opt: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize, mode: QuantifierMode) u8 {
     const hdr = hdr_opt orelse return 1;
-    if (hdr.elem_tag == 3 and hdr.elem_size >= 16) {
-        const cs = sliceFromDoxaString(doxaStringFromBits(comparison_bits));
+    if (hdr.elem_tag == 3) {
+        const cs = sliceFromDoxaString(.{ .ptr = comparison_ptr, .len = comparison_len });
         var idx: u64 = 0;
         while (idx < hdr.len) : (idx += 1) {
             var str_ptr: ?[*]u8 = undefined;
@@ -1563,6 +1819,7 @@ fn forallQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: Quantifi
         }
         return 1;
     }
+    const comparison_bits: i64 = if (comparison_ptr) |p| @bitCast(@as(u64, @intFromPtr(p))) else 0;
     var idx: u64 = 0;
     while (idx < hdr.len) : (idx += 1) {
         const elem_bits = doxa_array_get_i64(hdr, idx);
@@ -1573,104 +1830,17 @@ fn forallQuantifier(hdr_opt: ?*ArrayHeader, comparison_bits: i64, mode: Quantifi
     return 1;
 }
 
-pub export fn doxa_forall_quantifier_gt(hdr: ?*ArrayHeader, comparison_bits: i64) callconv(.c) u8 {
-    return forallQuantifier(hdr, comparison_bits, .Greater);
+pub export fn doxa_forall_quantifier_gt(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize) callconv(.c) u8 {
+    return forallQuantifier(hdr, comparison_ptr, comparison_len, .Greater);
 }
 
-pub export fn doxa_forall_quantifier_eq(hdr: ?*ArrayHeader, comparison_bits: i64) callconv(.c) u8 {
-    return forallQuantifier(hdr, comparison_bits, .Equal);
+pub export fn doxa_forall_quantifier_eq(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize) callconv(.c) u8 {
+    return forallQuantifier(hdr, comparison_ptr, comparison_len, .Equal);
 }
 
-/// Canonical runtime representation for Doxa values.
-/// This is the single, shared value model for the interpreter, native
-/// (LLVM) backend, and any C callers. The layout must stay in sync
-/// with `%DoxaValue` in `src/codegen/llvmir/ir_printer.zig`.
-///
-/// Tag values:
-///   0 = Int      (payload_bits = i64)
-///   1 = Float    (payload_bits = bitcast f64)
-///   2 = Byte     (payload_bits[0..8] = u8)
-///   3 = String   (payload_bits = pointer to string storage / C-string)
-///   4 = Array    (payload_bits = *ArrayHeader as bits)
-///   5 = Struct   (payload_bits = pointer to struct instance)
-///   6 = Enum     (payload_bits = i64 variant index; type via metadata)
-///   7 = Tetra    (payload_bits[0..2] = u2)
-///   8 = Nothing  (payload_bits ignored)
-///   9 = Function (payload_bits = pointer to function closure/descriptor)
-///  10 = Map      (payload_bits = *MapHeader as bits)
-///
-/// Boxing rules:
-///   - Unboxed: Int, Float, Byte, Tetra, Enum discriminant
-///   - Boxed:   String, Array, Struct, Function, Map
-///   - Sentinel: Nothing (tag = 8, payload_bits = 0)
-///
-/// Union encoding:
-///   - For non-union values, `reserved == 0`.
-///   - For union values, `reserved` packs:
-///       bit 31        : is_union flag
-///       bits 16..30   : union_id (up to 32k unions)
-///       bits 0..15    : active_member_index (0-based, up to 65k members)
-///   - `tag` always describes the active payload kind (Int, Float, Struct, …).
-pub const DoxaValue = extern struct {
-    /// Discriminant for the active variant / type.
-    /// See `DoxaTag` for the full set of tags.
-    tag: u32,
-    /// Packed flags and sub-tags. See `DoxaUnionMeta` helpers for how this is
-    /// used to encode union membership.
-    reserved: u32,
-    /// Payload bits. For small types, stores the value directly. For heap-backed
-    /// types, stores a pointer as bits.
-    payload_bits: i64,
-};
-
-/// High-level tag enumeration for `DoxaValue.tag`. The numeric values are part
-/// of the ABI and must stay in sync with the documentation above.
-pub const DoxaTag = enum(u32) {
-    Int = 0,
-    Float = 1,
-    Byte = 2,
-    String = 3,
-    Array = 4,
-    Struct = 5,
-    Enum = 6,
-    Tetra = 7,
-    Nothing = 8,
-    Function = 9,
-    Map = 10,
-};
-
-/// Helpers for encoding and decoding union metadata into the `reserved` field
-/// of a `DoxaValue`. This keeps union representation consistent across the
-/// interpreter, runtime helpers, and native code.
-pub const DoxaUnionMeta = struct {
-    pub const is_union_bit: u32 = 1 << 31;
-    pub const union_id_shift: u5 = 16;
-    pub const union_id_mask: u32 = 0x7FFF << union_id_shift; // 15 bits
-    pub const member_index_mask: u32 = 0xFFFF; // 16 bits
-
-    pub fn pack(union_id: u32, member_index: u32) u32 {
-        const uid: u32 = union_id & 0x7FFF;
-        const mid: u32 = member_index & member_index_mask;
-        return is_union_bit | (uid << union_id_shift) | mid;
-    }
-
-    pub fn isUnion(reserved: u32) bool {
-        return (reserved & is_union_bit) != 0;
-    }
-
-    pub fn unionId(reserved: u32) u32 {
-        return (reserved & union_id_mask) >> union_id_shift;
-    }
-
-    pub fn memberIndex(reserved: u32) u32 {
-        return reserved & member_index_mask;
-    }
-};
-
-/// Print a value described by the canonical `DoxaValueC` layout. This is the
-/// primary entry point for native code that wants to render values without
-/// going through the interpreter.
-pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
+/// Print a value described by the canonical `DoxaValue` layout. This is the
+/// primary entry point for native code that renders values via the runtime.
+pub export fn doxa_print_value(val: *const DoxaValue) callconv(.c) void {
     const tag: DoxaTag = @enumFromInt(val.tag);
     switch (tag) {
         .Int => {
@@ -1685,8 +1855,10 @@ pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
             doxa_print_byte(b);
         },
         .String => {
-            const ds = doxaStringFromBits(val.payload_bits);
-            doxa_peek_string(ds.ptr, ds.len);
+            const addr: u64 = @bitCast(val.payload_bits);
+            const len: usize = @intCast(val.payload_len);
+            const ptr: ?[*]const u8 = if (addr == 0) null else @ptrFromInt(@as(usize, addr));
+            doxa_peek_string(ptr, len);
         },
         .Array => {
             const addr: u64 = @bitCast(val.payload_bits);
@@ -1738,48 +1910,28 @@ pub export fn doxa_print_value(val: *const DoxaValueC) callconv(.c) void {
 /// Type checking for union types and `as` expressions.
 /// Returns 1 (true) if the value matches the target type, 0 (false) otherwise.
 ///
-/// Legacy ABI used by generated LLVM:
-///   - `value`      : payload bits (i64), interpreted according to `value_type`
-///   - `value_type` : legacy tag (0=int, 1=float, 2=byte, 3=string, 4=array,
-///                    5=struct, 6=enum, 7=tetra/bool, 8=nothing)
+/// ABI used by generated LLVM IR:
+///   - `value_type` : type tag (0=int, 1=float, 2=byte, 3=string, 4=array,
+///                    5=struct, 6=enum, 7=tetra, 8=nothing)
 ///   - `target_type`: C string with a type name like "int", "string", "int[]", …
-///
-/// This is now implemented as a thin shim that constructs a canonical
-/// `DoxaValue` and delegates to `doxa_type_check_value`. New code should
-/// prefer calling `doxa_type_check_value` directly.
 pub export fn doxa_type_check(value: i64, value_type: i64, target_type: ?[*:0]const u8) callconv(.c) i64 {
-    // Map legacy `value_type` to canonical tag. Values outside the known range
-    // are treated as `Nothing` to keep behaviour predictable.
-    const tag_raw: u32 = switch (value_type) {
-        0 => @intFromEnum(DoxaTag.Int),
-        1 => @intFromEnum(DoxaTag.Float),
-        2 => @intFromEnum(DoxaTag.Byte),
-        3 => @intFromEnum(DoxaTag.String),
-        4 => @intFromEnum(DoxaTag.Array),
-        5 => @intFromEnum(DoxaTag.Struct),
-        6 => @intFromEnum(DoxaTag.Enum),
-        7 => @intFromEnum(DoxaTag.Tetra),
-        8 => @intFromEnum(DoxaTag.Nothing),
-        else => @intFromEnum(DoxaTag.Nothing),
-    };
-
-    const val = DoxaValueC{
-        .tag = tag_raw,
-        .reserved = 0, // legacy path has no union metadata
-        .payload_bits = value,
-    };
-
-    return doxa_type_check_value(val, target_type);
-}
-
-/// New entry point that works directly with the canonical value representation.
-/// This will eventually replace `doxa_type_check` in generated LLVM IR.
-pub export fn doxa_type_check_value(val: DoxaValueC, target_type: ?[*:0]const u8) callconv(.c) i64 {
+    _ = value;
     if (target_type == null) return 0;
 
     const target = std.mem.span(target_type.?);
 
-    const tag: DoxaTag = @enumFromInt(val.tag);
+    const tag: DoxaTag = switch (value_type) {
+        0 => .Int,
+        1 => .Float,
+        2 => .Byte,
+        3 => .String,
+        4 => .Array,
+        5 => .Struct,
+        6 => .Enum,
+        7 => .Tetra,
+        8 => .Nothing,
+        else => .Nothing,
+    };
 
     const actual_type: []const u8 = switch (tag) {
         .Int => "int",
@@ -1795,14 +1947,10 @@ pub export fn doxa_type_check_value(val: DoxaValueC, target_type: ?[*:0]const u8
         .Map => "map",
     };
 
-    if (std.mem.eql(u8, actual_type, target)) {
-        return 1;
-    }
+    if (std.mem.eql(u8, actual_type, target)) return 1;
 
     if (std.mem.endsWith(u8, target, "[]")) {
-        if (tag == .Array) {
-            return 1;
-        }
+        if (tag == .Array) return 1;
     }
 
     return 0;

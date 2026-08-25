@@ -229,6 +229,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             // Process function body instructions
+            self.scope_depth = 0;
             for (hir.instructions[start_idx..end_idx]) |inst| {
                 const tag = std.meta.activeTag(inst);
                 const requires_new_block = switch (tag) {
@@ -280,6 +281,7 @@ pub fn Methods(comptime Ctx: type) type {
                             if (ret.has_value and stack.items.len > 0) {
                                 stack.items.len -= 1;
                             }
+                            try w.writeAll("  call void @doxa_scope_exit()\n");
                             try w.writeAll("  ret void\n");
                             last_instruction_was_terminator = true;
                             continue;
@@ -293,6 +295,8 @@ pub fn Methods(comptime Ctx: type) type {
                             if (v.ty != target_return_stack_type) {
                                 v = try self.coerceForStore(v, target_return_stack_type, &id, w);
                             }
+                            v = try self.cloneHeapForReturn(w, &id, v, func.return_type);
+                            try w.writeAll("  call void @doxa_scope_exit()\n");
                             const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, v.name });
                             defer self.allocator.free(ret_line);
                             try w.writeAll(ret_line);
@@ -313,10 +317,17 @@ pub fn Methods(comptime Ctx: type) type {
                                 const zero3_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 2\n", .{ zero3, return_type_str, zero2 });
                                 defer self.allocator.free(zero3_line);
                                 try w.writeAll(zero3_line);
-                                const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero3 });
+                                const zero4 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const zero4_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 3\n", .{ zero4, return_type_str, zero3 });
+                                defer self.allocator.free(zero4_line);
+                                try w.writeAll(zero4_line);
+                                try w.writeAll("  call void @doxa_scope_exit()\n");
+                                const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero4 });
                                 defer self.allocator.free(ret_line);
                                 try w.writeAll(ret_line);
                             } else {
+                                try w.writeAll("  call void @doxa_scope_exit()\n");
                                 const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} zeroinitializer\n", .{return_type_str});
                                 defer self.allocator.free(ret_line);
                                 try w.writeAll(ret_line);
@@ -325,6 +336,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = true;
                     },
                     .Unreachable => |_| {
+                        try w.writeAll("  call void @doxa_trap_unreachable()\n");
                         try w.writeAll("  unreachable\n");
                         stack.items.len = 0;
                         last_instruction_was_terminator = true;
@@ -385,18 +397,18 @@ pub fn Methods(comptime Ctx: type) type {
                             continue;
                         }
 
-                        const struct_type_llvm = try self.buildI64StructType(fcount);
+                        const struct_type_llvm = try self.buildI64StructType(fcount * 2);
                         defer self.allocator.free(struct_type_llvm);
 
-                        // Allocate struct on heap
-                        const struct_size = fcount * @sizeOf(i64);
+                        // Allocate struct on heap (each string field is ptr + len)
+                        const struct_size = fcount * 2 * @sizeOf(i64);
                         const size_reg = try self.nextTemp(&id);
                         const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_reg, struct_size });
                         defer self.allocator.free(size_line);
                         try w.writeAll(size_line);
 
                         const malloc_reg = try self.nextTemp(&id);
-                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @malloc(i64 {s})\n", .{ malloc_reg, size_reg });
+                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {s}, i64 8)\n", .{ malloc_reg, size_reg });
                         defer self.allocator.free(malloc_line);
                         try w.writeAll(malloc_line);
 
@@ -406,7 +418,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(cast_line);
                         try w.writeAll(cast_line);
 
-                        // Populate each field from module globals
+                        // Populate each field from module globals (raw C-strings).
                         var fi: usize = 0;
                         while (fi < fcount) : (fi += 1) {
                             const field_name = lm.field_names[fi];
@@ -422,20 +434,34 @@ pub fn Methods(comptime Ctx: type) type {
                             defer self.allocator.free(load_line);
                             try w.writeAll(load_line);
 
-                            // Convert value to i64 storage representation
-                            const loaded_sv = StackVal{ .name = loaded_val, .ty = field_st };
-                            const loaded_storage = try self.convertValueToArrayStorage(w, loaded_sv, HIR.HIRType{ .String = {} }, &id);
+                            // Recover (ptr, len) from the C-string and store both words.
+                            const out_ptr_slot = try self.nextTemp(&id);
+                            const out_len_slot = try self.nextTemp(&id);
+                            const alloca_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
+                            const alloca_len = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
+                            defer self.allocator.free(alloca_ptr);
+                            defer self.allocator.free(alloca_len);
+                            try w.writeAll(alloca_ptr);
+                            try w.writeAll(alloca_len);
+                            const init_null = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
+                            const init_zero = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
+                            defer self.allocator.free(init_null);
+                            defer self.allocator.free(init_zero);
+                            try w.writeAll(init_null);
+                            try w.writeAll(init_zero);
+                            const from_cstr = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_from_cstr(ptr {s}, ptr {s}, ptr {s})\n", .{ loaded_val, out_ptr_slot, out_len_slot });
+                            defer self.allocator.free(from_cstr);
+                            try w.writeAll(from_cstr);
+                            const cloned_ptr = try self.nextTemp(&id);
+                            const cloned_len = try self.nextTemp(&id);
+                            const load_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ cloned_ptr, out_ptr_slot });
+                            const load_len = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ cloned_len, out_len_slot });
+                            defer self.allocator.free(load_ptr);
+                            defer self.allocator.free(load_len);
+                            try w.writeAll(load_ptr);
+                            try w.writeAll(load_len);
 
-                            // GEP to field position
-                            const field_gep = try self.nextTemp(&id);
-                            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds {s}, ptr {s}, i32 0, i32 {d}\n", .{ field_gep, struct_type_llvm, struct_ptr, @as(i32, @intCast(fi)) });
-                            defer self.allocator.free(gep_line);
-                            try w.writeAll(gep_line);
-
-                            // Store into struct field
-                            const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ loaded_storage.name, field_gep });
-                            defer self.allocator.free(store_line);
-                            try w.writeAll(store_line);
+                            try self.storeStructStringField(w, struct_type_llvm, struct_ptr, fi * 2, cloned_ptr, cloned_len, &id);
                         }
 
                         // Store the module struct pointer to the global so subsequent
@@ -659,13 +685,16 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .EnterScope => |_| {
-                        // EnterScope is a no-op in LLVM IR generation
-                        // It's used for scope tracking but doesn't generate LLVM IR
+                        try w.writeAll("  call void @doxa_scope_enter()\n");
+                        self.scope_depth += 1;
                         last_instruction_was_terminator = false;
                     },
-                    .ExitScope => |_| {
-                        // ExitScope is a no-op in LLVM IR generation
-                        // It's used for scope tracking but doesn't generate LLVM IR
+                    .ExitScope => |s| {
+                        try w.writeAll("  call void @doxa_scope_exit()\n");
+                        if (!self.exited_scopes.contains(s.scope_id)) {
+                            self.scope_depth -|= 1;
+                            self.exited_scopes.put(s.scope_id, {}) catch {};
+                        }
                         last_instruction_was_terminator = false;
                     },
                     .PeekStruct => |ps| {
@@ -728,13 +757,8 @@ pub fn Methods(comptime Ctx: type) type {
                             if (sd.declared_type == .Union) {
                                 value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
                             }
-                            if (!sd.is_const and sd.declared_type == .Array and value.fixed_array_depth == 0) {
-                                const src_ptr = if (value.ty == .PTR) value else try self.ensurePointer(w, value, &id);
-                                const clone_reg = try self.nextTemp(&id);
-                                const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_clone(ptr {s})\n", .{ clone_reg, src_ptr.name });
-                                defer self.allocator.free(clone_line);
-                                try w.writeAll(clone_line);
-                                value = .{ .name = clone_reg, .ty = .PTR, .array_type = value.array_type };
+                            if (!sd.is_const) {
+                                value = try self.cloneHeapForStore(w, &id, value, sd.declared_type);
                             }
                             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
                                 value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
@@ -802,6 +826,7 @@ pub fn Methods(comptime Ctx: type) type {
                             if (sv.expected_type == .Union) {
                                 value = try self.buildDoxaValue(w, value, sv.expected_type, &id);
                             }
+                            value = try self.cloneHeapForStore(w, &id, value, sv.expected_type);
                             var info_ptr = variables.getPtr(sv.var_name);
                             if (info_ptr == null) {
                                 continue;
@@ -886,13 +911,14 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .AssertFail => |af| {
                         try self.handleAssertFail(w, &stack, &id, af, peek_state);
-                        last_instruction_was_terminator = false;
+                        last_instruction_was_terminator = true;
                     },
                 }
             }
 
             if (!last_instruction_was_terminator) {
                 if (target_return_stack_type == .Nothing) {
+                    try w.writeAll("  call void @doxa_scope_exit()\n");
                     try w.writeAll("  ret void\n");
                 } else if (std.mem.indexOf(u8, return_type_str, "%DoxaValue") != null) {
                     const zero = try self.nextTemp(&id);
@@ -907,10 +933,16 @@ pub fn Methods(comptime Ctx: type) type {
                     const zero3_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 2\n", .{ zero3, return_type_str, zero2 });
                     defer self.allocator.free(zero3_line);
                     try w.writeAll(zero3_line);
-                    const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero3 });
+                    const zero4 = try self.nextTemp(&id);
+                    const zero4_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 3\n", .{ zero4, return_type_str, zero3 });
+                    defer self.allocator.free(zero4_line);
+                    try w.writeAll(zero4_line);
+                    try w.writeAll("  call void @doxa_scope_exit()\n");
+                    const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero4 });
                     defer self.allocator.free(ret_line);
                     try w.writeAll(ret_line);
                 } else {
+                    try w.writeAll("  call void @doxa_scope_exit()\n");
                     const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} zeroinitializer\n", .{return_type_str});
                     defer self.allocator.free(ret_line);
                     try w.writeAll(ret_line);
@@ -1104,12 +1136,11 @@ pub fn Methods(comptime Ctx: type) type {
                 .{ .name = "forall_quantifier_eq", .runtime = "doxa_forall_quantifier_eq" },
             };
             for (wrappers) |wrap| {
-                const header = try std.fmt.allocPrint(self.allocator, "define i2 @{s}(ptr %hdr, ptr %value) {{\n", .{wrap.name});
+                const header = try std.fmt.allocPrint(self.allocator, "define i2 @{s}(ptr %hdr, ptr %value_ptr, i64 %value_len) {{\n", .{wrap.name});
                 defer self.allocator.free(header);
                 try w.writeAll(header);
                 try w.writeAll("entry:\n");
-                try w.writeAll("  %value_bits = ptrtoint ptr %value to i64\n");
-                const call_line = try std.fmt.allocPrint(self.allocator, "  %res = call i8 @{s}(ptr %hdr, i64 %value_bits)\n", .{wrap.runtime});
+                const call_line = try std.fmt.allocPrint(self.allocator, "  %res = call i8 @{s}(ptr %hdr, ptr %value_ptr, i64 %value_len)\n", .{wrap.runtime});
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
                 try w.writeAll("  %cast = trunc i8 %res to i2\n");

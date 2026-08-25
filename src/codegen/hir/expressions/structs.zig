@@ -92,7 +92,6 @@ pub const StructsHandler = struct {
                 .field_count = @intCast(struct_data.fields.len),
                 .field_names = try self.generator.allocator.dupe([]const u8, field_names),
                 .field_types = try self.generator.allocator.dupe(HIRType, field_types),
-                .size_bytes = 0, // Size will be calculated by VM
             },
         });
 

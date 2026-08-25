@@ -78,7 +78,7 @@ pub const DiagnosticRenderer = struct {
             try writer.writeAll(ansiReset());
         }
 
-        try writer.writeAll("DoxVM: ");
+        try writer.writeAll("Doxa: ");
 
         if (diag.code) |code| {
             if (loc) |l| {

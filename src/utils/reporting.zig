@@ -30,8 +30,6 @@ pub const ReporterOptions = struct {
     debug_parser: bool = false,
     debug_semantic: bool = false,
     debug_hir: bool = false,
-    debug_bytecode: bool = false,
-    debug_execution: bool = false,
     debug_memory: bool = false,
     log_to_stderr: bool = true,
     publish_debounce_ns: u64 = 30 * std.time.ns_per_ms,
@@ -62,7 +60,7 @@ pub const Diagnostic = struct {
     loc: ?Location,
     code: ?[]const u8 = null,
     related_info: ?[]RelatedInformation = null,
-    source: ?[]const u8 = "DoxVM",
+    source: ?[]const u8 = "Doxa",
 };
 
 pub const DiagnosticView = struct {
@@ -213,11 +211,11 @@ pub const Reporter = struct {
                 .loc = loc,
                 .code = code,
                 .related_info = null,
-                .source = "DoxVM",
+                .source = "Doxa",
             };
 
             self.appendDiagnostic(diag);
-            std.debug.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), fallback_copy });
+            std.debug.print("Doxa[{s}]: {s}\n", .{ @tagName(final_severity), fallback_copy });
             return;
         };
 
@@ -235,11 +233,11 @@ pub const Reporter = struct {
                 .loc = loc,
                 .code = code,
                 .related_info = null,
-                .source = "DoxVM",
+                .source = "Doxa",
             };
 
             self.appendDiagnostic(diag);
-            std.debug.print("DoxVM[{s}]: {s}\n", .{ @tagName(final_severity), fallback_copy });
+            std.debug.print("Doxa[{s}]: {s}\n", .{ @tagName(final_severity), fallback_copy });
             return;
         };
 
@@ -252,7 +250,7 @@ pub const Reporter = struct {
             .loc = loc,
             .code = code,
             .related_info = related_clone,
-            .source = "DoxVM",
+            .source = "Doxa",
         };
 
         self.appendDiagnostic(diag);
@@ -275,16 +273,6 @@ pub const Reporter = struct {
 
     fn debugHir(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
         if (!self.options.debug_hir and !self.options.debug_verbose) return;
-        self.report(.Debug, .Hint, loc, code, fmt, args);
-    }
-
-    fn debugBytecode(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.options.debug_bytecode and !self.options.debug_verbose) return;
-        self.report(.Debug, .Hint, loc, code, fmt, args);
-    }
-
-    fn debugExecution(self: *Reporter, loc: ?Location, code: ?[]const u8, comptime fmt: []const u8, args: anytype) void {
-        if (!self.options.debug_execution and !self.options.debug_verbose) return;
         self.report(.Debug, .Hint, loc, code, fmt, args);
     }
 
@@ -701,21 +689,21 @@ pub const Reporter = struct {
         if (line_buf) |buf| {
             if (diag.loc) |l| {
                 if (diag.code) |c| {
-                    std.fmt.format(buf.writer(), "DoxVM: [{s}][{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                    std.fmt.format(buf.writer(), "Doxa: [{s}][{s}][{s}] {s}:{d}:{d}: {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), c, l.file, l.range.start_line, l.range.start_col, diag.message,
                     }) catch {};
                 } else {
-                    std.fmt.format(buf.writer(), "DoxVM: [{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                    std.fmt.format(buf.writer(), "Doxa: [{s}][{s}] {s}:{d}:{d}: {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), l.file, l.range.start_line, l.range.start_col, diag.message,
                     }) catch {};
                 }
             } else {
                 if (diag.code) |c| {
-                    std.fmt.format(buf.writer(), "DoxVM: [{s}][{s}][{s}] {s}\n", .{
+                    std.fmt.format(buf.writer(), "Doxa: [{s}][{s}][{s}] {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), c, diag.message,
                     }) catch {};
                 } else {
-                    std.fmt.format(buf.writer(), "DoxVM: [{s}][{s}] {s}\n", .{
+                    std.fmt.format(buf.writer(), "Doxa: [{s}][{s}] {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), diag.message,
                     }) catch {};
                 }
@@ -723,21 +711,21 @@ pub const Reporter = struct {
         } else {
             if (diag.loc) |l| {
                 if (diag.code) |c| {
-                    std.debug.print("DoxVM: [{s}][{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                    std.debug.print("Doxa: [{s}][{s}][{s}] {s}:{d}:{d}: {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), c, l.file, l.range.start_line, l.range.start_col, diag.message,
                     });
                 } else {
-                    std.debug.print("DoxVM: [{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                    std.debug.print("Doxa: [{s}][{s}] {s}:{d}:{d}: {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), l.file, l.range.start_line, l.range.start_col, diag.message,
                     });
                 }
             } else {
                 if (diag.code) |c| {
-                    std.debug.print("DoxVM: [{s}][{s}][{s}] {s}\n", .{
+                    std.debug.print("Doxa: [{s}][{s}][{s}] {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), c, diag.message,
                     });
                 } else {
-                    std.debug.print("DoxVM: [{s}][{s}] {s}\n", .{
+                    std.debug.print("Doxa: [{s}][{s}] {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), diag.message,
                     });
                 }

@@ -7,14 +7,36 @@ const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
-const VM = @import("../interpreter/vm.zig").VM;
-const bc = @import("../codegen/bytecode/module.zig");
 const abi_source = @embedFile("abi.zig");
 const generator_source = @embedFile("compiler.zig");
 
 fn cacheSeed() []const u8 {
     return abi_source ++ generator_source;
 }
+
+/// Scalar types an inline-Zig module may use at the ABI boundary. Collection,
+/// enum, function, and union values are not supported as parameters/returns and
+/// are rejected during codegen.
+const AbiType = enum(u8) {
+    Int,
+    Byte,
+    Float,
+    String,
+    Tetra,
+    Nothing,
+    Array,
+    Struct,
+    Map,
+    Enum,
+    Function,
+    Union,
+};
+
+const ZigExportFn = struct {
+    symbol: []const u8,
+    param_types: []AbiType,
+    return_type: AbiType,
+};
 
 const ZigDeclInfo = struct {
     module_name: []const u8,
@@ -26,7 +48,7 @@ const ZigDeclInfo = struct {
 const GeneratedModule = struct {
     zig_path: []const u8,
     lib_path: []const u8,
-    functions: std.StringHashMap(VM.ZigRuntimeFn),
+    functions: std.StringHashMap(ZigExportFn),
     free_sym_owned: []const u8,
 
     pub fn deinit(self: *GeneratedModule, allocator: std.mem.Allocator) void {
@@ -287,7 +309,7 @@ fn generateWrapperZigFile(
     };
     const lib_path = try std.fmt.bufPrint(&lib_path_buf, "{s}/{s}-{s}.{s}", .{ cache_dir, decl.module_name, short_hex, lib_ext });
 
-    var functions = std.StringHashMap(VM.ZigRuntimeFn).init(allocator);
+    var functions = std.StringHashMap(ZigExportFn).init(allocator);
     errdefer {
         var itf = functions.iterator();
         while (itf.next()) |entry| {
@@ -309,18 +331,18 @@ fn generateWrapperZigFile(
         const TypeMeta = struct {
             native_param: ?[]const u8,
             native_ret: ?[]const u8,
-            bytecode: bc.BytecodeType,
+            abi: AbiType,
         };
 
         fn metaFor(t: ast.TypeInfo) TypeMeta {
             return switch (t.base) {
-                .Int => .{ .native_param = "i64", .native_ret = "i64", .bytecode = .Int },
-                .Float => .{ .native_param = "f64", .native_ret = "f64", .bytecode = .Float },
-                .Byte => .{ .native_param = "u8", .native_ret = "u8", .bytecode = .Byte },
-                .Tetra => .{ .native_param = "bool", .native_ret = "bool", .bytecode = .Tetra },
-                .Nothing => .{ .native_param = "void", .native_ret = "void", .bytecode = .Nothing },
-                .String => .{ .native_param = "?[*]const u8", .native_ret = "void", .bytecode = .String },
-                else => .{ .native_param = null, .native_ret = null, .bytecode = .Nothing },
+                .Int => .{ .native_param = "i64", .native_ret = "i64", .abi = .Int },
+                .Float => .{ .native_param = "f64", .native_ret = "f64", .abi = .Float },
+                .Byte => .{ .native_param = "u8", .native_ret = "u8", .abi = .Byte },
+                .Tetra => .{ .native_param = "bool", .native_ret = "bool", .abi = .Tetra },
+                .Nothing => .{ .native_param = "void", .native_ret = "void", .abi = .Nothing },
+                .String => .{ .native_param = "?[*]const u8", .native_ret = "void", .abi = .String },
+                else => .{ .native_param = null, .native_ret = null, .abi = .Nothing },
             };
         }
 
@@ -332,8 +354,8 @@ fn generateWrapperZigFile(
             return metaFor(t).native_ret;
         }
 
-        fn toBytecodeType(t: ast.TypeInfo) bc.BytecodeType {
-            return metaFor(t).bytecode;
+        fn toAbiType(t: ast.TypeInfo) AbiType {
+            return metaFor(t).abi;
         }
     };
 
@@ -368,8 +390,8 @@ fn generateWrapperZigFile(
     try file_buf.appendSlice("}\n\n");
 
     for (sigs) |sig| {
-        var param_types_bc = try allocator.alloc(bc.BytecodeType, sig.param_types.len);
-        errdefer allocator.free(param_types_bc);
+        var param_types_abi = try allocator.alloc(AbiType, sig.param_types.len);
+        errdefer allocator.free(param_types_abi);
 
         const sym_ident = try std.fmt.allocPrint(allocator, "__doxa_export__{s}_{s}", .{ decl.module_name, sig.name });
         defer allocator.free(sym_ident);
@@ -397,12 +419,12 @@ fn generateWrapperZigFile(
         defer string_param_indices.deinit(allocator);
 
         for (sig.param_types, 0..) |pt, i| {
-            const bytecode_t = zigTypeName.toBytecodeType(pt);
-            if (bytecode_t == .Array or bytecode_t == .Struct or bytecode_t == .Map or bytecode_t == .Enum or bytecode_t == .Function or bytecode_t == .Union) {
-                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+            const abi_t = zigTypeName.toAbiType(pt);
+            if (abi_t == .Array or abi_t == .Struct or abi_t == .Map or abi_t == .Enum or abi_t == .Function or abi_t == .Union) {
+                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type for '{s}.{s}'", .{ decl.module_name, sig.name });
                 return error.NotImplemented;
             }
-            param_types_bc[i] = bytecode_t;
+            param_types_abi[i] = abi_t;
             if (pt.base == .String) {
                 try string_param_indices.append(allocator, i);
             }
@@ -508,7 +530,7 @@ fn generateWrapperZigFile(
                     try sig_buf.appendSlice("_raw.len] else \"\";\n");
                 },
                 else => {
-                    reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                    reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type for '{s}.{s}'", .{ decl.module_name, sig.name });
                     return error.NotImplemented;
                 },
             }
@@ -545,9 +567,9 @@ fn generateWrapperZigFile(
         }
         try call_buf.appendSlice(")");
 
-        const ret_type = zigTypeName.toBytecodeType(sig.return_type);
+        const ret_type = zigTypeName.toAbiType(sig.return_type);
         if (ret_type == .Array or ret_type == .Struct or ret_type == .Map or ret_type == .Enum or ret_type == .Function or ret_type == .Union) {
-            reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+            reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type for '{s}.{s}'", .{ decl.module_name, sig.name });
             return error.NotImplemented;
         }
 
@@ -601,7 +623,7 @@ fn generateWrapperZigFile(
                 try sig_buf.appendSlice("    return .ok;\n");
             },
             .Array, .Struct, .Map, .Enum, .Function, .Union, .Custom => {
-                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type for '{s}.{s}'", .{ decl.module_name, sig.name });
                 return error.NotImplemented;
             },
         }
@@ -713,10 +735,10 @@ fn generateWrapperZigFile(
         const fn_key = try allocator.dupe(u8, sig.name);
         errdefer allocator.free(fn_key);
         errdefer allocator.free(sym_export_abi);
-        errdefer allocator.free(param_types_bc);
+        errdefer allocator.free(param_types_abi);
         try functions.put(fn_key, .{
             .symbol = sym_export_abi,
-            .param_types = param_types_bc,
+            .param_types = param_types_abi,
             .return_type = ret_type,
         });
     }
@@ -729,110 +751,6 @@ fn generateWrapperZigFile(
         .functions = functions,
         .free_sym_owned = free_sym_owned,
     };
-}
-
-pub fn compileInlineZigModules(
-    memoryManager: *MemoryManager,
-    statements: []ast.Stmt,
-    parser: *Parser,
-    reporter: *Reporter,
-    zig_exe_path: []const u8,
-    cache_dir: []const u8,
-    zig_opt_flag: []const u8,
-) !?std.StringHashMap(VM.ZigRuntimeModule) {
-    const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
-    defer memoryManager.getAllocator().free(zig_decls);
-    if (zig_decls.len == 0) return null;
-
-    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{cache_dir});
-    defer memoryManager.getAllocator().free(zig_cache_path);
-    try std.fs.cwd().makePath(zig_cache_path);
-
-    var modules = std.StringHashMap(VM.ZigRuntimeModule).init(memoryManager.getAllocator());
-    errdefer {
-        var it = modules.iterator();
-        while (it.next()) |entry| {
-            memoryManager.getAllocator().free(@constCast(entry.key_ptr.*));
-            var m = entry.value_ptr.*;
-            m.deinit(memoryManager.getAllocator());
-        }
-        modules.deinit();
-    }
-
-    for (zig_decls) |decl| {
-        var gen = try generateWrapperZigFile(memoryManager.getAllocator(), reporter, zig_cache_path, decl);
-        defer gen.deinit(memoryManager.getAllocator());
-
-        const already_compiled = blk: {
-            const f = std.fs.cwd().openFile(gen.lib_path, .{}) catch break :blk false;
-            f.close();
-            break :blk true;
-        };
-
-        if (!already_compiled) {
-            var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
-            defer args_list.deinit();
-            const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{gen.lib_path});
-            defer std.heap.page_allocator.free(emit_flag);
-            try args_list.appendSlice(&[_][]const u8{
-                zig_exe_path,
-                "build-lib",
-                "-dynamic",
-                gen.zig_path,
-                emit_flag,
-                zig_opt_flag,
-            });
-            if (builtin.os.tag == .linux) {
-                try args_list.append("-lc");
-            }
-
-            var dir_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer dir_arena.deinit();
-            const directives = try parseZigBuildDirectives(dir_arena.allocator(), decl.zig_source);
-            try appendZigBuildFlags(&args_list, dir_arena.allocator(), &directives, true);
-            if (directives.needs_libc and builtin.os.tag != .linux) {
-                try args_list.append("-lc");
-            }
-
-            var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
-            child.cwd = ".";
-            child.stdout_behavior = .Inherit;
-            child.stderr_behavior = .Inherit;
-            const term = try child.spawnAndWait();
-            switch (term) {
-                .Exited => |code| if (code != 0) return error.Unexpected,
-                else => return error.Unexpected,
-            }
-        }
-
-        const key_owned = try memoryManager.getAllocator().dupe(u8, decl.module_name);
-        const lib_owned = try memoryManager.getAllocator().dupe(u8, gen.lib_path);
-        const free_sym_owned = try memoryManager.getAllocator().dupe(u8, gen.free_sym_owned);
-
-        var mod_functions = std.StringHashMap(VM.ZigRuntimeFn).init(memoryManager.getAllocator());
-        var fn_it = gen.functions.iterator();
-        while (fn_it.next()) |entry| {
-            const fn_key = try memoryManager.getAllocator().dupe(u8, entry.key_ptr.*);
-            errdefer memoryManager.getAllocator().free(fn_key);
-            const fn_sym = try memoryManager.getAllocator().dupe(u8, entry.value_ptr.*.symbol);
-            errdefer memoryManager.getAllocator().free(fn_sym);
-            const fn_ptypes = try memoryManager.getAllocator().dupe(bc.BytecodeType, entry.value_ptr.*.param_types);
-            try mod_functions.put(fn_key, .{
-                .symbol = fn_sym,
-                .param_types = fn_ptypes,
-                .return_type = entry.value_ptr.*.return_type,
-            });
-        }
-
-        try modules.put(key_owned, .{
-            .lib_path = lib_owned,
-            .lib = null,
-            .free_cstr_symbol = free_sym_owned,
-            .functions = mod_functions,
-        });
-    }
-
-    return modules;
 }
 
 pub fn compileInlineZigObjects(

@@ -122,26 +122,25 @@ pub const BinaryExpressionHandler = struct {
                 .JumpCond = .{
                     .label_true = short_circuit_label,
                     .label_false = false_handle_label,
-                    .vm_offset = 0,
                     .condition_type = .Tetra,
                 },
             });
 
             // False branch: pop left_val and push false
-            try self.generator.instructions.append(.{ .Label = .{ .name = false_handle_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.{ .Label = .{ .name = false_handle_label } });
             try self.generator.instructions.append(.Pop); // Pop the original left_val
             const false_idx = try self.generator.addConstant(HIRValue{ .tetra = TETRA_FALSE });
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .tetra = TETRA_FALSE }, .constant_id = false_idx } });
-            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
 
             // True branch: pop left_val, evaluate right
-            try self.generator.instructions.append(.{ .Label = .{ .name = short_circuit_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.{ .Label = .{ .name = short_circuit_label } });
             try self.generator.instructions.append(.Pop); // Pop the original left_val
             try self.generator.generateExpression(log.right, true, should_pop_after_use);
-            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
 
             // Merge point: stack has [false] or [right_val]
-            try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.{ .Label = .{ .name = end_label } });
         } else if (log.operator.type == .OR) {
             try self.generator.generateExpression(log.left, true, should_pop_after_use);
             try self.generator.instructions.append(.Dup);
@@ -157,26 +156,25 @@ pub const BinaryExpressionHandler = struct {
                 .JumpCond = .{
                     .label_true = true_handle_label,
                     .label_false = short_circuit_label,
-                    .vm_offset = 0,
                     .condition_type = .Tetra,
                 },
             });
 
             // True branch: pop left_val and push true
-            try self.generator.instructions.append(.{ .Label = .{ .name = true_handle_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.{ .Label = .{ .name = true_handle_label } });
             try self.generator.instructions.append(.Pop);
             const true_idx = try self.generator.addConstant(HIRValue{ .tetra = TETRA_TRUE });
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .tetra = TETRA_TRUE }, .constant_id = true_idx } });
-            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
 
             // False branch: pop left_val, evaluate right
-            try self.generator.instructions.append(.{ .Label = .{ .name = short_circuit_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.{ .Label = .{ .name = short_circuit_label } });
             try self.generator.instructions.append(.Pop);
             try self.generator.generateExpression(log.right, true, should_pop_after_use);
-            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
 
             // Merge point: stack has [true] or [right_val]
-            try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.{ .Label = .{ .name = end_label } });
         } else if (log.operator.type == .IFF) {
             // IFF (if and only if): A ↔ B - true when A and B have same truth value
             try self.generator.generateExpression(log.left, true, should_pop_after_use);

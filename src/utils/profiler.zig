@@ -7,7 +7,6 @@ pub const Phase = enum {
     RESOLVING,
     SEMANTIC_A,
     GENERATE_S,
-    GENERATE_B,
     GENERATE_L,
     EXECUTION,
 };

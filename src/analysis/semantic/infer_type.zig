@@ -208,7 +208,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
             } else if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, ">") or
                 std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">=") or
-                std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "equals") or std.mem.eql(u8, op, "!="))
+                std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!="))
             {
                 const left_numeric = (left_type.base == .Int or left_type.base == .Float or left_type.base == .Byte);
                 const right_numeric = (right_type.base == .Int or right_type.base == .Float or right_type.base == .Byte);
@@ -1355,7 +1355,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 std.mem.eql(u8, fname, "int") or
                 std.mem.eql(u8, fname, "float") or
                 std.mem.eql(u8, fname, "byte") or
-                std.mem.eql(u8, fname, "type"))
+                std.mem.eql(u8, fname, "type") or
+                std.mem.eql(u8, fname, "pack") or
+                std.mem.eql(u8, fname, "unpack"))
             {
                 // Simple builtins: validate args and return type from centralized data
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
@@ -1373,6 +1375,24 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
                     if (arg_type.base != .Int and arg_type.base != .Byte) {
                         self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
+                        self.fatal_error = true;
+                    }
+                }
+                // Get return type from centralized data
+                if (builtin_methods.getMethodInfoByName(fname)) |info| {
+                    type_info.* = .{ .base = info.return_type };
+                    return type_info;
+                }
+                type_info.* = .{ .base = .Nothing };
+                return type_info;
+            } else if (std.mem.eql(u8, fname, "panic")) {
+                // Validate argument count using centralized data
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
+                // Validate argument type (string)
+                if (bc.arguments.len > 0) {
+                    const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
+                    if (arg_type.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@panic: argument must be a string", .{});
                         self.fatal_error = true;
                     }
                 }
@@ -1796,6 +1816,20 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 },
 
                 .LENGTH => {
+                    var args = try self.allocator.alloc(*ast.Expr, 1);
+                    args[0] = method_call.receiver;
+                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                    return try inferTypeFromExpr(self, expr);
+                },
+
+                .PACK, .UNPACK => {
+                    var args = try self.allocator.alloc(*ast.Expr, 1);
+                    args[0] = method_call.receiver;
+                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                    return try inferTypeFromExpr(self, expr);
+                },
+
+                .PANIC => {
                     var args = try self.allocator.alloc(*ast.Expr, 1);
                     args[0] = method_call.receiver;
                     expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };

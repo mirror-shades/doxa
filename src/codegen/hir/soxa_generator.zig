@@ -695,7 +695,7 @@ pub const HIRGenerator = struct {
             try self.symbol_table.enterFunctionScope(function_body.function_info.name);
 
             function_body.start_instruction_index = @intCast(self.instructions.items.len);
-            try self.instructions.append(.{ .Label = .{ .name = function_body.function_info.start_label, .vm_address = 0 } });
+            try self.instructions.append(.{ .Label = .{ .name = function_body.function_info.start_label } });
 
             const function_scope_id = self.nextScopeId();
             self.current_function_scope_id = function_scope_id;
@@ -827,7 +827,7 @@ pub const HIRGenerator = struct {
             }
 
             const body_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}_body", .{function_body.function_info.name}));
-            try self.instructions.append(.{ .Label = .{ .name = body_label, .vm_address = 0 } });
+            try self.instructions.append(.{ .Label = .{ .name = body_label } });
 
             if (self.function_signatures.getPtr(function_body.function_info.name)) |func_info| {
                 func_info.body_label = body_label;
@@ -1258,7 +1258,7 @@ pub const HIRGenerator = struct {
             .Decrement => |operand| try collections_handler.generateDecrement(operand),
             .Range => |range| try collections_handler.generateRange(.{ .start = range.start, .end = range.end }, preserve_result),
 
-            .FunctionCall => try calls_handler.generateFunctionCall(expr.data, should_pop_after_use),
+            .FunctionCall => try calls_handler.generateFunctionCall(expr.data, preserve_result, should_pop_after_use),
             .BuiltinCall => try calls_handler.generateBuiltinCall(expr.data, preserve_result),
             .InternalCall => try calls_handler.generateInternalCall(expr.data),
 

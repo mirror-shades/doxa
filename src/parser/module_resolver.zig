@@ -175,8 +175,8 @@ fn zigModuleStem(module_path: []const u8) []const u8 {
 
 // Resolve an imported `.zig` file into a module. The file is validated through
 // the same restricted-subset extractor used for inline `zig { ... }` blocks, then
-// surfaced as a synthetic `ZigDecl` so that the existing inline-zig codegen and VM
-// paths (`collectInlineZigDecls`, `execInlineZigModuleFunction`) pick it up unchanged.
+// surfaced as a synthetic `ZigDecl` so that the existing inline-zig codegen path
+// (`collectInlineZigDecls`) picks it up unchanged.
 // `display_name` becomes the module name used in calls (the import alias).
 pub fn resolveZigModule(self: *Parser, module_path: []const u8, display_name: []const u8) ErrorList!ast.ModuleInfo {
     const module_data = try self.loadModuleSourceWithPath(module_path);

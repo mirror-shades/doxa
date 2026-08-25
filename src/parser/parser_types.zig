@@ -358,20 +358,6 @@ pub const Parser = struct {
                     var func = try declaration_parser.parseFunctionDecl(self);
                     func.data.FunctionDecl.is_public = is_public;
                     func.data.FunctionDecl.is_entry = is_entry;
-                    if (is_entry and !is_public) {
-                        const entry_loc = self.entry_point_location orelse self.peek();
-                        const location = Location{
-                            .file = self.current_file,
-                            .file_uri = self.current_file_uri,
-                            .range = .{
-                                .start_line = entry_loc.line,
-                                .start_col = entry_loc.column,
-                                .end_line = entry_loc.line,
-                                .end_col = entry_loc.column + @as(u32, @intCast(entry_loc.lexeme.len)),
-                            },
-                        };
-                        self.reporter.reportWarning(location, ErrorCode.ENTRY_SHOULD_BE_PUBLIC, "an entry function is inherently public, so it should be marked 'public'", .{});
-                    }
                     if (is_entry) {
                         if (self.entry_point_location != null) {
                             self.entry_point_name = func.data.FunctionDecl.name.lexeme;
