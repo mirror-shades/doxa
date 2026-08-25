@@ -44,21 +44,22 @@ fn runCompiledBinaryWithInput(allocator: std.mem.Allocator, binary_path: []const
     return result.stdout;
 }
 
-fn runDoxaCommand(allocator: std.mem.Allocator, path: []const u8) ![]const u8 {
+fn compileDoxaSource(allocator: std.mem.Allocator, src: []const u8, out: []const u8) !void {
     const repo_root = try harness.repoRootFromEnv(allocator);
     defer if (repo_root) |rr| allocator.free(rr);
 
     const exe_path = try harness.doxaExePath(allocator);
     defer allocator.free(exe_path);
 
-    const argv = [_][]const u8{ exe_path, "run", path };
+    const argv = [_][]const u8{ exe_path, "compile", src, "-o", out };
     const result = try harness.runCommandCapture(allocator, &argv, repo_root, null);
-    allocator.free(result.stderr);
+    allocator.free(result.stdout);
     if (result.exit_code != 0) {
-        allocator.free(result.stdout);
+        std.debug.print("compile failed: {s} -> {s} (exit {d})\n{s}\n", .{ src, out, result.exit_code, result.stderr });
+        allocator.free(result.stderr);
         return error.CommandFailed;
     }
-    return result.stdout;
+    allocator.free(result.stderr);
 }
 
 fn validatePrintResults(output: []const u8, expected_results: []const print_result, allocator: std.mem.Allocator) !test_results {
@@ -199,7 +200,7 @@ fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
-        if (std.mem.startsWith(u8, line, "DoxVM: ")) continue;
+        if (harness.isDiagnosticLine(line)) continue;
         const j = std.mem.indexOf(u8, line, "]") orelse continue;
         if (j == 0) continue;
         const lineWithVar = line[j + 1 ..];
@@ -261,10 +262,30 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
 
     harness.printSection("COMPILE");
 
-    _ = runDoxaCommand(allocator, "./test/test_build.doxa") catch |err| {
-        std.debug.print("Build step failed: {}\n", .{err});
-        return err;
+    const build_jobs = [_][2][]const u8{
+        .{ "./test/misc/bigfile.doxa", "./test/out/bigfile" },
+        .{ "./test/misc/complex_print.doxa", "./test/out/complex_print" },
+        .{ "./test/misc/expressions.doxa", "./test/out/expressions" },
+        .{ "./test/misc/array_storage_migration.doxa", "./test/out/array_storage_migration" },
+        .{ "./test/misc/alias_arrays.doxa", "./test/out/alias_arrays" },
+        .{ "./test/misc/methods.doxa", "./test/out/methods" },
+        .{ "./test/misc/union_enum_return.doxa", "./test/out/union_enum_return" },
+        .{ "./test/misc/inline_zig_string.doxa", "./test/out/inline_zig_string" },
+        .{ "./test/misc/inline_zig_test.doxa", "./test/out/inline_zig_test" },
+        .{ "./test/misc/zig_import_test.doxa", "./test/out/zig_import_test" },
+        .{ "./test/misc/module_private_call.doxa", "./test/out/module_private_call" },
+        .{ "./test/misc/import_submodule.doxa", "./test/out/import_submodule" },
+        .{ "./test/examples/brainfuck.doxa", "./test/out/brainfuck" },
+        .{ "./test/examples/calculator.doxa", "./test/out/calculator" },
+        .{ "./test/misc/http_link_test.doxa", "./test/out/http_link_test" },
+        .{ "./test/misc/list.doxa", "./test/out/list" },
     };
+    for (build_jobs) |job| {
+        compileDoxaSource(allocator, job[0], job[1]) catch |err| {
+            std.debug.print("Build step failed: {}\n", .{err});
+            return err;
+        };
+    }
     harness.printCase("build test files", .{ .passed = 1, .failed = 0, .untested = 0 });
 
     // Test cases for compiled binaries

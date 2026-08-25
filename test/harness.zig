@@ -140,7 +140,7 @@ pub fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ar
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
-        if (std.mem.startsWith(u8, line, "DoxVM: ")) continue;
+        if (isDiagnosticLine(line)) continue;
         const close_bracket = std.mem.indexOfScalar(u8, line, ']') orelse continue;
         const line_with_var = line[close_bracket + 1 ..];
         const colon = std.mem.indexOfScalar(u8, line_with_var, ':') orelse continue;
@@ -153,6 +153,30 @@ pub fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ar
         });
     }
     return outputs;
+}
+
+/// Diagnostic headers are rendered by `src/utils/source_render.zig` as
+/// `Doxa: [<Phase>][<Severity>]...` and land on the same stream (stderr) as peek
+/// output. Match on that structural `[<Phase>][<Severity>]` shape rather than
+/// the literal "Doxa: " prefix, so a rename never silently breaks peek parsing.
+pub fn isDiagnosticLine(line: []const u8) bool {
+    const phases = [_][]const u8{ "CompileTime", "Runtime", "Internal", "Debug" };
+    const severities = [_][]const u8{ "Error", "Warning", "Info", "Hint", "Internal" };
+
+    const start = std.mem.indexOfScalar(u8, line, '[') orelse return false;
+    var rest = line[start..];
+    rest = rest[1..]; // past the opening '['
+    for (phases) |phase| {
+        if (!std.mem.startsWith(u8, rest, phase)) continue;
+        const after_phase = rest[phase.len..];
+        if (!std.mem.startsWith(u8, after_phase, "][")) continue;
+        const after_sev_bracket = after_phase[2..];
+        for (severities) |sev| {
+            if (!std.mem.startsWith(u8, after_sev_bracket, sev)) continue;
+            if (after_sev_bracket.len > sev.len and after_sev_bracket[sev.len] == ']') return true;
+        }
+    }
+    return false;
 }
 
 pub fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed([]const u8) {

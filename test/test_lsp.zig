@@ -115,7 +115,7 @@ fn checkReporterToLspDiagnosticsSerializesRelatedInfo() !void {
     defer testing.allocator.free(diagnostics);
 
     const expected =
-        "[{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":4}},\"severity\":2,\"source\":\"DoxVM\",\"code\":\"E100\",\"message\":\"duplicate symbol\",\"relatedInformation\":[{\"location\":{\"uri\":\"file:///src/other.doxa\",\"range\":{\"start\":{\"line\":9,\"character\":3},\"end\":{\"line\":9,\"character\":8}}},\"message\":\"first seen here\"}]}]";
+        "[{\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":4}},\"severity\":2,\"source\":\"Doxa\",\"code\":\"E100\",\"message\":\"duplicate symbol\",\"relatedInformation\":[{\"location\":{\"uri\":\"file:///src/other.doxa\",\"range\":{\"start\":{\"line\":9,\"character\":3},\"end\":{\"line\":9,\"character\":8}}},\"message\":\"first seen here\"}]}]";
     try testing.expectEqualStrings(expected, diagnostics);
 }
 

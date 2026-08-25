@@ -179,6 +179,7 @@ hello?
 
 var clearTestArr is [1, 2, 3, 4, 5]
 var clearTestStr is "hello"
+var clearTestStrArr is ["alpha", "beta", "gamma"]
 
 @clear(clearTestArr)?
 clearTestArr?
@@ -186,12 +187,16 @@ clearTestArr?
 @clear(clearTestStr)?
 clearTestStr?
 
+@clear(clearTestStrArr)?
+clearTestStrArr?
+
 ##
 # FIND
 ##
 
 var findTestArr is [10, 20, 30, 20, 40]
 var findTestStr is "hello world"
+var findTestStrArr is ["alpha", "beta", "gamma"]
 
 @find(findTestArr, 20)?
 @find(findTestArr, 50)?
@@ -199,6 +204,8 @@ var findTestStr is "hello world"
 @find(findTestStr, "z")?
 @find([], 1)?
 @find("", "a")?
+@find(findTestStrArr, "beta")?
+@find(findTestStrArr, "zzz")?
 
 
 ##
@@ -219,6 +226,23 @@ emptyStr?
 arr?
 @slice(hello, 0, 5)? 
 hello?
+
+
+##
+# PACK / UNPACK
+##
+
+var packArr is [104, 101, 108, 108, 111]
+@pack(packArr)?
+@pack([])?
+@unpack("hello")?
+@unpack("")?
+
+##
+# STD
+##
+
+(@length(@std()) > 0)?
 
 
 "end"?
