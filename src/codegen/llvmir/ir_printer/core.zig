@@ -43,6 +43,10 @@ pub fn Methods(comptime Ctx: type) type {
                     .String => true,
                     else => false,
                 },
+                .Value => switch (param_type) {
+                    .Union, .Unknown => true,
+                    else => false,
+                },
                 else => false,
             };
         }
@@ -55,6 +59,12 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
         ) !StackVal {
             if (incoming.ty == target) return incoming;
+            if (incoming.ty == .Nothing) {
+                if (target == .PTR) {
+                    return .{ .name = "null", .ty = .PTR, .array_type = incoming.array_type };
+                }
+                return .{ .name = "undef", .ty = target, .array_type = incoming.array_type };
+            }
 
             if (incoming.ty == .Value) {
                 const payload = try self.nextTemp(id);
@@ -108,37 +118,16 @@ pub fn Methods(comptime Ctx: type) type {
                         const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
                         defer self.allocator.free(line);
                         try w.writeAll(line);
-                        const out_ptr_slot = try self.nextTemp(id);
-                        const out_len_slot = try self.nextTemp(id);
-                        const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
-                        const alloca_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
-                        defer self.allocator.free(alloca_ptr_line);
-                        defer self.allocator.free(alloca_len_line);
-                        try w.writeAll(alloca_ptr_line);
-                        try w.writeAll(alloca_len_line);
-                        const init_ptr_line = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
-                        const init_len_line = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
-                        defer self.allocator.free(init_ptr_line);
-                        defer self.allocator.free(init_len_line);
-                        try w.writeAll(init_ptr_line);
-                        try w.writeAll(init_len_line);
-                        const from_cstr_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_from_cstr(ptr {s}, ptr {s}, ptr {s})\n", .{ as_ptr, out_ptr_slot, out_len_slot });
-                        defer self.allocator.free(from_cstr_call);
-                        try w.writeAll(from_cstr_call);
-                        const loaded_ptr = try self.nextTemp(id);
-                        const loaded_len = try self.nextTemp(id);
-                        const load_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ loaded_ptr, out_ptr_slot });
-                        const load_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ loaded_len, out_len_slot });
-                        defer self.allocator.free(load_ptr_line);
-                        defer self.allocator.free(load_len_line);
-                        try w.writeAll(load_ptr_line);
-                        try w.writeAll(load_len_line);
+                        const payload_len = try self.nextTemp(id);
+                        const len_extract = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 3\n", .{ payload_len, incoming.name });
+                        defer self.allocator.free(len_extract);
+                        try w.writeAll(len_extract);
                         const tmp_ds = try self.nextTemp(id);
-                        const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_ds, loaded_ptr });
+                        const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_ds, as_ptr });
                         defer self.allocator.free(ins0);
                         try w.writeAll(ins0);
                         const str_name = try self.nextTemp(id);
-                        const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {s}, 1\n", .{ str_name, tmp_ds, loaded_len });
+                        const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {s}, 1\n", .{ str_name, tmp_ds, payload_len });
                         defer self.allocator.free(ins1);
                         try w.writeAll(ins1);
                         break :blk .{ .name = str_name, .ty = .STRING };
@@ -148,76 +137,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             if (target == .Value and incoming.ty != .Value) {
-                const tag_const: i32 = switch (incoming.ty) {
-                    .I64 => 0,
-                    .F64 => 1,
-                    .I8 => 2,
-                    .PTR => 3,
-                    .STRING => 3,
-                    .I2, .I1 => 7,
-                    else => 8,
-                };
-                const tag_reg = try self.nextTemp(id);
-                const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ tag_reg, tag_const });
-                defer self.allocator.free(tag_line);
-                try w.writeAll(tag_line);
-
-                const reserved_reg = try self.nextTemp(id);
-                const reserved_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, 0\n", .{reserved_reg});
-                defer self.allocator.free(reserved_line);
-                try w.writeAll(reserved_line);
-
-                var payload: StackVal = undefined;
-                if (incoming.ty == .STRING) {
-                    const s_ptr = try self.nextTemp(id);
-                    const s_len = try self.nextTemp(id);
-                    const ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ s_ptr, incoming.name });
-                    const ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ s_len, incoming.name });
-                    defer self.allocator.free(ext0);
-                    defer self.allocator.free(ext1);
-                    try w.writeAll(ext0);
-                    try w.writeAll(ext1);
-                    const clone = try self.nextTemp(id);
-                    const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_str_clone_raw(ptr {s}, i64 {s})\n", .{ clone, s_ptr, s_len });
-                    defer self.allocator.free(clone_line);
-                    try w.writeAll(clone_line);
-                    const as_i64 = try self.nextTemp(id);
-                    const pi = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ as_i64, clone });
-                    defer self.allocator.free(pi);
-                    try w.writeAll(pi);
-                    payload = StackVal{ .name = as_i64, .ty = .I64 };
-                } else {
-                    payload = try self.ensureI64(w, incoming, id);
-                }
-
-                const dv0 = try self.nextTemp(id);
-                const dv0_line = try std.fmt.allocPrint(
-                    self.allocator,
-                    "  {s} = insertvalue %DoxaValue undef, i32 {s}, 0\n",
-                    .{ dv0, tag_reg },
-                );
-                defer self.allocator.free(dv0_line);
-                try w.writeAll(dv0_line);
-
-                const dv1 = try self.nextTemp(id);
-                const dv1_line = try std.fmt.allocPrint(
-                    self.allocator,
-                    "  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n",
-                    .{ dv1, dv0, reserved_reg },
-                );
-                defer self.allocator.free(dv1_line);
-                try w.writeAll(dv1_line);
-
-                const dv2 = try self.nextTemp(id);
-                const dv2_line = try std.fmt.allocPrint(
-                    self.allocator,
-                    "  {s} = insertvalue %DoxaValue {s}, i64 {s}, 2\n",
-                    .{ dv2, dv1, payload.name },
-                );
-                defer self.allocator.free(dv2_line);
-                try w.writeAll(dv2_line);
-
-                return .{ .name = dv2, .ty = .Value };
+                return self.buildDoxaValue(w, incoming, null, id);
             }
 
             switch (target) {
@@ -367,13 +287,6 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(line);
                         return .{ .name = as_ptr, .ty = .PTR };
                     },
-                    .STRING => {
-                        const as_ptr = try self.nextTemp(id);
-                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ as_ptr, incoming.name });
-                        defer self.allocator.free(line);
-                        try w.writeAll(line);
-                        return .{ .name = as_ptr, .ty = .PTR };
-                    },
                     .I1, .I2, .I8, .F64 => {
                         return self.ensurePointer(w, incoming, id);
                     },
@@ -381,7 +294,6 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 .STRING => {
                     if (incoming.ty == .STRING) return incoming;
-                    if (incoming.ty == .PTR) return self.ensureString(w, incoming, id);
                     const ptr = try self.ensurePointer(w, incoming, id);
                     return self.ensureString(w, ptr, id);
                 },
@@ -558,13 +470,6 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(line);
                         return .{ .name = as_ptr, .ty = .PTR };
                     },
-                    .STRING => {
-                        const as_ptr = try self.nextTemp(id);
-                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ as_ptr, incoming.name });
-                        defer self.allocator.free(line);
-                        try w.writeAll(line);
-                        return .{ .name = as_ptr, .ty = .PTR };
-                    },
                     .I1, .I2, .I8, .F64 => {
                         return self.ensurePointer(w, incoming, id);
                     },
@@ -572,7 +477,6 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 .STRING => {
                     if (incoming.ty == .STRING) return incoming;
-                    if (incoming.ty == .PTR) return self.ensureString(w, incoming, id);
                     const ptr = try self.ensurePointer(w, incoming, id);
                     return self.ensureString(w, ptr, id);
                 },
@@ -740,6 +644,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .enum_table = enum_table,
                 .entry_str_out_ptr = null,
                 .entry_str_out_len = null,
+                .exited_scopes = std.AutoHashMap(u32, void).init(allocator),
             };
         }
 
@@ -756,6 +661,7 @@ pub fn Methods(comptime Ctx: type) type {
             self.struct_fields_by_id.deinit();
             self.struct_type_names_by_id.deinit();
             self.defined_globals.deinit();
+            self.exited_scopes.deinit();
             var ret_it = self.function_struct_return_fields.iterator();
             while (ret_it.next()) |entry| {
                 self.allocator.free(entry.value_ptr.*);
@@ -793,13 +699,119 @@ pub fn Methods(comptime Ctx: type) type {
             self.enum_print_map.deinit();
         }
 
+        /// Deep-copy a heap value into the scope its variable is declared in,
+        /// so it survives the exit of the current (possibly nested) scope. The
+        /// destination is the function scope when inside a function, else the
+        /// program root scope. Scalars are returned unchanged.
+        pub fn cloneHeapForStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
+            return self.cloneHeapValue(w, id, value, declared_type, 0);
+        }
+
+        /// Deep-copy a return value into the caller's scope (one level above the
+        /// current function scope) so it survives the function scope being freed.
+        pub fn cloneHeapForReturn(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
+            return self.cloneHeapValue(w, id, value, declared_type, 1);
+        }
+
+        pub fn cloneHeapValue(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType, levels_offset: usize) !StackVal {
+            const levels_up: usize = (self.scope_depth -| @as(usize, @intFromBool(self.in_function_context))) + levels_offset;
+
+            switch (declared_type) {
+                .String => {
+                    if (value.ty != .STRING) return value;
+                    const s_ptr = try self.nextTemp(id);
+                    const s_len = try self.nextTemp(id);
+                    const ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ s_ptr, value.name });
+                    defer self.allocator.free(ext0);
+                    try w.writeAll(ext0);
+                    const ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ s_len, value.name });
+                    defer self.allocator.free(ext1);
+                    try w.writeAll(ext1);
+
+                    const out_ptr_slot = try self.nextTemp(id);
+                    const out_len_slot = try self.nextTemp(id);
+                    const ap = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
+                    defer self.allocator.free(ap);
+                    try w.writeAll(ap);
+                    const al = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
+                    defer self.allocator.free(al);
+                    try w.writeAll(al);
+                    const ip = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
+                    defer self.allocator.free(ip);
+                    try w.writeAll(ip);
+                    const il = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
+                    defer self.allocator.free(il);
+                    try w.writeAll(il);
+
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_at(i64 {d}, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ levels_up, s_ptr, s_len, out_ptr_slot, out_len_slot });
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+
+                    const loaded_ptr = try self.nextTemp(id);
+                    const loaded_len = try self.nextTemp(id);
+                    const lp = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ loaded_ptr, out_ptr_slot });
+                    defer self.allocator.free(lp);
+                    try w.writeAll(lp);
+                    const ll = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ loaded_len, out_len_slot });
+                    defer self.allocator.free(ll);
+                    try w.writeAll(ll);
+
+                    const tmp_name = try self.nextTemp(id);
+                    const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_name, loaded_ptr });
+                    defer self.allocator.free(ins0);
+                    try w.writeAll(ins0);
+                    const str_name = try self.nextTemp(id);
+                    const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {s}, 1\n", .{ str_name, tmp_name, loaded_len });
+                    defer self.allocator.free(ins1);
+                    try w.writeAll(ins1);
+
+                    return .{ .name = str_name, .ty = .STRING, .array_type = value.array_type, .enum_type_name = value.enum_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names, .struct_type_name = value.struct_type_name };
+                },
+                .Array => {
+                    if (value.fixed_array_depth != 0) return value;
+                    const src_ptr = if (value.ty == .PTR) value else try self.ensurePointer(w, value, id);
+                    const clone_reg = try self.nextTemp(id);
+                    const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_clone_at(i64 {d}, ptr {s})\n", .{ clone_reg, levels_up, src_ptr.name });
+                    defer self.allocator.free(clone_line);
+                    try w.writeAll(clone_line);
+                    return .{ .name = clone_reg, .ty = .PTR, .array_type = value.array_type, .fixed_array_depth = value.fixed_array_depth, .fixed_array_sizes = value.fixed_array_sizes };
+                },
+                .Struct => {
+                    const src_ptr = if (value.ty == .PTR) value else try self.ensurePointer(w, value, id);
+                    const clone_reg = try self.nextTemp(id);
+                    const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_clone_at(i64 {d}, ptr {s})\n", .{ clone_reg, levels_up, src_ptr.name });
+                    defer self.allocator.free(clone_line);
+                    try w.writeAll(clone_line);
+                    return .{ .name = clone_reg, .ty = .PTR, .struct_type_name = value.struct_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names };
+                },
+                .Union => {
+                    if (value.ty != .Value) return value;
+                    const slot = try self.nextTemp(id);
+                    const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{slot});
+                    defer self.allocator.free(alloca_line);
+                    try w.writeAll(alloca_line);
+                    const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ value.name, slot });
+                    defer self.allocator.free(store_line);
+                    try w.writeAll(store_line);
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_clone_doxa_value_at(i64 {d}, ptr {s})\n", .{ levels_up, slot });
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                    const loaded = try self.nextTemp(id);
+                    const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load %DoxaValue, ptr {s}\n", .{ loaded, slot });
+                    defer self.allocator.free(load_line);
+                    try w.writeAll(load_line);
+                    return .{ .name = loaded, .ty = .Value };
+                },
+                else => return value,
+            }
+        }
+
         pub fn mapBuiltinToRuntime(name: []const u8) []const u8 {
             if (std.mem.eql(u8, name, "int")) return "doxa_int";
-            if (std.mem.eql(u8, name, "string")) return "doxa_string";
-            if (std.mem.eql(u8, name, "dice_roll")) return "doxa_dice_roll";
-            if (std.mem.eql(u8, name, "find")) return "doxa_find";
             if (std.mem.eql(u8, name, "clear")) return "doxa_clear";
             if (std.mem.eql(u8, name, "print")) return "doxa_write_cstr";
+            if (std.mem.eql(u8, name, "exit")) return "doxa_exit";
+            if (std.mem.eql(u8, name, "panic")) return "doxa_panic";
             return name;
         }
 

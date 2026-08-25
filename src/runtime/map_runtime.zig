@@ -1,4 +1,5 @@
 const std = @import("std");
+const scope_arena = @import("scope_arena.zig");
 
 /// Simple runtime map representation used by the native (LLVM) backend.
 /// Keys and values are stored as raw i64 payloads. The compiler is
@@ -31,8 +32,8 @@ pub const MapHeader = struct {
 };
 
 fn mapAllocator() std.mem.Allocator {
-    // Use the page allocator for deterministic, long‑lived storage.
-    return std.heap.page_allocator;
+    // Scope-owned: maps are reclaimed when their allocating scope exits.
+    return scope_arena.allocator();
 }
 
 pub fn mapNew(capacity_raw: i64, key_tag: i64, value_tag: i64) *MapHeader {

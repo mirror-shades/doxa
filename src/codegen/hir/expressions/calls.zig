@@ -51,7 +51,7 @@ pub const CallsHandler = struct {
         });
     }
 
-    pub fn generateFunctionCall(self: *CallsHandler, function_call: ast.Expr.Data, should_pop_after_use: bool) !void {
+    pub fn generateFunctionCall(self: *CallsHandler, function_call: ast.Expr.Data, preserve_result: bool, should_pop_after_use: bool) !void {
         const call_data = function_call.FunctionCall;
 
         const target = ModuleCall.classifyCallTarget(self.generator, call_data.callee) catch {
@@ -66,7 +66,7 @@ pub const CallsHandler = struct {
 
         switch (target) {
             .function => |resolved| {
-                return try self.emitResolvedFunctionCall(resolved, function_call, should_pop_after_use);
+                return try self.emitResolvedFunctionCall(resolved, function_call, preserve_result, should_pop_after_use);
             },
             .struct_static => |ss| {
                 for (call_data.arguments) |arg| {
@@ -81,6 +81,9 @@ pub const CallsHandler = struct {
                     .target_module = null,
                     .return_type = return_type,
                 } });
+                if (!preserve_result) {
+                    try self.generator.instructions.append(.Pop);
+                }
             },
             .struct_method => |sm| {
                 try self.emitStructMethodCall(sm.field_access, sm.struct_name, call_data.arguments);
@@ -147,6 +150,7 @@ pub const CallsHandler = struct {
         self: *CallsHandler,
         resolved: ModuleCall.ResolvedCall,
         function_call: ast.Expr.Data,
+        preserve_result: bool,
         should_pop_after_use: bool,
     ) !void {
         const call_data = function_call.FunctionCall;
@@ -235,6 +239,9 @@ pub const CallsHandler = struct {
 
         if (call_kind == .LocalFunction) {
             if (try self.tryInlineFunction(function_name, call_kind)) {
+                if (!preserve_result) {
+                    try self.generator.instructions.append(.Pop);
+                }
                 return;
             }
         }
@@ -250,6 +257,9 @@ pub const CallsHandler = struct {
                 .return_type = return_type,
             },
         });
+        if (!preserve_result) {
+            try self.generator.instructions.append(.Pop);
+        }
     }
 
     fn expectedEnumTypeForArg(self: *CallsHandler, function_name: []const u8, call_kind: CallKind, arg_index: usize) !?[]const u8 {
@@ -707,6 +717,9 @@ pub const CallsHandler = struct {
         } else if (std.mem.eql(u8, name, "exit")) {
             // Use centralized data structure for simple builtin calls
             _ = try self.generateSimpleBuiltinCall(name, builtin_data.arguments);
+        } else if (std.mem.eql(u8, name, "panic")) {
+            // Use centralized data structure for simple builtin calls
+            _ = try self.generateSimpleBuiltinCall(name, builtin_data.arguments);
         } else if (std.mem.eql(u8, name, "print")) {
             // @print(string) - emits the string to stdout
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
@@ -901,7 +914,6 @@ pub const CallsHandler = struct {
                     .field_count = @intCast(field_count),
                     .field_names = try self.generator.allocator.dupe([]const u8, field_names),
                     .field_types = try self.generator.allocator.dupe(HIRType, field_types),
-                    .size_bytes = 0,
                 },
             });
         }

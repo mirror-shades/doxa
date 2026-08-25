@@ -76,15 +76,15 @@ pub const ControlFlowHandler = struct {
                 // If TRUE -> continue label, else fall-through
                 try self.generator.generateExpression(if_expr.condition.?, true, should_pop_after_use);
                 const end_if = try self.generator.generateLabel("end_if");
-                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = lc.continue_label, .label_false = end_if, .vm_offset = 0, .condition_type = .Tetra } });
-                try self.generator.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
+                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = lc.continue_label, .label_false = end_if, .condition_type = .Tetra } });
+                try self.generator.instructions.append(.{ .Label = .{ .name = end_if } });
                 handled_as_loop_control = true;
             } else if (then_is_break and !else_is_break and !else_is_continue and !then_is_continue) {
                 // If TRUE -> break label, else fall-through
                 try self.generator.generateExpression(if_expr.condition.?, true, should_pop_after_use);
                 const end_if = try self.generator.generateLabel("end_if");
-                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = lc.break_label, .label_false = end_if, .vm_offset = 0, .condition_type = .Tetra } });
-                try self.generator.instructions.append(.{ .Label = .{ .name = end_if, .vm_address = 0 } });
+                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = lc.break_label, .label_false = end_if, .condition_type = .Tetra } });
+                try self.generator.instructions.append(.{ .Label = .{ .name = end_if } });
                 handled_as_loop_control = true;
             } else if (!then_is_break and !then_is_continue and (else_is_break or else_is_continue)) {
                 // DISABLED: This optimization can skip important semantics like debugging output
@@ -115,13 +115,12 @@ pub const ControlFlowHandler = struct {
                         .JumpCond = .{
                             .label_true = then_label,
                             .label_false = end_label,
-                            .vm_offset = 0,
                             .condition_type = .Tetra,
                         },
                     });
 
                     // THEN branch
-                    try self.generator.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
+                    try self.generator.instructions.append(.{ .Label = .{ .name = then_label } });
                     if (preserve_result) {
                         try self.generator.generateExpression(if_expr.then_branch.?, true, should_pop_after_use);
                     } else {
@@ -135,23 +134,22 @@ pub const ControlFlowHandler = struct {
                         .JumpCond = .{
                             .label_true = then_label,
                             .label_false = else_label,
-                            .vm_offset = 0,
                             .condition_type = .Tetra,
                         },
                     });
 
                     // THEN branch
-                    try self.generator.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
+                    try self.generator.instructions.append(.{ .Label = .{ .name = then_label } });
                     if (preserve_result) {
                         try self.generator.generateExpression(if_expr.then_branch.?, true, should_pop_after_use);
                     } else {
                         // Statement context: do not produce a value
                         try self.generator.generateExpression(if_expr.then_branch.?, false, should_pop_after_use);
                     }
-                    try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+                    try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
 
                     // ELSE branch
-                    try self.generator.instructions.append(.{ .Label = .{ .name = else_label, .vm_address = 0 } });
+                    try self.generator.instructions.append(.{ .Label = .{ .name = else_label } });
                     if (preserve_result) {
                         try self.generator.generateExpression(if_expr.else_branch.?, true, should_pop_after_use);
                     } else {
@@ -164,25 +162,24 @@ pub const ControlFlowHandler = struct {
                     .JumpCond = .{
                         .label_true = then_label,
                         .label_false = end_label,
-                        .vm_offset = 0,
                         .condition_type = .Tetra,
                     },
                 });
 
                 // THEN branch
-                try self.generator.instructions.append(.{ .Label = .{ .name = then_label, .vm_address = 0 } });
+                try self.generator.instructions.append(.{ .Label = .{ .name = then_label } });
                 if (preserve_result) {
                     // If we need to preserve result but there's no else branch,
                     // we need to generate a nothing value for the else case
                     try self.generator.generateExpression(if_expr.then_branch.?, true, should_pop_after_use);
                     // Jump to end to skip the nothing value generation
-                    try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+                    try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
                 } else {
                     // Statement context: do not produce a value
                     try self.generator.generateExpression(if_expr.then_branch.?, false, should_pop_after_use);
                 }
             }
-            try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+                try self.generator.instructions.append(.{ .Label = .{ .name = end_label } });
         }
     }
 
@@ -291,7 +288,7 @@ pub const ControlFlowHandler = struct {
         for (match_expr.cases, 0..) |case, i| {
             // Add check label for cases after the first
             if (i > 0) {
-                try self.generator.instructions.append(.{ .Label = .{ .name = check_labels.items[i - 1], .vm_address = 0 } });
+                try self.generator.instructions.append(.{ .Label = .{ .name = check_labels.items[i - 1] } });
             }
 
             // Handle multiple patterns for this case
@@ -314,11 +311,11 @@ pub const ControlFlowHandler = struct {
 
                                             if (pp_idx == case.path_patterns.len - 1) {
                                                 const false_label = if (i < match_expr.cases.len - 1) check_labels.items[i] else if (fail_label) |fl| fl else end_label;
-                                                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .vm_offset = 0, .condition_type = .Tetra } });
+                                                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .condition_type = .Tetra } });
                                             } else {
                                                 const next_label = try self.generator.generateLabel("next_group_pattern");
-                                                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = next_label, .vm_offset = 0, .condition_type = .Tetra } });
-                                                try self.generator.instructions.append(.{ .Label = .{ .name = next_label, .vm_address = 0 } });
+                                                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = next_label, .condition_type = .Tetra } });
+                                                try self.generator.instructions.append(.{ .Label = .{ .name = next_label } });
                                             }
                                             pattern_matched = true;
                                             break;
@@ -343,7 +340,7 @@ pub const ControlFlowHandler = struct {
                 if (is_else_case) {
                     // Else case - always matches, pop the duplicated value
                     try self.generator.instructions.append(.Pop);
-                    try self.generator.instructions.append(.{ .Jump = .{ .label = case_labels.items[i], .vm_offset = 0 } });
+                    try self.generator.instructions.append(.{ .Jump = .{ .label = case_labels.items[i] } });
                     pattern_matched = true;
                     break;
                 } else {
@@ -407,12 +404,12 @@ pub const ControlFlowHandler = struct {
                             fl // No else case - jump to fail block
                         else
                             end_label; // Last case with else - jump to end
-                        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .vm_offset = 0, .condition_type = .Tetra } });
+                        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = false_label, .condition_type = .Tetra } });
                     } else {
                         // Not the last pattern - if this doesn't match, continue to next pattern
                         const next_pattern_label = try self.generator.generateLabel("next_pattern");
-                        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = next_pattern_label, .vm_offset = 0, .condition_type = .Tetra } });
-                        try self.generator.instructions.append(.{ .Label = .{ .name = next_pattern_label, .vm_address = 0 } });
+                        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = case_labels.items[i], .label_false = next_pattern_label, .condition_type = .Tetra } });
+                        try self.generator.instructions.append(.{ .Label = .{ .name = next_pattern_label } });
                     }
                 }
             }
@@ -420,7 +417,7 @@ pub const ControlFlowHandler = struct {
 
         // Generate case bodies with enum context
         for (match_expr.cases, 0..) |case, i| {
-            try self.generator.instructions.append(.{ .Label = .{ .name = case_labels.items[i], .vm_address = 0 } });
+            try self.generator.instructions.append(.{ .Label = .{ .name = case_labels.items[i] } });
 
             // Struct destructuring: extract fields from matched value
             if (case.path_patterns.len > 0 and case.path_patterns[0].field_names.len > 0) {
@@ -465,36 +462,28 @@ pub const ControlFlowHandler = struct {
                 self.generator.current_enum_type = enum_type_name;
             }
 
-            // Check if the case body is a block (statements) or an expression
-            const is_block = case.body.data == .Block;
-
-            if (is_block) {
-                // For blocks, we don't need to pop the match value since blocks don't return values
-                // and we don't need to preserve the result
-                try self.generator.generateExpression(case.body, false, false);
-            } else {
-                // For expressions, drop the original match value before producing the case body result
-                // to keep the stack balanced and ensure the case body value is on top.
-                try self.generator.instructions.append(.Pop);
-                try self.generator.generateExpression(case.body, true, false);
-            }
+            // Drop the matched subject so the arm body starts with a clean stack.
+            // Statement matches pass preserve_result=false (same as if) so arm
+            // values are not left for LLVM to merge into a dead phi.
+            try self.generator.instructions.append(.Pop);
+            try self.generator.generateExpression(case.body, preserve_result, !preserve_result);
 
             // Restore previous enum context
             self.generator.current_enum_type = old_enum_context;
 
-            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+            try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
         }
 
         if (preserve_result) {
             if (fail_label) |fl| {
-                try self.generator.instructions.append(.{ .Label = .{ .name = fl, .vm_address = 0 } });
+                try self.generator.instructions.append(.{ .Label = .{ .name = fl } });
                 try self.generator.instructions.append(.Pop);
                 try self.generator.instructions.append(.{ .Unreachable = .{ .location = fail_location } });
             }
         }
 
         // End label - the stack should now contain the result from whichever case was taken
-        try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+        try self.generator.instructions.append(.{ .Label = .{ .name = end_label } });
 
         // The match statement result is now on the stack and will be handled by the PHI node logic
     }
@@ -506,6 +495,7 @@ pub const ControlFlowHandler = struct {
         const loop_body_label = try self.generator.generateLabel("loop_body");
         const loop_step_label = try self.generator.generateLabel("loop_step");
         const loop_end_label = try self.generator.generateLabel("loop_end");
+        const loop_exit_label = try self.generator.generateLabel("loop_exit");
 
         // continue should jump to step if present, otherwise to start
         const continue_target = if (loop.step != null) loop_step_label else loop_start_label;
@@ -517,7 +507,7 @@ pub const ControlFlowHandler = struct {
         }
 
         // Loop start - condition check
-        try self.generator.instructions.append(.{ .Label = .{ .name = loop_start_label, .vm_address = 0 } });
+        try self.generator.instructions.append(.{ .Label = .{ .name = loop_start_label } });
 
         if (loop.condition) |condition| {
             try self.generator.generateExpression(condition, true, false);
@@ -526,10 +516,10 @@ pub const ControlFlowHandler = struct {
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .tetra = TETRA_TRUE }, .constant_id = true_idx } });
         }
 
-        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = loop_body_label, .label_false = loop_end_label, .vm_offset = 0, .condition_type = .Tetra } });
+        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = loop_body_label, .label_false = loop_exit_label, .condition_type = .Tetra } });
 
         // Body - create scope that will be cleaned up each iteration
-        try self.generator.instructions.append(.{ .Label = .{ .name = loop_body_label, .vm_address = 0 } });
+        try self.generator.instructions.append(.{ .Label = .{ .name = loop_body_label } });
 
         // Push symbol table scope for loop body variables
         try self.generator.symbol_table.pushScope();
@@ -547,7 +537,7 @@ pub const ControlFlowHandler = struct {
         // Otherwise, exit scope at start label (continue target)
         if (loop.step != null) {
             // Step - exit scope here so continue jumps to clean state
-            try self.generator.instructions.append(.{ .Label = .{ .name = loop_step_label, .vm_address = 0 } });
+            try self.generator.instructions.append(.{ .Label = .{ .name = loop_step_label } });
             try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
             // Pop symbol table scope
             self.generator.symbol_table.popScope();
@@ -562,10 +552,13 @@ pub const ControlFlowHandler = struct {
             self.generator.symbol_table.popScope();
         }
 
-        try self.generator.instructions.append(.{ .Jump = .{ .label = loop_start_label, .vm_offset = 0 } });
-        try self.generator.instructions.append(.{ .Label = .{ .name = loop_end_label, .vm_address = 0 } }); // Add end label
-        // Also exit scope here in case of break
+        try self.generator.instructions.append(.{ .Jump = .{ .label = loop_start_label } });
+        try self.generator.instructions.append(.{ .Label = .{ .name = loop_end_label } }); // Add end label (break target)
+        // Exit the loop scope here for `break`, which bypasses the step exit.
         try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
+        try self.generator.instructions.append(.{ .Jump = .{ .label = loop_exit_label } });
+        // Condition-false target: the loop body (and its scope) was never entered.
+        try self.generator.instructions.append(.{ .Label = .{ .name = loop_exit_label } });
         self.generator.popLoopContext();
         _ = self.generator.loop_deferred_boundaries.pop();
     }
@@ -825,10 +818,10 @@ pub const ControlFlowHandler = struct {
         const ok_label = try self.generator.generateLabel("cast_ok");
         const else_label = try self.generator.generateLabel("cast_else");
         const end_label = try self.generator.generateLabel("cast_end");
-        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = ok_label, .label_false = else_label, .vm_offset = 0, .condition_type = .Tetra } });
+        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = ok_label, .label_false = else_label, .condition_type = .Tetra } });
 
         // Else branch: drop original value and evaluate else expression
-        try self.generator.instructions.append(.{ .Label = .{ .name = else_label, .vm_address = 0 } });
+        try self.generator.instructions.append(.{ .Label = .{ .name = else_label } });
         try self.generator.instructions.append(.Pop);
         if (cast_data.else_branch) |else_expr| {
             // Preserve result only if requested by parent
@@ -839,10 +832,10 @@ pub const ControlFlowHandler = struct {
             // No else branch: cast must fail -> halt program
             try self.generator.instructions.append(.Halt);
         }
-        try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+        try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
 
         // Success branch
-        try self.generator.instructions.append(.{ .Label = .{ .name = ok_label, .vm_address = 0 } });
+        try self.generator.instructions.append(.{ .Label = .{ .name = ok_label } });
         if (cast_data.then_branch) |then_expr| {
             if (narrowing) |nw| try self.applyCastNarrowing(nw, nw.then_type, nw.then_members);
             if (then_expr.data == .Block) {
@@ -865,10 +858,10 @@ pub const ControlFlowHandler = struct {
         // After the success path, explicitly jump to the common end label so that
         // the LLVM IR printer sees both branches as predecessors of the merge
         // point and can correctly PHI-merge the resulting value on the stack.
-        try self.generator.instructions.append(.{ .Jump = .{ .label = end_label, .vm_offset = 0 } });
+        try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
 
         // End merge point
-        try self.generator.instructions.append(.{ .Label = .{ .name = end_label, .vm_address = 0 } });
+        try self.generator.instructions.append(.{ .Label = .{ .name = end_label } });
     }
 
     fn resolveEnumPatternVariantIndex(self: *ControlFlowHandler, enum_type_name: []const u8, pattern: ast.Token) ErrorList!u32 {

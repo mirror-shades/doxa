@@ -394,33 +394,7 @@ pub const MemoryManager = struct {
         return self.type_registry.get(type_name);
     }
 
-    pub fn bridgeTypesToVM(self: *MemoryManager, vm: anytype) !void {
-        var it = self.type_registry.iterator();
-        while (it.next()) |entry| {
-            try vm.registerCustomType(entry.value_ptr.*);
-        }
-    }
-
     pub fn dumpState(self: *MemoryManager, reporter: anytype) void {
         self.scope_manager.dumpStateWithReporter(reporter);
-    }
-
-    pub fn transitionToGeneration(self: *MemoryManager) !void {
-        _ = self;
-    }
-
-    pub fn transitionToExecution(self: *MemoryManager) !void {
-        if (self.scope_manager.root_scope == null) {
-            const scope = try self.scope_manager.createScope(null, self);
-            self.scope_manager.root_scope = scope;
-        }
-    }
-
-    pub fn reset(self: *MemoryManager) void {
-        _ = self;
-    }
-
-    pub fn resetExecutionMemory(self: *MemoryManager) void {
-        _ = self;
     }
 };

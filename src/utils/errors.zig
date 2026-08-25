@@ -401,7 +401,7 @@ pub const ErrorCode = struct {
     pub const REFERENCE_ERROR = "E3003";
     pub const VARIABLE_STORAGE_NOT_FOUND = "E3004";
 
-    // 4xxx - Runtime & VM
+    // 4xxx - Runtime
     pub const RUNTIME_ERROR = "E4001";
     pub const STACK_OVERFLOW = "E4002";
     pub const DIVISION_BY_ZERO = "E4003";
@@ -443,6 +443,7 @@ pub const ErrorCode = struct {
     pub const PRIVATE_FIELD_ACCESS = "E6016";
     pub const UNDEFINED_FIELD = "E6017";
     pub const ARRAY_REQUIRES_DYNAMIC_STORAGE = "E6018";
+    pub const CANNOT_INFER_ARRAY_ELEMENT_TYPE = "E6019";
 
     // 7xxx - Modules & Imports
     pub const MODULE_NOT_FOUND = "E7001";

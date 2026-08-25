@@ -93,7 +93,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     const boundary = self.loop_deferred_boundaries.items[self.loop_deferred_boundaries.items.len - 1];
                     try self.emitDeferredToBoundary(boundary);
                 }
-                try self.instructions.append(.{ .Jump = .{ .label = lc.continue_label, .vm_offset = 0 } });
+                try self.instructions.append(.{ .Jump = .{ .label = lc.continue_label } });
             } else {
                 const location = Location{
                     .file = stmt.base.location().file,
@@ -119,7 +119,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     const boundary = self.loop_deferred_boundaries.items[self.loop_deferred_boundaries.items.len - 1];
                     try self.emitDeferredToBoundary(boundary);
                 }
-                try self.instructions.append(.{ .Jump = .{ .label = lc.break_label, .vm_offset = 0 } });
+                try self.instructions.append(.{ .Jump = .{ .label = lc.break_label } });
             } else {
                 const location = Location{
                     .file = stmt.base.location().file,
@@ -654,12 +654,11 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 .JumpCond = .{
                     .label_true = success_label,
                     .label_false = failure_label,
-                    .vm_offset = 0,
                     .condition_type = .Tetra,
                 },
             });
 
-            try self.instructions.append(.{ .Label = .{ .name = failure_label, .vm_address = 0 } });
+            try self.instructions.append(.{ .Label = .{ .name = failure_label } });
 
             if (assert_stmt.message) |msg| {
                 try self.generateExpression(msg, true, true);
@@ -673,7 +672,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     .has_message = false,
                 } });
             }
-            try self.instructions.append(.{ .Label = .{ .name = success_label, .vm_address = 0 } });
+            try self.instructions.append(.{ .Label = .{ .name = success_label } });
         },
         .MapLiteral => |map_literal| {
             // Generate else value first if it exists

@@ -399,6 +399,25 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(payload_sel_line);
                 try w.writeAll(payload_sel_line);
 
+                const len_present = try self.nextTemp(id);
+                const len_present_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 3\n", .{ len_present, dv_present.name });
+                defer self.allocator.free(len_present_line);
+                try w.writeAll(len_present_line);
+
+                const len_absent = try self.nextTemp(id);
+                const len_absent_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 3\n", .{ len_absent, dv_absent.name });
+                defer self.allocator.free(len_absent_line);
+                try w.writeAll(len_absent_line);
+
+                const len_sel = try self.nextTemp(id);
+                const len_sel_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = select i1 {s}, i64 {s}, i64 {s}\n",
+                    .{ len_sel, found, len_present, len_absent },
+                );
+                defer self.allocator.free(len_sel_line);
+                try w.writeAll(len_sel_line);
+
                 const dv0 = try self.nextTemp(id);
                 const dv0_line = try std.fmt.allocPrint(
                     self.allocator,
@@ -426,7 +445,16 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(dv2_line);
                 try w.writeAll(dv2_line);
 
-                try stack.append(.{ .name = dv2, .ty = .Value });
+                const dv3 = try self.nextTemp(id);
+                const dv3_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = insertvalue %DoxaValue {s}, i64 {s}, 3\n",
+                    .{ dv3, dv2, len_sel },
+                );
+                defer self.allocator.free(dv3_line);
+                try w.writeAll(dv3_line);
+
+                try stack.append(.{ .name = dv3, .ty = .Value });
             } else {
                 const value_type = map_val.array_type orelse concrete_value_type;
                 const actual_val = try self.convertArrayStorageToValue(w, storage_val, value_type, id);
@@ -1018,12 +1046,13 @@ pub fn Methods(comptime Ctx: type) type {
             }
             if (element_type == .String) {
                 const str_val = try self.ensureString(w, value, id);
+                const cloned = try self.cloneHeapForStore(w, id, str_val, .String);
                 const str_ptr_ext = try self.nextTemp(id);
-                const str_ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ str_ptr_ext, str_val.name });
+                const str_ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ str_ptr_ext, cloned.name });
                 defer self.allocator.free(str_ext0);
                 try w.writeAll(str_ext0);
                 const str_len_ext = try self.nextTemp(id);
-                const str_ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ str_len_ext, str_val.name });
+                const str_ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ str_len_ext, cloned.name });
                 defer self.allocator.free(str_ext1);
                 try w.writeAll(str_ext1);
 
@@ -1035,7 +1064,8 @@ pub fn Methods(comptime Ctx: type) type {
                 return;
             }
 
-            const stored_val = try self.convertValueToArrayStorage(w, value, element_type, id);
+            const cloned_value = try self.cloneHeapForStore(w, id, value, element_type);
+            const stored_val = try self.convertValueToArrayStorage(w, cloned_value, element_type, id);
 
             const set_line = try std.fmt.allocPrint(
                 self.allocator,

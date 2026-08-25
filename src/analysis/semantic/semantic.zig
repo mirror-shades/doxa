@@ -34,7 +34,7 @@ const TokenImport = @import("../../types/token.zig");
 const TokenType = TokenImport.TokenType;
 const Token = TokenImport.Token;
 
-const Environment = @import("../../interpreter/environment.zig");
+const Environment = Types.Environment;
 
 const helpers = @import("./helpers.zig");
 const scope_management = @import("./scope_management.zig");
@@ -48,6 +48,16 @@ pub const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
 //======================================================================
 
 const NodeId = u32;
+
+/// Returns true when `expr` is an empty array literal (`[]`). Such a literal
+/// carries no element type, so it can only be typed by surrounding context
+/// (an annotation, a reassignment target, an argument, or a return type).
+fn isEmptyArrayLiteral(expr: *const ast.Expr) bool {
+    return switch (expr.data) {
+        .Array => |elements| elements.len == 0,
+        else => false,
+    };
+}
 
 pub const SemanticAnalyzer = struct {
     in_loop_scope: bool = false,
@@ -916,6 +926,16 @@ pub const SemanticAnalyzer = struct {
                     }
 
                     if (decl.initializer) |init_expr| {
+                        if (isEmptyArrayLiteral(init_expr) and type_info.base == .Array and type_info.array_type == null) {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(stmt.base),
+                                ErrorCode.CANNOT_INFER_ARRAY_ELEMENT_TYPE,
+                                "cannot infer element type of empty array literal; add an element type annotation (e.g. `int[]`)",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                            continue;
+                        }
                         self.tryTagConstLiteralArray(type_info, init_expr);
                     }
 
@@ -1258,6 +1278,19 @@ pub const SemanticAnalyzer = struct {
                             }
 
                             const token_type = eval.convertTypeToTokenType(type_info.base);
+
+                            if (decl.initializer) |init_expr| {
+                                if (isEmptyArrayLiteral(init_expr) and type_info.base == .Array and type_info.array_type == null) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(stmt.base),
+                                        ErrorCode.CANNOT_INFER_ARRAY_ELEMENT_TYPE,
+                                        "cannot infer element type of empty array literal; add an element type annotation (e.g. `int[]`)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    continue;
+                                }
+                            }
 
                             var value: TokenLiteral = undefined;
 

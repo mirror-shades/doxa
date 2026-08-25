@@ -39,6 +39,9 @@ pub const IRPrinter = struct {
     pub const restoreStackForLabel = CoreMethods.restoreStackForLabel;
     pub const mapBuiltinToRuntime = CoreMethods.mapBuiltinToRuntime;
     pub const mangleGlobalName = CoreMethods.mangleGlobalName;
+    pub const cloneHeapForStore = CoreMethods.cloneHeapForStore;
+    pub const cloneHeapForReturn = CoreMethods.cloneHeapForReturn;
+    pub const cloneHeapValue = CoreMethods.cloneHeapValue;
 
     const ModuleLayoutMethods = @import("./ir_printer/module_layout.zig").Methods(Ctx);
     const SharedHandlerMethods = @import("./ir_printer/shared_handlers.zig").Methods(Ctx);
@@ -124,12 +127,12 @@ pub const IRPrinter = struct {
     pub const emitGetField = StructsEnumsEmitMethods.emitGetField;
     pub const emitSetField = StructsEnumsEmitMethods.emitSetField;
     pub const emitPeekInstruction = StructsEnumsEmitMethods.emitPeekInstruction;
-    pub const emitStructValuePeek = StructsEnumsEmitMethods.emitStructValuePeek;
     pub const hydrateStructMetadata = StructsEnumsEmitMethods.hydrateStructMetadata;
     pub const resolveStructFieldNames = StructsEnumsEmitMethods.resolveStructFieldNames;
     pub const findLabelIndex = StructsEnumsEmitMethods.findLabelIndex;
-    pub const buildFallbackStructType = StructsEnumsEmitMethods.buildFallbackStructType;
     pub const buildI64StructType = StructsEnumsEmitMethods.buildI64StructType;
+    pub const storeStructStringField = StructsEnumsEmitMethods.storeStructStringField;
+    pub const loadStructStringField = StructsEnumsEmitMethods.loadStructStringField;
     pub const getOrCreateStructDescGlobal = StructsEnumsEmitMethods.getOrCreateStructDescGlobal;
     pub const getOrCreateEnumDescGlobal = StructsEnumsEmitMethods.getOrCreateEnumDescGlobal;
     pub const emitEnumInitCalls = StructsEnumsEmitMethods.emitEnumInitCalls;
@@ -166,6 +169,8 @@ pub const IRPrinter = struct {
     entry_str_out_ptr: ?[]const u8 = null,
     entry_str_out_len: ?[]const u8 = null,
     in_function_context: bool = false,
+    scope_depth: usize = 0,
+    exited_scopes: std.AutoHashMap(u32, void),
 
     pub const EnumVariantMeta = struct {
         index: u32,

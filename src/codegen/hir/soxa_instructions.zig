@@ -18,14 +18,14 @@ pub const LogicalOpType = enum { And, Or, Not, Iff, Xor, Nand, Nor, Implies };
 pub const StringOpType = enum { Concat, Length, Substring, ToInt, ToFloat, ToByte, ToString, Pop, Pack, Unpack };
 
 pub const OverflowBehavior = enum {
-    Trap, // VM: throw error, LLVM: generate trap
-    Saturate, // VM: clamp to limits, LLVM: use saturating intrinsics
-    Wrap, // VM: wrap around, LLVM: normal arithmetic
+    Trap, // throw error
+    Saturate, // clamp to limits
+    Wrap, // wrap around
 };
 
 pub const ExceptionBehavior = enum {
-    Trap, // VM: throw error, LLVM: generate trap
-    NaN, // VM: return nothing, LLVM: allow NaN result
+    Trap, // throw error
+    NaN, // allow NaN result
 };
 
 pub const ResizeBehavior = enum {
@@ -34,15 +34,14 @@ pub const ResizeBehavior = enum {
     Exact, // Only allocate exact amount needed
 };
 
-/// Stack-based HIR - The central intermediate representation
-/// Maps directly to VM OpCodes while carrying semantic information for LLVM
+/// Stack-based HIR - the central intermediate representation, consumed by the
+/// LLVM backend.
 pub const HIRInstruction = union(enum) {
     //==================================================================
-    // STACK OPERATIONS (Direct VM mapping)
+    // STACK OPERATIONS
     //==================================================================
 
     /// Push literal constant onto stack
-    /// VM: OP_CONST -> Frame.initInt(value)
     /// LLVM: LLVMConstInt(context, value, signed)
     Const: struct {
         value: HIRValue,
@@ -50,17 +49,14 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Duplicate top stack value
-    /// VM: OP_DUP
     /// LLVM: Create temporary for value reuse
     Dup,
 
     /// Pop and discard top stack value
-    /// VM: OP_POP
     /// LLVM: (no-op, just don't use the value)
     Pop,
 
     /// Swap top two stack values
-    /// VM: OP_SWAP
     /// LLVM: Create temporary for value reordering
     Swap,
 
@@ -69,17 +65,15 @@ pub const HIRInstruction = union(enum) {
     //==================================================================
 
     /// Load variable with full resolution context
-    /// VM: OP_VAR -> currentScopeVars[var_index]
     /// LLVM: LLVMBuildLoad -> symbol_table[var_name]
     LoadVar: struct {
-        var_index: u32, // VM: Direct index into current_scope_vars
+        var_index: u32, // Direct index into the current scope's variables
         var_name: []const u8, // LLVM: Symbol table lookup
         scope_kind: ScopeKind, // Resolution context
         module_context: ?[]const u8, // For imported variables
     },
 
     /// Store to variable
-    /// VM: OP_SET_VAR
     /// LLVM: LLVMBuildStore
     StoreVar: struct {
         var_index: u32,
@@ -90,7 +84,6 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Store variable declaration (var/const with initializer)
-    /// VM: OP_SET_VAR with declaration context
     /// LLVM: LLVMAddGlobal with proper type inference
     StoreDecl: struct {
         var_index: u32,
@@ -134,7 +127,6 @@ pub const HIRInstruction = union(enum) {
     //==================================================================
 
     /// Integer arithmetic
-    /// VM: OP_IADD, OP_ISUB, OP_IMUL
     /// LLVM: LLVMBuildAdd, LLVMBuildSub, LLVMBuildMul
     Arith: struct {
         op: ArithOp,
@@ -142,7 +134,6 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Type conversion
-    /// VM: OP_CONVERT_NUMBER
     /// LLVM: LLVMBuildSIToFP, LLVMBuildFPToSI
     Convert: struct {
         from_type: HIRType,
@@ -154,32 +145,27 @@ pub const HIRInstruction = union(enum) {
     //==================================================================
 
     /// Comparison with type handling
-    /// VM: OP_EQUAL, OP_GREATER, OP_LESS
     /// LLVM: LLVMBuildICmp, LLVMBuildFCmp with appropriate predicate
     Compare: struct {
         op: CompareOp,
-        operand_type: HIRType, // Determines VM behavior and LLVM predicate
+        operand_type: HIRType, // Determines the comparison predicate
     },
 
     /// Type checking for union types and as expressions
-    /// VM: Check runtime type against target type
     /// LLVM: Generate type checking code
     TypeCheck: struct {
         target_type: []const u8, // The type name to check against
     },
 
     /// Group member index check for group match patterns
-    /// VM: Compare top-of-stack group_instance.member_index against target
     GroupCheck: struct {
         member_index: u32,
     },
 
     /// Extract payload from a group_instance, replacing it with the member value.
-    /// VM: group_instance -> payload (enum_variant or struct_instance)
     GroupExtractPayload: struct {},
 
     /// Construct a union value from the current top-of-stack value.
-    /// VM: Currently a no-op (union semantics are handled structurally).
     /// LLVM: Build a canonical %DoxaValue with union_id + active member index
     ///       encoded into the reserved field.
     UnionConstruct: struct {
@@ -188,7 +174,7 @@ pub const HIRInstruction = union(enum) {
     },
 
     //==================================================================
-    // LOGICAL OPERATIONS (From old VM - proven implementations)
+    // LOGICAL OPERATIONS
     //==================================================================
 
     /// Logical operations (AND, OR, NOT)
@@ -198,44 +184,37 @@ pub const HIRInstruction = union(enum) {
     },
 
     //==================================================================
-    // STRING OPERATIONS (From old VM - proven implementations)
+    // STRING OPERATIONS
     //==================================================================
 
     /// String operations (concatenation, length, substring)
-    /// VM: String interning and memory management from old VM
     /// LLVM: String manipulation with proper memory management
     StringOp: struct {
         op: StringOpType,
     },
 
     //==================================================================
-    // CONTROL FLOW (Label-based for both targets)
+    // CONTROL FLOW (Label-based)
     //==================================================================
 
     /// Unconditional jump to label
-    /// VM: OP_JUMP -> ip += offset
     /// LLVM: LLVMBuildBr -> basic_block_map[label]
     Jump: struct {
         label: []const u8,
-        vm_offset: i32, // Pre-calculated for VM
     },
 
     /// Conditional jump
-    /// VM: OP_JUMP_IF_FALSE
     /// LLVM: LLVMBuildCondBr
     JumpCond: struct {
         label_true: []const u8,
         label_false: []const u8,
-        vm_offset: i32,
         condition_type: HIRType, // For type validation
     },
 
     /// Label marker
-    /// VM: (instruction pointer bookmark)
     /// LLVM: LLVMAppendBasicBlock
     Label: struct {
         name: []const u8,
-        vm_address: u32, // Pre-resolved for VM
     },
 
     //==================================================================
@@ -243,12 +222,11 @@ pub const HIRInstruction = union(enum) {
     //==================================================================
 
     /// Function call with full context
-    /// VM: OP_CALL -> getFunction(function_index)
     /// LLVM: LLVMBuildCall2 -> function_map[qualified_name]
     Call: struct {
-        function_index: ?u32, // VM: Direct function table index (null = zig module / builtin)
+        function_index: ?u32, // Direct function table index (null = zig module / builtin)
         qualified_name: []const u8, // LLVM: Full function name with module prefix
-        arg_count: u32, // Stack management for both targets
+        arg_count: u32, // Stack management
         call_kind: CallKind, // Resolution context
         target_module: ?[]const u8, // For cross-module calls
         return_type: HIRType, // For stack type management and LLVM return handling
@@ -256,7 +234,6 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Return from function
-    /// VM: OP_RETURN
     /// LLVM: LLVMBuildRet or LLVMBuildRetVoid
     Return: struct {
         has_value: bool,
@@ -268,7 +245,6 @@ pub const HIRInstruction = union(enum) {
     //==================================================================
 
     /// Array/struct field access
-    /// VM: OP_GET_FIELD
     /// LLVM: LLVMBuildStructGEP or LLVMBuildGEP
     GetField: struct {
         field_name: []const u8,
@@ -281,7 +257,6 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Array/struct field assignment
-    /// VM: OP_SET_FIELD
     /// LLVM: LLVMBuildStore with GEP
     SetField: struct {
         field_name: []const u8,
@@ -293,7 +268,6 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Store field name for struct field
-    /// VM: Store field name for later use in peek
     /// LLVM: No-op
     StoreFieldName: struct {
         field_name: []const u8,
@@ -304,26 +278,23 @@ pub const HIRInstruction = union(enum) {
     //==================================================================
 
     /// Enter new scope block
-    /// VM: OP_BEGIN_BLOCK -> BlockScope management
     /// LLVM: (variable lifetime tracking)
     EnterScope: struct {
         scope_id: u32,
-        var_count: u32, // Pre-calculated for VM efficiency
+        var_count: u32, // Number of variables in the scope
     },
 
     /// Exit scope block
-    /// VM: OP_END_BLOCK -> cleanup variables
     /// LLVM: (end lifetime tracking)
     ExitScope: struct {
         scope_id: u32,
     },
 
     //==================================================================
-    // ARRAY OPERATIONS (Phase 1 - High Priority)
+    // ARRAY OPERATIONS
     //==================================================================
 
     /// Create new array
-    /// VM: Allocate array storage, set element type
     /// LLVM: LLVMBuildArrayAlloca or heap allocation
     ArrayNew: struct {
         element_type: HIRType,
@@ -335,64 +306,52 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Get array element by index
-    /// VM: Bounds check + direct access
     /// LLVM: LLVMBuildGEP with bounds checking
     ArrayGet: struct {
         bounds_check: bool, // Enable/disable for performance
     },
 
     /// Set array element by index
-    /// VM: Bounds check + assignment
     /// LLVM: LLVMBuildStore with GEP
     ArraySet: struct {
         bounds_check: bool,
     },
 
     /// Push element to end of array
-    /// VM: Resize if needed, append element
     /// LLVM: Realloc logic or vector operations
     ArrayPush: struct {
         resize_behavior: ResizeBehavior,
     },
 
     /// Pop element from end of array
-    /// VM: Return element, decrease size
     /// LLVM: Load + resize
     ArrayPop,
 
     /// Insert element at index
-    /// VM: Shift elements right, insert, potentially resize
     /// LLVM: Realloc/memmove as needed
     ArrayInsert,
 
     /// Remove element at index
-    /// VM: Return element, shift elements left
     /// LLVM: memmove
     ArrayRemove,
 
     /// Slice array or string
-    /// VM: Return substring/subarray with start+length
     /// LLVM: memcpy or vector slice operations
     ArraySlice,
 
     /// Get array length
-    /// VM: Return stored length
     /// LLVM: Load from array header
     ArrayLen,
 
     /// Concatenate two arrays
-    /// VM: Allocate new array, copy elements
     /// LLVM: Complex allocation + memcpy
     ArrayConcat,
 
     //==================================================================
     // COMPOUND ASSIGNMENT OPERATIONS
     //==================================================================
-    // COMPOUND ASSIGNMENT OPERATIONS (Long-term fix)
-    //==================================================================
 
     /// Compound assignment: array[index] +=, -=, *=, etc.
-    /// VM: Get element, perform operation, set element
     /// LLVM: Generate optimized compound assignment
     ArrayCompoundAssign: struct {
         bounds_check: bool,
@@ -400,34 +359,26 @@ pub const HIRInstruction = union(enum) {
     },
 
     //==================================================================
-    // STRUCT OPERATIONS (Phase 1)
+    // STRUCT OPERATIONS
     //==================================================================
 
     /// Create new struct instance
-    /// VM: Allocate memory, initialize fields
     /// LLVM: LLVMBuildStructGEP for initialization
     StructNew: struct {
         type_name: []const u8, // Human-readable struct name
         struct_id: StructId,
         field_count: u32,
         /// Field names aligned with `field_types` / initialization order.
-        /// This is used by the native backend for debug printing; the VM still
-        /// reads the runtime-pushed field-name values.
+        /// Used by the native backend for debug printing.
         field_names: [][]const u8,
         field_types: []HIRType,
-        size_bytes: u32, // Pre-calculated for VM efficiency
     },
-
-    //==================================================================
-    // ENUM OPERATIONS (Phase 1)
-    //==================================================================
 
     //==================================================================
     // DEBUG/INTROSPECTION
     //==================================================================
 
     /// Print/peek value
-    /// VM: Complex printValue logic
     /// LLVM: Generate printf calls with format strings
     Peek: struct {
         name: ?[]const u8,
@@ -441,7 +392,6 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Prints a struct
-    /// VM: OP_PEEK_STRUCT
     /// LLVM: Generate constant string based on LLVM type
     PeekStruct: struct {
         type_name: []const u8, // Changed from struct_name to type_name
@@ -454,12 +404,10 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Program termination
-    /// VM: OP_HALT -> running = false
     /// LLVM: LLVMBuildRet from main function
     Halt,
 
     /// Load module as struct instance
-    /// VM: Load module variables as struct fields
     /// LLVM: Generate struct with module variables
     LoadModule: struct {
         module_name: []const u8,
@@ -468,7 +416,6 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Map expression
-    /// VM: OP_MAP -> map(key, value)
     /// LLVM: Generate map creation and lookup
     Map: struct {
         entries: []HIRMapEntry,
@@ -478,7 +425,6 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Get map value by key
-    /// VM: OP_MAP_GET -> map[key]
     /// LLVM: Generate map lookup
     MapGet: struct {
         key_type: HIRType,
@@ -486,14 +432,12 @@ pub const HIRInstruction = union(enum) {
     },
 
     /// Set map value by key
-    /// VM: OP_MAP_SET -> map[key] = value
     /// LLVM: Generate map update
     MapSet: struct {
         key_type: HIRType,
     },
 
     /// Assertion failure with formatted error message
-    /// VM: Print formatted "Assertion failed at [location]: [message]" and halt
     /// LLVM: Generate formatted error output and exit
     AssertFail: struct {
         location: Reporting.Location,
