@@ -8,9 +8,9 @@ Doxa is inspired by Nagarjuna's four cornered logic, known as Catuṣkoṭi. Dox
 
 ```
 P (true)
-¬ P (false)
-P ∧ ¬ P (both)
-¬ ( P ∨ ¬ P ) (neither)
+-¬ P (false)
+-P ∧ ¬ P (both)
+-¬ ( P ∨ ¬ P ) (neither)
 ```
 
 ## Usage
@@ -24,7 +24,7 @@ General options:
   --profile                         # Enable profiling
   --help, -h                        # Show this help message
   --debug-[stage]                   # Enable debug output for [stage]
-                                    # lexer, parser, semantic, hir, bytecode, execution
+                                    # lexer, parser, semantic, hir
   --debug-verbose                   # Enable all debug output
 
 Compile options:
@@ -91,7 +91,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - expand tests
 - improve error logging with better messages
 - improve effiency literally everywhere
-- lower fixed-size arrays to contiguous flat allocas (LLVM + VM backends)
+- lower fixed-size arrays to contiguous flat allocas (LLVM backend)
   - function-local flat scalar arrays lowered via alloca + GEP (brainfuck `tape :: byte[10]`)
   - global and nested arrays still use ArrayHeader path (peek/print compat, stack size limits)
   - wait for global `.bss` allocation and nested DoxaValue-free peek before removing gates

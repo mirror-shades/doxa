@@ -232,6 +232,14 @@ pub const expected_expressions_results = [_]peek_result{
     .{ .type = "int", .value = "4" },
     .{ .type = "int", .value = "6" },
     .{ .type = "int", .value = "4" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
     .{ .type = "string", .value = "\"end\"" },
 };
 
@@ -335,11 +343,15 @@ pub const expected_methods_results = [_]peek_result{
     .{ .type = "int[]", .value = "[]" },
     .{ .type = "nothing", .value = "nothing" },
     .{ .type = "string", .value = "\"\"" },
+    .{ .type = "nothing", .value = "nothing" },
+    .{ .type = "string[]", .value = "[]" },
     .{ .type = "int", .value = "1" },
     .{ .type = "int", .value = "-1" },
     .{ .type = "int", .value = "4" },
     .{ .type = "int", .value = "-1" },
     .{ .type = "int", .value = "-1" },
+    .{ .type = "int", .value = "-1" },
+    .{ .type = "int", .value = "1" },
     .{ .type = "int", .value = "-1" },
 
     .{ .type = "int[]", .value = "[2, 99, 4]" },
@@ -354,6 +366,12 @@ pub const expected_methods_results = [_]peek_result{
     .{ .type = "int[]", .value = "[1, 2, 99, 4, 5]" },
     .{ .type = "string", .value = "\"hello\"" },
     .{ .type = "string", .value = "\"hello\"" },
+
+    .{ .type = "string", .value = "\"hello\"" },
+    .{ .type = "string", .value = "\"\"" },
+    .{ .type = "byte[]", .value = "[104, 101, 108, 108, 111]" },
+    .{ .type = "byte[]", .value = "[]" },
+    .{ .type = "tetra", .value = "true" },
 
     .{ .type = "string", .value = "\"end\"" },
 };

@@ -326,6 +326,41 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     passed += calc_passed;
     failed += calc_failed;
 
+    // Dedicated terminating-methods batch. Each program must exit non-zero; a
+    // specific exit code is asserted for @exit and a stderr substring for the
+    // terminating diagnostics (@panic / @assert failure).
+    var term_passed: usize = 0;
+    var term_failed: usize = 0;
+    const term_cases = [_]struct {
+        name: []const u8,
+        path: []const u8,
+        expect_code: ?u8,
+        expect_stderr: ?[]const u8,
+    }{
+        .{ .name = "panic", .path = "./test/misc/panic.doxa", .expect_code = null, .expect_stderr = "panic test message" },
+        .{ .name = "exit", .path = "./test/misc/exit.doxa", .expect_code = 7, .expect_stderr = null },
+        .{ .name = "assert fail", .path = "./test/misc/assert_fail.doxa", .expect_code = null, .expect_stderr = "assert test message" },
+    };
+    for (term_cases) |tc| {
+        const result = try runDoxaCommandEx(allocator, tc.path, null);
+        allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+
+        var ok = result.exit_code != 0;
+        if (tc.expect_code) |code| ok = ok and result.exit_code == code;
+        if (tc.expect_stderr) |needle| ok = ok and std.mem.indexOf(u8, result.stderr, needle) != null;
+        if (ok) {
+            term_passed += 1;
+        } else {
+            term_failed += 1;
+            std.debug.print("Terminating method '{s}' failed:\n  exit={d}\n  stderr: {s}\n", .{ tc.name, result.exit_code, result.stderr });
+        }
+    }
+    const term_result = test_results{ .passed = term_passed, .failed = term_failed, .untested = 0 };
+    harness.printCase("terminating methods", term_result);
+    passed += term_passed;
+    failed += term_failed;
+
     const summary = test_results{ .passed = passed, .failed = failed, .untested = untested };
     harness.printSuiteSummary("RUN", summary);
     return summary;
@@ -336,7 +371,7 @@ fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
-        if (std.mem.startsWith(u8, line, "DoxVM: ")) continue;
+        if (harness.isDiagnosticLine(line)) continue;
         const j = std.mem.indexOf(u8, line, "]") orelse continue;
         if (j == 0) continue;
         const lineWithVar = line[j + 1 ..];
