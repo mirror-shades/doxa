@@ -1,4 +1,5 @@
 module error from "../error.doxa"
+module io from "../io/io.doxa"
 
 zig Build {
     const std = @import("std");
@@ -35,7 +36,34 @@ zig Build {
         return errorState(2, 0);
     }
 
-    pub fn compileDoxa(src: []const u8, out: []const u8, arch: []const u8, os: []const u8, abi: []const u8, debug_text: []const u8) i64 {
+    // Append `--<prefix>=<value>` for every newline-separated entry in `joined`.
+    // Empty entries are skipped. Returns false on allocation failure.
+    fn appendListFlags(a: std.mem.Allocator, args: *std.array_list.Managed([]const u8), prefix: []const u8, joined: []const u8) bool {
+        var it = std.mem.tokenizeScalar(u8, joined, '\n');
+        while (it.next()) |entry| {
+            if (entry.len == 0) continue;
+            const flag = std.fmt.allocPrint(a, "--{s}={s}", .{ prefix, entry }) catch return false;
+            args.append(flag) catch return false;
+        }
+        return true;
+    }
+
+    // Compile a single artifact by re-invoking `doxa compile` with the manifest's
+    // target, optimization mode, and native linking directives. The array-valued
+    // directives (links/libdirs/frameworks/includes) arrive as newline-joined
+    // strings because the inline-Zig ABI carries only scalar values.
+    pub fn compileArtifact(
+        src: []const u8,
+        out: []const u8,
+        arch: []const u8,
+        os: []const u8,
+        abi: []const u8,
+        opt_mode: []const u8,
+        links: []const u8,
+        libdirs: []const u8,
+        frameworks: []const u8,
+        includes: []const u8,
+    ) i64 {
         clearLastError();
 
         if (src.len == 0 or out.len == 0) {
@@ -47,74 +75,73 @@ zig Build {
         defer arena.deinit();
         const a = arena.allocator();
 
-        const self_path_opt = std.fs.selfExePathAlloc(a) catch {
-            setLastError(105);
-            return 0;
+        const doxa_path = blk: {
+            if (std.process.getEnvVarOwned(a, "DOXA_BIN")) |p| break :blk p else |_| {}
+            break :blk std.fs.selfExePathAlloc(a) catch {
+                setLastError(105);
+                return 0;
+            };
         };
-        const doxa_path = self_path_opt;
-
-        const debug = std.mem.eql(u8, debug_text, "true");
-        const opt_flag = if (debug) "-O0" else "-O-1";
 
         var args = std.array_list.Managed([]const u8).init(a);
         defer args.deinit();
 
-        args.append(doxa_path) catch {
-            setLastError(117);
-            return 0;
-        };
-        args.append("compile") catch {
-            setLastError(117);
-            return 0;
-        };
-        args.append(src) catch {
-            setLastError(117);
-            return 0;
-        };
-        args.append("-o") catch {
-            setLastError(117);
-            return 0;
-        };
-        args.append(out) catch {
-            setLastError(117);
-            return 0;
-        };
-        args.append(opt_flag) catch {
+        args.appendSlice(&[_][]const u8{ doxa_path, "compile", src, "-o", out }) catch {
             setLastError(117);
             return 0;
         };
 
+        if (opt_mode.len > 0) {
+            const opt_arg = std.fmt.allocPrint(a, "--opt-mode={s}", .{opt_mode}) catch {
+                setLastError(117);
+                return 0;
+            };
+            args.append(opt_arg) catch {
+                setLastError(117);
+                return 0;
+            };
+        }
+
         if (arch.len > 0) {
             const arch_arg = std.fmt.allocPrint(a, "--arch={s}", .{arch}) catch {
-            setLastError(117);
+                setLastError(117);
                 return 0;
             };
             args.append(arch_arg) catch {
-            setLastError(117);
+                setLastError(117);
                 return 0;
             };
         }
 
         if (os.len > 0) {
             const os_arg = std.fmt.allocPrint(a, "--os={s}", .{os}) catch {
-            setLastError(117);
+                setLastError(117);
                 return 0;
             };
             args.append(os_arg) catch {
-            setLastError(117);
+                setLastError(117);
                 return 0;
             };
         }
 
         if (abi.len > 0) {
             const abi_arg = std.fmt.allocPrint(a, "--abi={s}", .{abi}) catch {
-            setLastError(117);
+                setLastError(117);
                 return 0;
             };
             args.append(abi_arg) catch {
-            setLastError(117);
+                setLastError(117);
                 return 0;
             };
+        }
+
+        if (!appendListFlags(a, &args, "libdir", libdirs) or
+            !appendListFlags(a, &args, "link", links) or
+            !appendListFlags(a, &args, "framework", frameworks) or
+            !appendListFlags(a, &args, "include", includes))
+        {
+            setLastError(117);
+            return 0;
         }
 
         var child = std.process.Child.init(args.items, a);
@@ -135,15 +162,36 @@ zig Build {
         };
     }
 
-    pub fn compileHost(src: []const u8, out: []const u8, debug_text: []const u8) i64 {
-        return compileDoxa(
-            src,
-            out,
-            @tagName(builtin.cpu.arch),
-            @tagName(builtin.os.tag),
-            @tagName(builtin.abi),
-            debug_text,
-        );
+    pub fn hostArch() []const u8 {
+        return @tagName(builtin.cpu.arch);
+    }
+
+    pub fn hostOs() []const u8 {
+        return @tagName(builtin.os.tag);
+    }
+
+    pub fn hostAbi() []const u8 {
+        return @tagName(builtin.abi);
+    }
+
+    // The artifact's actual output path: appends `.exe` for a Windows target,
+    // mirroring the compiler's target-true output naming.
+    pub fn exePath(out: []const u8, os: []const u8) []const u8 {
+        if (std.mem.eql(u8, os, "windows")) {
+            if (std.mem.endsWith(u8, out, ".exe")) return out;
+            return std.fmt.allocPrint(std.heap.page_allocator, "{s}.exe", .{out}) catch return out;
+        }
+        return out;
+    }
+
+    // Modification time of `path` in nanoseconds, or -1 when the file cannot be
+    // stat'd (missing, permission denied, ...). Used by the artifact-level
+    // up-to-date check in `run`.
+    pub fn fileMtime(path: []const u8) i64 {
+        const file = std.fs.cwd().openFile(path, .{}) catch return -1;
+        defer file.close();
+        const stat = file.stat() catch return -1;
+        return @intCast(stat.mtime);
     }
 }
 
@@ -176,20 +224,246 @@ function mapBuildError(code :: int) returns error.StdError {
     }
 }
 
+public enum Optimization {
+    None,
+    Some,
+    Speed,
+    Size,
+}
+
+public enum Kind {
+    Executable,
+}
+
+# Maps the four-cornered Optimization to the backend's release modes, mirrored by
+# the compiler's `--opt-mode` flag (debug | safe | fast | small). Written with
+# enum equality rather than `match`: a `match` expression on an enum currently
+# does not produce its arm value (a compiler bug; `==` is correct).
+public function optModeName(o :: Optimization) returns string {
+    if o == Optimization.None then return "debug"
+    if o == Optimization.Some then return "safe"
+    if o == Optimization.Speed then return "fast"
+    return "small"
+}
+
+# The inline-Zig ABI is scalar-only, so array-valued directives cross into the
+# compiler shim as newline-joined strings.
+public function joinLines(parts :: string[]) returns string {
+    var out is ""
+    var i is 0
+    while i < @length(parts) {
+        if i > 0 then out is out + "\n"
+        out is out + parts[i]
+        i is i + 1
+    }
+    return out
+}
+
+public struct Target {
+    public arch :: string,
+    public os :: string,
+    public abi :: string,
+
+    public function host() returns Target {
+        return $Target {
+            arch is Build.hostArch(),
+            os is Build.hostOs(),
+            abi is Build.hostAbi(),
+        }
+    }
+
+    # Cross-compilation target. `os` is the raw OS name passed to `--os=`; an
+    # empty OS is rejected at build time (`run`), never silently collapsed to the
+    # host.
+    public function cross(arch :: string, os :: string, abi :: string) returns Target {
+        return $Target {
+            arch is arch,
+            os is os,
+            abi is abi,
+        }
+    }
+
+    public method isWindows() returns tetra {
+        return this.os == "windows"
+    }
+
+    public method isLinux() returns tetra {
+        return this.os == "linux"
+    }
+
+    public method isMac() returns tetra {
+        return this.os == "macos"
+    }
+}
+
+public struct Builder {
+    public name :: string,
+    public entry_point :: string,
+    public output :: string,
+    public kind :: Kind,
+    public includes :: string[],
+    public libdirs :: string[],
+    public links :: string[],
+    public frameworks :: string[],
+
+    public function new(name :: string, entry_point :: string, output :: string, kind :: Kind) returns Builder {
+        return $Builder {
+            name is name,
+            entry_point is entry_point,
+            output is output,
+            kind is kind,
+            includes is [],
+            libdirs is [],
+            links is [],
+            frameworks is [],
+        }
+    }
+
+    public function executable(name :: string, entry_point :: string, output :: string) returns Builder {
+        return Builder.new(name, entry_point, output, Kind.Executable)
+    }
+
+    public method include(x :: string | string[]) {
+        x as string then @push(this.includes, x) else {
+            var i is 0
+            while i < @length(x) {
+                @push(this.includes, x[i])
+                i is i + 1
+            }
+        }
+    }
+
+    public method libdir(x :: string | string[]) {
+        x as string then @push(this.libdirs, x) else {
+            var i is 0
+            while i < @length(x) {
+                @push(this.libdirs, x[i])
+                i is i + 1
+            }
+        }
+    }
+
+    public method link(x :: string | string[]) {
+        x as string then @push(this.links, x) else {
+            var i is 0
+            while i < @length(x) {
+                @push(this.links, x[i])
+                i is i + 1
+            }
+        }
+    }
+
+    public method framework(x :: string | string[]) {
+        x as string then @push(this.frameworks, x) else {
+            var i is 0
+            while i < @length(x) {
+                @push(this.frameworks, x[i])
+                i is i + 1
+            }
+        }
+    }
+}
+
+public struct Context {
+    public target :: Target,
+    public debug :: tetra,
+    public optimization :: Optimization,
+    public artifacts :: Builder[],
+
+    public function new(target :: Target) returns Context {
+        return $Context {
+            target is target,
+            debug is false,
+            optimization is Optimization.None,
+            artifacts is [],
+        }
+    }
+
+    public function host() returns Context {
+        return Context.new(Target.host())
+    }
+
+    public method addArtifact(b :: Builder) {
+        @push(this.artifacts, b)
+    }
+}
+
+# True when the artifact's output exists and is newer than its entry source, so
+# `run` can skip re-invoking the compiler. This is a cheap artifact-level pre-
+# filter; content-accurate up-to-date checks live in the driver (incremental
+# builds). Linked `-l` libraries are not part of the check.
+function artifactIsUpToDate(art :: Builder, target_os :: string) returns tetra {
+    const output is Build.exePath(art.output, target_os)
+    const out_mtime is Build.fileMtime(output)
+    if out_mtime < 0 then return false
+    const src_mtime is Build.fileMtime(art.entry_point)
+    if src_mtime < 0 then return false
+    return src_mtime <= out_mtime
+}
+
+# Drive the compiler over every artifact in the context. Returns the first
+# non-zero exit code or mapped error encountered, or 0 on success. `force`
+# bypasses the artifact-level up-to-date skip.
+public function run(c :: Context, force :: tetra) returns int | error.StdError {
+    # A cross target must name its OS; an empty OS is never silently resolved to
+    # the host.
+    if @length(c.target.os) == 0 then return error.Common.InvalidArgument
+    # Written as an assignment rather than an `if` expression: a runtime `if`
+    # expression that produces a string currently yields a corrupted value.
+    var opt is "debug"
+    if not c.debug then opt is optModeName(c.optimization)
+    var i is 0
+    while i < @length(c.artifacts) {
+        const art is c.artifacts[i]
+
+        if not force and artifactIsUpToDate(art, c.target.os) then {
+            i is i + 1
+            continue
+        }
+
+        const links is joinLines(art.links)
+        const libdirs is joinLines(art.libdirs)
+        const frameworks is joinLines(art.frameworks)
+        const includes is joinLines(art.includes)
+        const code is Build.compileArtifact(art.entry_point, art.output, c.target.arch, c.target.os, c.target.abi, opt, links, libdirs, frameworks, includes)
+        const err is Build.takeLastErrorCode()
+        if err != 0 then return mapBuildError(err)
+        if code != 0 then return code
+
+        i is i + 1
+    }
+    return 0
+}
+
+# Drive the compiler over every artifact and propagate the outcome through the
+# process exit code: a successful build exits 0, an `int` result exits with that
+# code, and an `error.StdError` prints a mapped message to stderr and exits 1.
+# `execute` is the terminal statement of a build script; it never returns.
+public function execute(c :: Context, force :: tetra) {
+    const outcome is run(c, force)
+    outcome as int then {
+        @print("build exit code: {string(outcome)}\n")
+    } else {
+        # The compiler's own diagnostics already describe the failing artifact;
+        # here we only need to signal the failure on the standard channel.
+        io.eprintln("Build failed")
+        @exit(1)
+    }
+}
+
+# Low-level single-file compile, retained for direct use and the build test
+# harness. `debug` forces the debug optimization mode.
 public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.StdError {
-    const code is Build.compileDoxa(src, out, arch, os, abi, @string(debug));
+    # Assignment form: a runtime `if` expression producing a string is corrupt.
+    var opt is "debug"
+    if not debug then opt is "fast"
+    const code is Build.compileArtifact(src, out, arch, os, abi, opt, "", "", "", "")
     const err is Build.takeLastErrorCode()
     if err == 0 then return code
     return mapBuildError(err)
 }
 
 public function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.StdError {
-    const code is Build.compileHost(src, out, @string(debug));
-    const err is Build.takeLastErrorCode()
-    if err == 0 then return code
-    return mapBuildError(err)
+    return compile(src, out, Build.hostArch(), Build.hostOs(), Build.hostAbi(), debug)
 }
-
-
-
 

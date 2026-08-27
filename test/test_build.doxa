@@ -17,3 +17,13 @@ build.compile("./test/examples/brainfuck.doxa", "./test/out/brainfuck", host.arc
 build.compile("./test/examples/calculator.doxa", "./test/out/calculator", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/http_link_test.doxa", "./test/out/http_link_test", host.arch(), host.os(), host.abi(), true)
 build.compile("./test/misc/list.doxa", "./test/out/list", host.arch(), host.os(), host.abi(), true)
+
+# Multi-artifact build through `execute`: exercises Context/Builder/execute and
+# the artifact-level up-to-date skip, with the process exit code as the signal.
+var fixture is build.Context.host()
+fixture.debug is true
+var fixture_hello is build.Builder.executable("hello", "test/build/src/hello.doxa", "test/out/build-fixture/hello")
+var fixture_other is build.Builder.executable("other", "test/build/src/other.doxa", "test/out/build-fixture/other")
+fixture.addArtifact(fixture_hello)
+fixture.addArtifact(fixture_other)
+build.execute(fixture, false)

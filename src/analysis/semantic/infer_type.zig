@@ -289,6 +289,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (self.struct_methods.get(ct_name)) |method_table| {
                                 if (method_table.get(method_name)) |method_info| {
                                     if (!method_info.is_static) {
+                                        try inferArgs(self, function_call.arguments);
                                         type_info.* = method_info.return_type.*;
                                         return type_info;
                                     }
@@ -327,6 +328,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (self.struct_methods.get(object_name)) |method_table| {
                                 if (method_table.get(method_name)) |method_info| {
                                     if (method_info.is_static) {
+                                        try inferArgs(self, function_call.arguments);
                                         type_info.* = method_info.return_type.*;
                                         return type_info;
                                     }
@@ -418,6 +420,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         if (struct_name) |name| {
                             if (self.struct_methods.get(name)) |tbl| {
                                 if (tbl.get(method_name)) |mi| {
+                                    try inferArgs(self, function_call.arguments);
                                     type_info.* = mi.return_type.*;
                                     return type_info;
                                 }
@@ -2600,6 +2603,16 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
     try self.type_cache.put(expr.base.id, type_info);
     return type_info;
+}
+
+/// Resolve each call argument's type. The side effect that matters here is
+/// marking referenced variables as used: struct method calls previously skipped
+/// argument inference, so their arguments were reported as unused.
+fn inferArgs(self: *SemanticAnalyzer, arguments: []const ast.CallArgument) SemanticError!void {
+    for (arguments) |arg_expr_it| {
+        if (arg_expr_it.expr.data == .DefaultArgPlaceholder) continue;
+        _ = try inferTypeFromExpr(self, arg_expr_it.expr);
+    }
 }
 
 fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, arguments: []const ast.CallArgument, func_type: *const ast.FunctionType) SemanticError!bool {

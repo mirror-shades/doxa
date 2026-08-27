@@ -268,6 +268,8 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
         .{ "./test/misc/expressions.doxa", "./test/out/expressions" },
         .{ "./test/misc/array_storage_migration.doxa", "./test/out/array_storage_migration" },
         .{ "./test/misc/alias_arrays.doxa", "./test/out/alias_arrays" },
+        .{ "./test/misc/union_narrow.doxa", "./test/out/union_narrow" },
+        .{ "./test/misc/nested_struct_return.doxa", "./test/out/nested_struct_return" },
         .{ "./test/misc/methods.doxa", "./test/out/methods" },
         .{ "./test/misc/union_enum_return.doxa", "./test/out/union_enum_return" },
         .{ "./test/misc/inline_zig_string.doxa", "./test/out/inline_zig_string" },
@@ -295,6 +297,8 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const brainfuck_path = try getBinaryPath(allocator, "./test/out/brainfuck");
     const array_storage_migration_path = try getBinaryPath(allocator, "./test/out/array_storage_migration");
     const alias_arrays_path = try getBinaryPath(allocator, "./test/out/alias_arrays");
+    const union_narrow_path = try getBinaryPath(allocator, "./test/out/union_narrow");
+    const nested_struct_return_path = try getBinaryPath(allocator, "./test/out/nested_struct_return");
     const methods_path = try getBinaryPath(allocator, "./test/out/methods");
     const union_enum_return_path = try getBinaryPath(allocator, "./test/out/union_enum_return");
     const inline_zig_string_path = try getBinaryPath(allocator, "./test/out/inline_zig_string");
@@ -353,6 +357,22 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .mode = .PRINT,
             .input = null,
             .expected_print = answers.expected_alias_arrays_results[0..],
+            .expected_peek = null,
+        },
+        .{
+            .name = "union narrow",
+            .binary_path = union_narrow_path,
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_union_narrow_results[0..],
+            .expected_peek = null,
+        },
+        .{
+            .name = "nested struct return",
+            .binary_path = nested_struct_return_path,
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_nested_struct_return_results[0..],
             .expected_peek = null,
         },
         .{

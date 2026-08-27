@@ -1635,7 +1635,9 @@ pub const HIRGenerator = struct {
                     t = tracked;
                 }
             }
-            switch (t) {
+            if (t == .Union and t.Union.members.len == 1 and t.Union.members[0].* == .Array) {
+                try self.instructions.append(.ArrayLen);
+            } else switch (t) {
                 .Array => try self.instructions.append(.ArrayLen),
                 else => try self.instructions.append(.{ .StringOp = .{ .op = .Length } }),
             }

@@ -40,6 +40,16 @@ pub const StructsHandler = struct {
         var field_names = try self.generator.allocator.alloc([]const u8, struct_data.fields.len);
         defer self.generator.allocator.free(field_names);
 
+        // Prefer the struct declaration's field types over literal inference.
+        // Literal inference degrades for empty arrays (`includes is []` loses the
+        // `string[]` element type) and enum/struct fields, so the declared type
+        // keeps downstream codegen (field metadata, `@push`, array gets) precise.
+        const declared_types = blk: {
+            const ct = self.generator.type_system.custom_types.get(struct_data.name.lexeme) orelse break :blk null;
+            if (ct.kind != .Struct or ct.struct_fields == null) break :blk null;
+            break :blk ct.struct_fields.?;
+        };
+
         // Generate field values and names in reverse order for stack-based construction
         var reverse_i = struct_data.fields.len;
         while (reverse_i > 0) {
@@ -69,13 +79,44 @@ pub const StructsHandler = struct {
                 }
             }
 
-            // Generate field value with possible enum context
+            // Generate field value with possible enum context. Array-typed fields
+            // thread their declared element type down so empty literals (`[]`)
+            // produce a correctly-tagged runtime array instead of `Unknown`.
+            const declared_field_type = blk: {
+                if (declared_types) |dfields| {
+                    for (dfields) |df| {
+                        if (std.mem.eql(u8, df.name, field.name.lexeme)) break :blk df.field_type;
+                    }
+                }
+                break :blk HIRType{ .Unknown = {} };
+            };
+            const prev_override = self.generator.array_storage_override;
+            defer self.generator.array_storage_override = prev_override;
+            const prev_element_override = self.generator.array_element_type_override;
+            defer self.generator.array_element_type_override = prev_element_override;
+            if (declared_field_type == .Array) {
+                self.generator.array_storage_override = null;
+                self.generator.array_element_type_override = declared_field_type.Array.*;
+            } else {
+                self.generator.array_storage_override = null;
+                self.generator.array_element_type_override = null;
+            }
             try self.generator.generateExpression(field.value, true, false);
             // Restore enum context
             self.generator.current_enum_type = previous_enum_context;
 
             // Infer and store field type
-            field_types[reverse_i] = self.generator.inferTypeFromExpression(field.value);
+            field_types[reverse_i] = blk: {
+                if (declared_types) |dfields| {
+                    for (dfields) |df| {
+                        if (std.mem.eql(u8, df.name, field.name.lexeme)) {
+                            if (df.field_type != .Unknown and df.field_type != .Nothing) break :blk df.field_type;
+                            break;
+                        }
+                    }
+                }
+                break :blk self.generator.inferTypeFromExpression(field.value);
+            };
             field_names[reverse_i] = field.name.lexeme;
 
             // Push field name as constant

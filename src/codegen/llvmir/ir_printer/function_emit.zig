@@ -26,6 +26,8 @@ pub fn Methods(comptime Ctx: type) type {
             self.in_function_context = true;
             defer self.in_function_context = false;
 
+            self.clearNarrowedVars();
+
             const range = self.getFunctionRange(hir, func, func_start_labels) orelse return;
             const start_idx = range.start;
             const end_idx = range.end;
@@ -142,19 +144,8 @@ pub fn Methods(comptime Ctx: type) type {
             const params_str = if (param_strs.items.len == 0) "" else try std.mem.join(self.allocator, ", ", param_strs.items);
             defer if (param_strs.items.len > 0) self.allocator.free(params_str);
 
-            // Rename user entry function so the generated Zig root can provide `main`
-            const emitted_name_owned = if (func.is_entry and !std.mem.eql(u8, func.qualified_name, "main"))
-                try std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{func.qualified_name})
-            else
-                null;
-            defer if (emitted_name_owned) |name| self.allocator.free(name);
-            const emitted_name = if (func.is_entry)
-                (if (std.mem.eql(u8, func.qualified_name, "main"))
-                    "doxa_user_main"
-                else
-                    emitted_name_owned.?)
-            else
-                func.qualified_name;
+            const emitted_name = try self.functionSymbol(func);
+            defer self.allocator.free(emitted_name);
 
             const func_decl = try std.fmt.allocPrint(self.allocator, "define {s} @{s}({s}) {{\n", .{ return_type_str, emitted_name, params_str });
             defer self.allocator.free(func_decl);
@@ -488,7 +479,7 @@ pub fn Methods(comptime Ctx: type) type {
                             );
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            try stack.append(.{
+                            const loaded = StackVal{
                                 .name = result_name,
                                 .ty = entry.stack_type,
                                 .array_type = entry.array_type,
@@ -498,7 +489,16 @@ pub fn Methods(comptime Ctx: type) type {
                                 .struct_type_name = entry.struct_type_name,
                                 .fixed_array_depth = entry.fixed_array_depth,
                                 .fixed_array_sizes = entry.fixed_array_sizes,
-                            });
+                            };
+                            if (entry.stack_type == .Value) {
+                                if (try self.loadNarrowedUnion(w, loaded, lv.var_name, &id)) |unwrapped| {
+                                    try stack.append(unwrapped);
+                                } else {
+                                    try stack.append(loaded);
+                                }
+                            } else {
+                                try stack.append(loaded);
+                            }
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
@@ -900,6 +900,14 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.handleUnionConstruct(w, &stack, &id, uc);
                         last_instruction_was_terminator = false;
                     },
+                    .NarrowVar => |nv| {
+                        try self.narrowVariable(nv.var_name, nv.narrowed_type);
+                        last_instruction_was_terminator = false;
+                    },
+                    .RestoreVar => |rv| {
+                        self.restoreVariable(rv.var_name);
+                        last_instruction_was_terminator = false;
+                    },
                     .LogicalOp => |lop| {
                         try self.handleLogicalOp(w, &stack, &id, lop);
                         last_instruction_was_terminator = false;
@@ -962,6 +970,63 @@ pub fn Methods(comptime Ctx: type) type {
             const name = try std.fmt.allocPrint(self.allocator, "%t{d}", .{id.*});
             id.* += 1;
             return name;
+        }
+
+        /// Push a narrowed member view for `var_name`. The narrowed type is a
+        /// single-member union; loads of the variable unwrap to that member.
+        pub fn narrowVariable(self: *IRPrinter, var_name: []const u8, narrowed_type: HIR.HIRType) !void {
+            var entry = try self.narrowed_vars.getOrPut(var_name);
+            if (!entry.found_existing) {
+                entry.value_ptr.* = std.ArrayListUnmanaged(HIR.HIRType){};
+            }
+            try entry.value_ptr.append(self.allocator, narrowed_type);
+        }
+
+        /// Drop all narrowing state. Called at function entry so a `RestoreVar`
+        /// skipped after an early `return` never leaks into a later function.
+        pub fn clearNarrowedVars(self: *IRPrinter) void {
+            var it = self.narrowed_vars.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit(self.allocator);
+            }
+            self.narrowed_vars.clearRetainingCapacity();
+        }
+
+        /// Pop the narrowed member view for `var_name`, restoring any outer view.
+        pub fn restoreVariable(self: *IRPrinter, var_name: []const u8) void {
+            if (self.narrowed_vars.getPtr(var_name)) |stack| {
+                if (stack.items.len > 0) {
+                    stack.items.len -= 1;
+                    if (stack.items.len == 0) _ = self.narrowed_vars.remove(var_name);
+                }
+            }
+        }
+
+        /// The single member of the variable's active narrowed union view, or
+        /// null when the variable is not narrowed to a single member.
+        pub fn narrowedMemberType(self: *IRPrinter, var_name: []const u8) ?HIR.HIRType {
+            const stack = self.narrowed_vars.get(var_name) orelse return null;
+            if (stack.items.len == 0) return null;
+            const view = stack.items[stack.items.len - 1];
+            if (view != .Union) return null;
+            const members = view.Union.members;
+            if (members.len != 1) return null;
+            return members[0].*;
+        }
+
+        /// Load a union-typed variable that is currently narrowed: emit the raw
+        /// `%DoxaValue` load and unwrap it to the active member representation.
+        /// Returns null when no narrowing applies.
+        pub fn loadNarrowedUnion(
+            self: *IRPrinter,
+            w: anytype,
+            raw: StackVal,
+            var_name: []const u8,
+            id: *usize,
+        ) !?StackVal {
+            const member = self.narrowedMemberType(var_name) orelse return null;
+            const unwrapped = try self.unwrapDoxaValueToType(w, raw, member, id);
+            return unwrapped;
         }
 
         /// Collect enum variant metadata from the constant pool so we can render

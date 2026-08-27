@@ -1739,9 +1739,10 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        /// Map an `ast.Type` to the corresponding `HIR.HIRType`. Collections and
-        /// user-defined types have no scalar HIR counterpart and resolve to null.
-        fn astTypeToHirType(t: ast.Type) ?HIR.HIRType {
+        /// Map an `ast.Type` to the corresponding `HIR.HIRType`. Array types
+        /// carry an unknown element type here; the concrete element type is
+        /// preserved on the StackVal.
+        fn astTypeToHirType(self: *IRPrinter, t: ast.Type) ?HIR.HIRType {
             return switch (t) {
                 .Int => .Int,
                 .Byte => .Byte,
@@ -1749,26 +1750,54 @@ pub fn Methods(comptime Ctx: type) type {
                 .String => .String,
                 .Tetra => .Tetra,
                 .Nothing => .Nothing,
+                .Array => blk: {
+                    const element_type = self.allocator.create(HIR.HIRType) catch break :blk null;
+                    element_type.* = .Unknown;
+                    break :blk HIR.HIRType{ .Array = element_type };
+                },
                 else => null,
             };
         }
 
-        /// Resolve a builtin argument type spec to a concrete HIR type so the
-        /// generic call coercions can adapt the runtime value. `Single` maps to
-        /// its HIR type; `Union` prefers the widest integer member (`int|byte`
-        /// -> `Int`), then falls back to the first scalar member; `Integer` maps
-        /// to `Int`; `Any` and `Collection` carry no coercion.
-        fn resolveBuiltinInputType(spec: builtin_methods.InputTypeSpec) ?HIR.HIRType {
+        fn builtinTypeMatchesStack(t: ast.Type, arg: StackVal) bool {
+            return switch (t) {
+                .Int, .Enum => arg.ty == .I64,
+                .Byte => arg.ty == .I8,
+                .Float => arg.ty == .F64,
+                .String => arg.ty == .STRING,
+                .Tetra => arg.ty == .I2 or arg.ty == .I1,
+                .Array, .Map, .Struct, .Function => arg.ty == .PTR,
+                .Nothing => arg.ty == .Nothing,
+                else => false,
+            };
+        }
+
+        /// Resolve a builtin argument type spec to the ABI type selected by
+        /// the actual argument. Builtin unions are native ABI unions, unlike
+        /// user-declared HIR unions which are boxed as DoxaValue.
+        fn resolveBuiltinInputType(self: *IRPrinter, spec: builtin_methods.InputTypeSpec, arg: StackVal) ?HIR.HIRType {
             return switch (spec) {
-                .Single => |t| astTypeToHirType(t),
+                .Single => |t| astTypeToHirType(self, t),
                 .Union => |types| blk: {
+                    var integer_union = true;
                     for (types) |t| {
-                        if (t == .Int) break :blk .Int;
+                        if (t != .Int and t != .Byte) {
+                            integer_union = false;
+                            break;
+                        }
                     }
+                    if (integer_union) break :blk .Int;
+
                     for (types) |t| {
-                        if (astTypeToHirType(t)) |h| break :blk h;
+                        if (builtinTypeMatchesStack(t, arg)) {
+                            break :blk astTypeToHirType(self, t);
+                        }
                     }
-                    break :blk null;
+                    // The semantic layer should reject an argument that is
+                    // not a member of the builtin union. Keep a declared
+                    // type so codegen cannot silently fall back to the
+                    // argument's stack representation.
+                    break :blk HIR.HIRType.Nothing;
                 },
                 .Integer => .Int,
                 .Any, .Collection => null,
@@ -2068,7 +2097,7 @@ pub fn Methods(comptime Ctx: type) type {
                     // (e.g. zext i8 -> i64 for a byte `@exit` code).
                     if (builtin_methods.getMethodInfoByName(c.qualified_name)) |info| {
                         if (i < info.input_types.len) {
-                            declared_type = resolveBuiltinInputType(info.input_types[i]);
+                            declared_type = resolveBuiltinInputType(self, info.input_types[i], arg);
                         }
                     }
                 }
@@ -2149,6 +2178,34 @@ pub fn Methods(comptime Ctx: type) type {
                         arg = .{ .name = widened, .ty = .I64 };
                         arg_ptr.* = arg;
                     }
+                    // The semantic analyzer lets comptime int literals narrow into
+                    // byte/tetra params and widen into float params, so lower the
+                    // i64 the literal was pushed as to the declared type here.
+                    if (decl == .Byte and arg.ty == .I64) {
+                        const narrowed = try self.nextTemp(id);
+                        const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i8\n", .{ narrowed, arg.name });
+                        defer self.allocator.free(trunc_line);
+                        try w.writeAll(trunc_line);
+                        arg = .{ .name = narrowed, .ty = .I8 };
+                        arg_ptr.* = arg;
+                    }
+                    if (decl == .Tetra and arg.ty == .I64) {
+                        const narrowed = try self.nextTemp(id);
+                        const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i2\n", .{ narrowed, arg.name });
+                        defer self.allocator.free(trunc_line);
+                        try w.writeAll(trunc_line);
+                        arg = .{ .name = narrowed, .ty = .I2 };
+                        arg_ptr.* = arg;
+                    }
+                    if (decl == .Float and (arg.ty == .I64 or arg.ty == .I8)) {
+                        const src_ty = if (arg.ty == .I8) "i8" else "i64";
+                        const widened = try self.nextTemp(id);
+                        const sitofp_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp {s} {s} to double\n", .{ widened, src_ty, arg.name });
+                        defer self.allocator.free(sitofp_line);
+                        try w.writeAll(sitofp_line);
+                        arg = .{ .name = widened, .ty = .F64 };
+                        arg_ptr.* = arg;
+                    }
                     if ((decl == .Array or decl == .Struct or decl == .Map) and arg.ty == .I64) {
                         const as_ptr = try self.nextTemp(id);
                         const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, arg.name });
@@ -2168,16 +2225,16 @@ pub fn Methods(comptime Ctx: type) type {
                         if (self.paramTypeMatchesStack(decl, arg.ty)) {
                             break :blk self.hirTypeToLLVMType(decl, false);
                         }
-                        if (c.call_kind == .BuiltinFunction) {
-                            // Builtin metadata unions over-approximate the actual
-                            // value (e.g. `array | string`); after the coercions
-                            // above no declared representation matches, so emit
-                            // the value as it actually sits on the stack.
-                            break :blk self.stackTypeToLLVMType(arg.ty);
-                        }
-                    } else {
+                    }
+                    if (declared_type == null) {
                         break :blk self.stackTypeToLLVMType(arg.ty);
                     }
+                    std.debug.print("cannot lower call argument {d} of {s}: declared={s}, stack={s}\n", .{
+                        i,
+                        c.qualified_name,
+                        @tagName(declared_type.?),
+                        @tagName(arg.ty),
+                    });
                     unreachable;
                 };
                 const arg_str = try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ llvm_ty, arg.name });
@@ -2196,9 +2253,19 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
+            const runtime_name_owned: ?[]const u8 = if (c.call_kind == .LocalFunction)
+                if (func_info) |info| try self.functionSymbol(info) else null
+            else
+                null;
+            defer if (runtime_name_owned) |name| self.allocator.free(name);
+            const runtime_name = runtime_name_owned orelse IRPrinter.mapBuiltinToRuntime(c.qualified_name);
+
             if (actual_return_type != .Nothing) {
-                if (c.call_kind == .ModuleFunction and actual_return_type == .String) {
-                    // Module functions use out-params for string returns (ABI compat)
+                // Only inline-Zig module functions (function_index == null) use
+                // out-params for string returns (the inline-Zig ABI). Pure-Doxa
+                // module functions are defined with `%DoxaString` value returns
+                // and must go through the value-return path below.
+                if (c.call_kind == .ModuleFunction and c.function_index == null and actual_return_type == .String) {
                     const out_ptr_slot = try self.nextTemp(id);
                     const out_len_slot = try self.nextTemp(id);
                     const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
@@ -2222,7 +2289,6 @@ pub fn Methods(comptime Ctx: type) type {
                         try std.fmt.allocPrint(self.allocator, "ptr {s}, ptr {s}", .{out_ptr_slot, out_len_slot});
                     defer if (full_args.ptr != args_str.ptr) self.allocator.free(full_args);
 
-                    const runtime_name = IRPrinter.mapBuiltinToRuntime(c.qualified_name);
                     const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ runtime_name, full_args });
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
@@ -2250,7 +2316,6 @@ pub fn Methods(comptime Ctx: type) type {
 
                 const result_name = try self.nextTemp(id);
                 const ret_ty = self.hirTypeToLLVMType(actual_return_type, false);
-                const runtime_name = IRPrinter.mapBuiltinToRuntime(c.qualified_name);
                 const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call {s} @{s}({s})\n", .{ result_name, ret_ty, runtime_name, args_str });
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
@@ -2276,7 +2341,6 @@ pub fn Methods(comptime Ctx: type) type {
                 }
                 try stack.append(pushed);
             } else {
-                const runtime_name = IRPrinter.mapBuiltinToRuntime(c.qualified_name);
                 const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ runtime_name, args_str });
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);

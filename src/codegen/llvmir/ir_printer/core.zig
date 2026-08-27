@@ -23,32 +23,8 @@ pub fn Methods(comptime Ctx: type) type {
             return raw;
         }
 
-        pub fn paramTypeMatchesStack(_: *IRPrinter, param_type: HIR.HIRType, stack_type: StackType) bool {
-            return switch (stack_type) {
-                .I64 => switch (param_type) {
-                    .Int, .Enum, .Union, .Unknown => true,
-                    else => false,
-                },
-                .F64 => switch (param_type) {
-                    .Float, .Union, .Unknown => true,
-                    else => false,
-                },
-                .I8 => param_type == .Byte,
-                .I2 => param_type == .Tetra,
-                .PTR => switch (param_type) {
-                    .Struct, .Array, .Map => true,
-                    else => false,
-                },
-                .STRING => switch (param_type) {
-                    .String => true,
-                    else => false,
-                },
-                .Value => switch (param_type) {
-                    .Union, .Unknown => true,
-                    else => false,
-                },
-                else => false,
-            };
+        pub fn paramTypeMatchesStack(self: *IRPrinter, param_type: HIR.HIRType, stack_type: StackType) bool {
+            return self.hirTypeToStackType(param_type) == stack_type;
         }
 
         pub fn coerceForMerge(
@@ -645,6 +621,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .entry_str_out_ptr = null,
                 .entry_str_out_len = null,
                 .exited_scopes = std.AutoHashMap(u32, void).init(allocator),
+                .narrowed_vars = std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)).init(allocator),
             };
         }
 
@@ -662,6 +639,11 @@ pub fn Methods(comptime Ctx: type) type {
             self.struct_type_names_by_id.deinit();
             self.defined_globals.deinit();
             self.exited_scopes.deinit();
+            var narrowed_it = self.narrowed_vars.iterator();
+            while (narrowed_it.next()) |entry| {
+                entry.value_ptr.deinit(self.allocator);
+            }
+            self.narrowed_vars.deinit();
             var ret_it = self.function_struct_return_fields.iterator();
             while (ret_it.next()) |entry| {
                 self.allocator.free(entry.value_ptr.*);
@@ -813,6 +795,24 @@ pub fn Methods(comptime Ctx: type) type {
             if (std.mem.eql(u8, name, "exit")) return "doxa_exit";
             if (std.mem.eql(u8, name, "panic")) return "doxa_panic";
             return name;
+        }
+
+        /// Emitted LLVM symbol for a user-defined function. The generated Zig root
+        /// owns the `main` symbol and the runtime owns every `doxa_*` export, so a
+        /// non-entry function whose name would collide with either (e.g. a plain
+        /// `function main()`) is renamed into the reserved namespace. The entry
+        /// function is always renamed so `doxa_program_main` can call it without
+        /// shadowing the root's `main`. Caller owns the returned slice.
+        pub fn functionSymbol(self: *IRPrinter, func: HIR.HIRProgram.HIRFunction) ![]const u8 {
+            const name = func.qualified_name;
+            if (func.is_entry) {
+                if (std.mem.eql(u8, name, "main")) return self.allocator.dupe(u8, "doxa_user_main");
+                return std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{name});
+            }
+            if (std.mem.eql(u8, name, "main") or std.mem.startsWith(u8, name, "doxa_")) {
+                return std.fmt.allocPrint(self.allocator, "doxa_fn_{s}", .{name});
+            }
+            return self.allocator.dupe(u8, name);
         }
 
         pub fn mangleGlobalName(self: *IRPrinter, name: []const u8) ![]const u8 {

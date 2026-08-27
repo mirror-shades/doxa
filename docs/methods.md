@@ -44,6 +44,8 @@ Here is a list of our intrinsic methods and an explaination of what they do.
 - `@clear(collection :: string | array)` -> `nothing`
 - `@find(collection :: string | array, value :: any)` -> `int`
 - `@slice(collection :: string | array, start :: int, length :: int)` -> `string | array`
+- `@pack(bytes :: array)` -> `string` — interprets each element as a u8 codepoint
+- `@unpack(word :: string)` -> `array` — decomposes a string into its byte values
 
 ### Type / Conversion
 
@@ -93,6 +95,10 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
 - `@slice(collection, start, length)`
   - Fails at runtime for negative indices/length, out-of-bounds ranges, wrong index types, or non-collection targets.
   - Current implementation can cascade into `StackUnderflow` after the primary runtime error in some statement forms.
+- `@pack(bytes)`
+  - Fails at runtime for arrays whose elements cannot be coerced to a u8 codepoint.
+- `@unpack(word)`
+  - Does not currently fail for supported runtime values.
 
 ### Type / Conversion
 
@@ -114,8 +120,8 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
 - `@print(format :: string)`
   - Argument must be a `string`. `@print` writes that string as-is; it does not interpolate or interpret `{...}`. Interpolation happens when a string value is produced (for example, in a double-quoted literal), so `@print("value is {value}")` still prints the current value because the literal is evaluated to a `string` before `@print` runs.
 - `@assert(condition :: tetra, message :: string?)`
-  - False condition halts execution and reports assertion failure location/message.
+  - False condition writes the message (if any) and `Assertion failed` to stderr, then halts execution with exit code 1.
 - `@panic(message)`
-  - Always terminates execution with a runtime panic.
+  - Writes the message to stderr and always terminates execution with exit code 1.
 - `@exit(code)`
-  - Terminates process with the provided status code (`int | byte`).
+  - Terminates the process with the provided status code (`int | byte`).

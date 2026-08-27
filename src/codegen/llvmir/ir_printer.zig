@@ -38,6 +38,7 @@ pub const IRPrinter = struct {
     pub const recordStackForLabel = CoreMethods.recordStackForLabel;
     pub const restoreStackForLabel = CoreMethods.restoreStackForLabel;
     pub const mapBuiltinToRuntime = CoreMethods.mapBuiltinToRuntime;
+    pub const functionSymbol = CoreMethods.functionSymbol;
     pub const mangleGlobalName = CoreMethods.mangleGlobalName;
     pub const cloneHeapForStore = CoreMethods.cloneHeapForStore;
     pub const cloneHeapForReturn = CoreMethods.cloneHeapForReturn;
@@ -56,6 +57,11 @@ pub const IRPrinter = struct {
     pub const writeFunction = FunctionEmitMethods.writeFunction;
     pub const nextTemp = FunctionEmitMethods.nextTemp;
     pub const nextTempText = FunctionEmitMethods.nextTempText;
+    pub const narrowVariable = FunctionEmitMethods.narrowVariable;
+    pub const restoreVariable = FunctionEmitMethods.restoreVariable;
+    pub const clearNarrowedVars = FunctionEmitMethods.clearNarrowedVars;
+    pub const loadNarrowedUnion = FunctionEmitMethods.loadNarrowedUnion;
+    pub const narrowedMemberType = FunctionEmitMethods.narrowedMemberType;
     pub const buildEnumPrintMap = FunctionEmitMethods.buildEnumPrintMap;
     pub const emitEnumPrint = FunctionEmitMethods.emitEnumPrint;
     pub const emitQuantifierWrappers = FunctionEmitMethods.emitQuantifierWrappers;
@@ -171,6 +177,10 @@ pub const IRPrinter = struct {
     in_function_context: bool = false,
     scope_depth: usize = 0,
     exited_scopes: std.AutoHashMap(u32, void),
+    /// Per-variable stack of `as`-cast narrowed member views. `NarrowVar` pushes
+    /// a single-member union view; `RestoreVar` pops it. Loads of the variable
+    /// unwrap the boxed `%DoxaValue` to the active member representation.
+    narrowed_vars: std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)),
 
     pub const EnumVariantMeta = struct {
         index: u32,

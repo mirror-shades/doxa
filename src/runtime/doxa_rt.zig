@@ -960,6 +960,15 @@ fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
             const cloned = arrayCloneIn(scope, hdr);
             dst[word] = @intCast(@intFromPtr(cloned));
             word += 1;
+        } else if (tag == 7 and bits != 0) {
+            // Nested struct field: the source was allocated in a scope that may
+            // be freed as soon as the outer struct is cloned (e.g. a function's
+            // scope), so deep-copy it into the destination scope rather than
+            // copying the pointer verbatim.
+            const nested_src: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(bits)));
+            const nested = structCloneInto(scope, nested_src);
+            dst[word] = @intCast(@intFromPtr(nested orelse nested_src));
+            word += 1;
         } else {
             dst[word] = bits;
             word += 1;

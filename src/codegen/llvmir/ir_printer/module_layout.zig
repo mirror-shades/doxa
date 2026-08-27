@@ -306,26 +306,19 @@ pub fn Methods(comptime Ctx: type) type {
             var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
             defer peek_state.deinit();
 
-            var has_entry_function: bool = false;
-            var entry_function_name: ?[]const u8 = null;
-            for (hir.function_table) |f| {
-                if (f.is_entry) {
-                    has_entry_function = true;
-                    entry_function_name = f.qualified_name;
-                    break;
+            const entry_function = blk: {
+                for (hir.function_table) |f| {
+                    if (f.is_entry) break :blk f;
                 }
-            }
-
-            const entry_mangled_name_owned = if (entry_function_name) |name|
-                (if (std.mem.eql(u8, name, "main")) null else try std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{name}))
+                break :blk null;
+            };
+            const entry_mangled_name_owned = if (entry_function) |ef|
+                try self.functionSymbol(ef)
             else
                 null;
             defer if (entry_mangled_name_owned) |name| self.allocator.free(name);
-            const entry_mangled_name: ?[]const u8 = if (has_entry_function)
-                if (entry_function_name) |name|
-                    (if (std.mem.eql(u8, name, "main")) "doxa_user_main" else entry_mangled_name_owned.?)
-                else
-                    "doxa_user_main"
+            const entry_mangled_name: ?[]const u8 = if (entry_mangled_name_owned) |name|
+                name
             else
                 null;
 
@@ -443,6 +436,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
             var dead_block_counter: usize = 0;
 
+            self.clearNarrowedVars();
             self.scope_depth = 0;
             for (hir.instructions[0..top_level_end_idx]) |inst| {
                 const tag = std.meta.activeTag(inst);
@@ -467,6 +461,14 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .StoreAlias => |_| {
+                        last_instruction_was_terminator = false;
+                    },
+                    .NarrowVar => |nv| {
+                        try self.narrowVariable(nv.var_name, nv.narrowed_type);
+                        last_instruction_was_terminator = false;
+                    },
+                    .RestoreVar => |rv| {
+                        self.restoreVariable(rv.var_name);
                         last_instruction_was_terminator = false;
                     },
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
@@ -854,6 +856,18 @@ pub fn Methods(comptime Ctx: type) type {
                                 }
                             } else {
                                 self.allocator.free(fields);
+                            }
+                            pending_type_name = null;
+                        } else if (ret.has_value and func.return_type == .Struct and !self.function_struct_return_fields.contains(func.qualified_name)) {
+                            // Pass-through factories (e.g. `executable` delegating to
+                            // `Builder.new`) contain no StructNew of their own, so the
+                            // field metadata is taken from the declared return type.
+                            const sid = func.return_type.Struct;
+                            if (self.struct_fields_by_id.get(sid)) |fts| {
+                                _ = try self.function_struct_return_fields.put(func.qualified_name, try self.allocator.dupe(HIR.HIRType, fts));
+                                if (self.struct_type_names_by_id.get(sid)) |tn| {
+                                    _ = try self.function_struct_return_type_names.put(func.qualified_name, tn);
+                                }
                             }
                             pending_type_name = null;
                         }

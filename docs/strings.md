@@ -48,16 +48,16 @@ strings and byte data with `pack` and `unpack`:
 
 | Builtin                | Signature                | Description                          |
 |------------------------|--------------------------|--------------------------------------|
-| `pack(array)`          | `int[]` → `string`       | Interpret each int as a u8 codepoint |
-| `unpack(string)`       | `string` → `int[]`       | Decompose a string into byte values  |
+| `@pack(array)`         | `int[]` → `string`       | Interpret each int as a u8 codepoint |
+| `@unpack(string)`      | `string` → `int[]`       | Decompose a string into byte values  |
 
 ```doxa
 const bytes is [0x48, 0x69, 0x21]       # [72, 105, 33]
-const word is pack(bytes)                # "Hi!"
-const back is unpack(word)               # [72, 105, 33]
+const word is @pack(bytes)               # "Hi!"
+const back is @unpack(word)              # [72, 105, 33]
 ```
 
-`pack` / `unpack` use the same byte-width guarantee as the underlying `u8` storage —
+`@pack` / `@unpack` use the same byte-width guarantee as the underlying `u8` storage —
 values outside 0–255 are truncated to fit.
 
 ## Common operations

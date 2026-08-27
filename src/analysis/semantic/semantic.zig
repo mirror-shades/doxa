@@ -234,8 +234,12 @@ pub const SemanticAnalyzer = struct {
 
 
 
-    // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo
-    pub fn convertCustomTypeInfo(semantic_type: CustomTypeInfo, allocator: std.mem.Allocator) !HIRTypeSystem.TypeSystem.CustomTypeInfo {
+    // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo.
+    // Struct field HIR types go through the centralized AST→HIR lowering so that
+    // custom/array/union fields resolve to concrete struct/enum IDs instead of
+    // collapsing to Struct(0)/Unknown. Callers must run this after all
+    // declarations (enums, structs, groups) are registered; see main.zig.
+    pub fn convertCustomTypeInfo(self: *SemanticAnalyzer, semantic_type: CustomTypeInfo, allocator: std.mem.Allocator) !HIRTypeSystem.TypeSystem.CustomTypeInfo {
         var hir_type = HIRTypeSystem.TypeSystem.CustomTypeInfo{
             .name = semantic_type.name,
             .kind = switch (semantic_type.kind) {
@@ -264,80 +268,7 @@ pub const SemanticAnalyzer = struct {
         if (semantic_type.struct_fields) |fields| {
             const converted_fields = try allocator.alloc(HIRTypeSystem.TypeSystem.CustomTypeInfo.StructField, fields.len);
             for (fields, 0..) |field, i| {
-                // Map to coarse HIRType here without relying on SemanticAnalyzer state
-                const mapped_hir_type: HIRType = switch (field.field_type_info.base) {
-                    .Int => .Int,
-                    .Byte => .Byte,
-                    .Float => .Float,
-                    .String => .String,
-                    .Tetra => .Tetra,
-                    .Nothing => .Nothing,
-                    .Array => array_blk: {
-                        const elem_type = try allocator.create(HIRType);
-                        elem_type.* = .Unknown;
-                        break :array_blk HIRType{ .Array = elem_type };
-                    },
-                    .Struct => HIRType{ .Struct = 0 },
-                    .Enum => HIRType{ .Enum = 0 },
-                    .Custom => HIRType{ .Struct = 0 },
-                    .Map => blk: {
-                        const key_type = try allocator.create(HIRType);
-                        key_type.* = .Unknown;
-                        const value_type = try allocator.create(HIRType);
-                        value_type.* = .Unknown;
-                        break :blk HIRType{ .Map = .{ .key = key_type, .value = value_type } };
-                    },
-                    .Function => blk: {
-                        const ret_type = try allocator.create(HIRType);
-                        ret_type.* = .Unknown;
-                        break :blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type } };
-                    },
-                    .Union => blk: {
-                        if (field.field_type_info.union_type) |ut| {
-                            var member_types = try allocator.alloc(*const HIRType, ut.types.len);
-                            for (ut.types, 0..) |member, in| {
-                                const member_type = try allocator.create(HIRType);
-                                member_type.* = switch (member.base) {
-                                    .Int => .Int,
-                                    .Byte => .Byte,
-                                    .Float => .Float,
-                                    .String => .String,
-                                    .Tetra => .Tetra,
-                                    .Nothing => .Nothing,
-                                    .Array => array_blk: {
-                                        const elem_type = try allocator.create(HIRType);
-                                        elem_type.* = .Unknown;
-                                        break :array_blk HIRType{ .Array = elem_type };
-                                    },
-                                    .Struct => HIRType{ .Struct = 0 },
-                                    .Enum => HIRType{ .Enum = 0 },
-                                    .Custom => HIRType{ .Struct = 0 },
-                                    .Map => blk3: {
-                                        const key_type2 = try allocator.create(HIRType);
-                                        key_type2.* = .Unknown;
-                                        const value_type2 = try allocator.create(HIRType);
-                                        value_type2.* = .Unknown;
-                                        break :blk3 HIRType{ .Map = .{ .key = key_type2, .value = value_type2 } };
-                                    },
-                                    .Function => blk4: {
-                                        const ret_type2 = try allocator.create(HIRType);
-                                        ret_type2.* = .Unknown;
-                                        break :blk4 HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type2 } };
-                                    },
-                                    .Union => blk5: {
-                                        const unknown_type = try allocator.create(HIRType);
-                                        unknown_type.* = .Unknown;
-                                        break :blk5 HIRType{ .Union = .{ .id = 0, .members = &[_]*const HIRType{unknown_type} } };
-                                    },
-                                };
-                                member_types[in] = member_type;
-                            }
-                            break :blk HIRType{ .Union = .{ .id = 0, .members = member_types } };
-                        } else {
-                            break :blk .Unknown;
-                        }
-                    },
-                };
+                const mapped_hir_type = try helpers.lowerAstTypeToHIR(self, field.field_type_info);
                 converted_fields[i] = .{
                     .name = field.name,
                     .field_type = mapped_hir_type,
@@ -360,6 +291,25 @@ pub const SemanticAnalyzer = struct {
         }
 
         return hir_type;
+    }
+
+    /// Recompute every struct field's HIR type now that all declarations are
+    /// registered. `registerStructType` lowers field types eagerly, before
+    /// referenced structs/enums from other modules are known, which leaves
+    /// Struct(0)/Unknown/Enum(0) placeholders. This pass runs after semantic
+    /// analysis completes and resolves the same field types against the fully
+    /// populated tables via the centralized AST→HIR lowering.
+    pub fn recomputeStructFieldHIRTypes(self: *SemanticAnalyzer) !void {
+        for (self.struct_table.entries.items) |*entry| {
+            for (entry.fields) |*field| {
+                field.hir_type = try helpers.lowerAstTypeToHIR(self, field.type_info);
+                if (helpers.structIdFromTypeInfo(self, field.type_info)) |nested_id| {
+                    field.nested_struct_id = nested_id;
+                } else {
+                    field.nested_struct_id = null;
+                }
+            }
+        }
     }
 
     pub fn analyze(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {

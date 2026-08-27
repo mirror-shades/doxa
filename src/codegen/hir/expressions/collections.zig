@@ -325,9 +325,15 @@ pub const CollectionsHandler = struct {
         // Generate array/map expression
         try self.generator.generateExpression(index.array, true, false);
 
-        // Determine if we're accessing an array, map
+        // Determine if we're accessing an array, map. A union narrowed to a
+        // single member by `as` behaves like that member (e.g. `x[i]` where the
+        // else branch narrowed `x` to `string[]`).
         const container_type = self.generator.inferTypeFromExpression(index.array);
-        switch (container_type) {
+        const effective_container: HIRType = if (container_type == .Union and container_type.Union.members.len == 1)
+            container_type.Union.members[0].*
+        else
+            container_type;
+        switch (effective_container) {
             .Map => {
                 // Generate index expression
                 try self.generator.generateExpression(index.index, true, false);
