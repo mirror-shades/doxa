@@ -1,0 +1,32 @@
+# Regression test: a `string | string[]` union narrowed by `as` must be
+# unwrapped to its member representation in the native backend. Previously the
+# boxed %DoxaValue leaked into @push/@length/@index, crashing codegen with an
+# invalid cast opcode or corrupting the string array.
+public struct Box {
+    public includes :: string[],
+
+    public function new() returns Box {
+        return $Box { includes is [] }
+    }
+
+    public method include(x :: string | string[]) {
+        x as string then @push(this.includes, x) else {
+            var i is 0
+            while i < @length(x) {
+                @push(this.includes, x[i])
+                i is i + 1
+            }
+        }
+    }
+}
+
+public entry function main() {
+    const b is Box.new()
+    b.include("single")
+    b.include(["a", "b", "c"])
+    var i is 0
+    while i < @length(b.includes) {
+        @print(b.includes[i] + "\n")
+        i is i + 1
+    }
+}

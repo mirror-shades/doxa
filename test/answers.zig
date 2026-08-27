@@ -31,6 +31,23 @@ pub const expected_alias_arrays_results = [_]print_result{
     .{ .value = "k0k1k2" },
 };
 
+pub const expected_union_narrow_results = [_]print_result{
+    .{ .value = "single" },
+    .{ .value = "a" },
+    .{ .value = "b" },
+    .{ .value = "c" },
+};
+
+pub const expected_nested_struct_return_results = [_]print_result{
+    .{ .value = "win" },
+    .{ .value = "b1" },
+};
+
+pub const expected_runtime_const_if_results = [_]print_result{
+    .{ .value = "yes" },
+    .{ .value = "checking for args" },
+};
+
 pub const expected_inline_zig_test_results = [_]print_result{
     .{ .value = "42" },
     .{ .value = "49" },

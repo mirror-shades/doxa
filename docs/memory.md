@@ -59,35 +59,32 @@ Aliases can be chained — `levelOne(^x)` calls `levelTwo(^x)` — passing the a
 - No alias duplication or mixing aliased/by-value parameters
 - Exclusive borrow during call (the aliased variable cannot be read or written elsewhere)
 
-## Allocation Strategy
+## Native Runtime Model
 
-Values fall into categories based on where they live:
+The compiled backend implements the arena model directly. The runtime keeps a **scope-arena stack** (`src/runtime/scope_arena.zig`): a linked list of `std.heap.ArenaAllocator` nodes. The IR printer emits a call to `doxa_scope_enter()` at each `EnterScope` HIR instruction and `doxa_scope_exit()` at each `ExitScope`. The program root scope is pushed once at the start of `doxa_program_main` and is never freed — the OS reclaims it at process exit.
 
-### Scope-Owned Values (Runtime)
+All heap values are allocated from the **current** scope arena:
 
-During execution, all complex runtime values (arrays, maps, structs, strings, enums) are allocated from the **current scope's arena**. Multiple values created in the same scope share one arena and are freed together when the scope exits. Struct fields and map entries use **allocation pooling** — all field/entry values are placed in a single contiguous slice alongside metadata, eliminating per-element heap allocations and improving cache locality.
+| Value kind | Allocation path |
+| --- | --- |
+| Arrays | `doxa_array_new` → `doxa_scope_alloc` (header + data) |
+| Strings | `doxa_str_clone`, `doxa_str_concat`, `doxa_substring`, … |
+| Structs | `doxa_scope_alloc` (contiguous `i64` field array) |
+| Maps | `doxa_map_new` (`map_runtime.zig`) |
 
-### Frame-Owned Variables (Runtime)
+Because a value can only be reached while its allocating scope is on the stack, values that cross a scope boundary are **deep-copied into the destination scope**:
 
-Function-local variable **slots** are allocated from a per-frame arena. The frame arena is created on function entry and bulk-freed on return. This separation exists because the frame is created before the function's scope (the `EnterScope` bytecode runs after the frame is established), so the frame cannot use the scope arena for its own storage.
+- **Clone on store.** Storing a heap value into a variable copies it into the persistent scope (the function scope, or the program root at top level), so it survives the exit of the block that created it.
+- **Clone on return.** A function frees its body scope on `return`; heap return values are copied into the caller's scope first (`doxa_str_clone_at`, `doxa_array_clone_at`, `doxa_struct_clone_at`, `doxa_clone_doxa_value_at`).
+- **Clone on element store.** Pushing or assigning a heap element into an array re-homes it into the array's own arena (tracked in the `ArrayHeader.scope` field), which is what makes `^`-aliased arrays safe — structs built in a callee are copied into the caller's array before the callee tears down.
 
-### Module-Owned Values
-
-Module global variables use a persistent allocator that lives for the program's duration. These values are never mutated in-place within the module's arena; any mutation triggers a deep copy into a scope or frame arena.
-
-### Analysis-Phase Scopes
-
-During semantic analysis, a parallel scope tree is maintained by `ScopeManager` (see `src/utils/memory.zig`). These analysis scopes (`ScopeKind.analysis`) track variable declarations, types, and aliasing for type-checking and name resolution. They are separate from runtime scopes (`ScopeKind.runtime`) which use pure O(1) arena cleanup.
-
-### Compiler Backend
-
-In the compiled output, each `EnterScope` HIR instruction emits a call to `doxa_scope_enter()` (in `src/runtime/arena.zig`), creating a child arena backed by `std.heap.ArenaAllocator`. Each `ExitScope` emits `doxa_scope_exit()`, popping back to the parent arena. Heap values stored into variables are deep-copied via `emitCloneForStore` (cloning strings via `doxa_str_clone`, arrays via `doxa_array_clone`, structs via `doxa_struct_clone`, maps via `doxa_map_clone`). The root scope is never destroyed — the OS reclaims it at process exit.
+Structs and arrays are cloned recursively: string fields and array fields are re-cloned into the destination arena, so a deep copy is genuinely independent of the source.
 
 ## Performance Characteristics
 
 ### Advantages
 - **Fast allocation:** Arena allocation is bump-pointer, extremely efficient
-- **Bulk deallocation:** Scopes clean up in O(1) via single `arena.deinit()`
+- **Bulk deallocation:** Scopes clean up in O(1) via a single `arena.deinit()`
 - **Cache-friendly:** Related data allocated contiguously within the arena
 - **No GC pauses:** Deterministic cleanup timing, scope-exit bounded
 - **Memory safe:** No dangling pointers, no use-after-free, no leaks by construction
@@ -102,14 +99,10 @@ In the compiled output, each `EnterScope` HIR instruction emits a call to `doxa_
 
 | Issue | Rationale |
 |-------|-----------|
-| **Arena buffer accumulation on resize** — When an array or map grows, the old buffer is abandoned in the arena. Repeated resizes accumulate dead buffers. | Matches VM behavior. All buffers bulk-freed on scope exit in O(1). |
-| **Functions with explicit `return` skip `ExitScope`** — The bytecode generator omits `ExitScope` when a function has a return statement. Scopes accumulate on `scope_stack` until VM reset/deinit. | Bounded per program execution, cleaned at VM deinit. Proper unwinding requires deep-copying frame locals that reference scope memory before deinit — deferred. |
-| **Runtime scopes allocate empty hashmaps** — `Scope.initRuntime` initializes `variables`/`name_map` hashmaps that are never populated by the VM. ~200 bytes of arena waste per scope. | Making them optional adds `.?` overhead to all analysis code paths. |
-| **Compiler clone-on-store is always-on** — Every `StoreVar`/`StoreDecl` clones heap values, even same-scope stores. | Simpler than tracking arena ownership in LLVM IR. Cloning is bump-pointer allocation + memcpy, so cost is low. |
-
-### Deferred: Return Value Move Semantics
-
-When a function returns a complex value (array, struct, map) and the callee's scope persists (ExitScope skipped for functions with `return`), the return value's inner pointers remain valid in the callee's scope arena. Pushing the original value (move) instead of deep-copying avoids O(n) allocation + memcpy. Infrastructure (`isScopeOnStack` helper) was prototyped. The optimization is correct for values in persistent scopes but interacted poorly with alias parameters in the brainfuck test — aliased variables may reference scope memory that the move incorrectly assumes is still valid. Deferred pending deeper alias analysis.
+| **Arena buffer accumulation on resize** — When an array or map grows, the old buffer is abandoned in the arena. Repeated resizes accumulate dead buffers. | All buffers bulk-freed on scope exit in O(1). |
+| **Clone-on-store is eager** — Every store of a heap value into a variable copies it, even a same-scope store. | Simpler than tracking arena ownership in LLVM IR. Cloning is bump-pointer allocation + memcpy, so cost is low. |
+| **Struct clones are registered, not garbage-collected** — `struct_registry` entries (address → descriptor) are appended, never removed. | Needed for `@string(struct)` and recursive cloning. Bounded by the number of structs created; acceptable for program lifetime. |
+| **Empty array literals require an element type** — `var x is []` is a compile error (E6019); the element type must come from an annotation (`var x :: int[] is []`) or surrounding context (`x = []`, `foo([])`, `return []`). | An unannotated empty literal has no element type to infer, so it would otherwise carry tag 255 and be treated as struct pointers by the runtime. |
 
 ## Edge Cases
 
@@ -125,5 +118,6 @@ Scopes guarantee cleanup. Every `{` is matched by a `}` that frees the arena.
 ### Large Allocations
 Controlled through scope-based cleanup timing. Anonymous blocks can be used within a scope to create narrower arenas that will clean up large allocations.
 
-### Two-Phase Execution
-Doxa runs analysis (semantic checks, type inference, IR generation) then execution (VM or compiled). Analysis scopes are managed by `MemoryManager` / `ScopeManager` and are cleaned up after IR generation. Runtime scopes are managed by the VM's scope stack and cleaned up on scope exit during execution.
+### Analysis-Phase Scopes
+
+During semantic analysis, a parallel scope tree is maintained by `MemoryManager` / `ScopeManager` (see `src/utils/memory.zig`). These analysis scopes track variable declarations, types, and aliasing for type-checking and name resolution. They are independent of the runtime scope-arena stack and are cleaned up after IR generation.

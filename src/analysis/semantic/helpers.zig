@@ -225,8 +225,11 @@ pub fn structIdFromTypeInfo(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) ?S
     }
 }
 
-/// Centralized AST→HIR lowering (best-effort; plug IDs if you have them)
-fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType {
+/// Centralized AST→HIR lowering. Recurses through array/map/union/function
+/// element types and resolves custom struct/enum/group references by ID against
+/// the tables. Safe to call once all declarations are registered; see
+/// `recomputeStructFieldHIRTypes`.
+pub fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType {
     return switch (ti.base) {
         .Int => HIRType.Int,
         .Byte => HIRType.Byte,

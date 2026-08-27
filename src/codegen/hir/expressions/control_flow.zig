@@ -644,6 +644,9 @@ pub const ControlFlowHandler = struct {
     fn applyCastNarrowing(self: *ControlFlowHandler, nw: CastNarrowing, ty: HIRType, members: [][]const u8) !void {
         try self.generator.trackVariableType(nw.var_name, ty);
         try self.generator.symbol_table.trackVariableUnionMembers(nw.is_local, nw.var_index, members);
+        // Tell the native backend that the variable's boxed value now denotes a
+        // narrower member view, so loads inside the branch unwrap it.
+        try self.generator.instructions.append(.{ .NarrowVar = .{ .var_name = nw.var_name, .narrowed_type = ty } });
     }
 
     fn restoreCastNarrowing(self: *ControlFlowHandler, nw: CastNarrowing) !void {
@@ -653,6 +656,7 @@ pub const ControlFlowHandler = struct {
         } else {
             self.generator.symbol_table.removeVariableUnionMembers(nw.is_local, nw.var_index);
         }
+        try self.generator.instructions.append(.{ .RestoreVar = .{ .var_name = nw.var_name } });
     }
 
     /// Compute the per-branch narrowing for an `as` cast whose subject is a plain

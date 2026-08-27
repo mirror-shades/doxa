@@ -502,11 +502,19 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             var t = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
             var use_array_len = t == .Array;
+            // A union narrowed by `as` to a single array member behaves like an
+            // array for @length (e.g. `x as string then ... else @length(x)`).
+            if (t == .Union and t.Union.members.len == 1 and t.Union.members[0].* == .Array) {
+                use_array_len = true;
+            }
             if (builtin_data.arguments[0].data == .Variable) {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 if (self.generator.getTrackedVariableType(var_name)) |tracked| {
                     if (t == .Unknown) t = tracked;
                     use_array_len = use_array_len or tracked == .Array;
+                    if (tracked == .Union and tracked.Union.members.len == 1 and tracked.Union.members[0].* == .Array) {
+                        use_array_len = true;
+                    }
                 }
                 // Match VM: length() on arrays uses element count even when the static annotation is wrong.
                 if (!use_array_len and self.generator.symbol_table.getTrackedArrayElementType(var_name) != null) {
@@ -772,7 +780,9 @@ pub const CallsHandler = struct {
                     t = tracked;
                 }
             }
-            switch (t) {
+            if (t == .Union and t.Union.members.len == 1 and t.Union.members[0].* == .Array) {
+                try self.generator.instructions.append(.ArrayLen);
+            } else switch (t) {
                 .Array => try self.generator.instructions.append(.ArrayLen),
                 else => try self.generator.instructions.append(.{ .StringOp = .{ .op = .Length } }),
             }

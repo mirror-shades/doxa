@@ -110,8 +110,73 @@ fn looksLikeOutputPath(path: []const u8) bool {
     return std.mem.indexOfAny(u8, path, "/\\") != null;
 }
 
-fn withExeSuffix(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    if (builtin.os.tag == .windows) {
+/// The resolved codegen target for the build: arch/os/abi components from the
+/// CLI flags, defaulting to empty (host) when absent. This single resolution is
+/// threaded through every toolchain step (`zig cc`, `build-obj`, `build-exe`)
+/// and the output naming so the whole pipeline agrees on one triple.
+const TargetTriple = struct {
+    /// Owned "arch-os-abi" triple (components omitted when empty); empty when
+    /// compiling for the host.
+    triple: []const u8,
+    /// Effective target OS name: the requested OS when cross-compiling,
+    /// otherwise the host OS. Drives target-true naming decisions (`.exe`
+    /// suffix, object extension, platform link libs).
+    os: []const u8,
+
+    /// Resolve the CLI's arch/os/abi flags. Explicitly naming any component
+    /// while cross-compiling requires an arch and an OS: missing components
+    /// would otherwise be silent host defaults, which are never correct for a
+    /// cross build (an arch-less `-target linux` is not even a valid triple).
+    fn resolve(cli: *const CLI, allocator: std.mem.Allocator) !TargetTriple {
+        const arch = cli.target_arch orelse "";
+        const os = cli.target_os orelse "";
+        const abi = cli.target_abi orelse "";
+        const is_cross = arch.len > 0 or os.len > 0 or abi.len > 0;
+        if (is_cross and os.len == 0) return error.MissingTargetOs;
+        if (is_cross and arch.len == 0) return error.MissingTargetArch;
+        const effective_os = if (os.len > 0)
+            os
+        else
+            switch (builtin.os.tag) {
+                .windows => "windows",
+                .linux => "linux",
+                .macos => "macos",
+                else => "",
+            };
+        const triple = try std.fmt.allocPrint(allocator, "{s}{s}{s}{s}{s}", .{
+            arch,
+            if (os.len > 0) "-" else "",
+            os,
+            if (abi.len > 0) "-" else "",
+            abi,
+        });
+        errdefer allocator.free(triple);
+        return .{ .triple = triple, .os = try allocator.dupe(u8, effective_os) };
+    }
+
+    fn deinit(self: *TargetTriple, allocator: std.mem.Allocator) void {
+        allocator.free(self.triple);
+        allocator.free(self.os);
+    }
+
+    fn isCross(self: TargetTriple) bool {
+        return self.triple.len > 0;
+    }
+
+    fn isWindows(self: TargetTriple) bool {
+        return std.mem.eql(u8, self.os, "windows");
+    }
+
+    /// Append `-target <triple>` to `args` when cross-compiling.
+    fn appendTargetArg(self: TargetTriple, args: *std.array_list.Managed([]const u8)) !void {
+        if (!self.isCross()) return;
+        try args.append("-target");
+        try args.append(self.triple);
+    }
+};
+
+fn withExeSuffix(allocator: std.mem.Allocator, path: []const u8, is_windows: bool) ![]u8 {
+    if (is_windows) {
         if (std.mem.endsWith(u8, path, ".exe")) return allocator.dupe(u8, path);
         return std.fmt.allocPrint(allocator, "{s}.exe", .{path});
     }
@@ -120,7 +185,7 @@ fn withExeSuffix(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 
 // `doxa compile` writes a user-facing binary (`-o`, or `bin/<stem>`).
 // `doxa run` writes into the cache directory and executes from there.
-fn nativeOutputPath(allocator: std.mem.Allocator, cli: *const CLI, script_path: []const u8) ![]u8 {
+fn nativeOutputPath(allocator: std.mem.Allocator, cli: *const CLI, script_path: []const u8, is_windows: bool) ![]u8 {
     const raw = switch (cli.mode) {
         .COMPILE => blk: {
             const stem = cli.output_path orelse fileStem(script_path);
@@ -131,10 +196,10 @@ fn nativeOutputPath(allocator: std.mem.Allocator, cli: *const CLI, script_path: 
         .UNDEFINED => unreachable,
     };
     defer allocator.free(raw);
-    return withExeSuffix(allocator, raw);
+    return withExeSuffix(allocator, raw, is_windows);
 }
 
-fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *SemanticAnalyzer) !void {
+fn registerMissingTypesFromModuleCache(parser: *Parser, semantic_analyzer: *SemanticAnalyzer) !void {
     const Registration = struct {
         fn enumDecl(parser_inner: *Parser, analyzer: *SemanticAnalyzer, ed: anytype) !void {
             const helpers = @import("./analysis/semantic/helpers.zig");
@@ -146,9 +211,22 @@ fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
             const helpers = @import("./analysis/semantic/helpers.zig");
             try helpers.registerGroupType(analyzer, gd.name.lexeme, gd.members);
         }
+        fn structDecl(analyzer: *SemanticAnalyzer, sd: anytype) !void {
+            const ast = @import("./ast/ast.zig");
+            const helpers = @import("./analysis/semantic/helpers.zig");
+            const field_types = try analyzer.allocator.alloc(ast.StructFieldType, sd.fields.len);
+            for (sd.fields, 0..) |field, i| {
+                field_types[i] = ast.StructFieldType{
+                    .name = field.name.lexeme,
+                    .type_info = try analyzer.typeExprToTypeInfo(field.type_expr),
+                    .is_public = field.is_public,
+                };
+            }
+            try helpers.registerStructType(analyzer, sd.name.lexeme, field_types);
+        }
     };
 
-    // Ensure all lazy module namespaces are loaded so their enum/group
+    // Ensure all lazy module namespaces are loaded so their enum/group/struct
     // declarations are available in the module cache.
     var ns_it = parser.module_namespaces.iterator();
     while (ns_it.next()) |entry| {
@@ -173,6 +251,8 @@ fn registerMissingEnumsFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
                             try Registration.enumDecl(parser, semantic_analyzer, expr.data.EnumDecl);
                         } else if (expr.data == .GroupDecl) {
                             try Registration.groupDecl(semantic_analyzer, expr.data.GroupDecl);
+                        } else if (expr.data == .StructDecl) {
+                            try Registration.structDecl(semantic_analyzer, expr.data.StructDecl);
                         }
                     }
                 },
@@ -194,10 +274,17 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, mod
         try folded_statements.append(folded_stmt);
     }
 
-    // Enums declared in dependency modules may not appear on the root parser's
-    // `imported_symbols` map; register them from the module cache so HIR
-    // lowering resolves types like `error.IO` in return unions.
-    try registerMissingEnumsFromModuleCache(parser, semantic_analyzer);
+    // Enums, groups, and structs declared in dependency modules may not appear
+    // on the root parser's `imported_symbols` map (private structs are never
+    // direct imports, yet public structs reference them in fields). Register them
+    // from the module cache so HIR lowering resolves types like `error.IO` in
+    // return unions and `Node[]` in `LinkedList.nodes`.
+    try registerMissingTypesFromModuleCache(parser, semantic_analyzer);
+
+    // Recompute struct field HIR types now that enums/groups/structs from every
+    // module are registered. The eager lowering in registerStructType ran before
+    // cross-module types were known and left Struct(0)/Unknown placeholders.
+    try semantic_analyzer.recomputeStructFieldHIRTypes();
 
     var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer);
     defer hir_generator.deinit();
@@ -208,7 +295,7 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, mod
     var custom_types_iter = custom_types.iterator();
     while (custom_types_iter.next()) |entry| {
         const custom_type = entry.value_ptr.*;
-        const converted_type = try SemanticAnalyzer.convertCustomTypeInfo(custom_type, memoryManager.getAnalysisAllocator());
+        const converted_type = try SemanticAnalyzer.convertCustomTypeInfo(semantic_analyzer, custom_type, memoryManager.getAnalysisAllocator());
         try hir_generator.type_system.custom_types.put(custom_type.name, converted_type);
     }
 
@@ -233,10 +320,10 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, mod
     return hir_program;
 }
 
-fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8) ![]const []const u8 {
+fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8) ![]const []const u8 {
     const zig_exe_path = try resolveBundledZigExecutable(memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
-    return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag);
+    return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target.triple, target.os, include_dirs);
 }
 
 fn openDirMaybeAbs(path: []const u8, opts: std.fs.Dir.OpenOptions) !std.fs.Dir {
@@ -342,10 +429,14 @@ fn resolveBundledZigExecutable(allocator: std.mem.Allocator) ![]u8 {
     defer allocator.free(exe_dir);
 
     const zig_exe_name = if (builtin.os.tag == .windows) "zig.exe" else "zig";
-    const zig_path = try std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "zig", zig_exe_name });
+    const zig_path = try std.fs.path.resolve(allocator, &.{ exe_dir, "..", "lib", "zig", zig_exe_name });
     errdefer allocator.free(zig_path);
 
-    const file = std.fs.openFileAbsolute(zig_path, .{}) catch return error.FileNotFound;
+    const file = std.fs.openFileAbsolute(zig_path, .{}) catch |err| {
+        std.debug.print("Error: bundled Zig not found at '{s}' ({s})\n", .{ zig_path, @errorName(err) });
+        std.debug.print("Run `zig build` from the repository root to unpack the toolchain into doxa/lib/zig.\n", .{});
+        std.process.exit(EXIT_CODE_USAGE);
+    };
     file.close();
     return zig_path;
 }
@@ -403,7 +494,7 @@ const EmitKind = enum { opt_ir, asm_ };
 // inspection artifact (optimized LLVM IR or target assembly) at the same
 // optimization level the object build uses. Non-fatal: a failure here warns but
 // does not abort the compile.
-fn emitInspectionArtifact(zig_exe_path: []const u8, cli_options: *const CLI, stem: []const u8, kind: EmitKind) !void {
+fn emitInspectionArtifact(zig_exe_path: []const u8, cli_options: *const CLI, stem: []const u8, kind: EmitKind, target: TargetTriple) !void {
     var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
     defer args.deinit();
 
@@ -420,21 +511,7 @@ fn emitInspectionArtifact(zig_exe_path: []const u8, cli_options: *const CLI, ste
     if (kind == .opt_ir) try args.append("-emit-llvm");
     try args.appendSlice(&[_][]const u8{ in_name, "-o", out_name });
 
-    if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
-        try args.append("-target");
-        const arch = cli_options.target_arch orelse "";
-        const os = cli_options.target_os orelse "";
-        const abi = cli_options.target_abi orelse "";
-        var triple_buf: [128]u8 = undefined;
-        const triple = try std.fmt.bufPrint(&triple_buf, "{s}{s}{s}{s}{s}", .{
-            arch,
-            if (os.len > 0) "-" else "",
-            os,
-            if (abi.len > 0) "-" else "",
-            abi,
-        });
-        try args.append(triple);
-    }
+    try target.appendTargetArg(&args);
     try args.append(cli_options.opt.clangFlag());
 
     var child = std.process.Child.init(args.items, std.heap.page_allocator);
@@ -465,6 +542,7 @@ fn compileToNative(
     semantic_analyzer: *SemanticAnalyzer,
     hir_program: *const HIRProgram,
     exe_path: []const u8,
+    target: TargetTriple,
 ) !void {
     const zig_exe_path = try resolveBundledZigExecutable(allocator);
     defer allocator.free(zig_exe_path);
@@ -480,7 +558,7 @@ fn compileToNative(
 
     const stem_for_derivatives = blk: {
         const filename = std.fs.path.basename(exe_path);
-        if (builtin.os.tag == .windows and std.mem.endsWith(u8, filename, ".exe"))
+        if (target.isWindows() and std.mem.endsWith(u8, filename, ".exe"))
             break :blk filename[0 .. filename.len - 4];
         break :blk filename;
     };
@@ -526,21 +604,7 @@ fn compileToNative(
         const obj_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.o", .{stem_for_derivatives});
         defer std.heap.page_allocator.free(obj_filename);
         try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-Wno-override-module", "-Wno-unused-command-line-argument", "-c", ir_filename, "-o", obj_filename });
-        if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
-            try args.append("-target");
-            const arch = cli_options.target_arch orelse "";
-            const os = cli_options.target_os orelse "";
-            const abi = cli_options.target_abi orelse "";
-            var triple_buf: [128]u8 = undefined;
-            const triple = try std.fmt.bufPrint(&triple_buf, "{s}{s}{s}{s}{s}", .{
-                arch,
-                if (os.len > 0) "-" else "",
-                os,
-                if (abi.len > 0) "-" else "",
-                abi,
-            });
-            try args.append(triple);
-        }
+        try target.appendTargetArg(&args);
         try args.append(cli_options.opt.clangFlag());
         var include_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
         defer {
@@ -563,10 +627,10 @@ fn compileToNative(
         }
     }
 
-    if (cli_options.emit_opt_ir) try emitInspectionArtifact(zig_exe_path, cli_options, stem_for_derivatives, .opt_ir);
-    if (cli_options.emit_asm) try emitInspectionArtifact(zig_exe_path, cli_options, stem_for_derivatives, .asm_);
+    if (cli_options.emit_opt_ir) try emitInspectionArtifact(zig_exe_path, cli_options, stem_for_derivatives, .opt_ir, target);
+    if (cli_options.emit_asm) try emitInspectionArtifact(zig_exe_path, cli_options, stem_for_derivatives, .asm_, target);
 
-    const inline_zig_wrapper_paths = try compileInlineZigObjects(memoryManager, parsed_statements, parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag());
+    const inline_zig_wrapper_paths = try compileInlineZigObjects(memoryManager, parsed_statements, parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items);
     defer {
         for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
         memoryManager.getAllocator().free(inline_zig_wrapper_paths);
@@ -591,33 +655,12 @@ fn compileToNative(
         const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{exe_path});
         defer std.heap.page_allocator.free(emit_flag);
         try args_ln.append(emit_flag);
-        if (cli_options.target_arch != null or cli_options.target_os != null or cli_options.target_abi != null) {
-            try args_ln.append("-target");
-            const arch = cli_options.target_arch orelse "";
-            const os = cli_options.target_os orelse "";
-            const abi = cli_options.target_abi orelse "";
-            var triple_buf2: [128]u8 = undefined;
-            const triple2 = try std.fmt.bufPrint(&triple_buf2, "{s}{s}{s}{s}{s}", .{
-                arch,
-                if (os.len > 0) "-" else "",
-                os,
-                if (abi.len > 0) "-" else "",
-                abi,
-            });
-            try args_ln.append(triple2);
-        }
+        try target.appendTargetArg(&args_ln);
         try args_ln.append(cli_options.opt.zigFlag());
         try args_ln.append("-lc");
-        if (builtin.os.tag == .windows and inline_zig_wrapper_paths.len > 0) {
+        if (target.isWindows() and inline_zig_wrapper_paths.len > 0) {
             try args_ln.appendSlice(&.{ "-lws2_32", "-lcrypt32" });
         }
-
-        const zig_link_flags = try inline_zig_compiler.collectZigLinkFlags(memoryManager.getAllocator(), parsed_statements, parser);
-        defer {
-            for (zig_link_flags) |f| memoryManager.getAllocator().free(@constCast(f));
-            memoryManager.getAllocator().free(zig_link_flags);
-        }
-        try args_ln.appendSlice(zig_link_flags);
 
         var manifest_link_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
         defer {
@@ -675,10 +718,23 @@ fn runNativeExecutable(exe_path: []const u8, program_args: []const []const u8) !
     try args.append(exe_path);
     if (program_args.len > 1) try args.appendSlice(program_args[1..]);
 
+    // Point the compiled program at the real `doxa` executable so the std/build
+    // library's `compileArtifact` re-invokes the compiler instead of recursing
+    // into the compiled binary itself (`selfExePath` would resolve to it).
+    var env = std.process.getEnvMap(std.heap.page_allocator) catch null;
+    defer if (env) |*e| e.deinit();
+    if (env) |*e| {
+        if (std.fs.selfExePathAlloc(std.heap.page_allocator)) |compiler_path| {
+            defer std.heap.page_allocator.free(compiler_path);
+            e.put("DOXA_BIN", compiler_path) catch {};
+        } else |_| {}
+    }
+
     var child = std.process.Child.init(args.items, std.heap.page_allocator);
     child.stdin_behavior = .Inherit;
     child.stdout_behavior = .Inherit;
     child.stderr_behavior = .Inherit;
+    child.env_map = if (env) |*e| e else null;
     const term = try child.spawnAndWait();
     return switch (term) {
         .Exited => |code| code,
@@ -964,8 +1020,8 @@ fn runInit(project_name: ?[]const u8) !void {
     var src_dir = try dir.openDir("src", .{});
     defer src_dir.close();
 
-    (try src_dir.createFile("main.doxa", .{})).close();
-    (try dir.createFile("build.doxa", .{})).close();
+    try src_dir.writeFile(.{ .sub_path = "main.doxa", .data = SCAFFOLD_MAIN });
+    try dir.writeFile(.{ .sub_path = "build.doxa", .data = SCAFFOLD_BUILD });
 
     if (project_name) |name| {
         std.debug.print("Initialized Doxa project in {s}/\n", .{name});
@@ -973,6 +1029,31 @@ fn runInit(project_name: ?[]const u8) !void {
         std.debug.print("Initialized Doxa project in current directory\n", .{});
     }
 }
+
+// Hello-world entry the scaffold compiles with `doxa run build.doxa`.
+const SCAFFOLD_MAIN =
+    \\import io from @std()
+    \\
+    \\io.println("Hello, World!")
+    \\
+;
+
+// Canonical build script shape (Context + Builder.executable + execute) with no
+// external library dependencies, so the scaffold builds out of the box.
+const SCAFFOLD_BUILD =
+    \\import build from @std()
+    \\
+    \\var c is build.Context.host()
+    \\c.debug is false
+    \\c.optimization is build.Optimization.Speed
+    \\
+    \\var exe is build.Builder.executable("app", "src/main.doxa", "bin/app")
+    \\
+    \\c.addArtifact(exe)
+    \\
+    \\build.execute(c, false)
+    \\
+;
 
 fn isDirEmpty(dir: std.fs.Dir) !bool {
     var iterable = try dir.openDir(".", .{ .iterate = true });
@@ -1199,7 +1280,19 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
     profiler.stopPhase();
 
     profiler.startPhase(Phase.GENERATE_L);
-    const exe_path = try nativeOutputPath(allocator, &cli_options, script_path);
+    var target = TargetTriple.resolve(&cli_options, allocator) catch |err| switch (err) {
+        error.MissingTargetOs => {
+            std.debug.print("Error: cross-compiling requires --os=<os>; a target without an OS would silently fall back to the host\n", .{});
+            std.process.exit(EXIT_CODE_USAGE);
+        },
+        error.MissingTargetArch => {
+            std.debug.print("Error: cross-compiling requires --arch=<arch>; a target without an arch is not a valid triple\n", .{});
+            std.process.exit(EXIT_CODE_USAGE);
+        },
+        else => return err,
+    };
+    defer target.deinit(allocator);
+    const exe_path = try nativeOutputPath(allocator, &cli_options, script_path, target.isWindows());
     defer allocator.free(exe_path);
     try compileToNative(
         allocator,
@@ -1211,6 +1304,7 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
         &semantic_analyzer,
         &hir_program,
         exe_path,
+        target,
     );
     profiler.stopPhase();
 

@@ -21,24 +21,31 @@ const TestCase = struct {
     input: ?[]const u8,
     expected_print: ?[]const print_result,
     expected_peek: ?[]const peek_result,
+    extra_args: []const []const u8 = &.{},
 };
 
 const CommandResult = harness.CommandResult;
 
-fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]const u8) !CommandResult {
+fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]const u8, extra_args: []const []const u8) !CommandResult {
     const repo_root = try harness.repoRootFromEnv(allocator);
     defer if (repo_root) |rr| allocator.free(rr);
 
     const exe_path = try harness.doxaExePath(allocator);
     defer allocator.free(exe_path);
 
-    const argv = [_][]const u8{ exe_path, "run", path };
-    return try harness.runCommandCapture(allocator, &argv, repo_root, input);
+    var argv = std.array_list.Managed([]const u8).init(allocator);
+    defer argv.deinit();
+    try argv.appendSlice(&[_][]const u8{ exe_path, "run", path });
+    if (extra_args.len > 0) {
+        try argv.append("--");
+        try argv.appendSlice(extra_args);
+    }
+    return try harness.runCommandCapture(allocator, argv.items, repo_root, input);
 }
 
 //this function will pipe a char to a doxa command and return the output
 fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input: []const u8) ![]const u8 {
-    const result = try runDoxaCommandEx(allocator, path, input);
+    const result = try runDoxaCommandEx(allocator, path, input, &.{});
     allocator.free(result.stderr);
     if (result.exit_code != 0) {
         allocator.free(result.stdout);
@@ -126,7 +133,7 @@ fn validatePeekResults(output: []const u8, expected_results: []const peek_result
 
 fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     const input: ?[]const u8 = tc.input;
-    const result = runDoxaCommandEx(allocator, tc.path, input) catch return error.CommandFailed;
+    const result = runDoxaCommandEx(allocator, tc.path, input, tc.extra_args) catch return error.CommandFailed;
 
     const output = switch (tc.mode) {
         .PRINT => blk: {
@@ -207,6 +214,31 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .input = null,
             .expected_print = answers.expected_alias_arrays_results[0..],
             .expected_peek = null,
+        },
+        .{
+            .name = "union narrow",
+            .path = "./test/misc/union_narrow.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_union_narrow_results[0..],
+            .expected_peek = null,
+        },
+        .{
+            .name = "nested struct return",
+            .path = "./test/misc/nested_struct_return.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_nested_struct_return_results[0..],
+            .expected_peek = null,
+        },
+        .{
+            .name = "runtime const if",
+            .path = "./test/misc/runtime_const_if.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_runtime_const_if_results[0..],
+            .expected_peek = null,
+            .extra_args = &[_][]const u8{"hello"},
         },
         .{
             .name = "inline zig string",
@@ -342,7 +374,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
         .{ .name = "assert fail", .path = "./test/misc/assert_fail.doxa", .expect_code = null, .expect_stderr = "assert test message" },
     };
     for (term_cases) |tc| {
-        const result = try runDoxaCommandEx(allocator, tc.path, null);
+        const result = try runDoxaCommandEx(allocator, tc.path, null, &.{});
         allocator.free(result.stdout);
         defer allocator.free(result.stderr);
 

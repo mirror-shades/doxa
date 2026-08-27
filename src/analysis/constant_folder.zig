@@ -1,9 +1,7 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
 const token = @import("../types/token.zig");
-const TokenType = token.TokenType;
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
-const Tetra = @import("../types/types.zig").Tetra;
 
 const Memory = @import("../utils/memory.zig");
 const Scope = Memory.Scope;
@@ -14,21 +12,58 @@ pub const ConstantFolder = struct {
     root_scope: *Scope,
     current_scope: *Scope,
     scope_child_index: std.AutoHashMap(u32, usize),
+    /// Bindings whose initializers folded to literals in this pass. Semantic
+    /// analysis stores placeholder values (e.g. `0`) for runtime calls, so the
+    /// folder must not read those as compile-time constants.
+    comptime_bindings: std.array_list.Managed(std.StringHashMap(TokenLiteral)),
 
     pub fn init(allocator: std.mem.Allocator, root_scope: *Scope) ConstantFolder {
-        return ConstantFolder{
+        var folder = ConstantFolder{
             .allocator = allocator,
             .root_scope = root_scope,
             .current_scope = root_scope,
             .scope_child_index = std.AutoHashMap(u32, usize).init(allocator),
+            .comptime_bindings = std.array_list.Managed(std.StringHashMap(TokenLiteral)).init(allocator),
         };
+        folder.pushBindingScope();
+        return folder;
     }
 
     pub fn deinit(self: *ConstantFolder) void {
+        while (self.comptime_bindings.items.len > 0) {
+            self.popBindingScope();
+        }
+        self.comptime_bindings.deinit();
         self.scope_child_index.deinit();
     }
 
+    fn pushBindingScope(self: *ConstantFolder) void {
+        self.comptime_bindings.append(std.StringHashMap(TokenLiteral).init(self.allocator)) catch {};
+    }
+
+    fn popBindingScope(self: *ConstantFolder) void {
+        if (self.comptime_bindings.items.len == 0) return;
+        var map = self.comptime_bindings.pop().?;
+        map.deinit();
+    }
+
+    fn bindComptime(self: *ConstantFolder, name: []const u8, value: TokenLiteral) void {
+        if (self.comptime_bindings.items.len == 0) return;
+        const map = &self.comptime_bindings.items[self.comptime_bindings.items.len - 1];
+        map.put(name, value) catch {};
+    }
+
+    fn lookupComptime(self: *ConstantFolder, name: []const u8) ?TokenLiteral {
+        var i = self.comptime_bindings.items.len;
+        while (i > 0) {
+            i -= 1;
+            if (self.comptime_bindings.items[i].get(name)) |value| return value;
+        }
+        return null;
+    }
+
     fn enterScope(self: *ConstantFolder) void {
+        self.pushBindingScope();
         var idx = self.scope_child_index.get(self.current_scope.id) orelse 0;
         const children = self.current_scope.children.items;
         while (idx < children.len) : (idx += 1) {
@@ -42,6 +77,7 @@ pub const ConstantFolder = struct {
     }
 
     fn leaveScope(self: *ConstantFolder) void {
+        self.popBindingScope();
         if (self.current_scope.parent) |parent| {
             self.current_scope = parent;
         }
@@ -190,19 +226,14 @@ pub const ConstantFolder = struct {
                 return expr;
             },
             .Variable => |var_token| {
-                if (self.current_scope.lookupVariable(var_token.lexeme)) |variable| {
-                    const scope_manager = self.current_scope.manager;
-                    if (scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                        if (storage.constant and isPropagatableVar(variable, storage)) {
-                            self.optimizations_made += 1;
-                            const folded_expr = try self.allocator.create(ast.Expr);
-                            folded_expr.* = .{
-                                .base = expr.base,
-                                .data = .{ .Literal = storage.value },
-                            };
-                            return folded_expr;
-                        }
-                    }
+                if (self.lookupComptime(var_token.lexeme)) |value| {
+                    self.optimizations_made += 1;
+                    const folded_expr = try self.allocator.create(ast.Expr);
+                    folded_expr.* = .{
+                        .base = expr.base,
+                        .data = .{ .Literal = value },
+                    };
+                    return folded_expr;
                 }
                 return expr;
             },
@@ -233,7 +264,13 @@ pub const ConstantFolder = struct {
             },
             .VarDecl => |*var_decl| {
                 if (var_decl.initializer) |initializer| {
-                    var_decl.initializer = try self.foldExpr(initializer);
+                    const folded = try self.foldExpr(initializer);
+                    var_decl.initializer = folded;
+                    // Only `const` literals are compile-time values. Propagating
+                    // `var acc is 0` would rewrite later `acc` uses to `0`.
+                    if (folded.data == .Literal and !var_decl.type_info.is_mutable) {
+                        self.bindComptime(var_decl.name.lexeme, folded.data.Literal);
+                    }
                 }
             },
             .Return => |*ret| {
@@ -772,14 +809,3 @@ pub const ConstantFolder = struct {
         return self.optimizations_made;
     }
 };
-
-fn isPropagatableVar(variable: *const Memory.Variable, storage: *const Memory.ValueStorage) bool {
-    if (!storage.constant) return false;
-    return switch (storage.value) {
-        .int => switch (variable.type) {
-            .FUNCTION, .STRUCT, .ENUM, .GROUP_KEYWORD, .MODULE => false,
-            else => true,
-        },
-        else => false,
-    };
-}

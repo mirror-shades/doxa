@@ -173,6 +173,20 @@ pub const HIRInstruction = union(enum) {
         member_index: u32,
     },
 
+    /// Narrow a union-typed variable to a member view for the following span of
+    /// instructions. Mirrors the `as`-cast narrowing the HIR symbol table
+    /// tracks; the LLVM backend uses it to unwrap the boxed `%DoxaValue` at the
+    /// next `LoadVar`, so consumers see the concrete member representation.
+    NarrowVar: struct {
+        var_name: []const u8,
+        narrowed_type: HIRType,
+    },
+
+    /// End the narrowing span started by `NarrowVar`.
+    RestoreVar: struct {
+        var_name: []const u8,
+    },
+
     //==================================================================
     // LOGICAL OPERATIONS
     //==================================================================

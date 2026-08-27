@@ -3,6 +3,7 @@ const doxa_rt = @import("../../../runtime/doxa_rt.zig");
 const DoxaTag = doxa_rt.DoxaTag;
 const DoxaUnionMeta = doxa_rt.DoxaUnionMeta;
 const GroupTable = @import("../../../common/group_table.zig").GroupTable;
+const EnumTable = @import("../../../common/enum_table.zig").EnumTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -122,6 +123,14 @@ pub fn Methods(comptime Ctx: type) type {
                 current_name = bitcasted;
                 current_ty = .I64;
             },
+            .Value => {
+                const payload = try self.nextTemp(id);
+                const extract_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload, current_name });
+                defer self.allocator.free(extract_line);
+                try w.writeAll(extract_line);
+                current_name = payload;
+                current_ty = .I64;
+            },
             else => {},
         }
 
@@ -183,6 +192,31 @@ pub fn Methods(comptime Ctx: type) type {
         id: *usize,
     ) !StackVal {
         if (value.ty == .STRING) return value;
+        if (value.ty == .Value) {
+            // Boxed union value holding a string member: recover (ptr, len) from
+            // the two payload words so downstream consumers see the full string.
+            const payload = try self.nextTemp(id);
+            const extract_bits = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload, value.name });
+            defer self.allocator.free(extract_bits);
+            try w.writeAll(extract_bits);
+            const as_ptr = try self.nextTemp(id);
+            const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
+            defer self.allocator.free(cast_line);
+            try w.writeAll(cast_line);
+            const payload_len = try self.nextTemp(id);
+            const len_extract = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 3\n", .{ payload_len, value.name });
+            defer self.allocator.free(len_extract);
+            try w.writeAll(len_extract);
+            const tmp_name = try self.nextTemp(id);
+            const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_name, as_ptr });
+            defer self.allocator.free(ins0);
+            try w.writeAll(ins0);
+            const str_name = try self.nextTemp(id);
+            const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {s}, 1\n", .{ str_name, tmp_name, payload_len });
+            defer self.allocator.free(ins1);
+            try w.writeAll(ins1);
+            return .{ .name = str_name, .ty = .STRING };
+        }
         const ptr = try self.ensurePointer(w, value, id);
         const tmp_name = try self.nextTemp(id);
         const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_name, ptr.name });
@@ -270,7 +304,14 @@ pub fn Methods(comptime Ctx: type) type {
         try w.writeAll(extract_line);
 
         return switch (target) {
-            .Int, .Enum => .{ .name = payload, .ty = .I64 },
+            .Int => .{ .name = payload, .ty = .I64 },
+            .Enum => blk: {
+                const enum_name: ?[]const u8 = if (self.enum_table) |et_opaque| blk_enum: {
+                    const et: *EnumTable = @ptrCast(@alignCast(et_opaque));
+                    break :blk_enum et.getName(target.Enum);
+                } else null;
+                break :blk StackVal{ .name = payload, .ty = .I64, .enum_type_name = enum_name };
+            },
             .Float => blk: {
                 const as_f64 = try self.nextTemp(id);
                 const bitcast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast i64 {s} to double\n", .{ as_f64, payload });
@@ -313,12 +354,33 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(ins1);
                 break :blk StackVal{ .name = str_name, .ty = .STRING, .array_type = value.array_type, .enum_type_name = value.enum_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names, .struct_type_name = value.struct_type_name };
             },
-            .Array, .Map, .Struct, .Function => blk: {
+            .Array => |inner| blk: {
+                const as_ptr = try self.nextTemp(id);
+                const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
+                defer self.allocator.free(cast_line);
+                try w.writeAll(cast_line);
+                break :blk StackVal{ .name = as_ptr, .ty = .PTR, .array_type = inner.* };
+            },
+            .Map, .Function => blk: {
                 const as_ptr = try self.nextTemp(id);
                 const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
                 defer self.allocator.free(cast_line);
                 try w.writeAll(cast_line);
                 break :blk StackVal{ .name = as_ptr, .ty = .PTR };
+            },
+            .Struct => |sid| blk: {
+                const as_ptr = try self.nextTemp(id);
+                const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, payload });
+                defer self.allocator.free(cast_line);
+                try w.writeAll(cast_line);
+                const type_name = self.struct_type_names_by_id.get(sid);
+                break :blk StackVal{
+                    .name = as_ptr,
+                    .ty = .PTR,
+                    .struct_field_types = self.struct_fields_by_id.get(sid),
+                    .struct_field_names = if (type_name) |tn| self.struct_field_names_by_type.get(tn) else null,
+                    .struct_type_name = type_name orelse "struct",
+                };
             },
             else => StackVal{ .name = payload, .ty = .I64 },
         };
