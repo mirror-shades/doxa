@@ -41,6 +41,26 @@ Examples:
   doxa compile file.doxa -o out/myapp --arch=x86_64 --os=linux -O2
 ```
 
+### Building projects
+
+Builds are ordinary Doxa programs driven by the standard-library build module.
+Scaffold a project with `doxa init <name>` (writes a buildable `build.doxa` and
+`src/main.doxa`), then build with:
+
+```bash
+doxa run build.doxa
+```
+
+The script declares artifacts against a `build.Context`, then terminates with
+`build.execute(c, false)`, which compiles every artifact and propagates the
+result through the process exit code. Artifacts whose output is newer than
+their entry source are skipped unless forced (`build.execute(c, true)`).
+
+Cross-compiling names the output for the target OS, not the host: `--os=windows`
+appends `.exe`, `--os=linux` does not. A cross target must name both its
+architecture and OS (`--arch=`/`--os=`); missing components are a compile error
+rather than a silent host default.
+
 ### Building from source
 
 Current build uses Zig 0.15.2, there are no other dependancies.
@@ -91,10 +111,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - expand tests
 - improve error logging with better messages
 - improve effiency literally everywhere
-- lower fixed-size arrays to contiguous flat allocas (LLVM backend)
-  - function-local flat scalar arrays lowered via alloca + GEP (brainfuck `tape :: byte[10]`)
-  - global and nested arrays still use ArrayHeader path (peek/print compat, stack size limits)
-  - wait for global `.bss` allocation and nested DoxaValue-free peek before removing gates
+- improve semantic analysis around negative cases (return statements in void return functions/methods, improper use of symbols (functions used as values), etc.)
 
 
 ## Example

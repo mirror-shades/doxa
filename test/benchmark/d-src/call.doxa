@@ -1,6 +1,9 @@
 module std from @std()
 
+# const ITERS is 350_000
 const ITERS is 350_000_000
+# const SINK_ITERS is 35_000
+const SINK_ITERS is 35_000_000
 
 function leaf_add(a :: int, b :: int) returns int {
     return a + b
@@ -17,7 +20,7 @@ function leaf_sum(iters :: int) returns int {
 
 public entry function main() {
     var sink is 0
-    for i while i < 35000000 do i++ {
+    for i while i < SINK_ITERS do i++ {
         sink += leaf_add(i, (sink % 997) + 1)
     }
 

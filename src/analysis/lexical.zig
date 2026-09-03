@@ -68,6 +68,15 @@ pub const LexicalAnalyzer = struct {
         self.keywords.deinit();
     }
 
+    /// Detach the string buffers this lexer allocated so `deinit` no longer frees
+    /// them. The parser's AST borrows these buffers (string literal values and
+    /// the lexemes of tokens inside format-string placeholders), so their
+    /// lifetime must match the AST, not the lexer. The analysis arena reclaims
+    /// them at program end.
+    pub fn takeOwnershipOfStrings(self: *LexicalAnalyzer) void {
+        self.allocated_strings.clearRetainingCapacity();
+    }
+
     pub fn initKeywords(self: *LexicalAnalyzer) !void {
         try self.keywords.put("pub", .PUBLIC);
         try self.keywords.put("public", .PUBLIC);

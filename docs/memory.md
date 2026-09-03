@@ -4,9 +4,9 @@ Doxa's memory system uses arena-based scoping to provide automatic management th
 
 ## Core Principles
 
-### Every Block is an Arena
+### Every Block is a Lifetime Boundary
 
-The fundamental rule: **every `{` creates a new arena, every `}` bulk-frees it.** This includes anonymous blocks, loop bodies, `if`/`else` branches, `match` cases, and function bodies. Each curly brace pair establishes a scope with its own arena allocator. When the closing brace executes, all memory allocated within that scope is freed in O(1) time.
+The fundamental rule is that **every `{` creates a lexical lifetime boundary and every `}` ends it.** The compiler may represent that boundary without creating a physical arena when the block contains only primitives, borrows, or other trivially managed values. When managed storage is required, the arena is entered and all memory allocated within that scope is freed in O(1) time.
 
 ```doxa
 fn registerEmployee(name :: string, age :: int) returns Employee
@@ -35,7 +35,7 @@ fn processData(id :: int) returns Employee | nothing {
 }
 ```
 
-Because the anonymous block is its own arena, the large list is freed immediately after `result` is extracted, rather than living until the function returns.
+Because the anonymous block is its own managed lifetime, the large list is freed immediately after `result` is extracted, rather than living until the function returns.
 
 ### Parameter Aliasing
 
@@ -61,7 +61,9 @@ Aliases can be chained — `levelOne(^x)` calls `levelTwo(^x)` — passing the a
 
 ## Native Runtime Model
 
-The compiled backend implements the arena model directly. The runtime keeps a **scope-arena stack** (`src/runtime/scope_arena.zig`): a linked list of `std.heap.ArenaAllocator` nodes. The IR printer emits a call to `doxa_scope_enter()` at each `EnterScope` HIR instruction and `doxa_scope_exit()` at each `ExitScope`. The program root scope is pushed once at the start of `doxa_program_main` and is never freed — the OS reclaims it at process exit.
+The compiled backend implements the arena model directly. The runtime keeps a **scope-arena stack** (`src/runtime/scope_arena.zig`): a linked list of `std.heap.ArenaAllocator` nodes. The IR printer emits calls to `doxa_scope_enter()` and `doxa_scope_exit()` only for managed lexical lifetimes, plus `doxa_scope_reset()` for reusable loop bodies. The program root scope is pushed once at the start of `doxa_program_main` and is never freed — the OS reclaims it at process exit.
+
+Loop bodies have two logical lifetimes: a loop scope for state that persists between iterations and a body scope for iteration-local values. The body arena is entered once, reset at each iteration boundary, and exited once when the loop ends. `continue` resets the body before continuing; `break` exits both scopes; `return` unwinds all active scopes after preparing any escaping result.
 
 All heap values are allocated from the **current** scope arena:
 
@@ -72,9 +74,13 @@ All heap values are allocated from the **current** scope arena:
 | Structs | `doxa_scope_alloc` (contiguous `i64` field array) |
 | Maps | `doxa_map_new` (`map_runtime.zig`) |
 
-Because a value can only be reached while its allocating scope is on the stack, values that cross a scope boundary are **deep-copied into the destination scope**:
+Because a value can only be reached while its allocating scope is on the stack, values that escape a scope are **rehomed into the destination scope**:
 
-- **Clone on store.** Storing a heap value into a variable copies it into the persistent scope (the function scope, or the program root at top level), so it survives the exit of the block that created it.
+- **Rehome on escape.** Heap values are copied only when lifetime or value-semantics require it:
+  - **Globals** live in the program-root arena. Storing a new value into a global rehomes it there. In-place mutations (`@push`, `arr[i] is x`, `n.field is …`) write through the existing root-owned object — they do not snapshot it.
+  - **Structs** keep identity when they already outlive the destination (a global array element, a same-scope struct). An unknown allocation is treated as long-lived, so `each n in neutrons { n.x_pos += 1 }` mutates the element. By-value parameters always snapshot.
+  - **Arrays** preserve identity when their owning arena already outlives the destination and are cloned only when the source could be destroyed first. Explicit snapshot operations still produce independent arrays.
+
 - **Clone on return.** A function frees its body scope on `return`; heap return values are copied into the caller's scope first (`doxa_str_clone_at`, `doxa_array_clone_at`, `doxa_struct_clone_at`, `doxa_clone_doxa_value_at`).
 - **Clone on element store.** Pushing or assigning a heap element into an array re-homes it into the array's own arena (tracked in the `ArrayHeader.scope` field), which is what makes `^`-aliased arrays safe — structs built in a callee are copied into the caller's array before the callee tears down.
 
@@ -100,7 +106,7 @@ Structs and arrays are cloned recursively: string fields and array fields are re
 | Issue | Rationale |
 |-------|-----------|
 | **Arena buffer accumulation on resize** — When an array or map grows, the old buffer is abandoned in the arena. Repeated resizes accumulate dead buffers. | All buffers bulk-freed on scope exit in O(1). |
-| **Clone-on-store is eager** — Every store of a heap value into a variable copies it, even a same-scope store. | Simpler than tracking arena ownership in LLVM IR. Cloning is bump-pointer allocation + memcpy, so cost is low. |
+| **Rehome decisions follow lifetime, not access** — Arrays and strings preserve identity when their owner outlives the destination, while explicit snapshots remain independent. `@push` / index assignment mutate the header in place and keep it. Struct stores keep identity when the source already outlives the destination, which is what makes `each n in arr { n.field is ... }` mutate the element. | Only an actual escape needs a copy. Globals and longer-lived containers still receive storage that survives the source scope. |
 | **Struct clones are registered, not garbage-collected** — `struct_registry` entries (address → descriptor) are appended, never removed. | Needed for `@string(struct)` and recursive cloning. Bounded by the number of structs created; acceptable for program lifetime. |
 | **Empty array literals require an element type** — `var x is []` is a compile error (E6019); the element type must come from an annotation (`var x :: int[] is []`) or surrounding context (`x = []`, `foo([])`, `return []`). | An unannotated empty literal has no element type to infer, so it would otherwise carry tag 255 and be treated as struct pointers by the runtime. |
 
@@ -121,3 +127,7 @@ Controlled through scope-based cleanup timing. Anonymous blocks can be used with
 ### Analysis-Phase Scopes
 
 During semantic analysis, a parallel scope tree is maintained by `MemoryManager` / `ScopeManager` (see `src/utils/memory.zig`). These analysis scopes track variable declarations, types, and aliasing for type-checking and name resolution. They are independent of the runtime scope-arena stack and are cleaned up after IR generation.
+
+### Lexer-Lifetime Borrowing
+
+The AST borrows lexer-owned buffers: string literal contents and the lexemes of tokens inside format-string placeholders (`{@string(x)}`) are slices into a `LexicalAnalyzer`'s buffers. A lexer must not be freed while the AST it produced is still alive. The main-file lexer is deliberately leaked into the analysis arena for this reason; module and placeholder lexers transfer ownership of their string buffers (`takeOwnershipOfStrings`) before deinit. The analysis arena reclaims everything at program end.

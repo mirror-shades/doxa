@@ -1,0 +1,6 @@
+module m from "./module_bad_struct_literal.doxa"
+
+entry function main() {
+    const it is m.makeItem()
+    @print("{it.name}\n")
+}

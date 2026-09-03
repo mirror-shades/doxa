@@ -21,13 +21,18 @@ static long long monotonic_ns(void) {
 #endif
 }
 
+/* #define SIZE 400 */
+#define SIZE 2000
+/* #define WARM_SIZE 128 */
+#define WARM_SIZE 256
+
 int main(void) {
     /* Warm-up: a smaller mandelbrot pass before timing. */
     long long warm = 0;
-    for (long long y = 0; y < 256; y++) {
-        for (long long x = 0; x < 256; x++) {
-            double cr = (x - 128.0) / 64.0;
-            double ci = (y - 128.0) / 64.0;
+    for (long long y = 0; y < WARM_SIZE; y++) {
+        for (long long x = 0; x < WARM_SIZE; x++) {
+            double cr = (x - WARM_SIZE / 2.0) / (WARM_SIZE / 4.0);
+            double ci = (y - WARM_SIZE / 2.0) / (WARM_SIZE / 4.0);
             double zr = 0.0;
             double zi = 0.0;
             long long iter = 0;
@@ -45,11 +50,11 @@ int main(void) {
 
     long long t0 = monotonic_ns();
 
-    for (long long y = 0; y < 2000; y++) {
-        for (long long x = 0; x < 2000; x++) {
+    for (long long y = 0; y < SIZE; y++) {
+        for (long long x = 0; x < SIZE; x++) {
 
-            double cr = (x - 1000.0) / 500.0;
-            double ci = (y - 1000.0) / 500.0;
+            double cr = (x - SIZE / 2.0) / (SIZE / 4.0);
+            double ci = (y - SIZE / 2.0) / (SIZE / 4.0);
 
             double zr = 0.0;
             double zi = 0.0;

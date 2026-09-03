@@ -24,6 +24,9 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare i64 @doxa_str_len(ptr, i64)\n");
             try w.writeAll("declare void @doxa_str_concat(ptr, i64, ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_str_clone_at(i64, ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_clone_root(ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_rehome_at(i64, ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_rehome_root(ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_str_from_cstr(ptr, ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_str_clone_raw(ptr, i64)\n");
             try w.writeAll("declare void @doxa_substring(ptr, i64, i64, i64, ptr, ptr)\n");
@@ -52,6 +55,9 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare ptr @doxa_array_new_nested(i64, i64, i64, ptr, i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_clone(ptr)\n");
             try w.writeAll("declare ptr @doxa_array_clone_at(i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_clone_root(ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_rehome_at(i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_rehome_root(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_get_i64(ptr, i64)\n");
             try w.writeAll("declare void @doxa_array_get_str(ptr, i64, ptr, ptr)\n");
@@ -75,15 +81,20 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare i64 @doxa_type_check(i64, i64, ptr)\n");
             try w.writeAll("declare void @doxa_print_value(ptr)\n");
             try w.writeAll("declare void @doxa_clone_doxa_value_at(i64, ptr)\n");
+            try w.writeAll("declare void @doxa_clone_doxa_value_root(ptr)\n");
             try w.writeAll("declare i64 @doxa_find_array(ptr, i64)\n");
             try w.writeAll("declare i64 @doxa_find_array_str(ptr, ptr, i64)\n");
             try w.writeAll("declare i64 @doxa_find_str(ptr, i64, ptr, i64)\n");
             try w.writeAll("declare void @doxa_struct_register(ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_struct_clone_at(i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_clone_root(ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_rehome_at(i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_rehome_root(ptr)\n");
             try w.writeAll("declare void @doxa_enum_register(ptr)\n");
             try w.writeAll("declare ptr @doxa_scope_alloc(i64, i64)\n");
             try w.writeAll("declare void @doxa_scope_enter()\n");
             try w.writeAll("declare void @doxa_scope_exit()\n");
+            try w.writeAll("declare void @doxa_scope_reset()\n");
             try w.writeAll("declare i8 @doxa_exists_quantifier_gt(ptr, ptr, i64)\n");
             try w.writeAll("declare i8 @doxa_exists_quantifier_eq(ptr, ptr, i64)\n");
             try w.writeAll("declare i8 @doxa_forall_quantifier_gt(ptr, ptr, i64)\n");
@@ -277,7 +288,7 @@ pub fn Methods(comptime Ctx: type) type {
                 for (hir.instructions[range.start..range.end]) |inst| {
                     switch (inst) {
                         .PushStorageId => |psid| {
-                            if (psid.scope_kind == .GlobalLocal) {
+                            if (psid.scope_kind == .GlobalLocal or psid.scope_kind == .ModuleGlobal) {
                                 if (!self.defined_globals.contains(psid.var_name)) {
                                     _ = try self.global_types.put(psid.var_name, .PTR);
                                     _ = try self.defined_globals.put(psid.var_name, true);
@@ -285,7 +296,7 @@ pub fn Methods(comptime Ctx: type) type {
                             }
                         },
                         .LoadVar => |lv| {
-                            if (lv.scope_kind == .GlobalLocal) {
+                            if (lv.scope_kind == .GlobalLocal or lv.scope_kind == .ModuleGlobal) {
                                 if (!self.defined_globals.contains(lv.var_name)) {
                                     _ = try self.global_types.put(lv.var_name, .PTR);
                                     _ = try self.defined_globals.put(lv.var_name, true);
@@ -510,9 +521,9 @@ pub fn Methods(comptime Ctx: type) type {
                     .LogicalOp => |lop| {
                         try self.handleLogicalOp(w, &stack, &id, lop);
                         last_instruction_was_terminator = false;
-                },
+                    },
 
-                .Peek => |pk| {
+                    .Peek => |pk| {
                         try self.handlePeek(w, &stack, &id, pk, peek_state);
                         last_instruction_was_terminator = false;
                     },
@@ -731,6 +742,10 @@ pub fn Methods(comptime Ctx: type) type {
                     .EnterScope => |_| {
                         try w.writeAll("  call void @doxa_scope_enter()\n");
                         self.scope_depth += 1;
+                        last_instruction_was_terminator = false;
+                    },
+                    .ResetScope => |_| {
+                        try w.writeAll("  call void @doxa_scope_reset()\n");
                         last_instruction_was_terminator = false;
                     },
                     .ExitScope => |s| {

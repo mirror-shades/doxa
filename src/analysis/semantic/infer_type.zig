@@ -2267,10 +2267,15 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         if (type_info.struct_fields) |decl_fields| {
                             if (decl_fields.len != struct_lit.fields.len) {
                                 self.reporter.reportCompileError(
-                                    getLocationFromBase(expr.base),
+                                    ast.SourceSpan.fromToken(struct_lit.name).location,
                                     ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
-                                    "Struct field count mismatch: expected {}, got {}",
-                                    .{ decl_fields.len, struct_lit.fields.len },
+                                    "struct '{s}' expects {d} field{s}, but this literal provides {d}",
+                                    .{
+                                        struct_lit.name.lexeme,
+                                        decl_fields.len,
+                                        if (decl_fields.len == 1) "" else "s",
+                                        struct_lit.fields.len,
+                                    },
                                 );
                                 self.fatal_error = true;
                             }
@@ -2292,11 +2297,13 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                     }
                                 }
                                 if (!found) {
+                                    const declared_list = try declaredFieldList(self, decl_fields);
+                                    defer self.allocator.free(declared_list);
                                     self.reporter.reportCompileError(
-                                        getLocationFromBase(lit_field.value.base),
+                                        ast.SourceSpan.fromToken(lit_field.name).location,
                                         ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
-                                        "Field '{s}' not found in struct '{s}'",
-                                        .{ lit_field.name.lexeme, struct_lit.name.lexeme },
+                                        "struct '{s}' has no field '{s}'; declared fields: {s}",
+                                        .{ struct_lit.name.lexeme, lit_field.name.lexeme, declared_list },
                                     );
                                     self.fatal_error = true;
                                 }
@@ -2887,4 +2894,17 @@ fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast
             }
         }
     }
+}
+
+/// Join declared struct field names into a human-readable list for error
+/// messages, e.g. `name, entry_point, output`.
+fn declaredFieldList(self: *SemanticAnalyzer, fields: []const ast.StructFieldType) ![]u8 {
+    var list = std.array_list.Managed(u8).init(self.allocator);
+    errdefer list.deinit();
+    for (fields, 0..) |field, i| {
+        if (i > 0) try list.appendSlice(", ");
+        try list.appendSlice(field.name);
+    }
+    if (fields.len == 0) try list.appendSlice("(none)");
+    return list.toOwnedSlice();
 }

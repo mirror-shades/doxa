@@ -72,7 +72,15 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
     }
 
     var module_lexer = try LexicalAnalyzer.init(self.allocator, module_data.source, module_data.resolved_path, self.reporter);
-    defer module_lexer.deinit();
+    // The module AST borrows the lexer's string buffers (literal values and
+    // format-template placeholder lexemes). Transfer ownership to the analysis
+    // arena so they outlive the lexer; otherwise deinit would free memory the
+    // AST still references. This matches the main-file lexer, which is never
+    // freed for the same reason.
+    defer {
+        module_lexer.takeOwnershipOfStrings();
+        module_lexer.deinit();
+    }
 
     try module_lexer.initKeywords();
     const tokens = module_lexer.lexTokens() catch |err| {

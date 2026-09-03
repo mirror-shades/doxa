@@ -1,0 +1,21 @@
+# Regression test: a struct literal that names a field the struct does not
+# declare must be a compile error (pointing at the offending field) rather than
+# silently desynchronizing construction from field access and crashing at
+# runtime.
+struct Person {
+    public name :: string,
+    public age :: int,
+}
+
+function makePerson() returns Person {
+    return $Person {
+        name is "Alice",
+        age is 30,
+        kind is "friend",
+    }
+}
+
+entry function main() {
+    const p is makePerson()
+    @print("{p.name}\n")
+}

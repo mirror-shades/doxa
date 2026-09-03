@@ -81,6 +81,7 @@ pub const HIRInstruction = union(enum) {
         scope_kind: ScopeKind,
         module_context: ?[]const u8,
         expected_type: HIRType, // Add expected type for coercion
+        heap_copy: SoxaTypes.HeapCopyKind = .rehome,
     },
 
     /// Store variable declaration (var/const with initializer)
@@ -252,6 +253,8 @@ pub const HIRInstruction = union(enum) {
     Return: struct {
         has_value: bool,
         return_type: HIRType,
+        /// Number of active reusable loop scopes to unwind before returning.
+        loop_scope_count: u32 = 0,
     },
 
     //==================================================================
@@ -296,6 +299,12 @@ pub const HIRInstruction = union(enum) {
     EnterScope: struct {
         scope_id: u32,
         var_count: u32, // Number of variables in the scope
+    },
+
+    /// Reset a reusable scope without releasing its arena node.
+    /// LLVM: doxa_scope_reset
+    ResetScope: struct {
+        scope_id: u32,
     },
 
     /// Exit scope block

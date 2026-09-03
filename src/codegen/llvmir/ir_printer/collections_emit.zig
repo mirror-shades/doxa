@@ -9,6 +9,113 @@ pub fn Methods(comptime Ctx: type) type {
     const StackVal = Ctx.StackVal;
 
     return struct {
+        /// LLVM type of one element in a dynamic array's packed backing buffer,
+        /// for the element types an inline load can reproduce bit-for-bit.
+        ///
+        /// `null` means the element needs the runtime accessor: a `String` element
+        /// is a two-word `%DoxaString`, and `Array` / `Struct` elements are
+        /// re-homed into the owning array's arena when accessed, which is real
+        /// work rather than a load.
+        fn dynamicElementLLVMType(element_type: HIR.HIRType) ?[]const u8 {
+            return switch (element_type) {
+                .Int, .Enum => "i64",
+                .Float => "double",
+                // `byte` and `tetra` both occupy one byte; tetra keeps its value
+                // in the low two bits, which the caller narrows after loading.
+                .Byte, .Tetra => "i8",
+                else => null,
+            };
+        }
+
+        /// Address of element `idx` in a dynamic array's packed backing buffer.
+        /// Field 0 of `%ArrayHeader` is the data pointer.
+        ///
+        /// Indexing is unchecked here, matching the fixed-size array path and the
+        /// documented intrinsic contract (`docs/methods.md`: out-of-bounds access
+        /// is a runtime trap, not a defined value). Keeping the address
+        /// computation in the IR is what lets LLVM hoist, unroll, and vectorize
+        /// element loops; an opaque accessor call blocks all three.
+        fn emitDynamicElementPtr(
+            self: *IRPrinter,
+            w: anytype,
+            id: *usize,
+            hdr_name: []const u8,
+            elem_llvm_ty: []const u8,
+            idx_name: []const u8,
+        ) ![]const u8 {
+            const data_slot = try self.nextTemp(id);
+            const data_slot_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds %ArrayHeader, ptr {s}, i32 0, i32 0\n",
+                .{ data_slot, hdr_name },
+            );
+            defer self.allocator.free(data_slot_line);
+            try w.writeAll(data_slot_line);
+
+            const data_ptr = try self.nextTemp(id);
+            const data_load_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = load ptr, ptr {s}\n",
+                .{ data_ptr, data_slot },
+            );
+            defer self.allocator.free(data_load_line);
+            try w.writeAll(data_load_line);
+
+            const elem_ptr = try self.nextTemp(id);
+            const elem_gep_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds {s}, ptr {s}, i64 {s}\n",
+                .{ elem_ptr, elem_llvm_ty, data_ptr, idx_name },
+            );
+            defer self.allocator.free(elem_gep_line);
+            try w.writeAll(elem_gep_line);
+
+            return elem_ptr;
+        }
+
+        /// Load element `idx` of a dynamic array directly, returning the value in
+        /// its natural representation. Caller must have checked
+        /// `dynamicElementLLVMType` for this element type.
+        fn emitDynamicElementLoad(
+            self: *IRPrinter,
+            w: anytype,
+            id: *usize,
+            hdr_name: []const u8,
+            element_type: HIR.HIRType,
+            elem_llvm_ty: []const u8,
+            idx_name: []const u8,
+        ) !StackVal {
+            const elem_ptr = try emitDynamicElementPtr(self, w, id, hdr_name, elem_llvm_ty, idx_name);
+
+            const loaded = try self.nextTemp(id);
+            const load_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = load {s}, ptr {s}\n",
+                .{ loaded, elem_llvm_ty, elem_ptr },
+            );
+            defer self.allocator.free(load_line);
+            try w.writeAll(load_line);
+
+            return switch (element_type) {
+                .Int, .Enum => StackVal{ .name = loaded, .ty = .I64 },
+                .Float => StackVal{ .name = loaded, .ty = .F64 },
+                .Byte => StackVal{ .name = loaded, .ty = .I8 },
+                // A tetra is stored masked to its low two bits.
+                .Tetra => blk: {
+                    const narrowed = try self.nextTemp(id);
+                    const trunc_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  {s} = trunc i8 {s} to i2\n",
+                        .{ narrowed, loaded },
+                    );
+                    defer self.allocator.free(trunc_line);
+                    try w.writeAll(trunc_line);
+                    break :blk StackVal{ .name = narrowed, .ty = .I2 };
+                },
+                else => unreachable,
+            };
+        }
+
         pub fn emitArrayNew(
             self: *IRPrinter,
             w: anytype,
@@ -679,6 +786,9 @@ pub fn Methods(comptime Ctx: type) type {
                     );
                     defer self.allocator.free(args_line);
                     try self.emitRTCallReturningString(w, stack, id, "doxa_array_get_str", args_line);
+                } else if (dynamicElementLLVMType(element_type)) |elem_llvm_ty| {
+                    const loaded = try emitDynamicElementLoad(self, w, id, arr_ptr.name, element_type, elem_llvm_ty, idx_i64.name);
+                    try stack.append(loaded);
                 } else {
                     const elem_reg = try self.nextTemp(id);
                     const call_line = try std.fmt.allocPrint(

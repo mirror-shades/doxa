@@ -27,17 +27,21 @@ pub const MapHeader = struct {
     capacity: usize,
     key_tag: u64,
     value_tag: u64,
+    scope: ?*scope_arena.Scope,
     else_value: i64 = 0,
     has_else_value: bool = false,
 };
 
-fn mapAllocator() std.mem.Allocator {
-    // Scope-owned: maps are reclaimed when their allocating scope exits.
-    return scope_arena.allocator();
+fn mapAllocator(scope: ?*scope_arena.Scope) std.mem.Allocator {
+    // Map storage belongs to the map, not to the scope performing a write.
+    // This prevents growth from placing its backing buffer in a shorter-lived
+    // access scope.
+    return scope_arena.allocatorInScope(scope);
 }
 
 pub fn mapNew(capacity_raw: i64, key_tag: i64, value_tag: i64) *MapHeader {
-    const alloc = mapAllocator();
+    const alloc = scope_arena.allocator();
+    const owner_scope = scope_arena.currentScope();
 
     const cap: usize = if (capacity_raw <= 0)
         0
@@ -55,6 +59,7 @@ pub fn mapNew(capacity_raw: i64, key_tag: i64, value_tag: i64) *MapHeader {
     header.capacity = if (cap == 0) 0 else cap;
     header.key_tag = @intCast(key_tag);
     header.value_tag = @intCast(value_tag);
+    header.scope = owner_scope;
     header.else_value = 0;
     header.has_else_value = false;
     return header;
@@ -83,7 +88,7 @@ fn keysEqual(key_tag: u64, a_bits: i64, b_bits: i64) bool {
 }
 
 pub fn mapSetI64(map: *MapHeader, key: i64, value: i64) void {
-    const alloc = mapAllocator();
+    const alloc = mapAllocator(map.scope);
 
     // 1) Update existing entry if key already present
     var i: usize = 0;

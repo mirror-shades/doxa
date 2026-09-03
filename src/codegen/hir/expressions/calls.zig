@@ -6,6 +6,7 @@ const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
 const SoxaStatements = @import("../soxa_statements.zig");
 const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
+const HeapCopyKind = @import("../soxa_types.zig").HeapCopyKind;
 const ScopeKind = @import("../soxa_types.zig").ScopeKind;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ArithOp = @import("../soxa_instructions.zig").ArithOp;
@@ -23,7 +24,7 @@ pub const CallsHandler = struct {
         return .{ .generator = generator };
     }
 
-    fn storeVariableOrAlias(self: *CallsHandler, var_name: []const u8, expected_type: HIRType) !void {
+    fn storeVariableOrAlias(self: *CallsHandler, var_name: []const u8, expected_type: HIRType, heap_copy: HeapCopyKind) !void {
         if (self.generator.symbol_table.isAliasParameter(var_name)) {
             if (self.generator.slot_manager.getAliasSlot(var_name)) |alias_slot| {
                 try self.generator.instructions.append(.{
@@ -47,6 +48,7 @@ pub const CallsHandler = struct {
                 .scope_kind = scope_kind,
                 .module_context = null,
                 .expected_type = expected_type,
+                .heap_copy = heap_copy,
             },
         });
     }
@@ -108,19 +110,8 @@ pub const CallsHandler = struct {
 
         const qualified_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ struct_name, method_name });
 
-        if (!mi.is_static and field_access.object.data == .Variable) {
-            const var_token = field_access.object.data.Variable;
-            const var_idx = try self.generator.getOrCreateVariable(var_token.lexeme);
-            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-            try self.generator.instructions.append(.{
-                .PushStorageId = .{
-                    .var_index = var_idx,
-                    .var_name = var_token.lexeme,
-                    .scope_kind = scope_kind,
-                },
-            });
-        } else if (!mi.is_static) {
-            try self.generator.generateExpression(field_access.object, true, false);
+        if (!mi.is_static) {
+            try self.generator.pushStructReceiver(field_access.object);
         }
 
         for (arguments) |arg| {
@@ -578,7 +569,8 @@ pub const CallsHandler = struct {
             if (builtin_data.arguments[0].data == .Variable) {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                try self.storeVariableOrAlias(var_name, expected_type);
+                const heap_copy: HeapCopyKind = if (target_type == .String) .rehome else .keep;
+                try self.storeVariableOrAlias(var_name, expected_type, heap_copy);
             } else if (builtin_data.arguments[0].data == .FieldAccess) {
                 const fa = builtin_data.arguments[0].data.FieldAccess;
                 try self.generator.generateExpression(fa.object, true, false);
@@ -599,9 +591,9 @@ pub const CallsHandler = struct {
                 });
                 if (fa.object.data == .Variable) {
                     const var_name = fa.object.data.Variable.lexeme;
-                    try self.storeVariableOrAlias(var_name, container_type);
+                    try self.storeVariableOrAlias(var_name, container_type, .keep);
                 } else if (fa.object.data == .This) {
-                    try self.storeVariableOrAlias("this", HIRType{ .Struct = 0 });
+                    try self.storeVariableOrAlias("this", HIRType{ .Struct = 0 }, .keep);
                 }
             }
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
@@ -625,10 +617,10 @@ pub const CallsHandler = struct {
 
                 if (target_type == .String) {
                     try self.generator.instructions.append(.Swap);
-                    try self.storeVariableOrAlias(var_name, expected_type);
+                    try self.storeVariableOrAlias(var_name, expected_type, .rehome);
                 } else {
                     try self.generator.instructions.append(.Swap);
-                    try self.storeVariableOrAlias(var_name, expected_type);
+                    try self.storeVariableOrAlias(var_name, expected_type, .keep);
                 }
             }
         } else if (std.mem.eql(u8, name, "insert")) {
@@ -640,7 +632,7 @@ pub const CallsHandler = struct {
             if (builtin_data.arguments[0].data == .Variable) {
                 const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                try self.storeVariableOrAlias(var_name, expected_type);
+                try self.storeVariableOrAlias(var_name, expected_type, .keep);
             } else {
                 try self.generator.instructions.append(.Pop);
             }
@@ -657,7 +649,7 @@ pub const CallsHandler = struct {
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
 
                 try self.generator.instructions.append(.Swap);
-                try self.storeVariableOrAlias(var_name, expected_type);
+                try self.storeVariableOrAlias(var_name, expected_type, .keep);
             } else {
                 try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.Pop);
@@ -679,7 +671,7 @@ pub const CallsHandler = struct {
                     const empty_str_value = HIRValue{ .string = "" };
                     const empty_str_idx = try self.generator.addConstant(empty_str_value);
                     try self.generator.instructions.append(.{ .Const = .{ .value = empty_str_value, .constant_id = empty_str_idx } });
-                    try self.storeVariableOrAlias(var_name, expected_type);
+                    try self.storeVariableOrAlias(var_name, expected_type, .rehome);
                 }
             } else {
                 try self.generator.generateExpression(builtin_data.arguments[0], true, false);
@@ -696,7 +688,7 @@ pub const CallsHandler = struct {
                 if (builtin_data.arguments[0].data == .Variable) {
                     const var_name = builtin_data.arguments[0].data.Variable.lexeme;
                     const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                    try self.storeVariableOrAlias(var_name, expected_type);
+                    try self.storeVariableOrAlias(var_name, expected_type, .keep);
                 } else {
                     try self.generator.instructions.append(.Pop);
                 }
@@ -825,7 +817,8 @@ pub const CallsHandler = struct {
             if (internal_data.receiver.data == .Variable) {
                 const var_name = internal_data.receiver.data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                try self.storeVariableOrAlias(var_name, expected_type);
+                const heap_copy: HeapCopyKind = if (target_type == .String) .rehome else .keep;
+                try self.storeVariableOrAlias(var_name, expected_type, heap_copy);
             } else if (internal_data.receiver.data == .FieldAccess) {
                 const fa = internal_data.receiver.data.FieldAccess;
                 try self.generator.generateExpression(fa.object, true, false);
@@ -846,9 +839,9 @@ pub const CallsHandler = struct {
                 });
                 if (fa.object.data == .Variable) {
                     const var_name = fa.object.data.Variable.lexeme;
-                    try self.storeVariableOrAlias(var_name, container_type);
+                    try self.storeVariableOrAlias(var_name, container_type, .keep);
                 } else if (fa.object.data == .This) {
-                    try self.storeVariableOrAlias("this", HIRType{ .Struct = 0 });
+                    try self.storeVariableOrAlias("this", HIRType{ .Struct = 0 }, .keep);
                 }
             }
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
@@ -945,9 +938,9 @@ pub const CallsHandler = struct {
             i -= 1;
             const param = func_body.function_params[i];
             const alias_lookup = if (is_method) i + 1 else i;
-            const expected_t = func_body.param_types[alias_lookup];
+            const expected_t = func_body.function_info.param_types[alias_lookup];
 
-            if (func_body.param_is_alias[alias_lookup]) {
+            if (func_body.function_info.param_is_alias[alias_lookup]) {
                 try self.generator.instructions.append(.{
                     .BindAlias = .{
                         .alias_name = param.name.lexeme,

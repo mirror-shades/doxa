@@ -1,6 +1,8 @@
 module std from @std()
 
+# const N is 20_000
 const N is 2_000_000
+# const OUTER is 6
 const OUTER is 600
 
 public entry function main() {

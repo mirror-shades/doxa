@@ -499,6 +499,7 @@ pub const CollectionsHandler = struct {
                 .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
                 .module_context = null,
                 .expected_type = expected_type,
+                .heap_copy = .keep,
             } });
         }
     }

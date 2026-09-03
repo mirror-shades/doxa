@@ -29,3 +29,4 @@ Doxa is a simple to write, highly readible language based on four corned logical
 - [Tetras](tetras.md) — four-valued logic in place of booleans
 - [Typed unions](unions.md) — `A | B` unions and narrowing
 - [Zig blocks](zig.md) — embedded Zig modules and the inline Zig ABI
+- [Compiler performance notes](performance.md) — codegen observations from the benchmark suite

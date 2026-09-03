@@ -1,0 +1,19 @@
+public var frames :: int is 0
+
+public function bump() {
+    frames += 1
+    @print("frames={@string(frames)}\n")
+}
+
+public function show(x :: int) {
+    @print("x={x} sum={@string(x + 1)} greet={greet()}\n")
+}
+
+public function label(limit :: tetra) returns string {
+    const s :: string is "limit fps: {limit}"
+    return s
+}
+
+public function greet() returns string {
+    return "hello world"
+}
