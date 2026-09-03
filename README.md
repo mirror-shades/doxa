@@ -32,8 +32,8 @@ Compile options:
   --arch=<arch>                     # Target CPU architecture (default: host)
   --os=<os>                         # Target operating system (default: host)
   --abi=<abi>                       # Target ABI (optional)
-  -O-1 | --opt=-1                   # Debug-aware codegen (peek dumps)
-  -O0..-O3 | --opt=0..3             # LLVM and codegen optimization level
+  --opt-mode=<debug|safe|fast|small># Zig release mode for the runtime and link step
+  -O0..-O3 | --opt=0..3             # clang -O level for the program (-O2 == zig cc -O2)
 
 Examples:
   doxa run file.doxa

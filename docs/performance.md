@@ -11,8 +11,11 @@ doxa run test/benchmark/suite.doxa -- --runs 10
 ```
 
 Each benchmark is compiled with `doxa compile … --opt=2` and its C twin with `zig cc -O2`.
-`doxa compile … --emit-opt-ir` writes the post-LLVM-optimization IR (`<stem>.opt.ll`) to the
-cache directory, which is what the analysis below is based on.
+`--opt=N` mirrors clang: `--opt=2` compiles the program's `.ll` to an object with `zig cc -O2`
+and links an unchecked (`ReleaseFast`) runtime, so the Doxa side optimizes its code at exactly
+the C baseline's `-O2` (see `Opt` in `src/main.zig`). `doxa compile … --emit-opt-ir` writes
+the post-LLVM-optimization IR (`<stem>.opt.ll`) to the cache directory, which is what the
+analysis below is based on.
 
 ## Current state (runs = 10)
 
@@ -21,23 +24,25 @@ compute time relative to the C baseline.
 
 | test    | doxa  | c      | % vs C  |
 | ------- | ----- | ------ | ------- |
-| fib     | 1.61s | 1.64s  | -1.57%  |
-| sieve   | 0.94s | 0.96s  | -1.75%  |
-| matrix  | 1.16s | 1.13s  | +2.99%  |
-| mb      | 0.91s | 0.92s  | -1.10%  |
-| arr     | 1.00s | 0.98s  | +2.36%  |
-| call    | 1.21s | 1.04s  | +15.77% |
-| struct  | 1.87s | 0.95s  | +97.33% |
-| vec     | 0.90s | 0.95s  | -5.78%  |
+| fib     | 1.61s | 1.64s  | -1.73%  |
+| sieve   | 0.92s | 0.91s  | +0.17%  |
+| matrix  | 1.18s | 1.15s  | +2.38%  |
+| mb      | 0.93s | 0.93s  | -0.33%  |
+| arr     | 1.02s | 1.03s  | -0.59%  |
+| call    | 1.20s | 1.04s  | +15.37% |
+| struct  | 1.93s | 0.99s  | +95.38% |
+| vec     | 0.90s | 0.93s  | -4.02%  |
 
 `struct` and `call` are the two largest gaps.
 
 ### Not regressions
 
-`stats.csv` records earlier runs of the same workloads. On the most recent recorded run,
-`struct` was 3.51s Doxa vs 0.93s C (+278%) and `call` was 1.16s vs 1.01s (+15%). The current
-numbers are therefore the best recorded for both; `struct` improved ~2x. The remaining gap is
-a persistent codegen characteristic, not a recent regression.
+The June 2026 runs in `stats.csv` predate the VM-removal architecture; on the most recent of
+those, `struct` was 3.51s Doxa vs 0.93s C (+278%) and `call` was 1.16s vs 1.01s (+15%).
+`struct` improved ~1.8x to the best recorded time; `call` is essentially flat (~15% then,
+~15% now). `arr` spent the recorded era at +660% (7.9s) and now sits at -0.59% — the largest
+improvement of any workload. With every other workload within ~4% of C, the remaining
+`struct` and `call` gaps are persistent codegen characteristics, not recent regressions.
 
 ## `struct`: ~2x off C
 
@@ -45,8 +50,8 @@ Sources: `test/benchmark/d-src/struct.doxa`, `test/benchmark/c-src/struct.c`. Th
 a flat, by-value `Vec4[250000]`; the timed loop reads four fields, applies five modulo-65536
 operations, and writes four fields with a serial carry dependency.
 
-Three properties of the generated code (see the hot loop `loop_body_46` in
-`doxa_bench_struct.opt.ll`) account for the gap:
+Three properties of the generated code (see the timed hot loop inside `doxa_program_main` in
+`struct.opt.ll`, produced per the `--emit-opt-ir` step above) account for the gap:
 
 1. **Boxed element representation.** `var arr :: Vec4[N]` lowers to an array whose element
    slots are 8-byte references to separately arena-allocated (`doxa_scope_alloc`) and
@@ -65,8 +70,9 @@ Three properties of the generated code (see the hot loop `loop_body_46` in
 
 ## `call`: ~16% off C
 
-Sources: `test/benchmark/d-src/call.doxa`, `test/benchmark/c-src/call.c`. After `-O2` the
-Doxa IR is structurally close to C: `leaf_add` is inlined and `leaf_sum` is unrolled (~4x).
+Sources: `test/benchmark/d-src/call.doxa`, `test/benchmark/c-src/call.c`. After `--opt=2`
+optimization the Doxa IR is structurally close to C: `leaf_add` is inlined and `leaf_sum` is
+unrolled (~4x).
 The residual ~0.5 ns/iteration is best explained by the remaining floored-`%` sign-fix
 latency on the serial `sum % 997` chain and a less favorable unroll shape. This ~15% gap has
 been steady since the test was added.

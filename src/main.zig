@@ -59,7 +59,7 @@ const CLI = struct {
     target_arch: ?[]const u8,
     target_os: ?[]const u8,
     target_abi: ?[]const u8,
-    opt: OptMode,
+    opt: Opt,
     // Native linking directives forwarded to the final `zig build-exe` link
     // step (and the object `cc` step for includes). Each `--link/--libdir/
     // --framework/--include` occurrence appends one entry.
@@ -441,40 +441,43 @@ fn resolveBundledZigExecutable(allocator: std.mem.Allocator) ![]u8 {
     return zig_path;
 }
 
-// Optimization mode as a wrapper over the backend's four release modes. Doxa's
-// `Optimization` enum (None/Some/Speed/Size) maps directly onto these, and the
-// numeric `-O` / `--opt=` flags are folded in for direct command-line use.
+// Optimization is described on two axes that govern different parts of the
+// toolchain:
+//
+//   * `mode` — the zig backend release mode for the runtime and the final
+//     `zig build-exe` link (`Debug`, `ReleaseSafe`, `ReleaseFast`,
+//     `ReleaseSmall`). `safe` keeps runtime safety checks on; `fast` turns
+//     them off.
+//   * `level` — the clang `-O` level applied to the generated `.ll` when it is
+//     compiled to an object. This governs the program's own code, so the
+//     numeric `-O` / `--opt=` flags mirror clang's levels directly.
+//
+// The named `--opt-mode=` presets tie the axes together the way zig's C code
+// does (`safe` == `-O2`, `fast` == `-O3`, `small` == `-Oz`); the numeric form
+// picks a clang level and the zig mode that suits it.
+const OptLevel = enum {
+    o0,
+    o1,
+    o2,
+    o3,
+    oz,
+
+    fn clangFlag(self: OptLevel) []const u8 {
+        return switch (self) {
+            .o0 => "-O0",
+            .o1 => "-O1",
+            .o2 => "-O2",
+            .o3 => "-O3",
+            .oz => "-Oz",
+        };
+    }
+};
+
 const OptMode = enum {
     debug,
     safe,
     fast,
     small,
-
-    fn fromLevel(level: i32) OptMode {
-        return if (level <= 0) .debug else switch (level) {
-            1 => .safe,
-            2 => .fast,
-            else => .fast, // 3+
-        };
-    }
-
-    fn parse(text: []const u8) ?OptMode {
-        if (std.mem.eql(u8, text, "debug")) return .debug;
-        if (std.mem.eql(u8, text, "safe")) return .safe;
-        if (std.mem.eql(u8, text, "fast")) return .fast;
-        if (std.mem.eql(u8, text, "small")) return .small;
-        return null;
-    }
-
-    // clang `cc` optimization flag for the `.ll` -> `.o` object step.
-    fn clangFlag(self: OptMode) []const u8 {
-        return switch (self) {
-            .debug => "-O0",
-            .safe => "-O2",
-            .fast => "-O3",
-            .small => "-Oz",
-        };
-    }
 
     // `zig build-exe` / `zig build-obj` optimization mode flag. Debug is the
     // default and passed explicitly for clarity.
@@ -484,6 +487,48 @@ const OptMode = enum {
             .safe => "-OReleaseSafe",
             .fast => "-OReleaseFast",
             .small => "-OReleaseSmall",
+        };
+    }
+};
+
+const Opt = struct {
+    mode: OptMode,
+    level: OptLevel,
+
+    // clang `cc` optimization flag for the `.ll` -> `.o` object step.
+    fn clangFlag(self: Opt) []const u8 {
+        return self.level.clangFlag();
+    }
+
+    // zig optimization mode flag, forwarded to the runtime/link steps.
+    fn zigFlag(self: Opt) []const u8 {
+        return self.mode.zigFlag();
+    }
+
+    fn fromMode(text: []const u8) ?Opt {
+        return if (std.mem.eql(u8, text, "debug"))
+            .{ .mode = .debug, .level = .o0 }
+        else if (std.mem.eql(u8, text, "safe"))
+            .{ .mode = .safe, .level = .o2 }
+        else if (std.mem.eql(u8, text, "fast"))
+            .{ .mode = .fast, .level = .o3 }
+        else if (std.mem.eql(u8, text, "small"))
+            .{ .mode = .small, .level = .oz }
+        else
+            null;
+    }
+
+    // Numeric levels mirror clang: `-O2` is clang `-O2`, matching a C build
+    // with `zig cc -O2`. The runtime and link step switch to the unchecked
+    // `fast` mode at `-O2` and up so a release Doxa binary stays comparable to
+    // its C counterpart; `-O1` is a checked, lightly-optimized release.
+    fn fromLevel(level: i32) Opt {
+        return if (level <= 0)
+            .{ .mode = .debug, .level = .o0 }
+        else switch (level) {
+            1 => .{ .mode = .safe, .level = .o1 },
+            2 => .{ .mode = .fast, .level = .o2 },
+            else => .{ .mode = .fast, .level = .o3 }, // 3+
         };
     }
 };
@@ -762,7 +807,7 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
         .target_arch = null,
         .target_os = null,
         .target_abi = null,
-        .opt = .debug,
+        .opt = Opt.fromLevel(0),
         .link_libs = std.array_list.Managed([]const u8).init(allocator),
         .lib_dirs = std.array_list.Managed([]const u8).init(allocator),
         .frameworks = std.array_list.Managed([]const u8).init(allocator),
@@ -921,7 +966,7 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             try options.include_dirs.append(try allocator.dupe(u8, arg["--include=".len..]));
             continue;
         } else if (std.mem.startsWith(u8, arg, "--opt-mode=")) {
-            options.opt = OptMode.parse(arg["--opt-mode=".len..]) orelse {
+            options.opt = Opt.fromMode(arg["--opt-mode=".len..]) orelse {
                 std.debug.print("Error: invalid --opt-mode (expected debug|safe|fast|small): {s}\n", .{arg});
                 std.process.exit(EXIT_CODE_USAGE);
             };
@@ -931,14 +976,14 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
                 std.debug.print("Error: invalid --opt level: {s}\n", .{arg});
                 std.process.exit(EXIT_CODE_USAGE);
             };
-            options.opt = OptMode.fromLevel(level);
+            options.opt = Opt.fromLevel(level);
             continue;
         } else if (arg.len >= 3 and arg[0] == '-' and arg[1] == 'O') {
             const level = std.fmt.parseInt(i32, arg[2..], 10) catch {
                 std.debug.print("Error: invalid optimization flag: {s}\n", .{arg});
                 std.process.exit(EXIT_CODE_USAGE);
             };
-            options.opt = OptMode.fromLevel(level);
+            options.opt = Opt.fromLevel(level);
             continue;
         } else if (stringEquals(arg, "--emit-opt-ir")) {
             options.emit_opt_ir = true;
@@ -1110,8 +1155,8 @@ fn printUsage() void {
     std.debug.print("  --libdir=<dir>                    # Library search path (-L<dir>); repeatable\n", .{});
     std.debug.print("  --framework=<name>                # Link a macOS framework; repeatable\n", .{});
     std.debug.print("  --include=<dir>                   # Header search path (-I<dir>); repeatable\n", .{});
-    std.debug.print("  --opt-mode=<debug|safe|fast|small># Optimization mode (wraps backend release modes)\n", .{});
-    std.debug.print("  -O0..-O3 | --opt=0..3             # Optimization level (0=debug,1=safe,2/3=fast)\n", .{});
+    std.debug.print("  --opt-mode=<debug|safe|fast|small># Zig release mode for the runtime and link step\n", .{});
+    std.debug.print("  -O0..-O3 | --opt=0..3             # clang -O level for the program (-O2 == zig cc -O2)\n", .{});
     std.debug.print("  --emit-opt-ir                     # Also write optimized LLVM IR (<stem>.opt.ll) to cache\n", .{});
     std.debug.print("  --emit-asm                        # Also write target assembly (<stem>.s) to cache\n", .{});
     std.debug.print("  --lsp-debug-io                    # Trace raw LSP I/O when used with --lsp\n", .{});
