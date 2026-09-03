@@ -2077,12 +2077,16 @@ pub fn Methods(comptime Ctx: type) type {
                 var arg = arg_ptr.*;
                 var declared_type: ?HIR.HIRType = null;
                 var is_alias = false;
+                var is_readonly = false;
                 if (func_info) |info| {
                     if (i < info.param_types.len) {
                         declared_type = info.param_types[i];
                     }
                     if (i < info.param_is_alias.len) {
                         is_alias = info.param_is_alias[i];
+                    }
+                    if (i < info.param_is_readonly.len) {
+                        is_readonly = info.param_is_readonly[i];
                     }
                 } else if (c.call_kind == .ModuleFunction) {
                     if (self.zig_fn_param_types.get(c.qualified_name)) |param_types| {
@@ -2102,37 +2106,57 @@ pub fn Methods(comptime Ctx: type) type {
                     }
                 }
                 if (!is_alias) {
+                    // A fixed-size array argument is boxed into an ArrayHeader to
+                    // match a dynamic-array parameter. The callee snapshots a
+                    // by-value parameter it mutates, so the boxing copy here would
+                    // be wasted when the body is read-only on this parameter —
+                    // borrow the flat buffer instead, pointing the header's `data`
+                    // at `arg.name` the way `wrapFixedArrayHeader` does for alias
+                    // parameters. Read-only is decided once at signature build
+                    // (`param_is_readonly` from `hir/param_mutation.zig`), so the
+                    // call site needs no re-analysis.
                     if (arg.fixed_array_depth > 0 and declared_type != null and declared_type.? == .Array) {
-                        const elem_type = arg.array_type orelse HIR.HIRType.Int;
-                        const elem_size = self.arrayElementSize(elem_type);
-                        const elem_tag = self.arrayElementTag(elem_type);
-                        var total_elems: u64 = arg.fixed_array_sizes[0];
-                        for (1..@as(usize, arg.fixed_array_depth)) |j| {
-                            total_elems *= arg.fixed_array_sizes[j];
+                        if (is_readonly) {
+                            arg = try self.wrapFixedArrayHeader(w, .{
+                                .name = arg.name,
+                                .ty = .PTR,
+                                .array_type = arg.array_type,
+                                .fixed_array_depth = arg.fixed_array_depth,
+                                .fixed_array_sizes = arg.fixed_array_sizes,
+                            }, id);
+                            arg_ptr.* = arg;
+                        } else {
+                            const elem_type = arg.array_type orelse HIR.HIRType.Int;
+                            const elem_size = self.arrayElementSize(elem_type);
+                            const elem_tag = self.arrayElementTag(elem_type);
+                            var total_elems: u64 = arg.fixed_array_sizes[0];
+                            for (1..@as(usize, arg.fixed_array_depth)) |j| {
+                                total_elems *= arg.fixed_array_sizes[j];
+                            }
+                            const total_bytes = total_elems * elem_size;
+
+                            const dyn_reg = try self.nextTemp(id);
+                            const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n", .{ dyn_reg, elem_size, elem_tag, total_elems });
+                            defer self.allocator.free(new_line);
+                            try w.writeAll(new_line);
+
+                            const data_ptr_ptr = try self.nextTemp(id);
+                            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr_ptr, dyn_reg });
+                            defer self.allocator.free(gep_line);
+                            try w.writeAll(gep_line);
+
+                            const data_ptr = try self.nextTemp(id);
+                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ data_ptr, data_ptr_ptr });
+                            defer self.allocator.free(load_line);
+                            try w.writeAll(load_line);
+
+                            const copy_line = try std.fmt.allocPrint(self.allocator, "  call void @llvm.memcpy.p0.p0.i64(ptr align 1 {s}, ptr align 1 {s}, i64 {d}, i1 false)\n", .{ data_ptr, arg.name, total_bytes });
+                            defer self.allocator.free(copy_line);
+                            try w.writeAll(copy_line);
+
+                            arg = .{ .name = dyn_reg, .ty = .PTR, .array_type = elem_type };
+                            arg_ptr.* = arg;
                         }
-                        const total_bytes = total_elems * elem_size;
-
-                        const dyn_reg = try self.nextTemp(id);
-                        const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n", .{ dyn_reg, elem_size, elem_tag, total_elems });
-                        defer self.allocator.free(new_line);
-                        try w.writeAll(new_line);
-
-                        const data_ptr_ptr = try self.nextTemp(id);
-                        const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr_ptr, dyn_reg });
-                        defer self.allocator.free(gep_line);
-                        try w.writeAll(gep_line);
-
-                        const data_ptr = try self.nextTemp(id);
-                        const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ data_ptr, data_ptr_ptr });
-                        defer self.allocator.free(load_line);
-                        try w.writeAll(load_line);
-
-                        const copy_line = try std.fmt.allocPrint(self.allocator, "  call void @llvm.memcpy.p0.p0.i64(ptr align 1 {s}, ptr align 1 {s}, i64 {d}, i1 false)\n", .{ data_ptr, arg.name, total_bytes });
-                        defer self.allocator.free(copy_line);
-                        try w.writeAll(copy_line);
-
-                        arg = .{ .name = dyn_reg, .ty = .PTR, .array_type = elem_type };
-                        arg_ptr.* = arg;
                     }
                     if (declared_type) |decl| {
                         if (arg.ty == .Value and decl != .Union) {
@@ -2366,7 +2390,7 @@ pub fn Methods(comptime Ctx: type) type {
                 value = try self.buildDoxaValue(w, value, sd.declared_type, id);
             }
             if (!sd.is_const) {
-                value = try self.cloneHeapForStore(w, id, value, sd.declared_type);
+                value = try self.cloneHeapForGlobalStore(w, id, value, sd.declared_type);
             }
             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
                 value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
@@ -2431,7 +2455,10 @@ pub fn Methods(comptime Ctx: type) type {
             if (sv.expected_type == .Union) {
                 value = try self.buildDoxaValue(w, value, sv.expected_type, id);
             }
-            value = try self.cloneHeapForStore(w, id, value, sv.expected_type);
+            value = switch (sv.heap_copy) {
+                .keep => value,
+                .snapshot, .rehome => try self.cloneHeapForGlobalStore(w, id, value, sv.expected_type),
+            };
             const llvm_ty = self.stackTypeToLLVMType(value.ty);
             _ = try self.global_types.put(sv.var_name, value.ty);
             if (value.array_type) |array_type| {

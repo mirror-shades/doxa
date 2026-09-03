@@ -35,9 +35,9 @@ pub const StructsHandler = struct {
         const struct_data = struct_lit.StructLiteral;
 
         // Track field types for type checking
-        var field_types = try self.generator.allocator.alloc(HIRType, struct_data.fields.len);
+        const field_types = try self.generator.allocator.alloc(HIRType, struct_data.fields.len);
         defer self.generator.allocator.free(field_types);
-        var field_names = try self.generator.allocator.alloc([]const u8, struct_data.fields.len);
+        const field_names = try self.generator.allocator.alloc([]const u8, struct_data.fields.len);
         defer self.generator.allocator.free(field_names);
 
         // Prefer the struct declaration's field types over literal inference.
@@ -50,78 +50,43 @@ pub const StructsHandler = struct {
             break :blk ct.struct_fields.?;
         };
 
-        // Generate field values and names in reverse order for stack-based construction
-        var reverse_i = struct_data.fields.len;
-        while (reverse_i > 0) {
-            reverse_i -= 1;
-            const field = struct_data.fields[reverse_i];
+        // Reject literals that do not match the declared struct shape. Construction
+        // lays the struct out from the field order seen here, while field access
+        // (especially `this.field` in methods) follows the declaration; an
+        // undeclared field, a missing one, or a reordered literal would silently
+        // desynchronize the two. This guard covers the entry file and every
+        // imported module alike, so the mistake is a compile error with a precise
+        // message instead of a segmentation fault.
+        var emit_declared_order = false;
+        if (declared_types) |dfields| {
+            emit_declared_order = try self.validateLiteralFields(struct_data.name, struct_data.fields, dfields);
+        }
 
-            // If we know the struct type and this field's declared custom type name refers
-            // to an enum, set the enum context so `.FOO` lowers to an enum value, not string
-            const previous_enum_context = self.generator.current_enum_type;
-            if (self.generator.type_system.custom_types.get(struct_data.name.lexeme)) |ctype| {
-                if (ctype.kind == .Struct) {
-                    if (ctype.struct_fields) |cfields| {
-                        // Find matching field by name
-                        for (cfields) |cf| {
-                            if (std.mem.eql(u8, cf.name, field.name.lexeme)) {
-                                if (cf.custom_type_name) |ct_name| {
-                                    if (self.generator.type_system.custom_types.get(ct_name)) |maybe_enum| {
-                                        if (maybe_enum.kind == .Enum) {
-                                            self.generator.current_enum_type = ct_name;
-                                        }
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
+        if (emit_declared_order) {
+            // Emit fields in DECLARED order so the runtime memory layout always
+            // agrees with field access, regardless of how the literal orders them.
+            // `validateLiteralFields` guarantees every declared field is present.
+            const dfields = declared_types.?;
+            var reverse_i = dfields.len;
+            while (reverse_i > 0) {
+                reverse_i -= 1;
+                const decl_field = dfields[reverse_i];
+                const lit_field = findLiteralField(struct_data.fields, decl_field.name) orelse unreachable;
+                try self.emitStructLiteralField(lit_field.value, decl_field.name, decl_field.field_type, decl_field.custom_type_name, reverse_i, field_types, field_names);
             }
-
-            // Generate field value with possible enum context. Array-typed fields
-            // thread their declared element type down so empty literals (`[]`)
-            // produce a correctly-tagged runtime array instead of `Unknown`.
-            const declared_field_type = blk: {
-                if (declared_types) |dfields| {
-                    for (dfields) |df| {
-                        if (std.mem.eql(u8, df.name, field.name.lexeme)) break :blk df.field_type;
-                    }
-                }
-                break :blk HIRType{ .Unknown = {} };
-            };
-            const prev_override = self.generator.array_storage_override;
-            defer self.generator.array_storage_override = prev_override;
-            const prev_element_override = self.generator.array_element_type_override;
-            defer self.generator.array_element_type_override = prev_element_override;
-            if (declared_field_type == .Array) {
-                self.generator.array_storage_override = null;
-                self.generator.array_element_type_override = declared_field_type.Array.*;
-            } else {
-                self.generator.array_storage_override = null;
-                self.generator.array_element_type_override = null;
+        } else {
+            // The declared shape is unknown, or the literal is invalid (errors are
+            // already reported and abort the pipeline after HIR generation), so
+            // fall back to emitting the literal's own field order.
+            var reverse_i = struct_data.fields.len;
+            while (reverse_i > 0) {
+                reverse_i -= 1;
+                const field = struct_data.fields[reverse_i];
+                const info = self.declaredFieldInfo(struct_data.name.lexeme, field.name.lexeme);
+                const field_type = if (info) |i| i.field_type else HIRType{ .Unknown = {} };
+                const custom_type_name = if (info) |i| i.custom_type_name else null;
+                try self.emitStructLiteralField(field.value, field.name.lexeme, field_type, custom_type_name, reverse_i, field_types, field_names);
             }
-            try self.generator.generateExpression(field.value, true, false);
-            // Restore enum context
-            self.generator.current_enum_type = previous_enum_context;
-
-            // Infer and store field type
-            field_types[reverse_i] = blk: {
-                if (declared_types) |dfields| {
-                    for (dfields) |df| {
-                        if (std.mem.eql(u8, df.name, field.name.lexeme)) {
-                            if (df.field_type != .Unknown and df.field_type != .Nothing) break :blk df.field_type;
-                            break;
-                        }
-                    }
-                }
-                break :blk self.generator.inferTypeFromExpression(field.value);
-            };
-            field_names[reverse_i] = field.name.lexeme;
-
-            // Push field name as constant
-            const field_name_const = try self.generator.addConstant(HIRValue{ .string = field.name.lexeme });
-            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = field.name.lexeme }, .constant_id = field_name_const } });
         }
 
         // Generate StructNew instruction with field types
@@ -137,6 +102,165 @@ pub const StructsHandler = struct {
         });
 
         // Result is on the stack
+    }
+
+    /// Emit the value of a single struct-literal field, carrying any declared
+    /// field type and enum context into the value expression, then record the
+    /// field's type and name for the enclosing `StructNew`.
+    fn emitStructLiteralField(
+        self: *StructsHandler,
+        value_expr: *ast.Expr,
+        field_name: []const u8,
+        field_type: HIRType,
+        custom_type_name: ?[]const u8,
+        reverse_i: usize,
+        field_types: []HIRType,
+        field_names: [][]const u8,
+    ) ErrorList!void {
+        // If this field's declared type refers to an enum, set the enum context so
+        // `.FOO` lowers to an enum value rather than a string.
+        const previous_enum_context = self.generator.current_enum_type;
+        if (custom_type_name) |ct_name| {
+            if (self.generator.type_system.custom_types.get(ct_name)) |maybe_enum| {
+                if (maybe_enum.kind == .Enum) {
+                    self.generator.current_enum_type = ct_name;
+                }
+            }
+        }
+
+        // Array-typed fields thread their declared element type down so empty
+        // literals (`[]`) produce a correctly-tagged runtime array, not `Unknown`.
+        const prev_override = self.generator.array_storage_override;
+        defer self.generator.array_storage_override = prev_override;
+        const prev_element_override = self.generator.array_element_type_override;
+        defer self.generator.array_element_type_override = prev_element_override;
+        if (field_type == .Array) {
+            self.generator.array_storage_override = null;
+            self.generator.array_element_type_override = field_type.Array.*;
+        } else {
+            self.generator.array_storage_override = null;
+            self.generator.array_element_type_override = null;
+        }
+        try self.generator.generateExpression(value_expr, true, false);
+        // Restore enum context
+        self.generator.current_enum_type = previous_enum_context;
+
+        field_types[reverse_i] = if (field_type != .Unknown and field_type != .Nothing)
+            field_type
+        else
+            self.generator.inferTypeFromExpression(value_expr);
+        field_names[reverse_i] = field_name;
+
+        // Push field name as constant
+        const field_name_const = try self.generator.addConstant(HIRValue{ .string = field_name });
+        try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = field_name }, .constant_id = field_name_const } });
+    }
+
+    /// Look up a field's declared HIR type and custom-type name on a struct, when
+    /// the struct's declaration is known.
+    fn declaredFieldInfo(self: *StructsHandler, struct_name: []const u8, field_name: []const u8) ?struct { field_type: HIRType, custom_type_name: ?[]const u8 } {
+        if (self.generator.type_system.custom_types.get(struct_name)) |ct| {
+            if (ct.kind == .Struct) {
+                if (ct.struct_fields) |fields| {
+                    for (fields) |f| {
+                        if (std.mem.eql(u8, f.name, field_name)) {
+                            return .{ .field_type = f.field_type, .custom_type_name = f.custom_type_name };
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /// Check a struct literal against the declared struct fields, reporting a
+    /// compile error for every undeclared or duplicate field and for a
+    /// field-count mismatch. Returns `false` when the literal cannot be mapped
+    /// onto the declaration (so a layout built from it would not match access).
+    fn validateLiteralFields(
+        self: *StructsHandler,
+        struct_name: ast.Token,
+        literal_fields: []const *ast.StructInstanceField,
+        declared_fields: []const @import("../type_system.zig").TypeSystem.CustomTypeInfo.StructField,
+    ) ErrorList!bool {
+        var valid = true;
+
+        if (literal_fields.len != declared_fields.len) {
+            self.generator.reporter.reportCompileError(
+                ast.SourceSpan.fromToken(struct_name).location,
+                ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
+                "struct '{s}' expects {d} field{s}, but this literal provides {d}",
+                .{
+                    struct_name.lexeme,
+                    declared_fields.len,
+                    if (declared_fields.len == 1) "" else "s",
+                    literal_fields.len,
+                },
+            );
+            valid = false;
+        }
+
+        // Every literal field must be declared, and every declared field must be
+        // present in the literal. Together with the count check this also rejects
+        // duplicate literal fields, so the two sides always match one-to-one.
+        for (literal_fields) |lit_field| {
+            var found = false;
+            for (declared_fields) |decl_field| {
+                if (std.mem.eql(u8, decl_field.name, lit_field.name.lexeme)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;
+
+            const declared_list = try self.declaredFieldList(declared_fields);
+            defer self.generator.allocator.free(declared_list);
+            self.generator.reporter.reportCompileError(
+                ast.SourceSpan.fromToken(lit_field.name).location,
+                ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
+                "struct '{s}' has no field '{s}'; declared fields: {s}",
+                .{ struct_name.lexeme, lit_field.name.lexeme, declared_list },
+            );
+            valid = false;
+        }
+
+        for (declared_fields) |decl_field| {
+            var found = false;
+            for (literal_fields) |lit_field| {
+                if (std.mem.eql(u8, decl_field.name, lit_field.name.lexeme)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                self.generator.reporter.reportCompileError(
+                    ast.SourceSpan.fromToken(struct_name).location,
+                    ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
+                    "struct '{s}' is missing field '{s}'",
+                    .{ struct_name.lexeme, decl_field.name },
+                );
+                valid = false;
+            }
+        }
+
+        return valid;
+    }
+
+    /// Join declared struct field names into a human-readable list for error
+    /// messages, e.g. `name, entry_point, output`.
+    fn declaredFieldList(
+        self: *StructsHandler,
+        declared_fields: []const @import("../type_system.zig").TypeSystem.CustomTypeInfo.StructField,
+    ) ![]u8 {
+        const allocator = self.generator.allocator;
+        var list = std.array_list.Managed(u8).init(allocator);
+        errdefer list.deinit();
+        for (declared_fields, 0..) |field, i| {
+            if (i > 0) try list.appendSlice(", ");
+            try list.appendSlice(field.name);
+        }
+        if (declared_fields.len == 0) try list.appendSlice("(none)");
+        return list.toOwnedSlice();
     }
 
     /// Helper function to resolve field index and struct name from struct type and field name
@@ -630,6 +754,7 @@ pub const StructsHandler = struct {
                             .scope_kind = .Local,
                             .module_context = null,
                             .expected_type = expected_type,
+                            .heap_copy = .keep,
                         },
                     });
                 },
@@ -643,6 +768,7 @@ pub const StructsHandler = struct {
                             .scope_kind = .Local,
                             .module_context = null,
                             .expected_type = HIRType{ .Struct = 0 },
+                            .heap_copy = .keep,
                         },
                     });
                 },
@@ -690,6 +816,7 @@ pub const StructsHandler = struct {
                             .scope_kind = .Local,
                             .module_context = null,
                             .expected_type = expected_type,
+                            .heap_copy = .keep,
                         },
                     });
                 },
@@ -712,6 +839,7 @@ pub const StructsHandler = struct {
                                     .scope_kind = .Local,
                                     .module_context = null,
                                     .expected_type = HIRType{ .Struct = 0 },
+                                    .heap_copy = .keep,
                                 },
                             });
                         }
@@ -724,6 +852,7 @@ pub const StructsHandler = struct {
                                 .scope_kind = .Local,
                                 .module_context = null,
                                 .expected_type = HIRType{ .Struct = 0 },
+                                .heap_copy = .keep,
                             },
                         });
                     }
@@ -779,3 +908,11 @@ pub const StructsHandler = struct {
         try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
     }
 };
+
+/// Look up a struct-literal field by name, returning its value expression.
+fn findLiteralField(literal_fields: []const *ast.StructInstanceField, name: []const u8) ?*ast.StructInstanceField {
+    for (literal_fields) |lit_field| {
+        if (std.mem.eql(u8, lit_field.name.lexeme, name)) return lit_field;
+    }
+    return null;
+}

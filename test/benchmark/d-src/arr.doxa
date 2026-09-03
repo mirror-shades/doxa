@@ -1,7 +1,11 @@
 module std from @std()
 
+# const N is 10_000
 const N is 1_000_000
+# const OUTER is 75
 const OUTER is 7500
+# const SINK_ITERS is 750_000
+const SINK_ITERS is 75_000_000
 
 function arr_reduce(arr :: int[]) returns int {
     var sum is 0
@@ -22,7 +26,7 @@ public entry function main() {
         arr[i] is i % 997
     }
 
-    for i while i < 75000000 do i++ {
+    for i while i < SINK_ITERS do i++ {
         sink += arr[i % N]
     }
 

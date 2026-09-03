@@ -1,6 +1,8 @@
 module std from @std()
 
+# const N is 100
 const N is 400
+# const REPEATS is 3
 const REPEATS is 35
 
 var a :: float[N][N]

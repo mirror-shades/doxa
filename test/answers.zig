@@ -21,7 +21,7 @@ pub const expected_brainfuck_results = [_]print_result{
 };
 
 pub const expected_array_storage_results = [_]print_result{
-    .{ .value = "2 3" },
+    .{ .value = "3 3" },
 };
 
 pub const expected_alias_arrays_results = [_]print_result{
@@ -46,6 +46,24 @@ pub const expected_nested_struct_return_results = [_]print_result{
 pub const expected_runtime_const_if_results = [_]print_result{
     .{ .value = "yes" },
     .{ .value = "checking for args" },
+};
+
+pub const expected_global_array_push_results = [_]print_result{
+    .{ .value = "4 1 4" },
+    .{ .value = "2 7 8" },
+    .{ .value = "9 10" },
+    .{ .value = "9" },
+    .{ .value = "102.0 102.0 102.0" },
+    .{ .value = "ok" },
+    .{ .value = "2 10 20" },
+};
+
+pub const expected_module_string_interp_results = [_]print_result{
+    .{ .value = "frames=1" },
+    .{ .value = "frames=2" },
+    .{ .value = "frames=3" },
+    .{ .value = "limit fps: true" },
+    .{ .value = "x=42 sum=43 greet=hello world" },
 };
 
 pub const expected_inline_zig_test_results = [_]print_result{

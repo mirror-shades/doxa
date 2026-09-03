@@ -19,6 +19,7 @@ pub const HIRType = SoxaTypes.HIRType;
 const CallKind = SoxaTypes.CallKind;
 const HIRProgram = SoxaTypes.HIRProgram;
 const import_parser = @import("../../parser/import_parser.zig");
+const ParamMutation = @import("param_mutation.zig");
 const ResourceManager = @import("resource_manager.zig");
 const LabelGenerator = ResourceManager.LabelGenerator;
 const ConstantManager = ResourceManager.ConstantManager;
@@ -229,6 +230,10 @@ pub const HIRGenerator = struct {
 
     next_scope_id: u32 = 0,
 
+    // Serial number for unnamed temporary variables materialized during codegen
+    // (e.g. a struct-method receiver that is not a plain variable).
+    next_temp_id: u32 = 0,
+
     pub const FunctionInfo = SoxaTypes.FunctionInfo;
 
     pub const FunctionBody = struct {
@@ -238,8 +243,6 @@ pub const HIRGenerator = struct {
         function_name: []const u8,
         function_params: []ast.FunctionParam,
         return_type_info: ast.TypeInfo,
-        param_is_alias: []bool,
-        param_types: []HIRType,
     };
 
     pub const FunctionCallSite = struct {
@@ -251,6 +254,9 @@ pub const HIRGenerator = struct {
     pub const LoopContext = struct {
         break_label: []const u8,
         continue_label: []const u8,
+        loop_scope_id: u32,
+        body_scope_id: u32,
+        has_runtime_scope: bool,
     };
 
     pub const DeferredBlock = struct {
@@ -350,8 +356,21 @@ pub const HIRGenerator = struct {
         self.loop_deferred_boundaries.deinit();
     }
 
-    pub inline fn pushLoopContext(self: *HIRGenerator, break_label: []const u8, continue_label: []const u8) !void {
-        try self.loop_context_stack.append(.{ .break_label = break_label, .continue_label = continue_label });
+    pub inline fn pushLoopContext(
+        self: *HIRGenerator,
+        break_label: []const u8,
+        continue_label: []const u8,
+        loop_scope_id: u32,
+        body_scope_id: u32,
+        has_runtime_scope: bool,
+    ) !void {
+        try self.loop_context_stack.append(.{
+            .break_label = break_label,
+            .continue_label = continue_label,
+            .loop_scope_id = loop_scope_id,
+            .body_scope_id = body_scope_id,
+            .has_runtime_scope = has_runtime_scope,
+        });
     }
 
     pub inline fn popLoopContext(self: *HIRGenerator) void {
@@ -477,9 +496,11 @@ pub const HIRGenerator = struct {
                     const start_label = try self.label_generator.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{func.name.lexeme}));
 
                     var param_is_alias = try self.allocator.alloc(bool, func.params.len);
+                    var param_is_readonly = try self.allocator.alloc(bool, func.params.len);
                     var param_types = try self.allocator.alloc(HIRType, func.params.len);
                     for (func.params, 0..) |param, i| {
                         param_is_alias[i] = param.is_alias;
+                        param_is_readonly[i] = !ParamMutation.bodyMutatesVariable(func.body, param.name.lexeme);
                         param_types[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
                         // Sanitize param types: keep only simple primitives/markers for signature
                         param_types[i] = switch (param_types[i]) {
@@ -498,6 +519,7 @@ pub const HIRGenerator = struct {
                         .local_var_count = 0,
                         .is_entry = func.is_entry,
                         .param_is_alias = param_is_alias,
+                        .param_is_readonly = param_is_readonly,
                         .param_types = param_types,
                     };
 
@@ -510,8 +532,6 @@ pub const HIRGenerator = struct {
                         .function_name = func.name.lexeme,
                         .function_params = func.params,
                         .return_type_info = eff_rti,
-                        .param_is_alias = param_is_alias,
-                        .param_types = param_types,
                     });
                 },
                 .Expression => |maybe_expr| {
@@ -542,9 +562,11 @@ pub const HIRGenerator = struct {
                                 const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified_name}));
 
                                 var param_is_alias_imported = try self.allocator.alloc(bool, func.params.len);
+                                var param_is_readonly_imported = try self.allocator.alloc(bool, func.params.len);
                                 var param_types_imported = try self.allocator.alloc(HIRType, func.params.len);
                                 for (func.params, 0..) |param, i| {
                                     param_is_alias_imported[i] = param.is_alias;
+                                    param_is_readonly_imported[i] = !ParamMutation.bodyMutatesVariable(func.body, param.name.lexeme);
                                     var pt: HIRType = if (param.type_expr) |type_expr|
                                         self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*)
                                     else
@@ -567,6 +589,7 @@ pub const HIRGenerator = struct {
                                     .local_var_count = 0,
                                     .is_entry = false,
                                     .param_is_alias = param_is_alias_imported,
+                                    .param_is_readonly = param_is_readonly_imported,
                                     .param_types = param_types_imported,
                                 };
 
@@ -579,8 +602,6 @@ pub const HIRGenerator = struct {
                                     .function_name = qualified_name,
                                     .function_params = func.params,
                                     .return_type_info = eff_rti,
-                                    .param_is_alias = param_is_alias_imported,
-                                    .param_types = param_types_imported,
                                 });
                             },
                             .Expression => |maybe_expr| {
@@ -647,12 +668,14 @@ pub const HIRGenerator = struct {
                                 .local_var_count = 0,
                                 .is_entry = false,
                                 .param_is_alias = try self.allocator.alloc(bool, func_params.len),
+                                .param_is_readonly = try self.allocator.alloc(bool, func_params.len),
                                 .param_types = try self.allocator.alloc(HIRType, func_params.len),
                             };
 
                             if (!self.function_signatures.contains(sym_name)) {
                                 for (func_params, 0..) |p, i| {
                                     function_info2.param_is_alias[i] = p.is_alias;
+                                    function_info2.param_is_readonly[i] = !ParamMutation.bodyMutatesVariable(func_body, p.name.lexeme);
                                     var pt2: HIRType = if (p.type_expr) |te|
                                         self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, te)).*)
                                     else
@@ -673,8 +696,6 @@ pub const HIRGenerator = struct {
                                     .function_name = sym_name,
                                     .function_params = func_params,
                                     .return_type_info = eff_sym_rti,
-                                    .param_is_alias = function_info2.param_is_alias,
-                                    .param_types = function_info2.param_types,
                                 });
                             }
 
@@ -717,7 +738,7 @@ pub const HIRGenerator = struct {
 
                 const alias_lookup = if (is_method) param_index + 1 else param_index;
 
-                if (function_body.param_is_alias[alias_lookup]) {
+                if (function_body.function_info.param_is_alias[alias_lookup]) {
                     switch (param_type) {
                         .Map, .Function => return error.InvalidAliasType,
                         else => {},
@@ -780,12 +801,20 @@ pub const HIRGenerator = struct {
                     });
                 } else {
                     const var_idx = try self.symbol_table.createVariable(param.name.lexeme);
+                    // A by-value heap parameter is deep-copied on entry so the
+                    // callee cannot write through to the caller's object. When the
+                    // body never writes through it, the copy is unobservable and
+                    // only costs an O(n) clone plus an arena allocation per call.
+                    // Whether the body mutates the parameter is decided once when
+                    // the signature metadata is built (`param_is_readonly`), not
+                    // re-derived per binding here.
                     try self.instructions.append(.{ .StoreVar = .{
                         .var_index = var_idx,
                         .var_name = param.name.lexeme,
                         .scope_kind = self.symbol_table.determineVariableScope(param.name.lexeme),
                         .module_context = null,
                         .expected_type = param_type,
+                        .heap_copy = if (function_body.function_info.param_is_readonly[alias_lookup]) .keep else .snapshot,
                     } });
                 }
             }
@@ -1080,8 +1109,9 @@ pub const HIRGenerator = struct {
                 .body_ip = null,
                 .local_var_count = function_info.local_var_count,
                 .is_entry = function_info.is_entry,
-                .param_is_alias = function_body.param_is_alias,
-                .param_types = function_body.param_types,
+                .param_is_alias = function_info.param_is_alias,
+                .param_is_readonly = function_info.param_is_readonly,
+                .param_types = function_info.param_types,
             });
         }
 
@@ -1366,15 +1396,18 @@ pub const HIRGenerator = struct {
             if (!method.is_static) arity += 1;
 
             var param_is_alias = try self.allocator.alloc(bool, arity);
+            var param_is_readonly = try self.allocator.alloc(bool, arity);
             var param_types = try self.allocator.alloc(HIRType, arity);
             var param_idx: usize = 0;
             if (!method.is_static) {
                 param_is_alias[param_idx] = true;
+                param_is_readonly[param_idx] = false;
                 param_types[param_idx] = HIRType{ .Struct = 0 };
                 param_idx += 1;
             }
             for (method.params) |param| {
                 param_is_alias[param_idx] = param.is_alias;
+                param_is_readonly[param_idx] = !ParamMutation.bodyMutatesVariable(method.body, param.name.lexeme);
                 param_types[param_idx] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
                 param_types[param_idx] = switch (param_types[param_idx]) {
                     .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[param_idx],
@@ -1393,6 +1426,7 @@ pub const HIRGenerator = struct {
                 .local_var_count = 0,
                 .is_entry = false,
                 .param_is_alias = param_is_alias,
+                .param_is_readonly = param_is_readonly,
                 .param_types = param_types,
             };
 
@@ -1405,8 +1439,6 @@ pub const HIRGenerator = struct {
                     .function_name = qualified,
                     .function_params = method.params,
                     .return_type_info = eff_method_rti,
-                    .param_is_alias = param_is_alias,
-                    .param_types = param_types,
                 });
             }
         }
@@ -1475,6 +1507,54 @@ pub const HIRGenerator = struct {
         }
     }
 
+    /// Push a struct-method receiver in the form the callee expects: the address
+    /// of a slot holding the struct pointer, since `this` is an alias parameter
+    /// and every method body dereferences its receiver (`load ptr, ptr`).
+    ///
+    /// A plain variable is pushed by its storage id directly. Any other receiver
+    /// expression (nested field access like `pair.left`, a function-call result,
+    /// ...) evaluates to the struct pointer itself, so it is first materialized
+    /// into a temporary slot and the slot's address is pushed instead. Without
+    /// this, the method would dereference the struct pointer as if it were a
+    /// slot address and read garbage for `this.field`.
+    pub fn pushStructReceiver(self: *HIRGenerator, receiver: *ast.Expr) !void {
+        if (receiver.data == .Variable) {
+            const var_token = receiver.data.Variable;
+            const var_idx = try self.getOrCreateVariable(var_token.lexeme);
+            const scope_kind = self.symbol_table.determineVariableScope(var_token.lexeme);
+            try self.instructions.append(.{
+                .PushStorageId = .{
+                    .var_index = var_idx,
+                    .var_name = var_token.lexeme,
+                    .scope_kind = scope_kind,
+                },
+            });
+            return;
+        }
+
+        const temp_id = self.next_temp_id;
+        self.next_temp_id += 1;
+        const temp_name = try std.fmt.allocPrint(self.allocator, "__recv_{d}", .{temp_id});
+        const temp_idx = try self.getOrCreateVariable(temp_name);
+        try self.generateExpression(receiver, true, false);
+        try self.instructions.append(.{
+            .StoreVar = .{
+                .var_index = temp_idx,
+                .var_name = temp_name,
+                .scope_kind = .Local,
+                .module_context = null,
+                .expected_type = HIRType{ .Struct = 0 },
+            },
+        });
+        try self.instructions.append(.{
+            .PushStorageId = .{
+                .var_index = temp_idx,
+                .var_name = temp_name,
+                .scope_kind = .Local,
+            },
+        });
+    }
+
     pub fn generateInternalMethodCall(self: *HIRGenerator, method: Token, receiver: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
         const name = method.lexeme;
 
@@ -1492,14 +1572,7 @@ pub const HIRGenerator = struct {
                         const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ struct_name, name });
 
                         if (!mi.is_static) {
-                            switch (receiver.data) {
-                                .Variable => {
-                                    try self.generateExpression(receiver, true, false);
-                                },
-                                else => {
-                                    try self.generateExpression(receiver, true, false);
-                                },
-                            }
+                            try self.pushStructReceiver(receiver);
                         }
                         for (args) |arg| {
                             try self.generateExpression(arg.expr, true, false);
@@ -1701,6 +1774,7 @@ pub const HIRGenerator = struct {
                     .scope_kind = self.symbol_table.determineVariableScope(target_var),
                     .module_context = null,
                     .expected_type = expected_type,
+                    .heap_copy = .keep,
                 } });
             }
         }

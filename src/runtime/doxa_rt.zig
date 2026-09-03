@@ -14,6 +14,12 @@ pub export fn doxa_scope_exit() callconv(.c) void {
     scope_arena.exit();
 }
 
+/// Reset the current scope's allocations without destroying its arena. Used
+/// for reusable loop-body scopes.
+pub export fn doxa_scope_reset() callconv(.c) void {
+    scope_arena.reset();
+}
+
 /// Heap allocation entry point used by the emitted IR. Allocates from the
 /// current scope arena; reclaimed when that scope exits.
 pub export fn doxa_scope_alloc(size: i64, alignment: i64) callconv(.c) ?*anyopaque {
@@ -149,6 +155,7 @@ fn allocDoxaString(bytes: []const u8) DoxaString {
     if (bytes.len == 0) return .{ .ptr = null, .len = 0 };
     const buf = scope_arena.allocator().alloc(u8, bytes.len) catch return .{ .ptr = null, .len = 0 };
     @memcpy(buf, bytes);
+    string_scopes.put(std.heap.page_allocator, @intFromPtr(buf.ptr), scope_arena.currentScope()) catch {};
     return .{ .ptr = buf.ptr, .len = bytes.len };
 }
 
@@ -157,9 +164,15 @@ fn sliceFromDoxaString(s: DoxaString) []const u8 {
     return "";
 }
 
-fn ds_ptr(s: DoxaString) ?[*]const u8 { return s.ptr; }
-fn ds_len(s: DoxaString) usize { return s.len; }
-fn ds_from_parts(ptr: ?[*]const u8, len: usize) DoxaString { return .{ .ptr = ptr, .len = len }; }
+fn ds_ptr(s: DoxaString) ?[*]const u8 {
+    return s.ptr;
+}
+fn ds_len(s: DoxaString) usize {
+    return s.len;
+}
+fn ds_from_parts(ptr: ?[*]const u8, len: usize) DoxaString {
+    return .{ .ptr = ptr, .len = len };
+}
 
 var startup_argc: i32 = 0;
 var startup_argv: ?[*][*:0]u8 = null;
@@ -168,7 +181,6 @@ pub export fn doxa_set_args(argc: i32, argv: ?[*][*:0]u8) callconv(.c) void {
     startup_argc = argc;
     startup_argv = argv;
 }
-
 
 pub export fn doxa_int_from_string(ptr: ?[*]const u8, len: usize) callconv(.c) i64 {
     const raw = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
@@ -405,12 +417,40 @@ fn strCloneInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: usize, out_p
     };
     @memset(buf[0..alloc_len], 0);
     @memcpy(buf[0..bytes.len], bytes);
+    string_scopes.put(std.heap.page_allocator, @intFromPtr(buf), scope) catch {};
     out_ptr.* = buf;
     out_len.* = bytes.len;
 }
 
 pub export fn doxa_str_clone_at(levels: i64, ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
     strCloneInto(scope_arena.scopeAt(@intCast(levels)), ptr, len, out_ptr, out_len);
+}
+
+/// Clone a string into the program-root arena so a global store outlives every
+/// function and block that may have constructed the value.
+pub export fn doxa_str_clone_root(ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+    strCloneInto(scope_arena.rootScope(), ptr, len, out_ptr, out_len);
+}
+
+fn strRehomeInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) void {
+    if (ptr) |p| {
+        if (string_scopes.get(@intFromPtr(p))) |source_scope| {
+            if (scope_arena.isEqualOrDescendant(scope, source_scope)) {
+                out_ptr.* = @constCast(p);
+                out_len.* = len;
+                return;
+            }
+        }
+    }
+    strCloneInto(scope, ptr, len, out_ptr, out_len);
+}
+
+pub export fn doxa_str_rehome_at(levels: i64, ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+    strRehomeInto(scope_arena.scopeAt(@intCast(levels)), ptr, len, out_ptr, out_len);
+}
+
+pub export fn doxa_str_rehome_root(ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+    strRehomeInto(scope_arena.rootScope(), ptr, len, out_ptr, out_len);
 }
 
 /// Clone with a null terminator, returning the raw C-string pointer. Maps are
@@ -632,12 +672,10 @@ pub const DoxaUnionMeta = struct {
 };
 
 /// Re-home the heap payload of a boxed `DoxaValue` (String/Array/Struct) into
-/// the arena `levels` scopes above the current one, so a union returned from a
-/// function survives the callee scope being freed. Unboxed payloads (Int,
-/// Float, Byte, Tetra, Enum, Nothing) are left unchanged.
-pub export fn doxa_clone_doxa_value_at(levels: i64, val: *DoxaValue) callconv(.c) void {
+/// `scope`. Unboxed payloads (Int, Float, Byte, Tetra, Enum, Nothing) are left
+/// unchanged.
+fn cloneDoxaValueInto(scope: ?*scope_arena.Scope, val: *DoxaValue) void {
     const tag: DoxaTag = @enumFromInt(val.tag);
-    const scope = scope_arena.scopeAt(@intCast(levels));
     switch (tag) {
         .String => {
             const addr: u64 = @bitCast(val.payload_bits);
@@ -668,6 +706,19 @@ pub export fn doxa_clone_doxa_value_at(levels: i64, val: *DoxaValue) callconv(.c
         },
         else => {},
     }
+}
+
+/// Re-home the heap payload of a boxed `DoxaValue` (String/Array/Struct) into
+/// the arena `levels` scopes above the current one, so a union returned from a
+/// function survives the callee scope being freed. Unboxed payloads (Int,
+/// Float, Byte, Tetra, Enum, Nothing) are left unchanged.
+pub export fn doxa_clone_doxa_value_at(levels: i64, val: *DoxaValue) callconv(.c) void {
+    cloneDoxaValueInto(scope_arena.scopeAt(@intCast(levels)), val);
+}
+
+/// Re-home a boxed `DoxaValue` into the program-root arena for global stores.
+pub export fn doxa_clone_doxa_value_root(val: *DoxaValue) callconv(.c) void {
+    cloneDoxaValueInto(scope_arena.rootScope(), val);
 }
 
 pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void {
@@ -904,12 +955,15 @@ pub const StructDesc = extern struct {
 };
 
 var struct_registry: std.AutoHashMapUnmanaged(usize, *const StructDesc) = .{};
+var struct_scopes: std.AutoHashMapUnmanaged(usize, ?*scope_arena.Scope) = .{};
+var string_scopes: std.AutoHashMapUnmanaged(usize, ?*scope_arena.Scope) = .{};
 
 pub export fn doxa_struct_register(instance: ?*anyopaque, desc: ?*const StructDesc) callconv(.c) void {
     const inst = instance orelse return;
     const sd = desc orelse return;
     // Best-effort registration; OOM in a runtime struct registry is non-recoverable
     struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), sd) catch {};
+    struct_scopes.put(std.heap.page_allocator, @intFromPtr(inst), scope_arena.currentScope()) catch {};
 }
 
 /// Word count of a single struct field given its runtime tag. String fields
@@ -978,6 +1032,7 @@ fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
     // Register the clone so its fields can be introspected/printed (and cloned
     // again) under the same descriptor as the source.
     struct_registry.put(std.heap.page_allocator, @intFromPtr(dst.ptr), desc) catch {};
+    struct_scopes.put(std.heap.page_allocator, @intFromPtr(dst.ptr), scope) catch {};
     return result;
 }
 
@@ -987,6 +1042,37 @@ fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
 /// copied verbatim.
 pub export fn doxa_struct_clone_at(levels: i64, ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
     return structCloneInto(scope_arena.scopeAt(@intCast(levels)), ptr);
+}
+
+/// Deep-copy a struct into the program-root arena so a global store outlives
+/// the function that constructed it.
+pub export fn doxa_struct_clone_root(ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
+    return structCloneInto(scope_arena.rootScope(), ptr);
+}
+
+/// Like `structCloneInto`, but keep the original pointer when its allocating
+/// arena already outlives `scope` (same arena or an ancestor). That preserves
+/// identity for `each n in arr { n.field is ... }` — a snapshot clone would
+/// disconnect `n` from the array element.
+///
+/// Unknown allocation scope keeps identity too. Array elements and other
+/// long-lived heap objects are often not in `struct_scopes`; cloning them
+/// would silently snapshot field writes off the source.
+fn structRehomeInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
+    const src = ptr orelse return null;
+    if (struct_scopes.get(@intFromPtr(src))) |src_scope| {
+        if (scope_arena.isEqualOrDescendant(scope, src_scope)) return src;
+        return structCloneInto(scope, src);
+    }
+    return src;
+}
+
+pub export fn doxa_struct_rehome_at(levels: i64, ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
+    return structRehomeInto(scope_arena.scopeAt(@intCast(levels)), ptr);
+}
+
+pub export fn doxa_struct_rehome_root(ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
+    return structRehomeInto(scope_arena.rootScope(), ptr);
 }
 
 pub const EnumDesc = extern struct {
@@ -1208,6 +1294,29 @@ pub export fn doxa_array_clone_at(levels: i64, hdr: ?*ArrayHeader) callconv(.c) 
     return arrayCloneAt(@intCast(levels), hdr);
 }
 
+/// Clone an array into the program-root arena so a global store outlives the
+/// function that produced the value.
+pub export fn doxa_array_clone_root(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
+    return arrayCloneIn(scope_arena.rootScope(), hdr);
+}
+
+/// Preserve an array when its owner already outlives the destination; clone
+/// only when storing across a scope boundary would otherwise leave a dangling
+/// header or backing buffer.
+fn arrayRehomeIn(scope: ?*scope_arena.Scope, hdr: ?*ArrayHeader) *ArrayHeader {
+    const src = hdr orelse return arrayNewIn(scope, 8, 0, 0);
+    if (scope_arena.isEqualOrDescendant(scope, src.scope)) return src;
+    return arrayCloneIn(scope, src);
+}
+
+pub export fn doxa_array_rehome_at(levels: i64, hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
+    return arrayRehomeIn(scope_arena.scopeAt(@intCast(levels)), hdr);
+}
+
+pub export fn doxa_array_rehome_root(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeader {
+    return arrayRehomeIn(scope_arena.rootScope(), hdr);
+}
+
 pub export fn doxa_array_len(hdr: *ArrayHeader) callconv(.c) u64 {
     return hdr.len;
 }
@@ -1233,7 +1342,7 @@ pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
             const bits: i64 = @bitCast(fp.*);
             break :blk_float bits;
         },
-         3 => blk_str: { // string: 16-byte DoxaString, first word is the pointer
+        3 => blk_str: { // string: 16-byte DoxaString, first word is the pointer
             const ip: *const i64 = @ptrCast(@alignCast(p));
             break :blk_str ip.*;
         },
@@ -1281,7 +1390,7 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
             const f: f64 = @bitCast(value);
             fp.* = f;
         },
-         3 => { // string: handled by doxa_array_set_str
+        3 => { // string: handled by doxa_array_set_str
             return;
         },
         4 => { // tetra (2-bit stored in u8)

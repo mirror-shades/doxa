@@ -129,6 +129,16 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected = .{ .exit_code = 1, .contains_message = "cannot be used with @push", .error_code = "E6018" },
         },
         .{
+            .name = "struct literal undeclared field",
+            .path = "./test/misc/struct_literal_bad_field.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "struct 'Person' has no field 'kind'; declared fields: name, age", .error_code = "E1011" },
+        },
+        .{
+            .name = "struct literal undeclared field in imported module",
+            .path = "./test/misc/module_bad_struct_import.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "struct 'Item' has no field 'kind'; declared fields: name, count, tags", .error_code = "E1011" },
+        },
+        .{
             .name = "unreachable keyword",
             .path = "./test/misc/unreachable.doxa",
             .expected = .{ .exit_code = 2, .contains_message = "Reached unreachable code", .error_code = null },

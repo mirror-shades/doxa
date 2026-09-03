@@ -13,8 +13,40 @@ pub fn Methods(comptime Ctx: type) type {
     const StackMergeState = Ctx.StackMergeState;
     const EnumVariantMeta = Ctx.EnumVariantMeta;
     const internPeekString = Ctx.internPeekString;
+    const ScopeElision = @import("./scope_elision.zig").Methods(Ctx);
 
     return struct {
+        /// Scope bookkeeping is suppressed wholesale for functions whose arenas
+        /// are provably unused (see `scope_elision.zig`). Routing every emission
+        /// through these helpers keeps enter/exit balanced: either both sides are
+        /// written or neither is.
+        fn emitScopeEnter(self: *IRPrinter, w: anytype) !void {
+            if (self.scopes_elided) return;
+            try w.writeAll("  call void @doxa_scope_enter()\n");
+        }
+
+        fn emitScopeExit(self: *IRPrinter, w: anytype) !void {
+            if (self.scopes_elided) return;
+            try w.writeAll("  call void @doxa_scope_exit()\n");
+        }
+
+        fn emitScopeReset(self: *IRPrinter, w: anytype) !void {
+            if (self.scopes_elided) return;
+            try w.writeAll("  call void @doxa_scope_reset()\n");
+        }
+
+        /// Unwind the reusable loop scopes still active at a `return`, then the
+        /// function's own scope. Each reusable loop scope contributes two levels.
+        fn emitReturnScopeExits(self: *IRPrinter, w: anytype, loop_scope_count: u32) !void {
+            if (self.scopes_elided) return;
+            var loop_i = loop_scope_count;
+            while (loop_i > 0) : (loop_i -= 1) {
+                try w.writeAll("  call void @doxa_scope_exit()\n");
+                try w.writeAll("  call void @doxa_scope_exit()\n");
+            }
+            try w.writeAll("  call void @doxa_scope_exit()\n");
+        }
+
         pub fn writeFunction(
             self: *IRPrinter,
             hir: *const HIR.HIRProgram,
@@ -31,6 +63,12 @@ pub fn Methods(comptime Ctx: type) type {
             const range = self.getFunctionRange(hir, func, func_start_labels) orelse return;
             const start_idx = range.start;
             const end_idx = range.end;
+
+            // A function that never puts a value in its scope arena does not need
+            // one. Skipping the enter/exit pair removes two page-allocator round
+            // trips per call, which is the whole cost of scalar leaf functions.
+            self.scopes_elided = ScopeElision.functionScopeIsDead(func.param_types, func.return_type, hir.instructions[start_idx..end_idx]);
+            defer self.scopes_elided = false;
 
             // First pass: Collect all variables that need allocation
             var variables_to_allocate = std.StringHashMap(VariableInfo).init(self.allocator);
@@ -272,7 +310,7 @@ pub fn Methods(comptime Ctx: type) type {
                             if (ret.has_value and stack.items.len > 0) {
                                 stack.items.len -= 1;
                             }
-                            try w.writeAll("  call void @doxa_scope_exit()\n");
+                            try emitReturnScopeExits(self, w, ret.loop_scope_count);
                             try w.writeAll("  ret void\n");
                             last_instruction_was_terminator = true;
                             continue;
@@ -287,7 +325,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 v = try self.coerceForStore(v, target_return_stack_type, &id, w);
                             }
                             v = try self.cloneHeapForReturn(w, &id, v, func.return_type);
-                            try w.writeAll("  call void @doxa_scope_exit()\n");
+                            try emitReturnScopeExits(self, w, ret.loop_scope_count);
                             const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, v.name });
                             defer self.allocator.free(ret_line);
                             try w.writeAll(ret_line);
@@ -313,12 +351,12 @@ pub fn Methods(comptime Ctx: type) type {
                                 const zero4_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 3\n", .{ zero4, return_type_str, zero3 });
                                 defer self.allocator.free(zero4_line);
                                 try w.writeAll(zero4_line);
-                                try w.writeAll("  call void @doxa_scope_exit()\n");
+                                try emitReturnScopeExits(self, w, ret.loop_scope_count);
                                 const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero4 });
                                 defer self.allocator.free(ret_line);
                                 try w.writeAll(ret_line);
                             } else {
-                                try w.writeAll("  call void @doxa_scope_exit()\n");
+                                try emitReturnScopeExits(self, w, ret.loop_scope_count);
                                 const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} zeroinitializer\n", .{return_type_str});
                                 defer self.allocator.free(ret_line);
                                 try w.writeAll(ret_line);
@@ -467,7 +505,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
-                        if (lv.scope_kind == .GlobalLocal) {
+                        if (lv.scope_kind == .GlobalLocal or lv.scope_kind == .ModuleGlobal) {
                             try self.handleLoadVarGlobal(w, &stack, &id, lv.var_name);
                         } else if (variables.get(lv.var_name)) |entry| {
                             const result_name = try self.nextTemp(&id);
@@ -514,7 +552,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .PushStorageId => |psid| {
-                        if (psid.scope_kind == .GlobalLocal) {
+                        if (psid.scope_kind == .GlobalLocal or psid.scope_kind == .ModuleGlobal) {
                             try self.handlePushStorageIdGlobal(w, &stack, &id, psid.var_name);
                         } else if (variables.get(psid.var_name)) |entry| {
                             if (entry.fixed_array_depth > 0) {
@@ -685,12 +723,16 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .EnterScope => |_| {
-                        try w.writeAll("  call void @doxa_scope_enter()\n");
+                        try emitScopeEnter(self, w);
                         self.scope_depth += 1;
                         last_instruction_was_terminator = false;
                     },
+                    .ResetScope => |_| {
+                        try emitScopeReset(self, w);
+                        last_instruction_was_terminator = false;
+                    },
                     .ExitScope => |s| {
-                        try w.writeAll("  call void @doxa_scope_exit()\n");
+                        try emitScopeExit(self, w);
                         if (!self.exited_scopes.contains(s.scope_id)) {
                             self.scope_depth -|= 1;
                             self.exited_scopes.put(s.scope_id, {}) catch {};
@@ -809,7 +851,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .StoreVar => |sv| {
-                        if (sv.scope_kind == .GlobalLocal) {
+                        if (sv.scope_kind == .GlobalLocal or sv.scope_kind == .ModuleGlobal) {
                             try self.handleStoreVarGlobal(w, &stack, &id, sv);
                         } else {
                             if (stack.items.len < 1) continue;
@@ -826,7 +868,11 @@ pub fn Methods(comptime Ctx: type) type {
                             if (sv.expected_type == .Union) {
                                 value = try self.buildDoxaValue(w, value, sv.expected_type, &id);
                             }
-                            value = try self.cloneHeapForStore(w, &id, value, sv.expected_type);
+                            value = switch (sv.heap_copy) {
+                                .snapshot => try self.cloneHeapForSnapshot(w, &id, value, sv.expected_type),
+                                .keep => value,
+                                .rehome => try self.cloneHeapForStore(w, &id, value, sv.expected_type),
+                            };
                             var info_ptr = variables.getPtr(sv.var_name);
                             if (info_ptr == null) {
                                 continue;
@@ -926,7 +972,7 @@ pub fn Methods(comptime Ctx: type) type {
 
             if (!last_instruction_was_terminator) {
                 if (target_return_stack_type == .Nothing) {
-                    try w.writeAll("  call void @doxa_scope_exit()\n");
+                    try emitScopeExit(self, w);
                     try w.writeAll("  ret void\n");
                 } else if (std.mem.indexOf(u8, return_type_str, "%DoxaValue") != null) {
                     const zero = try self.nextTemp(&id);
@@ -945,12 +991,12 @@ pub fn Methods(comptime Ctx: type) type {
                     const zero4_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 3\n", .{ zero4, return_type_str, zero3 });
                     defer self.allocator.free(zero4_line);
                     try w.writeAll(zero4_line);
-                    try w.writeAll("  call void @doxa_scope_exit()\n");
+                    try emitScopeExit(self, w);
                     const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero4 });
                     defer self.allocator.free(ret_line);
                     try w.writeAll(ret_line);
                 } else {
-                    try w.writeAll("  call void @doxa_scope_exit()\n");
+                    try emitScopeExit(self, w);
                     const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} zeroinitializer\n", .{return_type_str});
                     defer self.allocator.free(ret_line);
                     try w.writeAll(ret_line);
@@ -1072,10 +1118,10 @@ pub fn Methods(comptime Ctx: type) type {
                             const variants = et.variants(member.id) orelse continue;
                             for (variants) |variant| {
                                 try registerVariant.add(self, group_name, variant.index, variant.name);
+                            }
+                        }
                     }
                 }
-            }
-        }
             }
         }
 

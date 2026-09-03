@@ -19,6 +19,12 @@ pub fn allocator() std.mem.Allocator {
     return head.?.arena.allocator();
 }
 
+/// Allocator for a scope that is still live on the scope stack.
+pub fn allocatorInScope(scope: ?*Scope) std.mem.Allocator {
+    const node: *ScopeNode = @ptrCast(@alignCast(scope orelse return allocator()));
+    return node.arena.allocator();
+}
+
 pub fn enter() void {
     const node = std.heap.page_allocator.create(ScopeNode) catch @panic("scope_arena: OOM");
     node.* = .{ .arena = std.heap.ArenaAllocator.init(std.heap.page_allocator), .prev = head };
@@ -32,12 +38,45 @@ pub fn exit() void {
     std.heap.page_allocator.destroy(node);
 }
 
+/// Reclaim every allocation in the current scope while keeping the scope node
+/// and its arena available for reuse. This is the physical implementation of a
+/// lexical scope whose lifetime repeats (for example, a loop body).
+pub fn reset() void {
+    const node = head orelse return;
+    _ = node.arena.reset(.retain_capacity);
+}
+
 /// Opaque handle to a scope. Arrays record the scope they were allocated in so
 /// heap elements pushed into them can be re-homed to the same arena.
 pub const Scope = opaque {};
 
 pub fn currentScope() ?*Scope {
     return if (head) |h| @ptrCast(h) else null;
+}
+
+/// The program-root arena: the oldest node on the scope stack. Globals live
+/// here; `doxa_program_main` never exits this scope.
+pub fn rootScope() ?*Scope {
+    if (head == null) enter();
+    var node = head;
+    while (node) |n| {
+        if (n.prev == null) return @ptrCast(n);
+        node = n.prev;
+    }
+    return null;
+}
+
+/// True when `child` is `ancestor` or a nested arena under it. Used to skip
+/// identity-breaking clones when a heap value already lives in a scope that
+/// outlives the destination.
+pub fn isEqualOrDescendant(child: ?*Scope, ancestor: ?*Scope) bool {
+    const anc: ?*ScopeNode = @ptrCast(@alignCast(ancestor orelse return child == null));
+    var node: ?*ScopeNode = @ptrCast(@alignCast(child));
+    while (node) |n| {
+        if (n == anc) return true;
+        node = n.prev;
+    }
+    return false;
 }
 
 pub fn scopeAt(levels: usize) ?*Scope {
@@ -85,4 +124,16 @@ pub fn createInScope(scope: ?*Scope, comptime T: type) *T {
 pub fn allocSliceInScope(scope: ?*Scope, comptime T: type, n: usize) []T {
     const raw = allocInScope(scope, @sizeOf(T) * n, .fromByteUnits(@alignOf(T)), @returnAddress()) orelse @panic("scope_arena: OOM");
     return @as([*]T, @ptrCast(@alignCast(raw)))[0..n];
+}
+
+test "reset reuses the current scope node" {
+    enter();
+    defer exit();
+
+    const scope = currentScope();
+    _ = allocator().alloc(u8, 128) catch unreachable;
+    reset();
+
+    try std.testing.expectEqual(scope, currentScope());
+    _ = allocator().alloc(u8, 128) catch unreachable;
 }

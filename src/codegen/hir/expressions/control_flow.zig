@@ -25,6 +25,53 @@ pub const ControlFlowHandler = struct {
         return .{ .generator = generator };
     }
 
+    fn typeNeedsRuntimeScope(info: ast.TypeInfo) bool {
+        return switch (info.base) {
+            .String, .Array, .Struct, .Map, .Union => true,
+            else => false,
+        };
+    }
+
+    fn expressionNeedsRuntimeScope(self: *ControlFlowHandler, expr: *ast.Expr) bool {
+        if (self.generator.semantic_function_return_types) |type_map| {
+            if (type_map.get(expr.base.id)) |info| {
+                if (typeNeedsRuntimeScope(info.*)) return true;
+            }
+        }
+        return switch (expr.data) {
+            .Literal => |literal| switch (literal) {
+                .string => true,
+                else => false,
+            },
+            .InterpolatedString, .Array, .Struct, .StructLiteral, .Input => true,
+            .Block => |block| self.blockNeedsRuntimeScope(block.statements, block.value),
+            .If => |if_expr| (if_expr.then_branch != null and self.expressionNeedsRuntimeScope(if_expr.then_branch.?)) or
+                (if_expr.else_branch != null and self.expressionNeedsRuntimeScope(if_expr.else_branch.?)),
+            else => false,
+        };
+    }
+
+    fn blockNeedsRuntimeScope(self: *ControlFlowHandler, statements: []ast.Stmt, value: ?*ast.Expr) bool {
+        for (statements) |statement| {
+            switch (statement.data) {
+                .VarDecl => |decl| {
+                    if (typeNeedsRuntimeScope(decl.type_info)) return true;
+                    if (decl.initializer) |initializer| {
+                        if (self.expressionNeedsRuntimeScope(initializer)) return true;
+                    }
+                },
+                .Expression => |expr| {
+                    if (expr) |e| if (self.expressionNeedsRuntimeScope(e)) return true;
+                },
+                .Return => |ret| {
+                    if (ret.value) |e| if (self.expressionNeedsRuntimeScope(e)) return true;
+                },
+                else => {},
+            }
+        }
+        return if (value) |e| self.expressionNeedsRuntimeScope(e) else false;
+    }
+
     fn lowerMatchPatternLiteral(literal: ast.TokenLiteral) PatternLiteralLowering {
         return switch (literal) {
             .int => |v| .{ .value = .{ .int = v }, .operand_type = .Int },
@@ -179,7 +226,7 @@ pub const ControlFlowHandler = struct {
                     try self.generator.generateExpression(if_expr.then_branch.?, false, should_pop_after_use);
                 }
             }
-                try self.generator.instructions.append(.{ .Label = .{ .name = end_label } });
+            try self.generator.instructions.append(.{ .Label = .{ .name = end_label } });
         }
     }
 
@@ -495,15 +542,29 @@ pub const ControlFlowHandler = struct {
         const loop_body_label = try self.generator.generateLabel("loop_body");
         const loop_step_label = try self.generator.generateLabel("loop_step");
         const loop_end_label = try self.generator.generateLabel("loop_end");
+        const loop_false_label = try self.generator.generateLabel("loop_false");
         const loop_exit_label = try self.generator.generateLabel("loop_exit");
+        const loop_scope_id = self.generator.nextScopeId();
+        const body_scope_id = self.generator.nextScopeId();
+        const has_runtime_scope = self.expressionNeedsRuntimeScope(loop.body);
 
         // continue should jump to step if present, otherwise to start
         const continue_target = if (loop.step != null) loop_step_label else loop_start_label;
-        try self.generator.pushLoopContext(loop_end_label, continue_target);
+        try self.generator.pushLoopContext(loop_end_label, continue_target, loop_scope_id, body_scope_id, has_runtime_scope);
+
+        // The loop state survives iterations. The body arena is entered once
+        // and reset on each iteration instead of being recreated on every pass.
+        if (has_runtime_scope) {
+            try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = loop_scope_id, .var_count = 0 } });
+        }
 
         // Initializer (var decl or expression statement)
         if (loop.var_decl) |initializer| {
             try generateStatement(self.generator, initializer.*);
+        }
+
+        if (has_runtime_scope) {
+            try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = body_scope_id, .var_count = 0 } });
         }
 
         // Loop start - condition check
@@ -516,48 +577,55 @@ pub const ControlFlowHandler = struct {
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .tetra = TETRA_TRUE }, .constant_id = true_idx } });
         }
 
-        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = loop_body_label, .label_false = loop_exit_label, .condition_type = .Tetra } });
+        try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = loop_body_label, .label_false = loop_false_label, .condition_type = .Tetra } });
 
-        // Body - create scope that will be cleaned up each iteration
+        // Body - reset the reusable arena at the start of each iteration.
         try self.generator.instructions.append(.{ .Label = .{ .name = loop_body_label } });
+        if (has_runtime_scope) {
+            try self.generator.instructions.append(.{ .ResetScope = .{ .scope_id = body_scope_id } });
+        }
 
         // Push symbol table scope for loop body variables
         try self.generator.symbol_table.pushScope();
-
-        // Enter loop iteration scope
-        const loop_scope_id = self.generator.nextScopeId();
-        try self.generator.instructions.append(.{ .EnterScope = .{ .scope_id = loop_scope_id, .var_count = 0 } });
 
         const body_boundary = self.generator.deferred_stack.items.len;
         try self.generator.loop_deferred_boundaries.append(body_boundary);
 
         try self.generator.generateExpression(loop.body, false, false);
 
-        // If there's a step, exit scope at step label (continue target)
-        // Otherwise, exit scope at start label (continue target)
+        // Reset the body scope before the step or next condition check.
         if (loop.step != null) {
-            // Step - exit scope here so continue jumps to clean state
             try self.generator.instructions.append(.{ .Label = .{ .name = loop_step_label } });
-            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
-            // Pop symbol table scope
+            if (has_runtime_scope) {
+                try self.generator.instructions.append(.{ .ResetScope = .{ .scope_id = body_scope_id } });
+            }
             self.generator.symbol_table.popScope();
 
             if (loop.step) |step_expr| {
                 try self.generator.generateExpression(step_expr, false, false);
             }
         } else {
-            // No step - exit scope at start of next iteration
-            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
-            // Pop symbol table scope
+            if (has_runtime_scope) {
+                try self.generator.instructions.append(.{ .ResetScope = .{ .scope_id = body_scope_id } });
+            }
             self.generator.symbol_table.popScope();
         }
 
         try self.generator.instructions.append(.{ .Jump = .{ .label = loop_start_label } });
         try self.generator.instructions.append(.{ .Label = .{ .name = loop_end_label } }); // Add end label (break target)
-        // Exit the loop scope here for `break`, which bypasses the step exit.
-        try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
+        // Break bypasses the normal reset path, so unwind both logical scopes.
+        if (has_runtime_scope) {
+            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = body_scope_id } });
+            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
+        }
         try self.generator.instructions.append(.{ .Jump = .{ .label = loop_exit_label } });
-        // Condition-false target: the loop body (and its scope) was never entered.
+        // Condition-false target unwinds the scopes created before the check.
+        try self.generator.instructions.append(.{ .Label = .{ .name = loop_false_label } });
+        if (has_runtime_scope) {
+            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = body_scope_id } });
+            try self.generator.instructions.append(.{ .ExitScope = .{ .scope_id = loop_scope_id } });
+        }
+        try self.generator.instructions.append(.{ .Jump = .{ .label = loop_exit_label } });
         try self.generator.instructions.append(.{ .Label = .{ .name = loop_exit_label } });
         self.generator.popLoopContext();
         _ = self.generator.loop_deferred_boundaries.pop();
@@ -612,8 +680,18 @@ pub const ControlFlowHandler = struct {
         try self.generator.emitAllDeferredForReturn();
 
         // Generate Return instruction first so the VM deep-copies the return value
-        // to the caller's arena before ExitScope frees the current scope's arena.
-        try self.generator.instructions.append(.{ .Return = .{ .has_value = return_data.value != null, .return_type = self.generator.current_function_return_type } });
+        // to the caller's arena before the current scope's arena is freed.
+        try self.generator.instructions.append(.{ .Return = .{
+            .has_value = return_data.value != null,
+            .return_type = self.generator.current_function_return_type,
+            .loop_scope_count = blk: {
+                var count: u32 = 0;
+                for (self.generator.loop_context_stack.items) |context| {
+                    if (context.has_runtime_scope) count += 1;
+                }
+                break :blk count;
+            },
+        } });
 
         // Exit function scope after returning
         if (self.generator.current_function_scope_id) |scope_id| {

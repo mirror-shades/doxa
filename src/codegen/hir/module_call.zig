@@ -97,9 +97,47 @@ pub fn resolveBareCallee(generator: *HIRGenerator, bare_name: []const u8) Resolv
     };
 }
 
-fn structNameForReceiver(generator: *HIRGenerator, recv_var_name: []const u8) []const u8 {
-    if (generator.symbol_table.getVariableCustomType(recv_var_name)) |ctype| return ctype;
-    return recv_var_name;
+/// Resolve the concrete struct type name for a method-call receiver, or null
+/// when the receiver is not known to be a struct.
+///
+/// Unlike a bare tracked-variable lookup, this also resolves variables whose
+/// type came from a function return or `as` cast, and nested field access like
+/// `pair.left` (both go through the type system's field-resolution paths), so
+/// instance-method dispatch is not limited to literally-constructed structs.
+fn resolveReceiverStructName(generator: *HIRGenerator, receiver_expr: *ast.Expr) ?[]const u8 {
+    var candidate: ?[]const u8 = null;
+
+    // Fast path: an explicitly tracked variable (e.g. from a struct literal).
+    if (receiver_expr.data == .Variable) {
+        candidate = generator.symbol_table.getVariableCustomType(receiver_expr.data.Variable.lexeme);
+    }
+
+    // Type-driven resolution: variables initialized from a function return or
+    // cast, and nested field access.
+    if (candidate == null) {
+        if (generator.type_system.resolveFieldAccessType(receiver_expr, &generator.symbol_table)) |res| {
+            candidate = res.custom_type_name;
+        }
+    }
+
+    // Last resort: the inferred HIR type's struct-table name.
+    if (candidate == null) {
+        if (generator.type_system.struct_table) |table| {
+            const obj_type = generator.inferTypeFromExpression(receiver_expr);
+            if (obj_type == .Struct) candidate = table.getName(obj_type.Struct);
+        }
+    }
+
+    const name = candidate orelse return null;
+    // struct_methods is keyed by bare struct name; a qualified name (e.g. a
+    // nested struct from another module) needs its scope prefix stripped.
+    if (generator.struct_methods.get(name) == null) {
+        if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| {
+            const bare = name[dot + 1 ..];
+            if (bare.len > 0 and generator.struct_methods.get(bare) != null) return bare;
+        }
+    }
+    return name;
 }
 
 /// Classify any function-call callee (module, local, struct method, internal, etc.).
@@ -114,16 +152,17 @@ pub fn classifyCallTarget(generator: *HIRGenerator, callee: *ast.Expr) !CallTarg
 fn classifyFieldAccessCall(generator: *HIRGenerator, field_access: ast.FieldAccess) !CallTarget {
     if (field_access.object.data == .Variable) {
         const var_name = field_access.object.data.Variable.lexeme;
-        const struct_name = structNameForReceiver(generator, var_name);
-        if (!std.mem.eql(u8, struct_name, var_name)) {
-            if (generator.struct_methods.get(struct_name)) |method_table| {
-                if (method_table.get(field_access.field.lexeme)) |_| {
-                    return .{
-                        .struct_method = .{
-                            .struct_name = struct_name,
-                            .field_access = field_access,
-                        },
-                    };
+        if (resolveReceiverStructName(generator, field_access.object)) |struct_name| {
+            if (!std.mem.eql(u8, struct_name, var_name)) {
+                if (generator.struct_methods.get(struct_name)) |method_table| {
+                    if (method_table.get(field_access.field.lexeme)) |_| {
+                        return .{
+                            .struct_method = .{
+                                .struct_name = struct_name,
+                                .field_access = field_access,
+                            },
+                        };
+                    }
                 }
             }
         }
@@ -194,15 +233,38 @@ fn classifyFieldAccessCall(generator: *HIRGenerator, field_access: ast.FieldAcce
             }
         }
 
-        const struct_name = structNameForReceiver(generator, type_name);
-        if (generator.struct_methods.get(struct_name)) |method_table| {
-            if (method_table.get(field_access.field.lexeme)) |_| {
-                return .{
-                    .struct_method = .{
-                        .struct_name = struct_name,
-                        .field_access = field_access,
-                    },
-                };
+        if (resolveReceiverStructName(generator, field_access.object)) |struct_name| {
+            if (!std.mem.eql(u8, struct_name, type_name)) {
+                if (generator.struct_methods.get(struct_name)) |method_table| {
+                    if (method_table.get(field_access.field.lexeme)) |_| {
+                        return .{
+                            .struct_method = .{
+                                .struct_name = struct_name,
+                                .field_access = field_access,
+                            },
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    // Nested field-access receiver (`pair.left`, `zoo[0].owner`): the first
+    // receiver path only handles plain variables, so resolve the receiver's
+    // concrete struct type and dispatch to its instance method here.
+    if (resolveReceiverStructName(generator, field_access.object)) |struct_name| {
+        const is_bare_type_receiver = field_access.object.data == .Variable and
+            std.mem.eql(u8, field_access.object.data.Variable.lexeme, struct_name);
+        if (!is_bare_type_receiver) {
+            if (generator.struct_methods.get(struct_name)) |method_table| {
+                if (method_table.get(field_access.field.lexeme)) |_| {
+                    return .{
+                        .struct_method = .{
+                            .struct_name = struct_name,
+                            .field_access = field_access,
+                        },
+                    };
+                }
             }
         }
     }

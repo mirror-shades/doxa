@@ -41,7 +41,9 @@ pub const IRPrinter = struct {
     pub const functionSymbol = CoreMethods.functionSymbol;
     pub const mangleGlobalName = CoreMethods.mangleGlobalName;
     pub const cloneHeapForStore = CoreMethods.cloneHeapForStore;
+    pub const cloneHeapForSnapshot = CoreMethods.cloneHeapForSnapshot;
     pub const cloneHeapForReturn = CoreMethods.cloneHeapForReturn;
+    pub const cloneHeapForGlobalStore = CoreMethods.cloneHeapForGlobalStore;
     pub const cloneHeapValue = CoreMethods.cloneHeapValue;
 
     const ModuleLayoutMethods = @import("./ir_printer/module_layout.zig").Methods(Ctx);
@@ -176,6 +178,10 @@ pub const IRPrinter = struct {
     entry_str_out_len: ?[]const u8 = null,
     in_function_context: bool = false,
     scope_depth: usize = 0,
+    /// Set while emitting a function whose scope arenas are provably unused.
+    /// Suppresses every `doxa_scope_enter` / `exit` / `reset` in that body so a
+    /// scalar leaf function does not pay two page-allocator round trips per call.
+    scopes_elided: bool = false,
     exited_scopes: std.AutoHashMap(u32, void),
     /// Per-variable stack of `as`-cast narrowed member views. `NarrowVar` pushes
     /// a single-member union view; `RestoreVar` pops it. Loads of the variable
