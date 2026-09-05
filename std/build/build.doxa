@@ -231,10 +231,6 @@ public enum Optimization {
     Size,
 }
 
-public enum Kind {
-    Executable,
-}
-
 # Maps the four-cornered Optimization to the backend's release modes, mirrored by
 # the compiler's `--opt-mode` flag (debug | safe | fast | small). Written with
 # enum equality rather than `match`: a `match` expression on an enum currently
@@ -296,31 +292,25 @@ public struct Target {
     }
 }
 
-public struct Builder {
+public struct Executable {
     public name :: string,
     public entry_point :: string,
     public output :: string,
-    public kind :: Kind,
     public includes :: string[],
     public libdirs :: string[],
     public links :: string[],
     public frameworks :: string[],
 
-    public function new(name :: string, entry_point :: string, output :: string, kind :: Kind) returns Builder {
-        return $Builder {
+    public function new(name :: string, entry_point :: string, output :: string) returns Executable {
+        return $Executable {
             name is name,
             entry_point is entry_point,
             output is output,
-            kind is kind,
             includes is [],
             libdirs is [],
             links is [],
             frameworks is [],
         }
-    }
-
-    public function executable(name :: string, entry_point :: string, output :: string) returns Builder {
-        return Builder.new(name, entry_point, output, Kind.Executable)
     }
 
     public method include(x :: string | string[]) {
@@ -368,7 +358,7 @@ public struct Context {
     public target :: Target,
     public debug :: tetra,
     public optimization :: Optimization,
-    public artifacts :: Builder[],
+    public artifacts :: Executable[],
 
     public function new(target :: Target) returns Context {
         return $Context {
@@ -383,7 +373,7 @@ public struct Context {
         return Context.new(Target.host())
     }
 
-    public method addArtifact(b :: Builder) {
+    public method addArtifact(b :: Executable) {
         @push(this.artifacts, b)
     }
 }
@@ -392,7 +382,7 @@ public struct Context {
 # `run` can skip re-invoking the compiler. This is a cheap artifact-level pre-
 # filter; content-accurate up-to-date checks live in the driver (incremental
 # builds). Linked `-l` libraries are not part of the check.
-function artifactIsUpToDate(art :: Builder, target_os :: string) returns tetra {
+function artifactIsUpToDate(art :: Executable, target_os :: string) returns tetra {
     const output is Build.exePath(art.output, target_os)
     const out_mtime is Build.fileMtime(output)
     if out_mtime < 0 then return false

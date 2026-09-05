@@ -205,6 +205,7 @@ pub fn Methods(comptime Ctx: type) type {
                 try stack.append(.{
                     .name = reg,
                     .ty = .PTR,
+                    .region = self.currentRegionTag(),
                     .array_type = inst.element_type,
                     .fixed_array_depth = total_depth,
                     .fixed_array_sizes = fixed_sizes,
@@ -265,6 +266,7 @@ pub fn Methods(comptime Ctx: type) type {
             const arr_val = StackVal{
                 .name = reg,
                 .ty = .PTR,
+                .region = self.currentRegionTag(),
                 .array_type = inst.element_type,
             };
             try stack.append(arr_val);
@@ -362,7 +364,7 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
-            try stack.append(.{ .name = map_reg, .ty = .PTR, .array_type = inst.value_type });
+            try stack.append(.{ .name = map_reg, .ty = .PTR, .region = self.currentRegionTag(), .array_type = inst.value_type });
         }
 
         pub fn emitMapGet(
@@ -786,6 +788,12 @@ pub fn Methods(comptime Ctx: type) type {
                     );
                     defer self.allocator.free(args_line);
                     try self.emitRTCallReturningString(w, stack, id, "doxa_array_get_str", args_line);
+                    // A2 widening: element payloads are re-homed into the array's
+                    // own arena (`hdr.scope`) when stored, so a read shares the
+                    // container's region. A `Deep` container is always a
+                    // producer-fresh (definite) object — `LoadVar` folds recorded
+                    // `Deep` to `Unknown` — so this never manufactures a may-class.
+                    if (stack.items.len > 0) stack.items[stack.items.len - 1].region = arr_ptr.region;
                 } else if (dynamicElementLLVMType(element_type)) |elem_llvm_ty| {
                     const loaded = try emitDynamicElementLoad(self, w, id, arr_ptr.name, element_type, elem_llvm_ty, idx_i64.name);
                     try stack.append(loaded);
@@ -800,7 +808,13 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(call_line);
 
                     const stored = StackVal{ .name = elem_reg, .ty = .I64 };
-                    const actual = try self.convertArrayStorageToValue(w, stored, element_type, id);
+                    var actual = try self.convertArrayStorageToValue(w, stored, element_type, id);
+                    // Nested arrays and structs read out of an array were cloned
+                    // into the array's own arena at set time; carry the container's
+                    // region (A2 widening, same caveat as the string branch).
+                    if (element_type == .Array or element_type == .Struct) {
+                        actual.region = arr_ptr.region;
+                    }
                     try stack.append(actual);
                 }
             } else {
@@ -1263,7 +1277,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {s}, 1\n", .{ result_name, tmp_ds, loaded_len });
                 defer self.allocator.free(ins1);
                 try w.writeAll(ins1);
-                result_val = .{ .name = result_name, .ty = .STRING };
+                result_val = .{ .name = result_name, .ty = .STRING, .region = len_info.array.region };
             } else {
                 const elem_reg = try self.nextTemp(id);
                 const call_line = try std.fmt.allocPrint(
@@ -1276,13 +1290,18 @@ pub fn Methods(comptime Ctx: type) type {
 
                 const stored = StackVal{ .name = elem_reg, .ty = .I64 };
                 result_val = try self.convertArrayStorageToValue(w, stored, element_type, id);
+                // A2 widening (same rule as emitArrayGet): a popped element lives
+                // in the array's own arena until the array itself is freed.
+                if (element_type == .Array or element_type == .Struct) {
+                    result_val.region = len_info.array.region;
+                }
             }
 
             const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ idx, len_info.len_ptr });
             defer self.allocator.free(store_line);
             try w.writeAll(store_line);
 
-            try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = len_info.array.array_type });
+            try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .region = len_info.array.region, .array_type = len_info.array.array_type });
             try stack.append(result_val);
         }
 

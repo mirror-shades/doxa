@@ -8,6 +8,7 @@ pub fn Methods(comptime Ctx: type) type {
     const StackSlot = Ctx.StackSlot;
     const StackMergeState = Ctx.StackMergeState;
     const EnumVariantMeta = Ctx.EnumVariantMeta;
+    const Region = Ctx.Region;
 
     return struct {
         pub fn formatFloatLiteral(self: *IRPrinter, value: f64) ![]u8 {
@@ -622,6 +623,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .entry_str_out_len = null,
                 .exited_scopes = std.AutoHashMap(u32, void).init(allocator),
                 .narrowed_vars = std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)).init(allocator),
+                .var_regions = std.StringHashMap(Region).init(allocator),
             };
         }
 
@@ -644,6 +646,7 @@ pub fn Methods(comptime Ctx: type) type {
                 entry.value_ptr.deinit(self.allocator);
             }
             self.narrowed_vars.deinit();
+            self.var_regions.deinit();
             var ret_it = self.function_struct_return_fields.iterator();
             while (ret_it.next()) |entry| {
                 self.allocator.free(entry.value_ptr.*);
@@ -679,6 +682,82 @@ pub fn Methods(comptime Ctx: type) type {
                 entry.value_ptr.deinit(self.allocator);
             }
             self.enum_print_map.deinit();
+        }
+
+        /// Region class of the arena a fresh heap value is allocated into at the
+        /// current point of the function. The function-body scope (and any scope
+        /// outside it) is the only arena that outlives every local store; values
+        /// produced inside a reusable loop scope die on the next iteration reset.
+        pub fn currentRegionTag(self: *IRPrinter) Region {
+            return if (self.scope_depth <= 1) .Func else .Deep;
+        }
+
+        /// Heap types whose store path is a runtime *rehome* (identity preserved
+        /// when the source already outlives the destination). Unions always
+        /// deep-clone and maps are stored by pointer, so neither is a rehome
+        /// site and neither may take the static plain-store shortcut.
+        pub fn rehomeTypeEligible(t: HIR.HIRType) bool {
+            return switch (t) {
+                .String, .Array, .Struct => true,
+                else => false,
+            };
+        }
+
+        /// A1 static rehome decision: when the value's arena provably outlives
+        /// the store destination (the function-body scope), the runtime rehome
+        /// call would keep identity and copy nothing, so it can be skipped. This
+        /// is only ever consulted on rehome-eligible types; anything the region
+        /// analysis could not classify keeps the runtime call unchanged.
+        pub fn plainStoreProven(self: *IRPrinter, value: StackVal, declared_type: HIR.HIRType) bool {
+            _ = self;
+            if (!rehomeTypeEligible(declared_type)) return false;
+            return switch (value.region) {
+                .Root, .Func => true,
+                .Deep, .Unknown => false,
+            };
+        }
+
+        /// Record the region class of a local variable's payload after a store.
+        /// The emitter walks the instruction stream linearly, so this is not
+        /// path-sensitive: once a variable may hold a `Deep` (loop-arena) object
+        /// on *some* path, loads of it must stay conservative (`Deep` wins the
+        /// join) or a plain store could alias an object the loop reset is about
+        /// to free. `Func`/`Root` only join upward — from `Unknown`/absent to
+        /// the new class.
+        pub fn recordVarRegion(self: *IRPrinter, var_name: []const u8, region: Region) !void {
+            const merged = if (self.var_regions.get(var_name)) |cur|
+                if (cur == .Deep) .Deep else region
+            else
+                region;
+            try self.var_regions.put(var_name, merged);
+        }
+
+        /// A1 static decision for a store into a *global* (destination is the
+        /// program-root arena). Only a value already resident in the root arena
+        /// (`Root` — another global's payload or a module instance) provably
+        /// outlives it; a function-local or loop-arena object must still be
+        /// cloned up by the runtime rehome.
+        pub fn plainGlobalStoreProven(self: *IRPrinter, value: StackVal, declared_type: HIR.HIRType) bool {
+            _ = self;
+            if (!rehomeTypeEligible(declared_type)) return false;
+            return value.region == .Root;
+        }
+
+        /// A2: the local `.rehome` store decision, made statically. A local
+        /// store's destination is always the function-body arena, so the runtime
+        /// "does the source already outlive it?" walk is replaced by the region
+        /// class:
+        ///   - `Root`/`Func` → plain store (identity preserved, no copy);
+        ///   - `Deep` → explicit unconditional clone. A `Deep` source is born in
+        ///     a reusable loop arena that dies at the next iteration reset, so it
+        ///     never outlives the function body; the runtime rehome would clone
+        ///     it — emit that clone directly and skip the registry walk.
+        ///   - `Unknown` → the runtime rehome call, unchanged. The analysis could
+        ///     not prove the source arena, so the registry still decides.
+        pub fn rehomeForLocalStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
+            if (self.plainStoreProven(value, declared_type)) return value;
+            if (value.region == .Deep) return self.cloneHeapValue(w, id, value, declared_type, .persistent, true);
+            return self.cloneHeapForStore(w, id, value, declared_type);
         }
 
         /// Where a heap clone is allocated.

@@ -448,6 +448,7 @@ pub fn Methods(comptime Ctx: type) type {
             var dead_block_counter: usize = 0;
 
             self.clearNarrowedVars();
+            self.var_regions.clearRetainingCapacity();
             self.scope_depth = 0;
             for (hir.instructions[0..top_level_end_idx]) |inst| {
                 const tag = std.meta.activeTag(inst);
@@ -623,7 +624,7 @@ pub fn Methods(comptime Ctx: type) type {
                             defer self.allocator.free(store_module_line);
                             try w.writeAll(store_module_line);
 
-                            try stack.append(.{ .name = sentinel, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                            try stack.append(.{ .name = sentinel, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                             last_instruction_was_terminator = false;
                             continue;
                         }
@@ -704,7 +705,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(store_module_line);
                         try w.writeAll(store_module_line);
 
-                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
