@@ -59,6 +59,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.in_function_context = false;
 
             self.clearNarrowedVars();
+            self.var_regions.clearRetainingCapacity();
 
             const range = self.getFunctionRange(hir, func, func_start_labels) orelse return;
             const start_idx = range.start;
@@ -421,7 +422,7 @@ pub fn Methods(comptime Ctx: type) type {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 1 to ptr\n", .{sentinel});
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            try stack.append(.{ .name = sentinel, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                            try stack.append(.{ .name = sentinel, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                             last_instruction_was_terminator = false;
                             continue;
                         }
@@ -501,7 +502,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(store_module_line);
                         try w.writeAll(store_module_line);
 
-                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
@@ -520,6 +521,22 @@ pub fn Methods(comptime Ctx: type) type {
                             const loaded = StackVal{
                                 .name = result_name,
                                 .ty = entry.stack_type,
+                                // A region recorded for a *variable* is an upper
+                                // bound, not a fact: the Deep-wins join keeps a
+                                // loop-arena classification even after a later
+                                // `.rehome` store re-homed the payload into the
+                                // function body. Only a producer that allocates in
+                                // the current loop arena at the store site is a
+                                // definite `Deep`. A load therefore must never
+                                // present `Deep` as a clone signal — fold it to
+                                // `Unknown` so the emitter keeps the runtime
+                                // rehome call (which reads the object's real
+                                // arena) instead of statically cloning an object
+                                // the runtime would keep.
+                                .region = switch (self.var_regions.get(lv.var_name) orelse .Unknown) {
+                                    .Deep => .Unknown,
+                                    else => |r| r,
+                                },
                                 .array_type = entry.array_type,
                                 .enum_type_name = entry.enum_type_name,
                                 .struct_field_types = entry.struct_field_types,
@@ -788,6 +805,9 @@ pub fn Methods(comptime Ctx: type) type {
                                         },
                                         else => {},
                                     }
+                                    // The empty default was materialised in the arena
+                                    // current at this declaration (A1 region analysis).
+                                    try self.recordVarRegion(sd.var_name, self.currentRegionTag());
                                 }
                                 continue;
                             }
@@ -799,8 +819,22 @@ pub fn Methods(comptime Ctx: type) type {
                             if (sd.declared_type == .Union) {
                                 value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
                             }
+                            // A1: a mutable declaration re-homes (or plain-stores)
+                            // into the function-body arena, so the payload outlives
+                            // every later store. A const keeps its initializer's own
+                            // arena, which the analysis may not know — leave it
+                            // unclassified rather than risk a plain store of a
+                            // short-lived object.
                             if (!sd.is_const) {
-                                value = try self.cloneHeapForStore(w, &id, value, sd.declared_type);
+                                value = try self.rehomeForLocalStore(w, &id, value, sd.declared_type);
+                            }
+                            if (sd.is_const) {
+                                // A const keeps its initializer's own arena, which the
+                                // analysis does not classify; never plain-store a load
+                                // of it (A1).
+                                try self.var_regions.put(sd.var_name, .Unknown);
+                            } else {
+                                try self.recordVarRegion(sd.var_name, .Func);
                             }
                             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
                                 value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
@@ -871,8 +905,18 @@ pub fn Methods(comptime Ctx: type) type {
                             value = switch (sv.heap_copy) {
                                 .snapshot => try self.cloneHeapForSnapshot(w, &id, value, sv.expected_type),
                                 .keep => value,
-                                .rehome => try self.cloneHeapForStore(w, &id, value, sv.expected_type),
+                                .rehome => try self.rehomeForLocalStore(w, &id, value, sv.expected_type),
                             };
+                            // A1 region analysis: every local store except an
+                            // in-place `.keep` store-back leaves the payload in the
+                            // function-body arena (or an ancestor), so a later load
+                            // may take the static plain-store path. `.keep` rewrites
+                            // the same object the variable already holds; preserve a
+                            // `Deep` classification (loop-arena payload) if one was
+                            // recorded.
+                            if (sv.heap_copy != .keep or !self.var_regions.contains(sv.var_name)) {
+                                try self.recordVarRegion(sv.var_name, .Func);
+                            }
                             var info_ptr = variables.getPtr(sv.var_name);
                             if (info_ptr == null) {
                                 continue;

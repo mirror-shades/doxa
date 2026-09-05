@@ -18,6 +18,7 @@ pub const IRPrinter = struct {
         pub const PeekStringInfo = Self.PeekStringInfo;
         pub const StackType = Self.StackType;
         pub const StackVal = Self.StackVal;
+        pub const Region = Self.Region;
         pub const VariableInfo = Self.VariableInfo;
         pub const StackIncoming = Self.StackIncoming;
         pub const StackSlot = Self.StackSlot;
@@ -45,6 +46,12 @@ pub const IRPrinter = struct {
     pub const cloneHeapForReturn = CoreMethods.cloneHeapForReturn;
     pub const cloneHeapForGlobalStore = CoreMethods.cloneHeapForGlobalStore;
     pub const cloneHeapValue = CoreMethods.cloneHeapValue;
+    pub const currentRegionTag = CoreMethods.currentRegionTag;
+    pub const rehomeTypeEligible = CoreMethods.rehomeTypeEligible;
+    pub const plainStoreProven = CoreMethods.plainStoreProven;
+    pub const plainGlobalStoreProven = CoreMethods.plainGlobalStoreProven;
+    pub const recordVarRegion = CoreMethods.recordVarRegion;
+    pub const rehomeForLocalStore = CoreMethods.rehomeForLocalStore;
 
     const ModuleLayoutMethods = @import("./ir_printer/module_layout.zig").Methods(Ctx);
     const SharedHandlerMethods = @import("./ir_printer/shared_handlers.zig").Methods(Ctx);
@@ -187,6 +194,11 @@ pub const IRPrinter = struct {
     /// a single-member union view; `RestoreVar` pops it. Loads of the variable
     /// unwrap the boxed `%DoxaValue` to the active member representation.
     narrowed_vars: std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)),
+    /// Region class of each local variable's heap payload (A1). Populated while
+    /// a function body is emitted so a `LoadVar` knows whether the object it
+    /// loads provably outlives a later rehome store's destination. Global scope
+    /// kinds never appear here; globals are always `Root`.
+    var_regions: std.StringHashMap(Region),
 
     pub const EnumVariantMeta = struct {
         index: u32,
@@ -200,9 +212,24 @@ pub const IRPrinter = struct {
 
     pub const StackType = enum { I64, F64, I8, I1, I2, PTR, STRING, Value, Nothing };
 
+    /// Static region class of a heap value's allocating arena, relative to the
+    /// function being emitted (A1 region analysis). A value outlives any store
+    /// destination inside the function exactly when its arena is the function's
+    /// own body scope or an ancestor of it (`Func` / `Root`); values born in a
+    /// reusable loop scope (`Deep`) die at the next iteration reset. `Unknown`
+    /// means the analysis could not prove a class, and the emitter must keep the
+    /// conservative runtime rehome call.
+    pub const Region = enum {
+        Root,
+        Func,
+        Deep,
+        Unknown,
+    };
+
     pub const StackVal = struct {
         name: []const u8,
         ty: StackType,
+        region: Region = .Unknown,
         array_type: ?HIR.HIRType = null,
         enum_type_name: ?[]const u8 = null,
         struct_field_types: ?[]HIR.HIRType = null,

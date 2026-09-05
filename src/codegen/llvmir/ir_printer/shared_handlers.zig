@@ -129,6 +129,7 @@ pub fn Methods(comptime Ctx: type) type {
             const duped: StackVal = .{
                 .name = top.name,
                 .ty = top.ty,
+                .region = top.region,
                 .array_type = top.array_type,
                 .enum_type_name = top.enum_type_name,
                 .struct_field_types = top.struct_field_types,
@@ -150,6 +151,11 @@ pub fn Methods(comptime Ctx: type) type {
             if (stack.items.len < 2) return;
             const top_idx = stack.items.len - 1;
             std.mem.swap(StackVal, &stack.items[top_idx], &stack.items[top_idx - 1]);
+            // Region tags ride on the value's allocating arena, so swapping which
+            // slot holds which object would mislabel provenance. Clearing both is
+            // conservative: a later store keeps the runtime rehome call.
+            stack.items[top_idx].region = .Unknown;
+            stack.items[top_idx - 1].region = .Unknown;
         }
 
         pub fn handleArith(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, a: std.meta.TagPayload(HIRInstruction, .Arith)) !void {
@@ -2345,6 +2351,12 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(call_line);
                 const stack_ty = self.hirTypeToStackType(actual_return_type);
                 var pushed = StackVal{ .name = result_name, .ty = stack_ty };
+                // A defined Doxa function deep-copies its heap return value into
+                // the arena active at this call site (clone-on-return), so the
+                // result lives in the current region (A1).
+                if (c.function_index != null and (stack_ty == .STRING or stack_ty == .PTR)) {
+                    pushed.region = self.currentRegionTag();
+                }
                 if (stack_ty == .PTR) {
                     switch (actual_return_type) {
                         .Array => |inner| pushed.array_type = inner.*,
@@ -2389,7 +2401,7 @@ pub fn Methods(comptime Ctx: type) type {
             if (sd.declared_type == .Union) {
                 value = try self.buildDoxaValue(w, value, sd.declared_type, id);
             }
-            if (!sd.is_const) {
+            if (!sd.is_const and !self.plainGlobalStoreProven(value, sd.declared_type)) {
                 value = try self.cloneHeapForGlobalStore(w, id, value, sd.declared_type);
             }
             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
@@ -2457,7 +2469,11 @@ pub fn Methods(comptime Ctx: type) type {
             }
             value = switch (sv.heap_copy) {
                 .keep => value,
-                .snapshot, .rehome => try self.cloneHeapForGlobalStore(w, id, value, sv.expected_type),
+                .snapshot => try self.cloneHeapForGlobalStore(w, id, value, sv.expected_type),
+                .rehome => if (self.plainGlobalStoreProven(value, sv.expected_type))
+                    value
+                else
+                    try self.cloneHeapForGlobalStore(w, id, value, sv.expected_type),
             };
             const llvm_ty = self.stackTypeToLLVMType(value.ty);
             _ = try self.global_types.put(sv.var_name, value.ty);
@@ -2523,6 +2539,7 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(.{
                 .name = result_name,
                 .ty = st,
+                .region = .Root,
                 .array_type = array_type,
                 .enum_type_name = enum_type_name,
                 .struct_field_types = struct_fields,

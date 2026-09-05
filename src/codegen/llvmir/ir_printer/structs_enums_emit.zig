@@ -739,6 +739,7 @@ pub fn Methods(comptime Ctx: type) type {
         try stack.append(.{
             .name = struct_ptr,
             .ty = .PTR,
+            .region = self.currentRegionTag(),
             .struct_field_types = field_type_copy,
             .struct_field_names = struct_field_names,
             .struct_type_name = sn.type_name,

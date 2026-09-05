@@ -62,15 +62,15 @@ fn unpackZigDependency(
         return;
     } else |err| switch (err) {
         error.FileNotFound => {},
-        else => return,
+        else => return err,
     }
 
     if (destination_dir.access(extracted_folder_name, .{})) |_| {
-        destination_dir.rename(extracted_folder_name, "zig") catch return;
+        try destination_dir.rename(extracted_folder_name, "zig");
         return;
     } else |err| switch (err) {
         error.FileNotFound => {},
-        else => return,
+        else => return err,
     }
 
     if (std.mem.endsWith(u8, archive_path, ".zip")) {
