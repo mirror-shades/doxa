@@ -415,6 +415,72 @@ pub const expected_module_private_call_results = [_]peek_result{
     .{ .type = "int", .value = "42" },
 };
 
+pub const expected_logic_results = [_]peek_result{
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+};
+
+pub const expected_angel_results = [_]print_result{
+    .{ .value = "Bob is alive" },
+    .{ .value = "Shakespere is dead" },
+    .{ .value = "zombie is alive and dead" },
+    .{ .value = "angel neither alive or dead" },
+};
+
+pub const expected_import_test_results = [_]peek_result{
+    .{ .type = "int", .value = "81" },
+    .{ .type = "string", .value = "\"Overflow\"" },
+    .{ .type = "int", .value = "-1" },
+    .{ .type = "string", .value = "\"imported function\"" },
+    .{ .type = "int", .value = "60" },
+    .{ .type = "int", .value = "100" },
+};
+
+pub const expected_basic_test_results = [_]print_result{
+    .{ .value = "x: 42" },
+};
+
+pub const expected_alias_test_results = [_]print_result{
+    .{ .value = "circle: 20" },
+    .{ .value = "shift: 30" },
+    .{ .value = "result: nothing" },
+};
+
 pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "81" },
     .{ .type = "string", .value = "\"Overflow\"" },

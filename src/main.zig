@@ -29,6 +29,7 @@ const inline_zig_compiler = @import("./inline_zig/compiler.zig");
 const StructMethodInfo = @import("./analysis/semantic/semantic.zig").StructMethodInfo;
 const LspServer = @import("./lsp/server.zig");
 const Resolver = @import("./resolver/resolver.zig").Resolver;
+const platform = @import("./utils/platform.zig");
 
 const constants = @import("common/constants.zig");
 const MAX_FILE_SIZE = constants.MAX_SOURCE_FILE_BYTES;
@@ -1239,11 +1240,7 @@ fn isDoxaFile(path: []const u8, path_uri: []const u8, reporter: *Reporter) void 
 }
 
 pub fn main(init: std.process.Init) !void {
-    if (builtin.os.tag == .windows) {
-        // Set the console output code page to UTF-8 to enable Unicode support
-        // I think this is only needed for Windows
-        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
-    }
+    platform.enableUtf8Console();
 
     const gpa = init.gpa;
 
