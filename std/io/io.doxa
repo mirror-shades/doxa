@@ -68,7 +68,7 @@ zig IO {
     pub fn print(text: []const u8) void {
         clearLastError();
         var stdout_buffer: [1024]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        var stdout_writer = std.Io.File.stdout().writer(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
         const stdout = &stdout_writer.interface;
 
         stdout.print("{s}", .{text}) catch {
@@ -85,7 +85,7 @@ zig IO {
     pub fn eprint(text: []const u8) void {
         clearLastError();
         var stderr_buffer: [1024]u8 = undefined;
-        var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+        var stderr_writer = std.Io.File.stderr().writer(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
         const stderr = &stderr_writer.interface;
 
         stderr.print("{s}", .{text}) catch {
@@ -102,7 +102,7 @@ zig IO {
     pub fn input() []const u8 {
         clearLastError();
         var stdin_buffer: [4096]u8 = undefined;
-        var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+        var stdin_reader = std.Io.File.stdin().reader(std.Io.Threaded.global_single_threaded.io(), &stdin_buffer);
         const stdin = &stdin_reader.interface;
 
         var line = stdin.takeDelimiterExclusive('\n') catch {

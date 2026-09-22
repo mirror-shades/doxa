@@ -11,16 +11,23 @@ fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.process.exit(1);
 }
 
-fn runCommand(allocator: std.mem.Allocator, argv: []const []const u8, cwd: ?[]const u8) !void {
-    var child = std.process.Child.init(argv, allocator);
-    child.expand_arg0 = .expand;
-    child.cwd = cwd;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
+fn runCommand(
+    io: std.Io,
+    argv: []const []const u8,
+    cwd: []const u8,
+) !void {
+    var child = try std.process.spawn(io, .{
+        .argv = argv,
+        .expand_arg0 = .expand,
+        .cwd = .{ .path = cwd },
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
 
-    const term = try child.spawnAndWait();
+    const term = try child.wait(io);
+
     switch (term) {
-        .Exited => |code| {
+        .exited => |code| {
             if (code != 0) return error.CommandFailed;
         },
         else => return error.CommandFailed,
@@ -28,45 +35,48 @@ fn runCommand(allocator: std.mem.Allocator, argv: []const []const u8, cwd: ?[]co
 }
 
 fn runAnyCommand(
-    allocator: std.mem.Allocator,
+    io: std.Io,
     candidates: []const []const []const u8,
     cwd: ?[]const u8,
 ) !void {
-    var saw_command = false;
+    const effective_cwd = cwd orelse ".";
     for (candidates) |candidate| {
-        runCommand(allocator, candidate, cwd) catch |err| switch (err) {
+        runCommand(io, candidate, effective_cwd) catch |err| switch (err) {
             error.FileNotFound => continue,
-            error.CommandFailed => {
-                saw_command = true;
-                return err;
-            },
             else => return err,
         };
-        saw_command = true;
         return;
     }
-    if (!saw_command) return error.FileNotFound;
+    return error.FileNotFound;
 }
 
-fn unpackZigDependency(
-    allocator: std.mem.Allocator,
-    archive_path: []const u8,
-    destination_lib_dir: []const u8,
-    extracted_folder_name: []const u8,
-) !void {
-    try std.fs.cwd().makePath(destination_lib_dir);
-    var destination_dir = try std.fs.cwd().openDir(destination_lib_dir, .{});
-    defer destination_dir.close();
+fn unpackZigDependency(io: std.Io, allocator: std.mem.Allocator, archive_path: []const u8, destination_lib_dir: []const u8, extracted_folder_name: []const u8) !void {
+    const cwd = std.Io.Dir.cwd();
+    cwd.createDir(io, destination_lib_dir, .default_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+    var destination_dir = try std.Io.Dir.cwd().openDir(
+        io,
+        destination_lib_dir,
+        .{},
+    );
+    defer destination_dir.close(io);
 
-    if (destination_dir.access("zig", .{})) |_| {
+    if (destination_dir.access(io, "zig", .{})) |_| {
         return;
     } else |err| switch (err) {
         error.FileNotFound => {},
         else => return err,
     }
 
-    if (destination_dir.access(extracted_folder_name, .{})) |_| {
-        try destination_dir.rename(extracted_folder_name, "zig");
+    if (destination_dir.access(io, extracted_folder_name, .{})) |_| {
+        try destination_dir.rename(
+            extracted_folder_name,
+            destination_dir,
+            "zig",
+            io,
+        );
         return;
     } else |err| switch (err) {
         error.FileNotFound => {},
@@ -80,7 +90,7 @@ fn unpackZigDependency(
         const bsdtar_cmd = [_][]const u8{ "bsdtar", "-xf", archive_path, "-C", destination_lib_dir };
         const unzip_cmd = [_][]const u8{ "unzip", "-q", archive_path, "-d", destination_lib_dir };
         const seven_zip_cmd = [_][]const u8{ "7z", "x", archive_path, output_arg, "-y" };
-        try runAnyCommand(allocator, &[_][]const []const u8{
+        try runAnyCommand(io, &[_][]const []const u8{
             &tar_cmd,
             &bsdtar_cmd,
             &unzip_cmd,
@@ -89,7 +99,7 @@ fn unpackZigDependency(
     } else if (std.mem.endsWith(u8, archive_path, ".tar.xz")) {
         const tar_cmd = [_][]const u8{ "tar", "-xf", archive_path, "-C", destination_lib_dir };
         const bsdtar_cmd = [_][]const u8{ "bsdtar", "-xf", archive_path, "-C", destination_lib_dir };
-        try runAnyCommand(allocator, &[_][]const []const u8{
+        try runAnyCommand(io, &[_][]const []const u8{
             &tar_cmd,
             &bsdtar_cmd,
         }, null);
@@ -97,14 +107,15 @@ fn unpackZigDependency(
         return error.UnsupportedArchiveFormat;
     }
 
-    destination_dir.access(extracted_folder_name, .{}) catch |err| switch (err) {
+    destination_dir.access(io, extracted_folder_name, .{}) catch |err| switch (err) {
         error.FileNotFound => return error.ExtractedFolderMissing,
         else => return err,
     };
-    try destination_dir.rename(extracted_folder_name, "zig");
+    try destination_dir.rename(extracted_folder_name, destination_dir, "zig", io);
 }
 
 fn compressReleaseDir(
+    io: std.Io,
     allocator: std.mem.Allocator,
     cwd: []const u8,
     target_dir_name: []const u8,
@@ -112,22 +123,23 @@ fn compressReleaseDir(
     const zip_filename = try std.fmt.allocPrint(allocator, "{s}.zip", .{target_dir_name});
     defer allocator.free(zip_filename);
 
-    var root_dir = try std.fs.cwd().openDir(cwd, .{});
-    defer root_dir.close();
-    root_dir.deleteFile(zip_filename) catch |err| switch (err) {
+    var root_dir = try std.Io.Dir.cwd().openDir(io, cwd, .{});
+    defer root_dir.close(io);
+    root_dir.deleteFile(io, zip_filename) catch |err| switch (err) {
         error.FileNotFound => {},
         else => return err,
     };
 
     const seven_zip_cmd = [_][]const u8{ "7z", "a", "-tzip", "-mx=9", zip_filename, target_dir_name };
     const zip_cmd = [_][]const u8{ "zip", "-r", "-q", zip_filename, target_dir_name };
-    try runAnyCommand(allocator, &[_][]const []const u8{
+    try runAnyCommand(io, &[_][]const []const u8{
         &seven_zip_cmd,
         &zip_cmd,
     }, cwd);
 }
 
 fn compressReleases(
+    io: std.Io,
     allocator: std.mem.Allocator,
     cwd: []const u8,
     target_dirs: []const []const u8,
@@ -136,14 +148,13 @@ fn compressReleases(
         return error.InvalidArgument;
     }
     for (target_dirs) |target_dir_name| {
-        try compressReleaseDir(allocator, cwd, target_dir_name);
+        try compressReleaseDir(io, allocator, cwd, target_dir_name);
     }
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     const allocator = std.heap.page_allocator;
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     if (args.len < 2) {
         fatal("{s}", .{usage_text});
@@ -151,7 +162,7 @@ pub fn main() !void {
 
     if (std.mem.eql(u8, args[1], "unpack-zig-dep")) {
         if (args.len != 5) fatal("{s}", .{usage_text});
-        unpackZigDependency(allocator, args[2], args[3], args[4]) catch |err| {
+        unpackZigDependency(init.io, allocator, args[2], args[3], args[4]) catch |err| {
             fatal("unpack-zig-dep failed: {s}", .{@errorName(err)});
         };
         return;
@@ -161,7 +172,7 @@ pub fn main() !void {
         if (args.len < 5 or !std.mem.eql(u8, args[2], "--cwd")) {
             fatal("{s}", .{usage_text});
         }
-        compressReleases(allocator, args[3], args[4..]) catch |err| {
+        compressReleases(init.io, allocator, args[3], args[4..]) catch |err| {
             fatal("compress-releases failed: {s}", .{@errorName(err)});
         };
         return;

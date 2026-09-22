@@ -121,7 +121,7 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .ArrayNew),
+            inst: std.meta.fieldInfo(HIRInstruction, .ArrayNew).type,
         ) !void {
             // Fixed arrays of scalar types get a flat contiguous buffer
             // (alloca / scope_alloc for functions; alloca in doxa_program_main
@@ -277,7 +277,7 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .Map),
+            inst: std.meta.fieldInfo(HIRInstruction, .Map).type,
         ) !void {
             const entry_count: usize = inst.entries.len;
             const else_inputs: usize = if (inst.has_else_value) @as(usize, 1) else 0;
@@ -372,7 +372,7 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .MapGet),
+            inst: std.meta.fieldInfo(HIRInstruction, .MapGet).type,
         ) !void {
             if (stack.items.len < 2) return;
             const key_val = stack.items[stack.items.len - 1];
@@ -576,7 +576,7 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .MapSet),
+            inst: std.meta.fieldInfo(HIRInstruction, .MapSet).type,
         ) !void {
             if (stack.items.len < 3) return;
             const value = stack.items[stack.items.len - 1];
@@ -1590,7 +1590,7 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .Range),
+            inst: std.meta.fieldInfo(HIRInstruction, .Range).type,
         ) !void {
             _ = inst;
 

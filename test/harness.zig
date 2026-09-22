@@ -58,18 +58,28 @@ pub fn printSuiteSummary(name: []const u8, result: Counts) void {
 }
 
 pub fn repoRootFromEnv(allocator: std.mem.Allocator) !?[]const u8 {
-    return process.getEnvVarOwned(allocator, "DOXA_REPO_ROOT") catch null;
+    return process.Environ.getAlloc(std.testing.environ, allocator, "DOXA_REPO_ROOT") catch null;
+}
+
+fn realPathAlloc(path: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    const io = std.testing.io;
+    const resolved = if (std.fs.path.isAbsolute(path))
+        try std.Io.Dir.realPathFileAbsoluteAlloc(io, path, allocator)
+    else
+        try std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator);
+    defer allocator.free(resolved);
+    return try allocator.dupe(u8, resolved);
 }
 
 pub fn doxaExePath(allocator: std.mem.Allocator) ![]const u8 {
-    if (process.getEnvVarOwned(allocator, "DOXA_BIN") catch null) |custom| {
+    if (process.Environ.getAlloc(std.testing.environ, allocator, "DOXA_BIN") catch null) |custom| {
         defer allocator.free(custom);
-        return try std.fs.cwd().realpathAlloc(allocator, custom);
+        return try realPathAlloc(custom, allocator);
     }
     const exe_name = if (builtin.os.tag == .windows) "doxa.exe" else "doxa";
     const joined = try std.fs.path.join(allocator, &[_][]const u8{ "doxa", "test-bin", exe_name });
     defer allocator.free(joined);
-    return try std.fs.cwd().realpathAlloc(allocator, joined);
+    return try realPathAlloc(joined, allocator);
 }
 
 pub fn runCommandCapture(
@@ -78,59 +88,68 @@ pub fn runCommandCapture(
     cwd: ?[]const u8,
     input: ?[]const u8,
 ) !CommandResult {
+    const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const child_allocator = arena.allocator();
 
-    var child = process.Child.init(argv, child_allocator);
-    if (cwd) |dir| child.cwd = dir;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    if (input != null) child.stdin_behavior = .Pipe;
-
-    try child.spawn();
+    var child = try process.spawn(io, .{
+        .argv = argv,
+        .cwd = if (cwd) |dir| .{ .path = dir } else .inherit,
+        .stdin = if (input != null) .pipe else .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
 
     if (input) |input_data| {
         var stdin_buffer: [1024]u8 = undefined;
-        var stdin_writer = child.stdin.?.writer(&stdin_buffer);
+        var stdin_writer = child.stdin.?.writer(io, &stdin_buffer);
         const stdin = &stdin_writer.interface;
         try stdin.writeAll(input_data);
         try stdin.flush();
-        child.stdin.?.close();
+        child.stdin.?.close(io);
         child.stdin = null;
     }
 
-    var stdout = std.ArrayList(u8).empty;
-    defer stdout.deinit(child_allocator);
-    var stderr = std.ArrayList(u8).empty;
-    defer stderr.deinit(child_allocator);
-
     // Poll both pipes concurrently to avoid deadlock when one pipe fills up.
-    try child.collectOutput(child_allocator, &stdout, &stderr, 8 * 1024 * 1024);
+    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(child_allocator, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
 
-    const term = try child.wait();
+    while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => |e| return e,
+    }
+    try multi_reader.checkAnyError();
+
+    const term = try child.wait(io);
+    const out_slice = try multi_reader.toOwnedSlice(0);
+    const err_slice = try multi_reader.toOwnedSlice(1);
+
     const exit_code: u8 = switch (term) {
-        .Exited => |code| @intCast(code),
-        .Signal => |signal| {
+        .exited => |code| code,
+        .signal => |signal| {
             std.debug.print("Command terminated with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
+            std.debug.print("stderr: {s}\n", .{err_slice});
             return error.CommandFailed;
         },
-        .Stopped => |signal| {
+        .stopped => |signal| {
             std.debug.print("Command stopped with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
+            std.debug.print("stderr: {s}\n", .{err_slice});
             return error.CommandFailed;
         },
-        .Unknown => {
+        .unknown => {
             std.debug.print("Command failed with unknown error:\n", .{});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
+            std.debug.print("stderr: {s}\n", .{err_slice});
             return error.CommandFailed;
         },
     };
 
     return .{
-        .stdout = try allocator.dupe(u8, stdout.items),
-        .stderr = try allocator.dupe(u8, stderr.items),
+        .stdout = try allocator.dupe(u8, out_slice),
+        .stderr = try allocator.dupe(u8, err_slice),
         .exit_code = exit_code,
     };
 }
@@ -186,7 +205,7 @@ pub fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.a
     while (lines.next()) |raw_line| {
         // Normalize Windows line endings: stdlib `io.println` emits the OS-native
         // terminator (`\r\n`), so strip a trailing `\r` before comparing.
-        const line = std.mem.trimRight(u8, raw_line, "\r");
+        const line = std.mem.trimEnd(u8, raw_line, "\r");
         if (line.len == 0) continue;
         try outputs.append(line);
     }

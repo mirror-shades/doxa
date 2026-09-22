@@ -5,7 +5,7 @@ pub const IRPrinter = struct {
     pub const HIR = @import("../hir/soxa_types.zig");
     pub const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
     pub const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
-    pub const CompareInstruction = std.meta.TagPayload(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare);
+    pub const CompareInstruction = std.meta.fieldInfo(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare).type;
     const Self = @This();
 
     const Ctx = struct {
@@ -13,7 +13,7 @@ pub const IRPrinter = struct {
         pub const HIR = @import("../hir/soxa_types.zig");
         pub const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
         pub const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
-        pub const CompareInstruction = std.meta.TagPayload(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare);
+        pub const CompareInstruction = std.meta.fieldInfo(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare).type;
         pub const PeekEmitState = Self.PeekEmitState;
         pub const PeekStringInfo = Self.PeekStringInfo;
         pub const StackType = Self.StackType;
@@ -157,6 +157,7 @@ pub const IRPrinter = struct {
     pub const hirTypeToLLVMType = StructsEnumsEmitMethods.hirTypeToLLVMType;
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     zig_fn_param_types: std.StringHashMap([]HIR.HIRType),
     peek_string_counter: usize,
     string_pool_len: usize = 0,
@@ -271,7 +272,7 @@ pub const IRPrinter = struct {
             var slots = try allocator.alloc(StackSlot, slot_count);
             var i: usize = 0;
             while (i < slot_count) : (i += 1) {
-                slots[i] = StackSlot{};
+                slots[i] = .empty;
             }
             return .{ .slots = slots };
         }
@@ -321,7 +322,7 @@ pub const IRPrinter = struct {
     };
 
     pub fn escapeLLVMString(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
-        var buffer = std.ArrayListUnmanaged(u8){};
+        var buffer = std.ArrayListUnmanaged(u8).empty;
         defer buffer.deinit(allocator);
         const hex = "0123456789ABCDEF";
         for (text) |ch| {

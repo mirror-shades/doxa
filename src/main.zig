@@ -136,13 +136,12 @@ const TargetTriple = struct {
         if (is_cross and arch.len == 0) return error.MissingTargetArch;
         const effective_os = if (os.len > 0)
             os
-        else
-            switch (builtin.os.tag) {
-                .windows => "windows",
-                .linux => "linux",
-                .macos => "macos",
-                else => "",
-            };
+        else switch (builtin.os.tag) {
+            .windows => "windows",
+            .linux => "linux",
+            .macos => "macos",
+            else => "",
+        };
         const triple = try std.fmt.allocPrint(allocator, "{s}{s}{s}{s}{s}", .{
             arch,
             if (os.len > 0) "-" else "",
@@ -167,11 +166,22 @@ const TargetTriple = struct {
         return std.mem.eql(u8, self.os, "windows");
     }
 
-    /// Append `-target <triple>` to `args` when cross-compiling.
+    /// Append `-target <triple>` to `args`. Native builds still pass an
+    /// explicit host triple so the bundled Zig resolves its own C runtime
+    /// objects instead of the host's; some host `crt1.o` files carry
+    /// relocations the bundled linker cannot handle.
     fn appendTargetArg(self: TargetTriple, args: *std.array_list.Managed([]const u8)) !void {
-        if (!self.isCross()) return;
+        if (self.isCross()) {
+            try args.append("-target");
+            try args.append(self.triple);
+            return;
+        }
         try args.append("-target");
-        try args.append(self.triple);
+        try args.append(std.fmt.comptimePrint("{s}-{s}-{s}", .{
+            @tagName(builtin.target.cpu.arch),
+            @tagName(builtin.target.os.tag),
+            @tagName(builtin.target.abi),
+        }));
     }
 };
 
@@ -262,7 +272,7 @@ fn registerMissingTypesFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
     }
 }
 
-fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
+fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
     const root_scope = semantic_analyzer.memory.scope_manager.root_scope orelse return error.MissingRootScope;
     var constant_folder = ConstantFolder.init(memoryManager.getAnalysisAllocator(), root_scope);
     var folded_statements = std.array_list.Managed(AST.Stmt).init(memoryManager.getAnalysisAllocator());
@@ -286,7 +296,7 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, mod
     // cross-module types were known and left Struct(0)/Unknown placeholders.
     try semantic_analyzer.recomputeStructFieldHIRTypes();
 
-    var hir_generator = HIRGenerator.init(memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer);
+    var hir_generator = HIRGenerator.init(io, memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer);
     defer hir_generator.deinit();
 
     hir_generator.type_system.function_signatures = &hir_generator.function_signatures;
@@ -320,27 +330,27 @@ fn generateHIRProgram(memoryManager: *MemoryManager, statements: []AST.Stmt, mod
     return hir_program;
 }
 
-fn compileInlineZigObjects(memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8) ![]const []const u8 {
-    const zig_exe_path = try resolveBundledZigExecutable(memoryManager.getAllocator());
+fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8) ![]const []const u8 {
+    const zig_exe_path = try resolveBundledZigExecutable(io, memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
-    return inline_zig_compiler.compileInlineZigObjects(memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target.triple, target.os, include_dirs);
+    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target.triple, target.os, include_dirs);
 }
 
-fn openDirMaybeAbs(path: []const u8, opts: std.fs.Dir.OpenOptions) !std.fs.Dir {
+fn openDirMaybeAbs(io: std.Io, path: []const u8, opts: std.Io.Dir.OpenOptions) !std.Io.Dir {
     return if (std.fs.path.isAbsolute(path))
-        std.fs.openDirAbsolute(path, opts)
+        std.Io.Dir.openDirAbsolute(io, path, opts)
     else
-        std.fs.cwd().openDir(path, opts);
+        std.Io.Dir.cwd().openDir(io, path, opts);
 }
 
-fn dirContainsFile(dir: []const u8, name: []const u8) bool {
+fn dirContainsFile(io: std.Io, dir: []const u8, name: []const u8) bool {
     const joined = std.fs.path.join(std.heap.page_allocator, &.{ dir, name }) catch return false;
     defer std.heap.page_allocator.free(joined);
     const file = (if (std.fs.path.isAbsolute(joined))
-        std.fs.openFileAbsolute(joined, .{})
+        std.Io.Dir.openFileAbsolute(io, joined, .{})
     else
-        std.fs.cwd().openFile(joined, .{})) catch return false;
-    file.close();
+        std.Io.Dir.cwd().openFile(io, joined, .{})) catch return false;
+    file.close(io);
     return true;
 }
 
@@ -348,8 +358,8 @@ fn dirContainsFile(dir: []const u8, name: []const u8) bool {
 // self-contained siblings). Tries the installed layout next to the executable
 // first, then repo-relative layouts, then a CWD-relative fallback (running from
 // the repo root). Returns an owned path to the directory.
-fn resolveRuntimeSourceDir(allocator: std.mem.Allocator) ![]u8 {
-    if (std.fs.selfExeDirPathAlloc(allocator)) |exe_dir| {
+fn resolveRuntimeSourceDir(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
+    if (std.process.executableDirPathAlloc(io, allocator)) |exe_dir| {
         defer allocator.free(exe_dir);
         const candidates = [_][]const []const u8{
             &.{ exe_dir, "..", "lib", "runtime" }, // installed / shipped
@@ -358,13 +368,13 @@ fn resolveRuntimeSourceDir(allocator: std.mem.Allocator) ![]u8 {
         };
         for (candidates) |parts| {
             const dir = try std.fs.path.join(allocator, parts);
-            if (dirContainsFile(dir, "doxa_rt.zig")) return dir;
+            if (dirContainsFile(io, dir, "doxa_rt.zig")) return dir;
             allocator.free(dir);
         }
     } else |_| {}
 
     const cwd_relative = try allocator.dupe(u8, "src/runtime");
-    if (dirContainsFile(cwd_relative, "doxa_rt.zig")) return cwd_relative;
+    if (dirContainsFile(io, cwd_relative, "doxa_rt.zig")) return cwd_relative;
     allocator.free(cwd_relative);
 
     return error.RuntimeSourceNotFound;
@@ -373,21 +383,21 @@ fn resolveRuntimeSourceDir(allocator: std.mem.Allocator) ![]u8 {
 // Copy the runtime `.zig` sources into `<cache_dir>/runtime/` so the generated
 // root can `@import` them as a subpath (Zig forbids imports outside the root
 // file's directory). Returns the owned destination directory path.
-fn copyRuntimeToCache(allocator: std.mem.Allocator, src_dir: []const u8, cache_dir: []const u8) ![]u8 {
+fn copyRuntimeToCache(io: std.Io, allocator: std.mem.Allocator, src_dir: []const u8, cache_dir: []const u8) ![]u8 {
     const dst_dir = try std.fs.path.join(allocator, &.{ cache_dir, "runtime" });
     errdefer allocator.free(dst_dir);
-    try std.fs.cwd().makePath(dst_dir);
+    try std.Io.Dir.cwd().createDirPath(io, dst_dir);
 
-    var src = try openDirMaybeAbs(src_dir, .{ .iterate = true });
-    defer src.close();
-    var dst = try openDirMaybeAbs(dst_dir, .{});
-    defer dst.close();
+    var src = try openDirMaybeAbs(io, src_dir, .{ .iterate = true });
+    defer src.close(io);
+    var dst = try openDirMaybeAbs(io, dst_dir, .{});
+    defer dst.close(io);
 
     var it = src.iterate();
-    while (try it.next()) |entry| {
+    while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
-        try src.copyFile(entry.name, dst, entry.name, .{});
+        try src.copyFile(entry.name, dst, entry.name, io, .{});
     }
 
     return dst_dir;
@@ -395,10 +405,10 @@ fn copyRuntimeToCache(allocator: std.mem.Allocator, src_dir: []const u8, cache_d
 
 // Stage the runtime under the cache dir and write the generated Zig root that owns
 // the platform entry point. Returns the owned path to the root file.
-fn prepareZigRoot(allocator: std.mem.Allocator, cache_dir: []const u8) ![]const u8 {
-    const runtime_src = try resolveRuntimeSourceDir(allocator);
+fn prepareZigRoot(io: std.Io, allocator: std.mem.Allocator, cache_dir: []const u8) ![]const u8 {
+    const runtime_src = try resolveRuntimeSourceDir(io, allocator);
     defer allocator.free(runtime_src);
-    const runtime_dst = try copyRuntimeToCache(allocator, runtime_src, cache_dir);
+    const runtime_dst = try copyRuntimeToCache(io, allocator, runtime_src, cache_dir);
     defer allocator.free(runtime_dst);
 
     const root_path = try std.fmt.allocPrint(allocator, "{s}/__doxa_main.zig", .{cache_dir});
@@ -410,34 +420,42 @@ fn prepareZigRoot(allocator: std.mem.Allocator, cache_dir: []const u8) ![]const 
     try content.appendSlice("const doxa_rt = @import(\"runtime/doxa_rt.zig\");\n");
 
     try content.appendSlice("\nextern fn doxa_program_main() callconv(.c) void;\n");
-    try content.appendSlice("\npub fn main() void {\n");
-    try content.appendSlice("    const argv = std.process.argsAlloc(std.heap.page_allocator) catch {\n");
+    try content.appendSlice("\npub fn main(init: std.process.Init) void {\n");
+    try content.appendSlice("    const args = init.minimal.args.toSlice(init.arena.allocator()) catch {\n");
     try content.appendSlice("        doxa_program_main();\n");
     try content.appendSlice("        return;\n");
     try content.appendSlice("    };\n");
-    try content.appendSlice("    defer std.process.argsFree(std.heap.page_allocator, argv);\n");
-    try content.appendSlice("    doxa_rt.doxa_set_args(@as(i32, @intCast(argv.len)), @ptrCast(argv.ptr));\n");
+    try content.appendSlice("    const argv = init.arena.allocator().alloc([*:0]u8, args.len) catch {\n");
+    try content.appendSlice("        doxa_program_main();\n");
+    try content.appendSlice("        return;\n");
+    try content.appendSlice("    };\n");
+    try content.appendSlice("    for (args, argv) |arg, *slot| slot.* = @constCast(arg.ptr);\n");
+    try content.appendSlice("    doxa_rt.doxa_set_args(@as(i32, @intCast(args.len)), argv.ptr);\n");
+    try content.appendSlice("    doxa_rt.doxa_set_environ(init.environ_map);\n");
     try content.appendSlice("    doxa_program_main();\n");
     try content.appendSlice("}\n");
 
-    try std.fs.cwd().writeFile(.{ .sub_path = root_path, .data = content.items });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = root_path, .data = content.items });
     return root_path;
 }
 
-fn resolveBundledZigExecutable(allocator: std.mem.Allocator) ![]u8 {
-    const exe_dir = try std.fs.selfExeDirPathAlloc(allocator);
+fn resolveBundledZigExecutable(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
+    const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
     defer allocator.free(exe_dir);
 
     const zig_exe_name = if (builtin.os.tag == .windows) "zig.exe" else "zig";
     const zig_path = try std.fs.path.resolve(allocator, &.{ exe_dir, "..", "lib", "zig", zig_exe_name });
     errdefer allocator.free(zig_path);
 
-    const file = std.fs.openFileAbsolute(zig_path, .{}) catch |err| {
-        std.debug.print("Error: bundled Zig not found at '{s}' ({s})\n", .{ zig_path, @errorName(err) });
-        std.debug.print("Run `zig build` from the repository root to unpack the toolchain into doxa/lib/zig.\n", .{});
+    const file = std.Io.Dir.openFileAbsolute(io, zig_path, .{}) catch |err| {
+        std.debug.print(
+            "Error: bundled Zig not found at '{s}' ({s})\n",
+            .{ zig_path, @errorName(err) },
+        );
         std.process.exit(EXIT_CODE_USAGE);
     };
-    file.close();
+    defer file.close(io);
+
     return zig_path;
 }
 
@@ -539,7 +557,7 @@ const EmitKind = enum { opt_ir, asm_ };
 // inspection artifact (optimized LLVM IR or target assembly) at the same
 // optimization level the object build uses. Non-fatal: a failure here warns but
 // does not abort the compile.
-fn emitInspectionArtifact(zig_exe_path: []const u8, cli_options: *const CLI, stem: []const u8, kind: EmitKind, target: TargetTriple) !void {
+fn emitInspectionArtifact(io: std.Io, zig_exe_path: []const u8, cli_options: *const CLI, stem: []const u8, kind: EmitKind, target: TargetTriple) !void {
     var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
     defer args.deinit();
 
@@ -559,13 +577,15 @@ fn emitInspectionArtifact(zig_exe_path: []const u8, cli_options: *const CLI, ste
     try target.appendTargetArg(&args);
     try args.append(cli_options.opt.clangFlag());
 
-    var child = std.process.Child.init(args.items, std.heap.page_allocator);
-    child.cwd = cli_options.cache_dir;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-    const term = try child.spawnAndWait();
+    var child = try std.process.spawn(io, .{
+        .argv = args.items,
+        .cwd = .{ .path = cli_options.cache_dir },
+        .stdout = .inherit,
+        .stderr = .inherit,
+    });
+    const term = try child.wait(io);
     switch (term) {
-        .Exited => |code| if (code != 0) {
+        .exited => |code| if (code != 0) {
             std.debug.print("Warning: could not emit {s} (zig cc exited {d})\n", .{ out_name, code });
             return;
         },
@@ -578,6 +598,7 @@ fn emitInspectionArtifact(zig_exe_path: []const u8, cli_options: *const CLI, ste
 }
 
 fn compileToNative(
+    io: std.Io,
     allocator: std.mem.Allocator,
     memoryManager: *MemoryManager,
     cli_options: *const CLI,
@@ -589,16 +610,16 @@ fn compileToNative(
     exe_path: []const u8,
     target: TargetTriple,
 ) !void {
-    const zig_exe_path = try resolveBundledZigExecutable(allocator);
+    const zig_exe_path = try resolveBundledZigExecutable(io, allocator);
     defer allocator.free(zig_exe_path);
 
-    std.fs.cwd().makeDir(cli_options.cache_dir) catch |err| switch (err) {
+    std.Io.Dir.cwd().createDir(io, cli_options.cache_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 
     if (std.fs.path.dirname(exe_path)) |dir| {
-        try std.fs.cwd().makePath(dir);
+        try std.Io.Dir.cwd().createDirPath(io, dir);
     }
 
     const stem_for_derivatives = blk: {
@@ -635,7 +656,7 @@ fn compileToNative(
                 }
             }
         }
-        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), zig_fn_param_types);
+        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), zig_fn_param_types);
         try printer.emitToFile(hir_program, ir_path);
     }
 
@@ -661,27 +682,30 @@ fn compileToNative(
             try include_flags.append(flag);
             try args.append(flag);
         }
-        var child = std.process.Child.init(args.items, std.heap.page_allocator);
-        child.cwd = cli_options.cache_dir;
-        child.stdout_behavior = .Inherit;
-        child.stderr_behavior = .Inherit;
-        const term = try child.spawnAndWait();
+        var child = try std.process.spawn(io, .{
+            .argv = args.items,
+            .cwd = .{ .path = cli_options.cache_dir },
+            .stdout = .inherit,
+            .stderr = .inherit,
+        });
+        const term = try child.wait(io);
         switch (term) {
-            .Exited => |code| if (code != 0) return error.Unexpected,
+            .exited => |code| if (code != 0) return error.Unexpected,
             else => return error.Unexpected,
         }
     }
 
-    if (cli_options.emit_opt_ir) try emitInspectionArtifact(zig_exe_path, cli_options, stem_for_derivatives, .opt_ir, target);
-    if (cli_options.emit_asm) try emitInspectionArtifact(zig_exe_path, cli_options, stem_for_derivatives, .asm_, target);
+    if (cli_options.emit_opt_ir) try emitInspectionArtifact(io, zig_exe_path, cli_options, stem_for_derivatives, .opt_ir, target);
+    if (cli_options.emit_asm) try emitInspectionArtifact(io, zig_exe_path, cli_options, stem_for_derivatives, .asm_, target);
 
-    const inline_zig_wrapper_paths = try compileInlineZigObjects(memoryManager, parsed_statements, parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items);
+    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, parsed_statements, parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items);
     defer {
         for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
         memoryManager.getAllocator().free(inline_zig_wrapper_paths);
     }
 
     const root_path = try prepareZigRoot(
+        io,
         memoryManager.getAllocator(),
         cli_options.cache_dir,
     );
@@ -727,13 +751,15 @@ fn compileToNative(
             try args_ln.append(fw);
         }
 
-        var child_ln = std.process.Child.init(args_ln.items, std.heap.page_allocator);
-        child_ln.cwd = ".";
-        child_ln.stdout_behavior = .Inherit;
-        child_ln.stderr_behavior = .Inherit;
-        const term2 = try child_ln.spawnAndWait();
+        var child_ln = try std.process.spawn(io, .{
+            .argv = args_ln.items,
+            .cwd = .{ .path = "." },
+            .stdout = .inherit,
+            .stderr = .inherit,
+        });
+        const term2 = try child_ln.wait(io);
         switch (term2) {
-            .Exited => |code| if (code != 0) {
+            .exited => |code| if (code != 0) {
                 std.debug.print("link failed\n", .{});
                 return error.Unexpected;
             },
@@ -749,7 +775,7 @@ fn compileToNative(
     const pdb_out_path = try std.fmt.allocPrint(std.heap.page_allocator, "{s}/{s}.pdb", .{ cli_options.cache_dir, stem_for_derivatives });
     defer std.heap.page_allocator.free(pdb_out_path);
 
-    std.fs.cwd().rename(pdb_filename, pdb_out_path) catch |err| switch (err) {
+    std.Io.Dir.rename(std.Io.Dir.cwd(), pdb_filename, std.Io.Dir.cwd(), pdb_out_path, io) catch |err| switch (err) {
         error.FileNotFound => {},
         else => {},
     };
@@ -757,7 +783,7 @@ fn compileToNative(
 
 // Spawn the native binary produced for `doxa run`. `program_args[0]` is the
 // source path; skip it so the process argv[0] is the exe.
-fn runNativeExecutable(exe_path: []const u8, program_args: []const []const u8) !u8 {
+fn runNativeExecutable(io: std.Io, environ_map: *const std.process.Environ.Map, exe_path: []const u8, program_args: []const []const u8) !u8 {
     var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
     defer args.deinit();
     try args.append(exe_path);
@@ -766,30 +792,29 @@ fn runNativeExecutable(exe_path: []const u8, program_args: []const []const u8) !
     // Point the compiled program at the real `doxa` executable so the std/build
     // library's `compileArtifact` re-invokes the compiler instead of recursing
     // into the compiled binary itself (`selfExePath` would resolve to it).
-    var env = std.process.getEnvMap(std.heap.page_allocator) catch null;
-    defer if (env) |*e| e.deinit();
-    if (env) |*e| {
-        if (std.fs.selfExePathAlloc(std.heap.page_allocator)) |compiler_path| {
-            defer std.heap.page_allocator.free(compiler_path);
-            e.put("DOXA_BIN", compiler_path) catch {};
-        } else |_| {}
-    }
+    var env = try environ_map.clone(std.heap.page_allocator);
+    defer env.deinit();
+    if (std.process.executablePathAlloc(io, std.heap.page_allocator)) |compiler_path| {
+        defer std.heap.page_allocator.free(compiler_path);
+        env.put("DOXA_BIN", compiler_path) catch {};
+    } else |_| {}
 
-    var child = std.process.Child.init(args.items, std.heap.page_allocator);
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-    child.env_map = if (env) |*e| e else null;
-    const term = try child.spawnAndWait();
+    var child = try std.process.spawn(io, .{
+        .argv = args.items,
+        .stdin = .inherit,
+        .stdout = .inherit,
+        .stderr = .inherit,
+        .environ_map = &env,
+    });
+    const term = try child.wait(io);
     return switch (term) {
-        .Exited => |code| code,
+        .exited => |code| code,
         else => error.Unexpected,
     };
 }
 
-fn parseArgs(allocator: std.mem.Allocator) !CLI {
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
+    const args = try init.minimal.args.toSlice(init.arena.allocator());
 
     if (args.len < 2) {
         std.debug.print("Error: No arguments provided\n", .{});
@@ -829,7 +854,7 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
             }
             break :blk args[2];
         } else null;
-        runInit(project_name) catch |err| {
+        runInit(project_name, init.io) catch |err| {
             std.debug.print("Error: could not initialize project: {s}\n", .{@errorName(err)});
             std.process.exit(EXIT_CODE_USAGE);
         };
@@ -1038,35 +1063,35 @@ fn parseArgs(allocator: std.mem.Allocator) !CLI {
     return options;
 }
 
-fn runInit(project_name: ?[]const u8) !void {
-    const cwd = std.fs.cwd();
+fn runInit(project_name: ?[]const u8, io: std.Io) !void {
+    const cwd = std.Io.Dir.cwd();
 
     var dir = if (project_name) |name| dir: {
-        cwd.makeDir(name) catch |err| switch (err) {
+        cwd.createDir(io, name, .default_dir) catch |err| switch (err) {
             error.PathAlreadyExists => {
                 std.debug.print("Error: '{s}' already exists\n", .{name});
                 std.process.exit(EXIT_CODE_USAGE);
             },
             else => return err,
         };
-        break :dir try cwd.openDir(name, .{});
+        break :dir try cwd.openDir(io, name, .{});
     } else dir: {
-        if (!try isDirEmpty(cwd)) {
-            if (!try promptYesNo("Current directory is not empty. Create project here?")) {
+        if (!try isDirEmpty(io, cwd)) {
+            if (!try promptYesNo(io, "Current directory is not empty. Create project here?")) {
                 std.debug.print("Aborted.\n", .{});
                 std.process.exit(0);
             }
         }
-        break :dir try cwd.openDir(".", .{});
+        break :dir try cwd.openDir(io, ".", .{});
     };
-    defer if (project_name != null) dir.close();
+    defer if (project_name != null) dir.close(io);
 
-    try dir.makePath("src");
-    var src_dir = try dir.openDir("src", .{});
-    defer src_dir.close();
+    try dir.createDir(io, "src", .default_dir);
+    var src_dir = try dir.openDir(io, "src", .{});
+    defer src_dir.close(io);
 
-    try src_dir.writeFile(.{ .sub_path = "main.doxa", .data = SCAFFOLD_MAIN });
-    try dir.writeFile(.{ .sub_path = "build.doxa", .data = SCAFFOLD_BUILD });
+    try src_dir.writeFile(io, .{ .sub_path = "main.doxa", .data = SCAFFOLD_MAIN });
+    try dir.writeFile(io, .{ .sub_path = "build.doxa", .data = SCAFFOLD_BUILD });
 
     if (project_name) |name| {
         std.debug.print("Initialized Doxa project in {s}/\n", .{name});
@@ -1100,24 +1125,24 @@ const SCAFFOLD_BUILD =
     \\
 ;
 
-fn isDirEmpty(dir: std.fs.Dir) !bool {
-    var iterable = try dir.openDir(".", .{ .iterate = true });
-    defer iterable.close();
+fn isDirEmpty(io: std.Io, dir: std.Io.Dir) !bool {
+    var iterable = try dir.openDir(io, ".", .{ .iterate = true });
+    defer iterable.close(io);
     var it = iterable.iterate();
-    return (try it.next()) == null;
+    return (try it.next(io)) == null;
 }
 
-fn promptYesNo(question: []const u8) !bool {
+fn promptYesNo(io: std.Io, question: []const u8) !bool {
     std.debug.print("{s} [Y/n] ", .{question});
 
     var stdin_buffer: [256]u8 = undefined;
-    var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+    var stdin_reader = std.Io.File.stdin().reader(io, &stdin_buffer);
     const reader = &stdin_reader.interface;
 
     var line: [256]u8 = undefined;
     var len: usize = 0;
     while (len < line.len) {
-        const byte = std.io.Reader.takeByte(reader) catch |err| switch (err) {
+        const byte = std.Io.Reader.takeByte(reader) catch |err| switch (err) {
             error.EndOfStream => break,
             else => return err,
         };
@@ -1183,8 +1208,8 @@ fn stringEndsWith(str: []const u8, suffix: []const u8) bool {
     return result;
 }
 
-fn lexicAnalysis(memoryManager: *MemoryManager, source: []const u8, path: []const u8, reporter: *Reporter) !std.array_list.Managed(Token) {
-    var lexer = try LexicalAnalyzer.init(memoryManager.getAnalysisAllocator(), source, path, reporter);
+fn lexicAnalysis(io: std.Io, memoryManager: *MemoryManager, source: []const u8, path: []const u8, reporter: *Reporter) !std.array_list.Managed(Token) {
+    var lexer = try LexicalAnalyzer.init(io, memoryManager.getAnalysisAllocator(), source, path, reporter);
     try lexer.initKeywords();
     const tokens = try lexer.lexTokens();
     return tokens;
@@ -1213,39 +1238,34 @@ fn isDoxaFile(path: []const u8, path_uri: []const u8, reporter: *Reporter) void 
     }
 }
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
     if (builtin.os.tag == .windows) {
         // Set the console output code page to UTF-8 to enable Unicode support
         // I think this is only needed for Windows
         _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
     }
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const gpa = init.gpa;
 
-    defer {
-        const leaked = gpa.deinit();
-        if (leaked == .leak) std.debug.print("Warning: Memory leak detected!\n", .{});
-    }
-
-    var memoryManager = try MemoryManager.init(gpa.allocator());
+    var memoryManager = try MemoryManager.init(gpa);
     defer memoryManager.deinit();
 
-    var sourceCache = source_cache.SourceCache.init(gpa.allocator());
+    var sourceCache = source_cache.SourceCache.init(gpa);
     defer sourceCache.deinit();
 
-    var reporter = Reporter.init(gpa.allocator(), .{}, &sourceCache);
+    var reporter = Reporter.init(init.io, gpa, .{}, &sourceCache);
     defer reporter.deinit();
 
-    const cli_options = try parseArgs(gpa.allocator());
-    defer cli_options.deinit(gpa.allocator());
+    const cli_options = try parseArgs(gpa, init);
+    defer cli_options.deinit(gpa);
 
     switch (cli_options.lsp_mode) {
         .none => {},
-        .stdio => return LspServer.run(gpa.allocator(), .{
+        .stdio => return LspServer.run(init.io, gpa, .{
             .reporter_options = cli_options.reporter_options,
             .trace_io = cli_options.lsp_io_trace,
         }),
-        .harness => return LspServer.runDebugHarness(gpa.allocator(), .{
+        .harness => return LspServer.runDebugHarness(init.io, gpa, .{
             .reporter_options = cli_options.reporter_options,
             .script_path = cli_options.lsp_debug_file orelse unreachable,
         }),
@@ -1253,29 +1273,59 @@ pub fn main() !void {
 
     const script_path = cli_options.script_path orelse unreachable;
 
-    var profiler = Profiler.init(gpa.allocator(), cli_options.profile);
+    var profiler = Profiler.init(init.io, gpa, cli_options.profile);
     defer profiler.deinit();
 
-    const source = std.fs.cwd().readFileAlloc(memoryManager.getAnalysisAllocator(), script_path, MAX_FILE_SIZE) catch |err| {
+    const source = std.Io.Dir.cwd().readFileAlloc(
+        init.io,
+        script_path,
+        memoryManager.getAnalysisAllocator(),
+        .limited(MAX_FILE_SIZE),
+    ) catch |err| {
         switch (err) {
-            error.FileNotFound => std.debug.print("Error: could not find script '{s}' (looked relative to {s})\n", .{ script_path, std.fs.cwd().realpathAlloc(gpa.allocator(), ".") catch "the current directory" }),
-            error.AccessDenied => std.debug.print("Error: permission denied reading script '{s}'\n", .{script_path}),
-            error.IsDir => std.debug.print("Error: '{s}' is a directory, not a Doxa source file\n", .{script_path}),
-            error.FileTooBig => std.debug.print("Error: script '{s}' exceeds the maximum size of {d} bytes\n", .{ script_path, MAX_FILE_SIZE }),
-            else => std.debug.print("Error: could not read script '{s}': {s}\n", .{ script_path, @errorName(err) }),
+            error.FileNotFound => {
+                const cwd_path = std.process.currentPathAlloc(init.io, gpa) catch null;
+                defer if (cwd_path) |path| gpa.free(path);
+
+                std.debug.print(
+                    "Error: could not find script '{s}' (looked relative to {s})\n",
+                    .{
+                        script_path,
+                        cwd_path orelse "the current directory",
+                    },
+                );
+            },
+            error.AccessDenied => std.debug.print(
+                "Error: permission denied reading script '{s}'\n",
+                .{script_path},
+            ),
+            error.IsDir => std.debug.print(
+                "Error: '{s}' is a directory, not a Doxa source file\n",
+                .{script_path},
+            ),
+            error.StreamTooLong => std.debug.print(
+                "Error: script '{s}' exceeds the maximum size of {d} bytes\n",
+                .{ script_path, MAX_FILE_SIZE },
+            ),
+            else => std.debug.print(
+                "Error: could not read script '{s}': {s}\n",
+                .{ script_path, @errorName(err) },
+            ),
         }
+
         std.process.exit(EXIT_CODE_USAGE);
     };
+
     defer memoryManager.getAnalysisAllocator().free(source);
     try sourceCache.load(script_path, source);
-    isDoxaFile(script_path, try reporter.ensureFileUri(script_path), &reporter);
+    isDoxaFile(script_path, try reporter.ensureFileUri(init.io, script_path), &reporter);
 
-    try pipeline(gpa.allocator(), cli_options, script_path, &memoryManager, &reporter, &profiler, source);
+    try pipeline(init.io, init.environ_map, gpa, cli_options, script_path, &memoryManager, &reporter, &profiler, source);
 }
 
-fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8, memoryManager: *MemoryManager, reporter: *Reporter, profiler: *Profiler, source: []const u8) !void {
+fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8, memoryManager: *MemoryManager, reporter: *Reporter, profiler: *Profiler, source: []const u8) !void {
     profiler.startPhase(Phase.LEXIC_A);
-    const lexedTokens = try lexicAnalysis(memoryManager, source, script_path, reporter);
+    const lexedTokens = try lexicAnalysis(io, memoryManager, source, script_path, reporter);
     defer lexedTokens.deinit();
     if (cli_options.reporter_options.debug_lexer) {
         for (lexedTokens.items) |token| {
@@ -1285,17 +1335,17 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
     profiler.stopPhase();
 
     profiler.startPhase(Phase.PARSING);
-    var parser = Parser.init(memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(script_path), reporter);
+    var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter);
     defer parser.deinit();
     const parsedStatements = try parser.execute();
     profiler.stopPhase();
     exitIfCompileErrors(reporter);
 
     if (cli_options.reporter_options.debug_parser) {
-        var ast_dump = std.array_list.Managed(u8).init(memoryManager.getAnalysisAllocator());
+        var ast_dump = std.Io.Writer.Allocating.init(memoryManager.getAnalysisAllocator());
         defer ast_dump.deinit();
-        AST.dumpStatements(ast_dump.writer(), parsedStatements) catch {};
-        reporter.report(.Debug, .Hint, null, "AST", "{s}", .{ast_dump.items});
+        AST.dumpStatements(&ast_dump.writer, parsedStatements) catch {};
+        reporter.report(.Debug, .Hint, null, "AST", "{s}", .{ast_dump.written()});
     }
 
     profiler.startPhase(Phase.RESOLVING);
@@ -1320,7 +1370,7 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
 
     var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
     defer reachable_modules.deinit();
-    const hir_program = try generateHIRProgram(memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, reporter);
+    const hir_program = try generateHIRProgram(io, memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, reporter);
     exitIfCompileErrors(reporter);
     profiler.stopPhase();
 
@@ -1340,6 +1390,7 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
     const exe_path = try nativeOutputPath(allocator, &cli_options, script_path, target.isWindows());
     defer allocator.free(exe_path);
     try compileToNative(
+        io,
         allocator,
         memoryManager,
         &cli_options,
@@ -1355,7 +1406,7 @@ fn pipeline(allocator: std.mem.Allocator, cli_options: CLI, script_path: []const
 
     if (cli_options.mode == .RUN) {
         profiler.startPhase(Phase.EXECUTION);
-        const code = try runNativeExecutable(exe_path, cli_options.program_args);
+        const code = try runNativeExecutable(io, environ_map, exe_path, cli_options.program_args);
         profiler.stopPhase();
 
         if (cli_options.reporter_options.debug_memory) {

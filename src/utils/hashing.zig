@@ -20,14 +20,6 @@ pub fn hashBytes(bytes: []const u8) Digest {
     return digest;
 }
 
-/// Content hash of the file at `path`. The path itself is not part of the
-/// digest; key identity separately with `KeyBuilder.addSource`.
-pub fn hashFile(allocator: std.mem.Allocator, path: []const u8) !Digest {
-    const content = try readFile(allocator, path);
-    defer allocator.free(content);
-    return hashBytes(content);
-}
-
 /// Streaming composite key builder. Every field is framed with its byte length
 /// (big-endian u64), so concatenated fields are unambiguous — `("ab", "c")`
 /// can never collide with `("a", "bc")` — and ordering always matters.
@@ -53,13 +45,6 @@ pub const KeyBuilder = struct {
         self.hasher.update(&digest);
     }
 
-    /// Reads `path` and adds it as `(path, content)`.
-    pub fn addFile(self: *KeyBuilder, allocator: std.mem.Allocator, path: []const u8) !void {
-        const content = try readFile(allocator, path);
-        defer allocator.free(content);
-        self.addSource(.{ .name = path, .content = content });
-    }
-
     pub fn finish(self: *KeyBuilder) Digest {
         var digest: Digest = undefined;
         self.hasher.final(&digest);
@@ -72,12 +57,6 @@ fn addField(hasher: *Sha256, bytes: []const u8) void {
     std.mem.writeInt(u64, &len_buf, @intCast(bytes.len), .big);
     hasher.update(&len_buf);
     hasher.update(bytes);
-}
-
-fn readFile(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    const file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    return file.readToEndAlloc(allocator, std.math.maxInt(usize));
 }
 
 pub const CompileInput = struct {

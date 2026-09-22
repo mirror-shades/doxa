@@ -36,9 +36,7 @@ pub const ImportStackEntry = struct {
     module_path: []const u8,
     imported_from: ?[]const u8,
 
-    pub fn format(self: ImportStackEntry, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
-        _ = fmt;
-        _ = options;
+    pub fn format(self: ImportStackEntry, writer: *std.Io.Writer) std.Io.Writer.Error!void {
         if (self.imported_from) |from| {
             try writer.print("{s} (imported from {s})", .{ self.module_path, from });
         } else {
@@ -68,6 +66,7 @@ const PendingModuleDependency = struct {
 pub const Parser = struct {
     tokens: []const token.Token,
     current: usize,
+    io: std.Io,
     allocator: std.mem.Allocator,
     reporter: *Reporter,
 
@@ -94,8 +93,9 @@ pub const Parser = struct {
     current_path_pattern_is_wildcard: bool = false,
     current_path_pattern_field_names: ?[]const token.Token = null,
 
-    pub fn init(allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter) Parser {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter) Parser {
         const parser = Parser{
+            .io = io,
             .allocator = allocator,
             .tokens = tokens,
             .current = 0,
@@ -1236,7 +1236,7 @@ pub const Parser = struct {
             const prev_uri = self.current_file_uri;
             if (existing.importer_path.len > 0) {
                 self.current_file = existing.importer_path;
-                self.current_file_uri = try self.reporter.ensureFileUri(existing.importer_path);
+                self.current_file_uri = try self.reporter.ensureFileUri(self.io,existing.importer_path);
             }
             defer {
                 self.current_file = prev_file;
@@ -1267,7 +1267,7 @@ pub const Parser = struct {
             const previous_current_file = self.current_file;
             const previous_current_file_uri = self.current_file_uri;
             self.current_file = parent_info.file_path;
-            self.current_file_uri = try self.reporter.ensureFileUri(parent_info.file_path);
+            self.current_file_uri = try self.reporter.ensureFileUri(self.io,parent_info.file_path);
             defer {
                 self.current_file = previous_current_file;
                 self.current_file_uri = previous_current_file_uri;
@@ -1332,7 +1332,7 @@ pub const Parser = struct {
                 const previous_current_file = self.current_file;
                 const previous_current_file_uri = self.current_file_uri;
                 self.current_file = import_entry.importer_path;
-                self.current_file_uri = try self.reporter.ensureFileUri(import_entry.importer_path);
+                self.current_file_uri = try self.reporter.ensureFileUri(self.io,import_entry.importer_path);
                 defer {
                     self.current_file = previous_current_file;
                     self.current_file_uri = previous_current_file_uri;
@@ -1410,7 +1410,7 @@ pub const Parser = struct {
                     const previous_current_file = self.current_file;
                     const previous_current_file_uri = self.current_file_uri;
                     self.current_file = dep.parent_file;
-                    self.current_file_uri = try self.reporter.ensureFileUri(dep.parent_file);
+                    self.current_file_uri = try self.reporter.ensureFileUri(self.io,dep.parent_file);
                     defer {
                         self.current_file = previous_current_file;
                         self.current_file_uri = previous_current_file_uri;
@@ -1845,7 +1845,7 @@ pub const Parser = struct {
         const previous_current_file = self.current_file;
         const previous_current_file_uri = self.current_file_uri;
         self.current_file = parent_path;
-        self.current_file_uri = try self.reporter.ensureFileUri(parent_path);
+        self.current_file_uri = try self.reporter.ensureFileUri(self.io,parent_path);
         defer {
             self.current_file = previous_current_file;
             self.current_file_uri = previous_current_file_uri;

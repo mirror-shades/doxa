@@ -5,6 +5,8 @@ zig Build {
     const std = @import("std");
     const builtin = @import("builtin");
 
+    extern fn doxa_getenv(name_ptr: ?[*]const u8, name_len: usize, out_len: *usize) callconv(.c) ?[*]const u8;
+
     pub fn errorState(mode: i64, value: i64) i64 {
         const State = struct {
             var last_error_code: i64 = 0;
@@ -74,10 +76,14 @@ zig Build {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
         const a = arena.allocator();
+        const io = std.Io.Threaded.global_single_threaded.io();
 
         const doxa_path = blk: {
-            if (std.process.getEnvVarOwned(a, "DOXA_BIN")) |p| break :blk p else |_| {}
-            break :blk std.fs.selfExePathAlloc(a) catch {
+            var env_len: usize = 0;
+            if (doxa_getenv("DOXA_BIN", "DOXA_BIN".len, &env_len)) |ptr| {
+                break :blk ptr[0..env_len];
+            }
+            break :blk std.process.executablePathAlloc(io, a) catch {
                 setLastError(105);
                 return 0;
             };
@@ -144,17 +150,23 @@ zig Build {
             return 0;
         }
 
-        var child = std.process.Child.init(args.items, a);
-        child.stdout_behavior = .Inherit;
-        child.stderr_behavior = .Inherit;
+        var child = std.process.spawn(io, .{
+            .argv = args.items,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        }) catch {
+            setLastError(105);
+            return 0;
+        };
+        defer child.kill(io);
 
-        const term = child.spawnAndWait() catch {
+        const term = child.wait(io) catch {
             setLastError(105);
             return 0;
         };
 
         return switch (term) {
-            .Exited => |code| @as(i64, code),
+            .exited => |code| @as(i64, code),
             else => {
                 setLastError(117);
                 return 0;
@@ -188,10 +200,11 @@ zig Build {
     // stat'd (missing, permission denied, ...). Used by the artifact-level
     // up-to-date check in `run`.
     pub fn fileMtime(path: []const u8) i64 {
-        const file = std.fs.cwd().openFile(path, .{}) catch return -1;
-        defer file.close();
-        const stat = file.stat() catch return -1;
-        return @intCast(stat.mtime);
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return -1;
+        defer file.close(io);
+        const stat = file.stat(io) catch return -1;
+        return @intCast(stat.mtime.toNanoseconds());
     }
 }
 

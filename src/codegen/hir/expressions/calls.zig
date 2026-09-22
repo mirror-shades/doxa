@@ -739,7 +739,10 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Pop);
             }
         } else if (std.mem.eql(u8, name, "std")) {
-            const exe_dir = std.fs.selfExeDirPathAlloc(self.generator.allocator) catch return error.PermissionDenied;
+            const exe_dir = std.process.executableDirPathAlloc(
+                self.generator.io,
+                self.generator.allocator,
+            ) catch return error.PermissionDenied;
             defer self.generator.allocator.free(exe_dir);
             const std_path = try std.fs.path.join(self.generator.allocator, &.{ exe_dir, "..", "lib", "std", "std.doxa" });
             const path_value = HIRValue{ .string = std_path };
@@ -753,7 +756,7 @@ pub const CallsHandler = struct {
     pub fn generateInternalCall(self: *CallsHandler, m: ast.Expr.Data) !void {
         const internal_data = m.InternalCall;
 
-        const name = std.mem.trimLeft(u8, internal_data.method.lexeme, "@");
+        const name = std.mem.trimStart(u8, internal_data.method.lexeme, "@");
 
         if (std.mem.eql(u8, name, "substring")) {
             try self.generator.generateExpression(internal_data.arguments[0], true, false);

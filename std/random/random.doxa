@@ -2,7 +2,9 @@ zig Random {
     const std = @import("std");
 
     pub fn floatUnit() f64 {
-        return std.crypto.random.float(f64);
+        const io = std.Io.Threaded.global_single_threaded.io();
+        var source: std.Random.IoSource = .{ .io = io };
+        return source.interface().float(f64);
     }
 }
 

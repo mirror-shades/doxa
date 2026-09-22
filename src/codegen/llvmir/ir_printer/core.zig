@@ -5,7 +5,6 @@ pub fn Methods(comptime Ctx: type) type {
     const HIR = Ctx.HIR;
     const StackType = Ctx.StackType;
     const StackVal = Ctx.StackVal;
-    const StackSlot = Ctx.StackSlot;
     const StackMergeState = Ctx.StackMergeState;
     const EnumVariantMeta = Ctx.EnumVariantMeta;
     const Region = Ctx.Region;
@@ -480,7 +479,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const new_slots = try self.allocator.realloc(entry.value_ptr.slots, stack.len);
                 entry.value_ptr.slots = new_slots;
                 for (old_len..stack.len) |i| {
-                    new_slots[i] = StackSlot{};
+                    new_slots[i] = .empty;
                 }
             }
 
@@ -594,9 +593,10 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn init(allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType)) IRPrinter {
+        pub fn init(io: std.Io, allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType)) IRPrinter {
             return .{
                 .allocator = allocator,
+                .io = io,
                 .zig_fn_param_types = zig_fn_param_types,
                 .peek_string_counter = 0,
                 .global_types = std.StringHashMap(StackType).init(allocator),
@@ -941,10 +941,10 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn emitToFile(self: *IRPrinter, hir: *const HIR.HIRProgram, path: []const u8) !void {
-            const file = try std.fs.cwd().createFile(path, .{});
-            defer file.close();
+            const file = try std.Io.Dir.cwd().createFile(self.io, path, .{});
+            defer file.close(self.io);
             var buffer: [4096]u8 = undefined;
-            var file_writer = file.writer(&buffer);
+            var file_writer = file.writer(self.io, &buffer);
             const w = &file_writer.interface;
             try self.writeModule(hir, w);
             try w.flush();

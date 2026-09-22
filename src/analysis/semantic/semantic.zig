@@ -232,8 +232,6 @@ pub const SemanticAnalyzer = struct {
         return true;
     }
 
-
-
     // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo.
     // Struct field HIR types go through the centralized AST→HIR lowering so that
     // custom/array/union fields resolve to concrete struct/enum IDs instead of
@@ -368,7 +366,8 @@ pub const SemanticAnalyzer = struct {
                         // Module sub-symbols and zig-block functions use dotted keys
                         // (e.g. "std.println", "io.hello"). Skip those so only bare
                         // direct-import names produce a warning.
-                        if (std.mem.indexOf(u8, entry.key_ptr.*, ".")) |_| continue;
+                        const i = std.mem.indexOf(u8, entry.key_ptr.*, ".");
+                        if (i) |_| continue;
                         self.reporter.reportWarning(null, ErrorCode.UNUSED_IMPORT, "unused import '{s}'", .{sym.name});
                     }
                 }
@@ -974,7 +973,7 @@ pub const SemanticAnalyzer = struct {
                     try self.collectDeclarations(block_stmts, block_scope);
                     block_scope.deinit();
                 },
-                .FunctionDecl => |_| {
+                .FunctionDecl => {
                     // Already registered in pre-pass. Validation will occur later.
                 },
                 .EnumDecl => |enum_decl| {
@@ -1270,7 +1269,9 @@ pub const SemanticAnalyzer = struct {
                                     .String => TokenLiteral{ .string = "" },
                                     .Tetra => TokenLiteral{ .tetra = .false },
                                     .Byte => TokenLiteral{ .byte = 0 },
-                                    .Array => blk: { break :blk try eval.defaultTypeLiteral(self.allocator, type_info); },
+                                    .Array => blk: {
+                                        break :blk try eval.defaultTypeLiteral(self.allocator, type_info);
+                                    },
                                     .Union => if (type_info.union_type) |ut|
                                         union_handling.getUnionDefaultValue(ut)
                                     else
@@ -1539,7 +1540,8 @@ pub const SemanticAnalyzer = struct {
                 const first_pattern = case.patterns[0]; // Use first pattern for type narrowing
 
                 // Check for array suffix in pattern lexeme (e.g., "int[]", "string[][]")
-                if (std.mem.indexOf(u8, first_pattern.lexeme, "[]")) |_| {
+                const i = std.mem.indexOf(u8, first_pattern.lexeme, "[]");
+                if (i) |_| {
                     narrow_info.* = .{ .base = .Array, .is_mutable = false };
                 } else {
                     narrow_info.* = switch (first_pattern.type) {
@@ -1583,7 +1585,8 @@ pub const SemanticAnalyzer = struct {
         if (type_info.base == .Custom) {
             if (type_info.custom_type) |custom_type_name| {
                 if (helpers.lookupVariable(self, custom_type_name)) |variable| {
-                    if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |_| {
+                    const id = self.memory.scope_manager.value_storage.get(variable.storage_id);
+                    if (id) |_| {
                         // If the custom type refers to a struct or enum declaration, keep it as Custom
                         // This is the correct behavior - variables of struct/enum types should be Custom
                         return type_info;
@@ -1591,7 +1594,8 @@ pub const SemanticAnalyzer = struct {
                 }
 
                 // Check if it's a registered custom type
-                if (self.custom_types.get(custom_type_name)) |_| {
+                const tn = self.custom_types.get(custom_type_name);
+                if (tn) |_| {
                     return type_info;
                 }
             }
@@ -1994,7 +1998,7 @@ pub const SemanticAnalyzer = struct {
                     .is_mutable = map.is_mutable,
                 };
             },
-            .Enum => |_| {
+            .Enum => {
                 type_info.* = .{ .base = .Nothing };
             },
             .Union => |union_types| {

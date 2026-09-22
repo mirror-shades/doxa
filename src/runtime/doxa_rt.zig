@@ -52,7 +52,7 @@ fn writeStdout(slice: []const u8) void {
         return;
     }
     var stdout_buffer: [4096]u8 = undefined;
-    var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+    var stdout_writer = std.Io.File.stdout().writer(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
     const stdout = &stdout_writer.interface;
     _ = stdout.write(slice) catch return;
     _ = stdout.flush() catch return;
@@ -68,7 +68,7 @@ fn writeStderr(slice: []const u8) void {
         return;
     }
     var stderr_buffer: [1024]u8 = undefined;
-    var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+    var stderr_writer = std.Io.File.stderr().writer(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
     const stderr = &stderr_writer.interface;
     _ = stderr.write(slice) catch return;
     _ = stderr.flush() catch return;
@@ -176,10 +176,33 @@ fn ds_from_parts(ptr: ?[*]const u8, len: usize) DoxaString {
 
 var startup_argc: i32 = 0;
 var startup_argv: ?[*][*:0]u8 = null;
+var startup_environ: ?*const std.process.Environ.Map = null;
 
 pub export fn doxa_set_args(argc: i32, argv: ?[*][*:0]u8) callconv(.c) void {
     startup_argc = argc;
     startup_argv = argv;
+}
+
+pub export fn doxa_argc() callconv(.c) i32 {
+    return startup_argc;
+}
+
+pub export fn doxa_argv(index: i32) callconv(.c) ?[*:0]const u8 {
+    if (index < 0 or index >= startup_argc) return null;
+    const argv = startup_argv orelse return null;
+    return argv[@intCast(index)];
+}
+
+pub export fn doxa_set_environ(env: ?*const std.process.Environ.Map) callconv(.c) void {
+    startup_environ = env;
+}
+
+pub export fn doxa_getenv(name_ptr: ?[*]const u8, name_len: usize, out_len: *usize) callconv(.c) ?[*]const u8 {
+    const env = startup_environ orelse return null;
+    const name = if (name_ptr) |p| p[0..name_len] else return null;
+    const value = env.get(name) orelse return null;
+    out_len.* = value.len;
+    return value.ptr;
 }
 
 pub export fn doxa_int_from_string(ptr: ?[*]const u8, len: usize) callconv(.c) i64 {
@@ -286,15 +309,14 @@ pub export fn doxa_nothing_to_string(out_ptr: *?[*]u8, out_len: *usize) callconv
 }
 
 pub export fn doxa_enum_to_string(type_name_ptr: ?[*]const u8, type_name_len: usize, bits: i64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
-    var list = std.array_list.Managed(u8).init(std.heap.page_allocator);
+    var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
     defer list.deinit();
-    const w = list.writer();
-    printEnumImpl(w, sliceFromDoxaString(.{ .ptr = type_name_ptr, .len = type_name_len }), bits) catch {
+    printEnumImpl(&list.writer, sliceFromDoxaString(.{ .ptr = type_name_ptr, .len = type_name_len }), bits) catch {
         out_ptr.* = null;
         out_len.* = 0;
         return;
     };
-    const ds = allocDoxaString(list.items);
+    const ds = allocDoxaString(list.written());
     out_ptr.* = @constCast(ds.ptr);
     out_len.* = ds.len;
 }
@@ -307,15 +329,14 @@ pub export fn doxa_struct_to_string(instance: ?*anyopaque, out_ptr: *?[*]u8, out
         return;
     }
     const addr: u64 = @intFromPtr(instance.?);
-    var list = std.array_list.Managed(u8).init(std.heap.page_allocator);
+    var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
     defer list.deinit();
-    const w = list.writer();
-    printStructImpl(w, addr) catch {
+    printStructImpl(&list.writer, addr) catch {
         out_ptr.* = null;
         out_len.* = 0;
         return;
     };
-    const ds = allocDoxaString(list.items);
+    const ds = allocDoxaString(list.written());
     out_ptr.* = @constCast(ds.ptr);
     out_len.* = ds.len;
 }
@@ -327,15 +348,14 @@ pub export fn doxa_array_to_string(hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len
         out_len.* = ds.len;
         return;
     }
-    var list = std.array_list.Managed(u8).init(std.heap.page_allocator);
+    var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
     defer list.deinit();
-    const w = list.writer();
-    printArrayHdrImpl(w, hdr.?) catch {
+    printArrayHdrImpl(&list.writer, hdr.?) catch {
         out_ptr.* = null;
         out_len.* = 0;
         return;
     };
-    const ds = allocDoxaString(list.items);
+    const ds = allocDoxaString(list.written());
     out_ptr.* = @constCast(ds.ptr);
     out_len.* = ds.len;
 }
@@ -1676,14 +1696,13 @@ fn asArrayHeader(ptr: ?*anyopaque) ?*ArrayHeader {
 }
 
 pub export fn doxa_print_array_hdr(hdr: *ArrayHeader) callconv(.c) void {
-    var list = std.array_list.Managed(u8).init(std.heap.page_allocator);
+    var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
     defer list.deinit();
-    const out = list.writer();
-    printArrayHdrImpl(out, hdr) catch return;
-    doxaWrite(list.items);
+    printArrayHdrImpl(&list.writer, hdr) catch return;
+    doxaWrite(list.written());
 }
 
-fn printTaggedBitsImpl(out: anytype, tag: u64, bits: i64) anyerror!void {
+fn printTaggedBitsImpl(out: *std.Io.Writer, tag: u64, bits: i64) anyerror!void {
     switch (tag) {
         0 => { // int (i64)
             try out.print("{d}", .{bits});
@@ -1744,7 +1763,7 @@ fn printTaggedBitsImpl(out: anytype, tag: u64, bits: i64) anyerror!void {
     }
 }
 
-fn printEnumImpl(out: anytype, type_name: []const u8, bits: i64) anyerror!void {
+fn printEnumImpl(out: *std.Io.Writer, type_name: []const u8, bits: i64) anyerror!void {
     if (type_name.len == 0) {
         try out.print("<enum:{d}>", .{bits});
         return;
@@ -1774,7 +1793,7 @@ fn printEnumImpl(out: anytype, type_name: []const u8, bits: i64) anyerror!void {
     }
 }
 
-fn printStructImpl(out: anytype, addr: u64) anyerror!void {
+fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
     const key: usize = @intCast(addr);
     const desc = struct_registry.get(key) orelse {
         try out.print("<struct@0x{x}>", .{addr});
@@ -1821,7 +1840,7 @@ fn printStructImpl(out: anytype, addr: u64) anyerror!void {
     try out.print(" }}", .{});
 }
 
-fn printArrayHdrImpl(out: anytype, hdr: *ArrayHeader) anyerror!void {
+fn printArrayHdrImpl(out: *std.Io.Writer, hdr: *ArrayHeader) anyerror!void {
     try out.print("[", .{});
 
     if (hdr.len == 0) {
@@ -1990,11 +2009,10 @@ pub export fn doxa_print_value(val: *const DoxaValue) callconv(.c) void {
         },
         .Struct => {
             var buf: [1024]u8 = undefined;
-            var fbs = std.io.fixedBufferStream(&buf);
-            const out = fbs.writer();
+            var fbs: std.Io.Writer = .fixed(&buf);
             const addr: u64 = @bitCast(val.payload_bits);
-            printTaggedBitsImpl(out, 7, @as(i64, @bitCast(addr))) catch return;
-            doxaWrite(fbs.getWritten());
+            printTaggedBitsImpl(&fbs, 7, @as(i64, @bitCast(addr))) catch return;
+            doxaWrite(fbs.buffered());
         },
         .Enum => {
             // Enum printing is now handled natively by the IR printer

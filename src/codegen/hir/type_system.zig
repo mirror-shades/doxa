@@ -190,7 +190,7 @@ pub const TypeSystem = struct {
     pub fn registerGroupType(self: *TypeSystem, group_name: []const u8, members: []const ast.GroupMember) !void {
         var group_member_sources = try self.allocator.alloc(CustomTypeInfo.GroupMemberSource, members.len);
         for (members, 0..) |member, i| {
-            var qualified: std.ArrayListUnmanaged(u8) = .{};
+            var qualified: std.ArrayListUnmanaged(u8) = .empty;
             for (member.path, 0..) |token, j| {
                 if (j > 0) try qualified.appendSlice(self.allocator, ".");
                 try qualified.appendSlice(self.allocator, token.lexeme);
@@ -211,10 +211,10 @@ pub const TypeSystem = struct {
         // Also populate the GroupTable so GroupCheck instructions can resolve members
         if (self.group_table) |gtable| {
             if (gtable.getIdByName(group_name) != null) return;
-            var flat_members = std.ArrayListUnmanaged(GroupTable.Member){};
+            var flat_members: std.ArrayListUnmanaged(GroupTable.Member) = .empty;
             defer flat_members.deinit(self.allocator);
             for (members) |member| {
-                var q: std.ArrayListUnmanaged(u8) = .{};
+                var q: std.ArrayListUnmanaged(u8) = .empty;
                 for (member.path, 0..) |tok, j| {
                     if (j > 0) try q.appendSlice(self.allocator, ".");
                     try q.appendSlice(self.allocator, tok.lexeme);
@@ -362,11 +362,11 @@ pub const TypeSystem = struct {
     }
 
     fn buildUnionKey(self: *TypeSystem, ut: *ast.UnionType) ![]u8 {
-        var members = std.ArrayListUnmanaged(*const ast.TypeInfo){};
+        var members: std.ArrayListUnmanaged(*const ast.TypeInfo) = .empty;
         defer members.deinit(self.allocator);
         try self.collectUnionMembers(&members, ut);
 
-        var buf = std.ArrayListUnmanaged(u8){};
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
         defer buf.deinit(self.allocator);
         for (members.items, 0..) |member, idx| {
             if (idx > 0) try buf.append(self.allocator, '|');
@@ -425,9 +425,9 @@ pub const TypeSystem = struct {
                     }
                     const union_id = entry.value_ptr.*;
 
-                    var lowered = std.ArrayListUnmanaged(*const HIRType){};
+                    var lowered: std.ArrayListUnmanaged(*const HIRType) = .empty;
                     defer lowered.deinit(self.allocator);
-                    var members = std.ArrayListUnmanaged(*const ast.TypeInfo){};
+                    var members: std.ArrayListUnmanaged(*const ast.TypeInfo) = .empty;
                     defer members.deinit(self.allocator);
                     self.collectUnionMembers(&members, ut) catch return .Unknown;
                     for (members.items) |member| {
@@ -703,17 +703,17 @@ pub const TypeSystem = struct {
                 if (self.resolveFieldAccessType(expr, symbol_table)) |res| {
                     return res.t;
                 }
-            const obj_type = self.inferTypeFromExpression(field.object, symbol_table);
-            if (std.mem.eql(u8, field.field.lexeme, "token_type")) return HIRType{ .Enum = 0 };
-            switch (obj_type) {
-                .Struct => return .Unknown,
-                .String => return .String,
-                .Int => return .Int,
-                .Float => return .Float,
-                .Byte => return .Byte,
-                .Nothing => return .Nothing,
-                else => return .Unknown,
-            }
+                const obj_type = self.inferTypeFromExpression(field.object, symbol_table);
+                if (std.mem.eql(u8, field.field.lexeme, "token_type")) return HIRType{ .Enum = 0 };
+                switch (obj_type) {
+                    .Struct => return .Unknown,
+                    .String => return .String,
+                    .Int => return .Int,
+                    .Float => return .Float,
+                    .Byte => return .Byte,
+                    .Nothing => return .Nothing,
+                    else => return .Unknown,
+                }
             },
             .EnumMember => |member| {
                 // For enum members, try to find the parent enum type
@@ -816,7 +816,7 @@ pub const TypeSystem = struct {
                 };
             },
             .InternalCall => |internal| {
-                const method_name = std.mem.trimLeft(u8, internal.method.lexeme, "@");
+                const method_name = std.mem.trimStart(u8, internal.method.lexeme, "@");
                 if (std.mem.eql(u8, method_name, "pop")) {
                     const receiver_type = self.inferTypeFromExpression(internal.receiver, symbol_table);
                     switch (receiver_type) {
