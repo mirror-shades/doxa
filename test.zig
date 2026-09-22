@@ -44,6 +44,7 @@ test "suite wiring: every test file is reachable" {
     // is built as its own test executable (see build.zig).
     const external = [_][]const u8{
         "answers.zig",
+        "cases.zig",
         "harness.zig",
         "test_lsp.zig",
     };

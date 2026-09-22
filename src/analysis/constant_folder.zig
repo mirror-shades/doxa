@@ -284,8 +284,26 @@ pub const ConstantFolder = struct {
                 return expr;
             },
             .Logical => |*logical| {
-                logical.left = try self.foldExpr(logical.left);
-                logical.right = try self.foldExpr(logical.right);
+                const folded_left = try self.foldExpr(logical.left);
+                const folded_right = try self.foldExpr(logical.right);
+
+                logical.left = folded_left;
+                logical.right = folded_right;
+
+                if (folded_left.data == .Literal and folded_right.data == .Literal) {
+                    if (self.foldBinaryOp(folded_left.data.Literal, logical.operator, folded_right.data.Literal)) |result| {
+                        self.optimizations_made += 1;
+
+                        folded_left.deinit(self.allocator);
+                        self.allocator.destroy(folded_left);
+                        folded_right.deinit(self.allocator);
+                        self.allocator.destroy(folded_right);
+
+                        expr.data = .{ .Literal = result };
+                        return expr;
+                    }
+                }
+
                 return expr;
             },
             .FieldAccess => |*access| {
@@ -869,25 +887,9 @@ pub const ConstantFolder = struct {
     }
 
     fn foldAnd(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
         return switch (left) {
-            .tetra => |l| switch (right) {
-                .tetra => |r| TokenLiteral{ .tetra = switch (l) {
-                    .true => r,
-                    .false => .false,
-                    .both => switch (r) {
-                        .true => .both,
-                        .false => .false,
-                        .both => .both,
-                        .neither => .false,
-                    },
-                    .neither => switch (r) {
-                        .true => .neither,
-                        .false => .false,
-                        .both => .false,
-                        .neither => .neither,
-                    },
-                } },
+            .tetra => switch (right) {
+                .tetra => if (self.isTruthy(left)) right else TokenLiteral{ .tetra = .false },
                 else => null,
             },
             else => null,
@@ -895,25 +897,9 @@ pub const ConstantFolder = struct {
     }
 
     fn foldOr(self: *ConstantFolder, left: TokenLiteral, right: TokenLiteral) ?TokenLiteral {
-        _ = self;
         return switch (left) {
-            .tetra => |l| switch (right) {
-                .tetra => |r| TokenLiteral{ .tetra = switch (l) {
-                    .true => .true,
-                    .false => r,
-                    .both => switch (r) {
-                        .true => .true,
-                        .false => .both,
-                        .both => .both,
-                        .neither => .both,
-                    },
-                    .neither => switch (r) {
-                        .true => .true,
-                        .false => .neither,
-                        .both => .both,
-                        .neither => .neither,
-                    },
-                } },
+            .tetra => switch (right) {
+                .tetra => if (self.isTruthy(left)) TokenLiteral{ .tetra = .true } else right,
                 else => null,
             },
             else => null,

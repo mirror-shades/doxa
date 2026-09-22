@@ -1,47 +1,22 @@
 const std = @import("std");
-const answers = @import("answers");
 const platform = @import("platform");
 
+const cases = @import("cases.zig");
 const harness = @import("harness.zig");
 
-const peek_result = answers.peek_result;
-const print_result = answers.print_result;
-
+const Case = cases.Case;
 const test_results = harness.Counts;
-
-const Mode = enum {
-    PEEK,
-    PRINT,
-    SKIP,
-};
-
-const TestCase = struct {
-    name: []const u8,
-    binary_path: []const u8,
-    mode: Mode,
-    input: ?[]const u8,
-    expected_print: ?[]const print_result,
-    expected_peek: ?[]const peek_result,
-};
-
 const CommandResult = harness.CommandResult;
 
-fn runCompiledBinaryEx(allocator: std.mem.Allocator, binary_path: []const u8, input: ?[]const u8) !CommandResult {
+fn runCompiledBinaryEx(allocator: std.mem.Allocator, binary_path: []const u8, input: ?[]const u8, extra_args: []const []const u8) !CommandResult {
     const repo_root = try harness.repoRootFromEnv(allocator);
     defer if (repo_root) |rr| allocator.free(rr);
 
-    const argv = [_][]const u8{binary_path};
-    return try harness.runCommandCapture(allocator, &argv, repo_root, input);
-}
-
-fn runCompiledBinaryWithInput(allocator: std.mem.Allocator, binary_path: []const u8, input: []const u8) ![]const u8 {
-    const result = try runCompiledBinaryEx(allocator, binary_path, input);
-    allocator.free(result.stderr);
-    if (result.exit_code != 0) {
-        allocator.free(result.stdout);
-        return error.CommandFailed;
-    }
-    return result.stdout;
+    var argv = std.array_list.Managed([]const u8).init(allocator);
+    defer argv.deinit();
+    try argv.append(binary_path);
+    try argv.appendSlice(extra_args);
+    return try harness.runCommandCapture(allocator, argv.items, repo_root, input);
 }
 
 fn compileDoxaSource(allocator: std.mem.Allocator, src: []const u8, out: []const u8) !void {
@@ -62,18 +37,30 @@ fn compileDoxaSource(allocator: std.mem.Allocator, src: []const u8, out: []const
     allocator.free(result.stderr);
 }
 
-fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
-    if (tc.mode == .SKIP) {
-        return .{ .passed = 0, .failed = 0, .untested = 1 };
+fn runTestCase(allocator: std.mem.Allocator, tc: Case) !test_results {
+    const output_path = try cases.outputPathFor(allocator, tc.path);
+    const binary_path = try harness.getBinaryPath(allocator, output_path);
+
+    if (tc.mode == .terminate) {
+        const result = runCompiledBinaryEx(allocator, binary_path, tc.input, tc.extra_args) catch {
+            return .{ .passed = 0, .failed = 0, .untested = 1 };
+        };
+        defer allocator.free(result.stdout);
+        defer allocator.free(result.stderr);
+
+        var ok = result.exit_code != 0;
+        if (tc.expect_code) |code| ok = ok and result.exit_code == code;
+        if (tc.expect_stderr) |needle| ok = ok and std.mem.indexOf(u8, result.stderr, needle) != null;
+        if (ok) return .{ .passed = 1, .failed = 0, .untested = 0 };
+        std.debug.print(
+            "Terminating case '{s}' failed:\n  exit={d}\n  stderr: {s}\n",
+            .{ tc.name, result.exit_code, result.stderr },
+        );
+        return .{ .passed = 0, .failed = 1, .untested = 0 };
     }
 
-    const exe_result = runCompiledBinaryEx(allocator, tc.binary_path, tc.input) catch {
-        const expected_count = switch (tc.mode) {
-            .PRINT => tc.expected_print.?.len,
-            .PEEK => tc.expected_peek.?.len,
-            .SKIP => 1,
-        };
-        return .{ .passed = 0, .failed = 0, .untested = expected_count };
+    const exe_result = runCompiledBinaryEx(allocator, binary_path, tc.input, tc.extra_args) catch {
+        return .{ .passed = 0, .failed = 0, .untested = tc.expectedCount() };
     };
 
     if (exe_result.exit_code != 0) {
@@ -91,39 +78,30 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
             std.mem.indexOf(u8, stderr_lower, "exec format error") != null or
             std.mem.indexOf(u8, stderr_lower, "wrong architecture") != null)
         {
-            const expected_count = switch (tc.mode) {
-                .PRINT => tc.expected_print.?.len,
-                .PEEK => tc.expected_peek.?.len,
-                .SKIP => 1,
-            };
-            return .{ .passed = 0, .failed = 0, .untested = expected_count };
+            return .{ .passed = 0, .failed = 0, .untested = tc.expectedCount() };
         }
 
         return error.CommandFailed;
     }
 
     const output = switch (tc.mode) {
-        .PRINT => blk: {
+        .print => blk: {
             allocator.free(exe_result.stderr);
             break :blk exe_result.stdout;
         },
-        .PEEK => blk: {
+        .peek => blk: {
             allocator.free(exe_result.stdout);
             break :blk exe_result.stderr;
         },
-        .SKIP => unreachable,
+        .terminate => unreachable,
     };
     defer allocator.free(output);
 
     return switch (tc.mode) {
-        .PRINT => try harness.validatePrintResults(output, tc.expected_print.?, allocator),
-        .PEEK => try harness.validatePeekResults(output, tc.expected_peek.?, allocator),
-        .SKIP => .{ .passed = 0, .failed = 0, .untested = 1 },
+        .print => try harness.validatePrintResults(output, tc.expected_print.?, allocator),
+        .peek => try harness.validatePeekResults(output, tc.expected_peek.?, allocator),
+        .terminate => unreachable,
     };
-}
-
-fn getBinaryPath(alloc: std.mem.Allocator, base: []const u8) ![]const u8 {
-    return harness.getBinaryPath(alloc, base);
 }
 
 pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
@@ -135,295 +113,35 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
 
     harness.printSection("COMPILE");
 
-    const build_jobs = [_][2][]const u8{
-        .{ "./test/misc/bigfile.doxa", "./test/out/bigfile" },
-        .{ "./test/misc/complex_print.doxa", "./test/out/complex_print" },
-        .{ "./test/misc/expressions.doxa", "./test/out/expressions" },
-        .{ "./test/misc/array_storage_migration.doxa", "./test/out/array_storage_migration" },
-        .{ "./test/misc/alias_arrays.doxa", "./test/out/alias_arrays" },
-        .{ "./test/misc/union_narrow.doxa", "./test/out/union_narrow" },
-        .{ "./test/misc/nested_struct_return.doxa", "./test/out/nested_struct_return" },
-        .{ "./test/misc/methods.doxa", "./test/out/methods" },
-        .{ "./test/misc/union_enum_return.doxa", "./test/out/union_enum_return" },
-        .{ "./test/misc/inline_zig_string.doxa", "./test/out/inline_zig_string" },
-        .{ "./test/misc/inline_zig_test.doxa", "./test/out/inline_zig_test" },
-        .{ "./test/misc/zig_import_test.doxa", "./test/out/zig_import_test" },
-        .{ "./test/misc/module_private_call.doxa", "./test/out/module_private_call" },
-        .{ "./test/misc/import_submodule.doxa", "./test/out/import_submodule" },
-        .{ "./test/examples/brainfuck.doxa", "./test/out/brainfuck" },
-        .{ "./test/examples/calculator.doxa", "./test/out/calculator" },
-        .{ "./test/misc/http_link_test.doxa", "./test/out/http_link_test" },
-        .{ "./test/misc/list.doxa", "./test/out/list" },
-        .{ "./test/misc/logic.doxa", "./test/out/logic" },
-        .{ "./test/misc/angel.doxa", "./test/out/angel" },
-        .{ "./test/misc/import_test.doxa", "./test/out/import_test" },
-        .{ "./test/misc/basic_test.doxa", "./test/out/basic_test" },
-        .{ "./test/misc/alias_test.doxa", "./test/out/alias_test" },
-    };
-    for (build_jobs) |job| {
-        compileDoxaSource(allocator, job[0], job[1]) catch |err| {
+    // Build every program referenced by a compile-pipeline case exactly once.
+    var built = std.StringHashMap(void).init(allocator);
+    defer built.deinit();
+    for (cases.cases) |tc| {
+        if (!tc.runsOn(.compile)) continue;
+        if (built.contains(tc.path)) continue;
+        try built.put(tc.path, {});
+        const out = try cases.outputPathFor(allocator, tc.path);
+        compileDoxaSource(allocator, tc.path, out) catch |err| {
             std.debug.print("Build step failed: {}\n", .{err});
             return err;
         };
     }
     harness.printCase("build test files", .{ .passed = 1, .failed = 0, .untested = 0 });
 
-    // Test cases for compiled binaries
-    const bigfile_path = try getBinaryPath(allocator, "./test/out/bigfile");
-    const complex_print_path = try getBinaryPath(allocator, "./test/out/complex_print");
-    const expressions_path = try getBinaryPath(allocator, "./test/out/expressions");
-    const brainfuck_path = try getBinaryPath(allocator, "./test/out/brainfuck");
-    const array_storage_migration_path = try getBinaryPath(allocator, "./test/out/array_storage_migration");
-    const alias_arrays_path = try getBinaryPath(allocator, "./test/out/alias_arrays");
-    const union_narrow_path = try getBinaryPath(allocator, "./test/out/union_narrow");
-    const nested_struct_return_path = try getBinaryPath(allocator, "./test/out/nested_struct_return");
-    const methods_path = try getBinaryPath(allocator, "./test/out/methods");
-    const union_enum_return_path = try getBinaryPath(allocator, "./test/out/union_enum_return");
-    const inline_zig_string_path = try getBinaryPath(allocator, "./test/out/inline_zig_string");
-    const inline_zig_test_path = try getBinaryPath(allocator, "./test/out/inline_zig_test");
-    const zig_import_test_path = try getBinaryPath(allocator, "./test/out/zig_import_test");
-    const module_private_call_path = try getBinaryPath(allocator, "./test/out/module_private_call");
-    const import_submodule_path = try getBinaryPath(allocator, "./test/out/import_submodule");
-    const calculator_path = try getBinaryPath(allocator, "./test/out/calculator");
-    const http_link_path = try getBinaryPath(allocator, "./test/out/http_link_test");
-    const list_path = try getBinaryPath(allocator, "./test/out/list");
-    const logic_path = try getBinaryPath(allocator, "./test/out/logic");
-    const angel_path = try getBinaryPath(allocator, "./test/out/angel");
-    const import_test_path = try getBinaryPath(allocator, "./test/out/import_test");
-    const basic_test_path = try getBinaryPath(allocator, "./test/out/basic_test");
-    const alias_test_path = try getBinaryPath(allocator, "./test/out/alias_test");
-
-    const test_cases = [_]TestCase{
-        .{
-            .name = "bigfile",
-            .binary_path = bigfile_path,
-            .mode = .PEEK,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = answers.expected_bigfile_results[0..],
-        },
-        .{
-            .name = "complex print",
-            .binary_path = complex_print_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_complex_print_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "expressions",
-            .binary_path = expressions_path,
-            .mode = .PEEK,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = answers.expected_expressions_results[0..],
-        },
-        .{
-            .name = "brainfuck",
-            .binary_path = brainfuck_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_brainfuck_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "array storage migration",
-            .binary_path = array_storage_migration_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_array_storage_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "alias arrays",
-            .binary_path = alias_arrays_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_alias_arrays_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "union narrow",
-            .binary_path = union_narrow_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_union_narrow_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "nested struct return",
-            .binary_path = nested_struct_return_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_nested_struct_return_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "methods",
-            .binary_path = methods_path,
-            .mode = .PEEK,
-            .input = "f\n",
-            .expected_print = null,
-            .expected_peek = answers.expected_methods_results[0..],
-        },
-        .{
-            .name = "union enum return",
-            .binary_path = union_enum_return_path,
-            .mode = .PEEK,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = answers.expected_union_enum_return_results[0..],
-        },
-        .{
-            .name = "inline zig string",
-            .binary_path = inline_zig_string_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = &[_]print_result{
-                .{ .value = "abc" },
-                .{ .value = "hi" },
-            },
-            .expected_peek = null,
-        },
-        .{
-            .name = "inline zig test",
-            .binary_path = inline_zig_test_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_inline_zig_test_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "zig import test",
-            .binary_path = zig_import_test_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_zig_import_test_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "module private call",
-            .binary_path = module_private_call_path,
-            .mode = .PEEK,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = answers.expected_module_private_call_results[0..],
-        },
-        .{
-            .name = "import submodule",
-            .binary_path = import_submodule_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = &[_]print_result{
-                .{ .value = "submodule import works" },
-                .{ .value = "true" },
-            },
-            .expected_peek = null,
-        },
-        .{
-            .name = "http link test",
-            .binary_path = http_link_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = &[_]print_result{},
-            .expected_peek = null,
-        },
-        .{
-            .name = "list",
-            .binary_path = list_path,
-            .mode = .PEEK,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = answers.expected_list_results[0..],
-        },
-        .{
-            .name = "logic",
-            .binary_path = logic_path,
-            .mode = .PEEK,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = answers.expected_logic_results[0..],
-        },
-        .{
-            .name = "angel",
-            .binary_path = angel_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_angel_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "import test",
-            .binary_path = import_test_path,
-            .mode = .PEEK,
-            .input = null,
-            .expected_print = null,
-            .expected_peek = answers.expected_import_test_results[0..],
-        },
-        .{
-            .name = "basic test",
-            .binary_path = basic_test_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_basic_test_results[0..],
-            .expected_peek = null,
-        },
-        .{
-            .name = "alias test",
-            .binary_path = alias_test_path,
-            .mode = .PRINT,
-            .input = null,
-            .expected_print = answers.expected_alias_test_results[0..],
-            .expected_peek = null,
-        },
-    };
-
     var passed: usize = 0;
     var failed: usize = 0;
     var untested: usize = 0;
-    for (test_cases) |tc| {
+    for (cases.cases) |tc| {
+        if (!tc.runsOn(.compile)) continue;
         const result = try runTestCase(allocator, tc);
         harness.printCase(tc.name, result);
         if (!harness.isClean(result)) {
-            std.debug.print("  bin: {s}\n", .{tc.binary_path});
+            std.debug.print("  src: {s}\n", .{tc.path});
         }
         passed += result.passed;
         failed += result.failed;
         untested += result.untested;
     }
-
-    // Dedicated calculator batch with a single summary
-    var calc_passed: usize = 0;
-    var calc_failed: usize = 0;
-    for (answers.calculator_io_tests, 0..) |io, idx| {
-        const out = runCompiledBinaryWithInput(allocator, calculator_path, io.input) catch {
-            // Check for cross-compilation or execution error
-            const result = runCompiledBinaryEx(allocator, calculator_path, io.input) catch {
-                // Likely cross-compilation - mark as untested
-                untested += answers.calculator_io_tests.len;
-                harness.printCase("calculator", .{ .passed = 0, .failed = 0, .untested = answers.calculator_io_tests.len });
-                break;
-            };
-            defer allocator.free(result.stdout);
-            defer allocator.free(result.stderr);
-            calc_failed += 1;
-            continue;
-        };
-        defer allocator.free(out);
-        const lines = try harness.parsePrintOutput(out, allocator);
-        defer lines.deinit();
-        if (lines.items.len > 0 and std.mem.eql(u8, lines.items[0], io.expected_output)) {
-            calc_passed += 1;
-        } else {
-            calc_failed += 1;
-            const found_output = if (lines.items.len > 0) lines.items[0] else "(no output)";
-            std.debug.print("Calculator test case {d} failed:\n  Input: \"{s}\"\n  Expected: \"{s}\"\n  Found:    \"{s}\"\n", .{ idx + 1, std.mem.trim(u8, io.input, " \t\n\r"), io.expected_output, found_output });
-        }
-    }
-    const calc_result = test_results{ .passed = calc_passed, .failed = calc_failed, .untested = 0 };
-    harness.printCase("calculator", calc_result);
-    passed += calc_passed;
-    failed += calc_failed;
 
     const summary = test_results{ .passed = passed, .failed = failed, .untested = untested };
     harness.printSuiteSummary("COMPILE", summary);
