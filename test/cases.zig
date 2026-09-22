@@ -54,7 +54,7 @@ pub const Case = struct {
 
 /// Source basename without its extension. A local implementation (rather than
 /// `std.fs.path.stem`) because the comptime uniqueness guard below evaluates it
-/// for every pair of cases and the std path parser blows the branch quota.
+/// at compile time and the std path parser blows the branch quota.
 fn sourceStem(path: []const u8) []const u8 {
     var start: usize = path.len;
     while (start > 0 and path[start - 1] != '/' and path[start - 1] != '\\') start -= 1;
