@@ -18,9 +18,21 @@
 (both and true)? # true
 (both or false)? # true
 (both or true)? # true
-(both xor false)? # true 
-(both xor true)? # true should be false
-(both implies false)? # false 
+(both xor false)? # true
+(both xor true)? # false
+(both implies false)? # false
 (both implies true)? # true
-(both iff false)? # false 
+(both iff false)? # false
 (both iff true)? # true
+(both nand false)? # true
+(both nand true)? # false
+(both nor false)? # false
+(both nor true)? # false
+(neither xor false)? # false
+(neither xor true)? # true
+(neither implies false)? # true
+(neither implies true)? # true
+(neither iff false)? # true
+(neither iff true)? # false
+(neither nand false)? # true
+(neither nor false)? # true

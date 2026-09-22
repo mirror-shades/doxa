@@ -249,6 +249,14 @@ pub fn validatePrintResults(output: []const u8, expected_results: anytype, alloc
     if (expected_count > actual_count) {
         untested = expected_count - actual_count;
         std.debug.print("WARN: {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
+    } else if (actual_count > expected_count) {
+        const surplus = actual_count - expected_count;
+        std.debug.print("ERROR: {d} unexpected extra line(s) of output:\n", .{surplus});
+        var extra_i: usize = expected_count;
+        while (extra_i < actual_count) : (extra_i += 1) {
+            std.debug.print("  Extra: {s}\n", .{outputs.items[extra_i]});
+        }
+        failed += surplus;
     }
 
     return .{ .passed = passed, .failed = failed, .untested = untested };
@@ -283,6 +291,14 @@ pub fn validatePeekResults(output: []const u8, expected_results: anytype, alloca
     if (expected_count > actual_count) {
         untested = expected_count - actual_count;
         std.debug.print("WARN: {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
+    } else if (actual_count > expected_count) {
+        const surplus = actual_count - expected_count;
+        std.debug.print("ERROR: {d} unexpected extra peek result(s):\n", .{surplus});
+        var extra_i: usize = expected_count;
+        while (extra_i < actual_count) : (extra_i += 1) {
+            std.debug.print("  Extra: {s} = {s}\n", .{ outputs.items[extra_i].type, outputs.items[extra_i].value });
+        }
+        failed += surplus;
     }
 
     return .{ .passed = passed, .failed = failed, .untested = untested };

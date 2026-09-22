@@ -1,5 +1,5 @@
 const std = @import("std");
-const builtin = @import("builtin");
+const platform = @import("platform");
 
 const harness = @import("harness.zig");
 
@@ -83,9 +83,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    if (builtin.os.tag == .windows) {
-        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
-    }
+    platform.enableUtf8Console();
 
     const error_cases = [_]ErrorCase{
         .{

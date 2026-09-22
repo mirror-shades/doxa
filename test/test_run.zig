@@ -1,6 +1,6 @@
 const std = @import("std");
-const builtin = @import("builtin");
 const answers = @import("answers");
+const platform = @import("platform");
 
 const harness = @import("harness.zig");
 
@@ -54,83 +54,6 @@ fn runDoxaCommandWithInput(allocator: std.mem.Allocator, path: []const u8, input
     return result.stdout;
 }
 
-fn validatePrintResults(output: []const u8, expected_results: []const print_result, allocator: std.mem.Allocator) !test_results {
-    const outputs = try parsePrintOutput(output, allocator);
-    defer outputs.deinit();
-
-    var passed: usize = 0;
-    var failed: usize = 0;
-    var untested: usize = 0;
-
-    // Count how many tests we actually got results for
-    const actual_count = outputs.items.len;
-    const expected_count = expected_results.len;
-
-    // Check each result we actually got
-    var i: usize = 0;
-    while (i < actual_count and i < expected_count) : (i += 1) {
-        if (!std.mem.eql(u8, outputs.items[i], expected_results[i].value)) {
-            const found_output = outputs.items[i];
-            std.debug.print("✗ Print test case {d} failed:\n  Expected: \"{s}\"\n  Found:    \"{s}\"\n", .{ i + 1, expected_results[i].value, found_output });
-            failed += 1;
-        } else {
-            passed += 1;
-        }
-    }
-
-    // Count any remaining expected results that we didn't get (untested)
-    if (expected_count > actual_count) {
-        untested = expected_count - actual_count;
-        std.debug.print("⚠ {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
-    }
-
-    return .{ .passed = passed, .failed = failed, .untested = untested };
-}
-
-fn validatePeekResults(output: []const u8, expected_results: []const peek_result, allocator: std.mem.Allocator) !test_results {
-    const outputs = try parsePeekOutput(output, allocator);
-    defer outputs.deinit();
-
-    var passed: usize = 0;
-    var failed: usize = 0;
-    var untested: usize = 0;
-
-    // Count how many tests we actually got results for
-    const actual_count = outputs.items.len;
-    const expected_count = expected_results.len;
-
-    // Check each result we actually got
-    var i: usize = 0;
-    while (i < actual_count and i < expected_count) : (i += 1) {
-        if (!std.mem.eql(u8, outputs.items[i].type, expected_results[i].type) or
-            !std.mem.eql(u8, outputs.items[i].value, expected_results[i].value))
-        {
-            if (i < outputs.items.len) {
-                std.debug.print(
-                    "✗ Peek test case {d} failed:\n  Expected: {s} = \"{s}\"\n  Found:    {s} = \"{s}\"\n",
-                    .{ i + 1, expected_results[i].type, expected_results[i].value, outputs.items[i].type, outputs.items[i].value },
-                );
-            } else {
-                std.debug.print(
-                    "✗ Peek test case {d} failed:\n  Expected: {s} = \"{s}\"\n  Found:    (no output)\n",
-                    .{ i + 1, expected_results[i].type, expected_results[i].value },
-                );
-            }
-            failed += 1;
-        } else {
-            passed += 1;
-        }
-    }
-
-    // Count any remaining expected results that we didn't get (untested)
-    if (expected_count > actual_count) {
-        untested = expected_count - actual_count;
-        std.debug.print("⚠ {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
-    }
-
-    return .{ .passed = passed, .failed = failed, .untested = untested };
-}
-
 fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     const input: ?[]const u8 = tc.input;
     const result = runDoxaCommandEx(allocator, tc.path, input, tc.extra_args) catch return error.CommandFailed;
@@ -155,8 +78,6 @@ fn runTestCase(allocator: std.mem.Allocator, tc: TestCase) !test_results {
     };
     defer allocator.free(output);
 
-    if (output.len == 0) return .{ .passed = 0, .untested = 0, .failed = 0 };
-
     return switch (tc.mode) {
         .PRINT => try harness.validatePrintResults(output, tc.expected_print.?, allocator),
         .PEEK => try harness.validatePeekResults(output, tc.expected_peek.?, allocator),
@@ -168,11 +89,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    if (builtin.os.tag == .windows) {
-        // Set the console output code page to UTF-8 to enable Unicode support
-        // I think this is only needed for Windows
-        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
-    }
+    platform.enableUtf8Console();
 
     const test_cases = [_]TestCase{
         .{
@@ -356,6 +273,46 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected_peek = null,
         },
         .{
+            .name = "logic",
+            .path = "./test/misc/logic.doxa",
+            .mode = .PEEK,
+            .input = null,
+            .expected_print = null,
+            .expected_peek = answers.expected_logic_results[0..],
+        },
+        .{
+            .name = "angel",
+            .path = "./test/misc/angel.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_angel_results[0..],
+            .expected_peek = null,
+        },
+        .{
+            .name = "import test",
+            .path = "./test/misc/import_test.doxa",
+            .mode = .PEEK,
+            .input = null,
+            .expected_print = null,
+            .expected_peek = answers.expected_import_test_results[0..],
+        },
+        .{
+            .name = "basic test",
+            .path = "./test/misc/basic_test.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_basic_test_results[0..],
+            .expected_peek = null,
+        },
+        .{
+            .name = "alias test",
+            .path = "./test/misc/alias_test.doxa",
+            .mode = .PRINT,
+            .input = null,
+            .expected_print = answers.expected_alias_test_results[0..],
+            .expected_peek = null,
+        },
+        .{
             .name = "list",
             .path = "./test/misc/list.doxa",
             .mode = .PEEK,
@@ -441,59 +398,4 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const summary = test_results{ .passed = passed, .failed = failed, .untested = untested };
     harness.printSuiteSummary("RUN", summary);
     return summary;
-}
-
-fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed(peek_result) {
-    var outputs = std.array_list.Managed(peek_result).init(allocator);
-
-    var lines = std.mem.splitScalar(u8, output, '\n');
-    while (lines.next()) |line| {
-        if (harness.isDiagnosticLine(line)) continue;
-        const j = std.mem.indexOf(u8, line, "]") orelse continue;
-        if (j == 0) continue;
-        const lineWithVar = line[j + 1 ..];
-        const colon_pos = std.mem.indexOf(u8, lineWithVar, ":") orelse continue;
-        if (colon_pos + 3 > lineWithVar.len) continue;
-        const lineWithoutVar = lineWithVar[colon_pos + 3 ..];
-        const foundType = grabType(lineWithoutVar);
-        const foundValue = grabValue(lineWithoutVar);
-
-        // Create and append a new result
-        try outputs.append(.{
-            .type = foundType,
-            .value = foundValue,
-        });
-    }
-    return outputs;
-}
-
-fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed([]const u8) {
-    var outputs = std.array_list.Managed([]const u8).init(allocator);
-
-    var lines = std.mem.splitScalar(u8, output, '\n');
-    while (lines.next()) |line| {
-        if (line.len == 0) continue;
-
-        // For print output, we just get the raw value
-        try outputs.append(line);
-    }
-    return outputs;
-}
-
-fn grabType(output: []const u8) []const u8 {
-    var foundType: []const u8 = "";
-    for (output, 0..) |_, i| {
-        if (output[i] == ' ' and output[i + 1] == 'i' and output[i + 2] == 's') {
-            foundType = output[0..i];
-            break;
-        }
-    }
-    return foundType;
-}
-
-fn grabValue(output: []const u8) []const u8 {
-    const i = std.mem.indexOf(u8, output, "is") orelse 0;
-    if (i == 0) unreachable;
-    const trimmedLine = output[i + 3 ..];
-    return trimmedLine;
 }

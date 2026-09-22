@@ -198,6 +198,10 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("test/answers.zig"),
     });
 
+    const platform_module = b.createModule(.{
+        .root_source_file = b.path("src/utils/platform.zig"),
+    });
+
     // Dedicated install location for tests so a long-running editor/LSP instance
     // doesn't lock the default installed binary and break `zig build test` on Windows.
     const test_install = b.addInstallArtifact(exe, .{
@@ -214,6 +218,7 @@ pub fn build(b: *std.Build) void {
         }),
     });
     test_suite_exe.root_module.addImport("answers", answers_module);
+    test_suite_exe.root_module.addImport("platform", platform_module);
     const run_test_suite = b.addRunArtifact(test_suite_exe);
     run_test_suite.skip_foreign_checks = true;
     run_test_suite.step.dependOn(&test_install.step);

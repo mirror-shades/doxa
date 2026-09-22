@@ -2,6 +2,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const MapRuntime = @import("map_runtime.zig");
 const scope_arena = @import("scope_arena.zig");
+const win32 = @import("win32.zig");
 
 /// Push a child arena for a new block scope. Emitted by the IR printer at each
 /// `EnterScope` HIR instruction and once for the program root scope.
@@ -44,11 +45,10 @@ fn doxaWrite(slice: []const u8) void {
 
 fn writeStdout(slice: []const u8) void {
     if (builtin.os.tag == .windows) {
-        const win = std.os.windows;
-        const handle = win.kernel32.GetStdHandle(win.STD_OUTPUT_HANDLE);
-        if (handle == win.INVALID_HANDLE_VALUE) return;
+        const handle = win32.GetStdHandle(win32.STD_OUTPUT_HANDLE);
+        if (handle == std.os.windows.INVALID_HANDLE_VALUE) return;
         var written: u32 = 0;
-        _ = win.kernel32.WriteFile(handle.?, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
+        _ = win32.WriteFile(handle, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
         return;
     }
     var stdout_buffer: [4096]u8 = undefined;
@@ -60,11 +60,10 @@ fn writeStdout(slice: []const u8) void {
 
 fn writeStderr(slice: []const u8) void {
     if (builtin.os.tag == .windows) {
-        const win = std.os.windows;
-        const handle = win.kernel32.GetStdHandle(win.STD_ERROR_HANDLE);
-        if (handle == win.INVALID_HANDLE_VALUE) return;
+        const handle = win32.GetStdHandle(win32.STD_ERROR_HANDLE);
+        if (handle == std.os.windows.INVALID_HANDLE_VALUE) return;
         var written: u32 = 0;
-        _ = win.kernel32.WriteFile(handle.?, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
+        _ = win32.WriteFile(handle, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
         return;
     }
     var stderr_buffer: [1024]u8 = undefined;
