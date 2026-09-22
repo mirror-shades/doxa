@@ -154,7 +154,7 @@ fn canonicalizeUnion(
     allocator: std.mem.Allocator,
     members: []const *ast.TypeInfo,
 ) ![]*ast.TypeInfo {
-    var list = std.ArrayListUnmanaged(*ast.TypeInfo){};
+    var list: std.ArrayListUnmanaged(*ast.TypeInfo) = .empty;
     defer list.deinit(allocator);
 
     // dedup (structural)
@@ -303,7 +303,7 @@ pub fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRT
         .Function => blk: {
             if (ti.function_type) |ft| {
                 // Convert params & return
-                var params_list = std.ArrayListUnmanaged(*const HIRType){};
+                var params_list: std.ArrayList(*const HIRType) = .empty;
                 defer params_list.deinit(self.allocator);
                 for (ft.params) |p| {
                     const ph = try lowerAstTypeToHIR(self, &p);
@@ -334,7 +334,7 @@ pub fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRT
             const flat = try flattenUnionType(self, ut);
 
             // Lower members
-            var lowered = std.ArrayListUnmanaged(*const HIRType){};
+            var lowered: std.ArrayListUnmanaged(*const HIRType) = .empty;
             defer lowered.deinit(self.allocator);
             for (flat.types) |mt| {
                 const mh = try lowerAstTypeToHIR(self, mt);
@@ -350,12 +350,10 @@ pub fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRT
     };
 }
 
-/// REWRITE: better union flatten
 pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*ast.UnionType {
-    var scratch = std.ArrayListUnmanaged(*ast.TypeInfo){};
+    var scratch: std.ArrayListUnmanaged(*ast.TypeInfo) = .empty;
     defer scratch.deinit(self.allocator);
 
-    // Gather members (recursively flatten)
     for (union_type.types) |member_type| {
         if (member_type.base == .Union) {
             if (member_type.union_type) |nested_union| {
@@ -369,7 +367,6 @@ pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*a
         }
     }
 
-    // Canonicalize (structural dedup + stable order)
     const unique = try canonicalizeUnion(self, self.allocator, scratch.items);
 
     const flattened = try self.allocator.create(ast.UnionType);
@@ -380,10 +377,9 @@ pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*a
     return flattened;
 }
 
-/// REWRITE: createUnionType uses the same canonicalization
 pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.TypeInfo {
     // First flatten any unions inside inputs
-    var flat = std.ArrayListUnmanaged(*ast.TypeInfo){};
+    var flat: std.ArrayListUnmanaged(*ast.TypeInfo) = .empty;
     defer flat.deinit(self.allocator);
 
     for (types) |ti| {
@@ -402,7 +398,6 @@ pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.Ty
     const unique = try canonicalizeUnion(self, self.allocator, flat.items);
 
     if (unique.len == 1) {
-        // Single type → not a union
         return unique[0];
     }
 
@@ -414,7 +409,6 @@ pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.Ty
     return out;
 }
 
-/// REWRITE: unionContainsNothing
 pub fn unionContainsNothing(self: *SemanticAnalyzer, union_type_info: ast.TypeInfo) bool {
     _ = self;
     if (union_type_info.base != .Union) return false;
@@ -431,7 +425,7 @@ pub fn subtractTypeFromUnion(self: *SemanticAnalyzer, union_type_info: *const as
         return copy;
     }
     const u = union_type_info.union_type.?;
-    var remaining = std.ArrayListUnmanaged(*ast.TypeInfo){};
+    var remaining: std.ArrayListUnmanaged(*ast.TypeInfo) = .empty;
     defer remaining.deinit(self.allocator);
     for (u.types) |member| {
         if (!typesEqual(self, target, member)) {
@@ -491,7 +485,7 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
                             }
                         }
                         if (!allowed) {
-                            var list = std.ArrayListUnmanaged(u8){};
+                            var list: std.ArrayListUnmanaged(u8) = .empty;
                             defer list.deinit(self.allocator);
                             for (exp_u.types, 0..) |m, i| {
                                 if (i > 0) list.appendSlice(self.allocator, " | ") catch {}; // building error message; partial output ok on OOM
@@ -513,7 +507,7 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
                 for (exp_u.types) |m| {
                     if (typeMatchesUnionMember(self, m, actual)) return;
                 }
-                var list = std.ArrayListUnmanaged(u8){};
+                var list: std.ArrayListUnmanaged(u8) = .empty;
                 defer list.deinit(self.allocator);
                 for (exp_u.types, 0..) |m, i| {
                     if (i > 0) list.appendSlice(self.allocator, " | ") catch {};
@@ -1265,19 +1259,19 @@ pub fn registerGroupType(self: *SemanticAnalyzer, group_name: []const u8, member
     try self.memory.registerCustomType(mem_group);
 
     // Flatten and register in GroupTable
-    var flat_members = std.ArrayListUnmanaged(GroupTable.Member){};
+    var flat_members: std.ArrayListUnmanaged(GroupTable.Member) = .empty;
     defer flat_members.deinit(self.allocator);
 
-    var visited = std.StringHashMapUnmanaged(void){};
+    var visited = std.StringHashMapUnmanaged(void).empty;
     defer visited.deinit(self.allocator);
 
-    var seen = std.AutoHashMapUnmanaged(MemberKey, void){};
+    var seen = std.AutoHashMapUnmanaged(MemberKey, void).empty;
     defer seen.deinit(self.allocator);
 
     try flattenGroupMembers(self, members, &flat_members, &visited, &seen);
 
     // Check for duplicate qualifiers after flattening
-    var qualifiers = std.StringHashMapUnmanaged(void){};
+    var qualifiers = std.StringHashMapUnmanaged(void).empty;
     defer qualifiers.deinit(self.allocator);
     for (flat_members.items) |fm| {
         if (qualifiers.contains(fm.qualifier)) {
@@ -1456,6 +1450,3 @@ fn buildQualifiedName(allocator: std.mem.Allocator, path: []const Token) ![]cons
 pub fn getLocationFromBase(base: ast.Base) Reporting.Location {
     return base.location();
 }
-
-
-

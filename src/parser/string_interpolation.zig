@@ -113,7 +113,7 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: as
     // whole compile.
     const owned_content = try self.allocator.dupe(u8, content);
 
-    var temp_lexer = try LexicalAnalyzer.init(self.allocator, owned_content, self.current_file, self.reporter);
+    var temp_lexer = try LexicalAnalyzer.init(self.io, self.allocator, owned_content, self.current_file, self.reporter);
     defer {
         // Keep string literals nested inside the placeholder alive (e.g. a
         // `{"hi"}` argument): the parsed AST borrows them, so they must outlive
@@ -126,7 +126,7 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: as
     const tokens = try temp_lexer.lexTokens();
     defer tokens.deinit();
 
-    var temp_parser = Parser.init(self.allocator, tokens.items, self.current_file, self.current_file_uri, self.reporter);
+    var temp_parser = Parser.init(self.io, self.allocator, tokens.items, self.current_file, self.current_file_uri, self.reporter);
     defer temp_parser.deinit();
 
     const expr = try expression_parser.parseExpression(&temp_parser) orelse {

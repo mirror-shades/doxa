@@ -173,6 +173,7 @@ pub const TETRA_BOTH: u8 = 2;
 pub const TETRA_NEITHER: u8 = 3;
 
 pub const HIRGenerator = struct {
+    io: std.Io,
     allocator: std.mem.Allocator,
     instructions: std.array_list.Managed(HIRInstruction),
     current_peek_expr: ?*ast.Expr = null,
@@ -299,8 +300,9 @@ pub const HIRGenerator = struct {
         field_types: []HIRType,
     };
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol), semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo), semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer) HIRGenerator {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, reporter: *Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol), semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo), semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer) HIRGenerator {
         return HIRGenerator{
+            .io = io,
             .allocator = allocator,
             .instructions = std.array_list.Managed(HIRInstruction).init(allocator),
             .current_peek_expr = null,

@@ -71,7 +71,7 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
         sc.load(module_data.resolved_path, module_data.source) catch {};
     }
 
-    var module_lexer = try LexicalAnalyzer.init(self.allocator, module_data.source, module_data.resolved_path, self.reporter);
+    var module_lexer = try LexicalAnalyzer.init(self.io, self.allocator, module_data.source, module_data.resolved_path, self.reporter);
     // The module AST borrows the lexer's string buffers (literal values and
     // format-template placeholder lexemes). Transfer ownership to the analysis
     // arena so they outlive the lexer; otherwise deinit would free memory the
@@ -88,8 +88,8 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
         return err;
     };
 
-    const module_uri = try self.reporter.ensureFileUri(module_data.resolved_path);
-    var new_parser = Parser.init(self.allocator, tokens.items, module_data.resolved_path, module_uri, self.reporter);
+    const module_uri = try self.reporter.ensureFileUri(self.io, module_data.resolved_path);
+    var new_parser = Parser.init(self.io, self.allocator, tokens.items, module_data.resolved_path, module_uri, self.reporter);
 
     new_parser.module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(self.allocator);
     var it = self.module_resolution_status.iterator();
@@ -279,14 +279,14 @@ pub const ModuleData = struct {
     resolved_path: []const u8,
 };
 
-fn readModuleDataFromFile(alloc: std.mem.Allocator, file_path: []const u8) !ModuleData {
+fn readModuleDataFromFile(io: std.Io, alloc: std.mem.Allocator, file_path: []const u8) !ModuleData {
     var file = if (std.fs.path.isAbsolute(file_path))
-        try std.fs.openFileAbsolute(file_path, .{})
+        try std.Io.Dir.openFileAbsolute(io, file_path, .{})
     else
-        try std.fs.cwd().openFile(file_path, .{});
-    defer file.close();
+        try std.Io.Dir.cwd().openFile(io, file_path, .{});
+    defer file.close(io);
 
-    const file_size = try file.getEndPos();
+    const file_size = try file.length(io);
     if (file_size > std.math.maxInt(usize)) {
         return error.FileTooLarge;
     }
@@ -294,7 +294,7 @@ fn readModuleDataFromFile(alloc: std.mem.Allocator, file_path: []const u8) !Modu
     const buffer = try alloc.alloc(u8, size);
     errdefer alloc.free(buffer);
 
-    const bytes_read = try file.readAll(buffer);
+    const bytes_read = try file.readPositionalAll(io, buffer, 0);
     if (bytes_read != size) {
         alloc.free(buffer);
         return error.IncompleteRead;
@@ -316,10 +316,10 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
 
     // If the path is absolute, try reading it directly first
     if (std.fs.path.isAbsolute(clean_name)) {
-        if (readModuleDataFromFile(self.allocator, clean_name)) |data| {
+        if (readModuleDataFromFile(self.io, self.allocator, clean_name)) |data| {
             return data;
-        } else |e| {
-            return e;
+        } else |_| {
+            return error.ModuleLoadError;
         }
     }
 
@@ -339,7 +339,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
         try same_dir_exact_path_pre.appendSlice(current_dir);
         try same_dir_exact_path_pre.appendSlice("/");
         try same_dir_exact_path_pre.appendSlice(clean_name);
-        if (readFileContentsWithPath(self.allocator, same_dir_exact_path_pre.items)) |data| {
+        if (readFileContentsWithPath(self.io, self.allocator, same_dir_exact_path_pre.items)) |data| {
             return data;
         } else |e| {
             err = e;
@@ -352,7 +352,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     try same_dir_path_pre.appendSlice("/");
     try same_dir_path_pre.appendSlice(clean_name);
     if (!has_extension) try same_dir_path_pre.appendSlice(".doxa");
-    if (readFileContentsWithPath(self.allocator, same_dir_path_pre.items)) |data| {
+    if (readFileContentsWithPath(self.io, self.allocator, same_dir_path_pre.items)) |data| {
         return data;
     } else |e| {
         err = e;
@@ -363,7 +363,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
         defer direct_path.deinit();
         try direct_path.appendSlice(clean_name);
 
-        if (readFileContentsWithPath(self.allocator, direct_path.items)) |data| {
+        if (readFileContentsWithPath(self.io, self.allocator, direct_path.items)) |data| {
             return data;
         } else |e| {
             err = e;
@@ -375,7 +375,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     try cwd_doxa_path.appendSlice(clean_name);
     if (!has_extension) try cwd_doxa_path.appendSlice(".doxa");
 
-    if (readFileContentsWithPath(self.allocator, cwd_doxa_path.items)) |data| {
+    if (readFileContentsWithPath(self.io, self.allocator, cwd_doxa_path.items)) |data| {
         return data;
     } else |e| {
         err = e;
@@ -388,7 +388,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
         try same_dir_exact_path.appendSlice("/");
         try same_dir_exact_path.appendSlice(clean_name);
 
-        if (readFileContentsWithPath(self.allocator, same_dir_exact_path.items)) |data| {
+        if (readFileContentsWithPath(self.io, self.allocator, same_dir_exact_path.items)) |data| {
             return data;
         } else |e| {
             err = e;
@@ -402,7 +402,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     try same_dir_path.appendSlice(clean_name);
     if (!has_extension) try same_dir_path.appendSlice(".doxa");
 
-    if (readFileContentsWithPath(self.allocator, same_dir_path.items)) |data| {
+    if (readFileContentsWithPath(self.io, self.allocator, same_dir_path.items)) |data| {
         return data;
     } else |e| {
         err = e;
@@ -415,7 +415,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
         try modules_exact_path.appendSlice("/modules/");
         try modules_exact_path.appendSlice(clean_name);
 
-        if (readFileContentsWithPath(self.allocator, modules_exact_path.items)) |data| {
+        if (readFileContentsWithPath(self.io, self.allocator, modules_exact_path.items)) |data| {
             return data;
         } else |e| {
             err = e;
@@ -429,7 +429,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     try modules_path.appendSlice(clean_name);
     if (!has_extension) try modules_path.appendSlice(".doxa");
 
-    if (readFileContentsWithPath(self.allocator, modules_path.items)) |data| {
+    if (readFileContentsWithPath(self.io, self.allocator, modules_path.items)) |data| {
         return data;
     } else |e| {
         err = e;
@@ -450,7 +450,7 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
         try dir_path.appendSlice(clean_name);
         if (!has_extension) try dir_path.appendSlice(".doxa");
 
-        if (readFileContentsWithPath(self.allocator, dir_path.items)) |data| {
+        if (readFileContentsWithPath(self.io, self.allocator, dir_path.items)) |data| {
             return data;
         } else |_| {}
 

@@ -365,7 +365,7 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                         last_instruction_was_terminator = true;
                     },
-                    .Unreachable => |_| {
+                    .Unreachable => {
                         try w.writeAll("  call void @doxa_trap_unreachable()\n");
                         try w.writeAll("  unreachable\n");
                         stack.items.len = 0;
@@ -716,11 +716,11 @@ pub fn Methods(comptime Ctx: type) type {
                     .GetField => |gf| try self.emitGetField(w, &stack, &id, gf),
                     .SetField => |sf| try self.emitSetField(w, &stack, &id, sf),
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
-                    .ArraySet => |_| try self.emitArraySet(w, &stack, &id),
-                    .ArrayGet => |_| try self.emitArrayGet(w, &stack, &id),
+                    .ArraySet => try self.emitArraySet(w, &stack, &id),
+                    .ArrayGet => try self.emitArrayGet(w, &stack, &id),
                     .ArrayCompoundAssign => |a| try self.emitArrayGetAndArith(w, &stack, &id, a.op),
                     .ArrayLen => try self.emitArrayLen(w, &stack, &id),
-                    .ArrayPush => |_| try self.emitArrayPush(w, &stack, &id),
+                    .ArrayPush => try self.emitArrayPush(w, &stack, &id),
                     .ArrayPop => try self.emitArrayPop(w, &stack, &id),
                     .ArrayInsert => try self.emitArrayInsert(w, &stack, &id),
                     .ArrayRemove => try self.emitArrayRemove(w, &stack, &id),
@@ -736,15 +736,15 @@ pub fn Methods(comptime Ctx: type) type {
                         self.handleSwap(&stack);
                         last_instruction_was_terminator = false;
                     },
-                    .StoreFieldName => |_| {
+                    .StoreFieldName => {
                         last_instruction_was_terminator = false;
                     },
-                    .EnterScope => |_| {
+                    .EnterScope => {
                         try emitScopeEnter(self, w);
                         self.scope_depth += 1;
                         last_instruction_was_terminator = false;
                     },
-                    .ResetScope => |_| {
+                    .ResetScope => {
                         try emitScopeReset(self, w);
                         last_instruction_was_terminator = false;
                     },
@@ -1067,7 +1067,7 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn narrowVariable(self: *IRPrinter, var_name: []const u8, narrowed_type: HIR.HIRType) !void {
             var entry = try self.narrowed_vars.getOrPut(var_name);
             if (!entry.found_existing) {
-                entry.value_ptr.* = std.ArrayListUnmanaged(HIR.HIRType){};
+                entry.value_ptr.* = std.ArrayListUnmanaged(HIR.HIRType).empty;
             }
             try entry.value_ptr.append(self.allocator, narrowed_type);
         }
@@ -1127,7 +1127,7 @@ pub fn Methods(comptime Ctx: type) type {
                 fn add(printer: *IRPrinter, type_name: []const u8, variant_index: u32, variant_name: []const u8) !void {
                     var entry = try printer.enum_print_map.getOrPut(type_name);
                     if (!entry.found_existing) {
-                        entry.value_ptr.* = std.ArrayListUnmanaged(EnumVariantMeta){};
+                        entry.value_ptr.* = std.ArrayListUnmanaged(EnumVariantMeta).empty;
                     }
 
                     for (entry.value_ptr.items) |existing| {

@@ -9,8 +9,8 @@ const HIRType = HIRTypes.HIRType;
 /// The frontend owns this metadata and other stages (HIR/LLVM/VM) consume it by ID.
 pub const StructTable = struct {
     allocator: std.mem.Allocator,
-    entries: std.ArrayListUnmanaged(Entry) = .{},
-    name_to_id: std.StringHashMapUnmanaged(StructId) = .{},
+    entries: std.ArrayListUnmanaged(Entry) = .empty,
+    name_to_id: std.StringHashMapUnmanaged(StructId) = .empty,
 
     pub const Entry = struct {
         id: StructId,

@@ -1582,7 +1582,7 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
             // Collect the full dotted path: Error.IOError.NotFound -> [Error, IOError, NotFound]
             var is_path = false;
             if (self.peekAhead(1).type == .DOT) {
-                var path_tokens = std.ArrayListUnmanaged(token.Token){};
+                var path_tokens = std.ArrayListUnmanaged(token.Token).empty;
                 errdefer path_tokens.deinit(self.allocator);
                 try path_tokens.append(self.allocator, current);
                 self.advance();
@@ -1621,7 +1621,7 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
             // Check for struct destructuring: { field1, field2 }
             if (self.peek().type == .LEFT_BRACE) {
                 self.advance();
-                var fields = std.ArrayListUnmanaged(token.Token){};
+                var fields = std.ArrayListUnmanaged(token.Token).empty;
                 errdefer fields.deinit(self.allocator);
 
                 while (self.peek().type != .RIGHT_BRACE) {

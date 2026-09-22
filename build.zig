@@ -26,17 +26,17 @@ fn getZigDependencyForTarget(target: std.Target) ?ZigDependency {
 
     const folder_name = switch (target.os.tag) {
         .windows => switch (target.cpu.arch) {
-            .x86_64 => "zig-x86_64-windows-0.15.2",
+            .x86_64 => "zig-x86_64-windows-0.16.0",
             else => return null,
         },
         .macos => switch (target.cpu.arch) {
-            .x86_64 => "zig-x86_64-macos-0.15.2",
-            .aarch64 => "zig-aarch64-macos-0.15.2",
+            .x86_64 => "zig-x86_64-macos-0.16.0",
+            .aarch64 => "zig-aarch64-macos-0.16.0",
             else => return null,
         },
         .linux => switch (target.cpu.arch) {
-            .x86_64 => "zig-x86_64-linux-0.15.2",
-            .aarch64 => "zig-aarch64-linux-0.15.2",
+            .x86_64 => "zig-x86_64-linux-0.16.0",
+            .aarch64 => "zig-aarch64-linux-0.16.0",
             else => return null,
         },
         else => return null,

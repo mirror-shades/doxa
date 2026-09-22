@@ -318,12 +318,12 @@ pub fn inferFunctionCallReturnType(generator: *HIRGenerator, expr: *ast.Expr) HI
             return .Unknown;
         },
         .struct_constructor => |type_name| blk: {
-            if (generator.isCustomType(type_name)) |_| {
+            if (generator.isCustomType(type_name) != null) {
                 break :blk generator.type_system.structTypeForName(type_name);
             }
             break :blk .Unknown;
         },
-        .internal_method => |_| generator.type_system.inferInternalMethodCallReturnType(expr),
+        .internal_method => generator.type_system.inferInternalMethodCallReturnType(expr),
     };
 }
 

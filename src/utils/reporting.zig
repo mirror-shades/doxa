@@ -87,6 +87,7 @@ pub const Reporter = struct {
     published_state: std.StringHashMap(PublishedState),
     source_cache: ?*source_cache.SourceCache,
     use_ansi: bool,
+    io: std.Io,
 
     const FileNeedleContext = struct {
         treat_as_uri: bool,
@@ -105,11 +106,11 @@ pub const Reporter = struct {
                 if (path) |p| {
                     ctx.path_storage = p;
                     ctx.normalized_path = p;
-                    ctx.normalized_uri = reporter.ensureFileUri(p) catch file_or_uri;
+                    ctx.normalized_uri = reporter.ensureFileUri(reporter.io, p) catch file_or_uri;
                 }
             } else {
                 ctx.normalized_path = file_or_uri;
-                ctx.normalized_uri = reporter.ensureFileUri(file_or_uri) catch file_or_uri;
+                ctx.normalized_uri = reporter.ensureFileUri(reporter.io, file_or_uri) catch file_or_uri;
             }
 
             return ctx;
@@ -122,7 +123,7 @@ pub const Reporter = struct {
         }
     };
 
-    pub fn init(allocator: std.mem.Allocator, options: ReporterOptions, source_cache_ptr: ?*source_cache.SourceCache) Reporter {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, options: ReporterOptions, source_cache_ptr: ?*source_cache.SourceCache) Reporter {
         return .{
             .diagnostics = std.array_list.Managed(Diagnostic).init(allocator),
             .options = options,
@@ -131,6 +132,7 @@ pub const Reporter = struct {
             .published_state = std.StringHashMap(PublishedState).init(allocator),
             .source_cache = source_cache_ptr,
             .use_ansi = checkAnsi(allocator),
+            .io = io,
         };
     }
 
@@ -309,7 +311,7 @@ pub const Reporter = struct {
     pub fn reportInternal(self: *Reporter, comptime fmt: []const u8, args: anytype, comptime src: std.builtin.SourceLocation) void {
         const loc = Location{
             .file = src.file,
-            .file_uri = self.ensureFileUri(src.file) catch null,
+            .file_uri = self.ensureFileUri(self.io, src.file) catch null,
             .range = .{
                 .start_line = src.line,
                 .start_col = 0,
@@ -433,10 +435,10 @@ pub const Reporter = struct {
     }
 
     pub fn toLspDiagnostics(self: *Reporter, allocator: std.mem.Allocator, file_or_uri: []const u8) ![]u8 {
-        var buffer = std.array_list.Managed(u8).init(allocator);
-        errdefer buffer.deinit();
+        var buffer = std.Io.Writer.Allocating.init(allocator);
+        defer buffer.deinit();
 
-        var writer = buffer.writer();
+        var writer = &buffer.writer;
         try writer.writeByte('[');
 
         var needle = FileNeedleContext.init(self, file_or_uri);
@@ -461,9 +463,9 @@ pub const Reporter = struct {
         const diagnostics_json = try self.toLspDiagnostics(allocator, file_or_uri);
         defer allocator.free(diagnostics_json);
 
-        var buffer = std.array_list.Managed(u8).init(allocator);
-        errdefer buffer.deinit();
-        var writer = buffer.writer();
+        var buffer = std.Io.Writer.Allocating.init(allocator);
+        defer buffer.deinit();
+        var writer = &buffer.writer;
 
         const uri = self.normalizeFileOrUri(file_or_uri);
         try writer.writeAll("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":");
@@ -517,13 +519,13 @@ pub const Reporter = struct {
         }
     }
 
-    fn writeLspDiagnostic(self: *Reporter, writer: anytype, diag: *const Diagnostic, loc: Location) !void {
+    fn writeLspDiagnostic(self: *Reporter, writer: *std.Io.Writer, diag: *const Diagnostic, loc: Location) !void {
         try writer.writeByte('{');
         try writer.writeAll("\"range\":");
         try writeLspRange(writer, loc.range);
 
         try writer.writeAll(",\"severity\":");
-        try std.fmt.format(writer, "{d}", .{severityToLspValue(diag.severity)});
+        try writer.print("{d}", .{severityToLspValue(diag.severity)});
 
         if (diag.source) |source| {
             try writer.writeAll(",\"source\":");
@@ -571,13 +573,13 @@ pub const Reporter = struct {
     fn uriForLocation(self: *Reporter, loc: Location) []const u8 {
         if (loc.file_uri) |uri| return uri;
         if (loc.file.len == 0) return "";
-        return self.ensureFileUri(loc.file) catch loc.file;
+        return self.ensureFileUri(self.io, loc.file) catch loc.file;
     }
 
     fn normalizeFileOrUri(self: *Reporter, file_or_uri: []const u8) []const u8 {
         if (file_or_uri.len == 0) return file_or_uri;
         if (std.mem.startsWith(u8, file_or_uri, "file://")) return file_or_uri;
-        return self.ensureFileUri(file_or_uri) catch file_or_uri;
+        return self.ensureFileUri(self.io, file_or_uri) catch file_or_uri;
     }
 
     fn appendDiagnostic(self: *Reporter, diag: Diagnostic) void {
@@ -659,7 +661,7 @@ pub const Reporter = struct {
             defer arena.deinit();
             const aa = arena.allocator();
 
-            var buf = std.array_list.Managed(u8).init(aa);
+            var buf = std.Io.Writer.Allocating.init(aa);
 
             const renderer = source_render.DiagnosticRenderer{
                 .source_cache = sc,
@@ -667,13 +669,13 @@ pub const Reporter = struct {
                 .use_ansi = self.use_ansi,
             };
 
-            renderer.render(buf.writer(), diag) catch {
+            renderer.render(&buf.writer, diag) catch {
                 buf.clearRetainingCapacity();
                 logDiagnosticPlain(self, diag, &buf);
             };
 
-            if (buf.items.len > 0) {
-                std.debug.print("{s}", .{buf.items});
+            if (buf.written().len > 0) {
+                std.debug.print("{s}", .{buf.written()});
             }
         } else {
             logDiagnosticPlain(self, diag, null);
@@ -683,27 +685,27 @@ pub const Reporter = struct {
     fn logDiagnosticPlain(
         self: *Reporter,
         diag: *const Diagnostic,
-        line_buf: ?*std.array_list.Managed(u8),
+        line_buf: ?*std.Io.Writer.Allocating,
     ) void {
         _ = self;
         if (line_buf) |buf| {
             if (diag.loc) |l| {
                 if (diag.code) |c| {
-                    std.fmt.format(buf.writer(), "Doxa: [{s}][{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                    buf.writer.print("Doxa: [{s}][{s}][{s}] {s}:{d}:{d}: {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), c, l.file, l.range.start_line, l.range.start_col, diag.message,
                     }) catch {};
                 } else {
-                    std.fmt.format(buf.writer(), "Doxa: [{s}][{s}] {s}:{d}:{d}: {s}\n", .{
+                    buf.writer.print("Doxa: [{s}][{s}] {s}:{d}:{d}: {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), l.file, l.range.start_line, l.range.start_col, diag.message,
                     }) catch {};
                 }
             } else {
                 if (diag.code) |c| {
-                    std.fmt.format(buf.writer(), "Doxa: [{s}][{s}][{s}] {s}\n", .{
+                    buf.writer.print("Doxa: [{s}][{s}][{s}] {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), c, diag.message,
                     }) catch {};
                 } else {
-                    std.fmt.format(buf.writer(), "Doxa: [{s}][{s}] {s}\n", .{
+                    buf.writer.print("Doxa: [{s}][{s}] {s}\n", .{
                         @tagName(diag.phase), @tagName(diag.severity), diag.message,
                     }) catch {};
                 }
@@ -770,12 +772,11 @@ pub const Reporter = struct {
         return std.mem.eql(u8, a, b);
     }
 
-    pub fn ensureFileUri(self: *Reporter, path: []const u8) ![]const u8 {
-        const canonical = canonicalizePath(self.allocator, path) catch |err| switch (err) {
+    pub fn ensureFileUri(self: *Reporter, io: std.Io, path: []const u8) ![]const u8 {
+        const canonical = canonicalizePath(io, self.allocator, path) catch |err| switch (err) {
             error.FileNotFound => return error.FileNotFound,
             error.AccessDenied => return error.AccessDenied,
             error.NotDir => return error.NotDir,
-            error.NotSupported => return error.NotSupported,
             error.FileSystem => return error.FileSystem,
             error.UnrecognizedVolume => return error.UnrecognizedVolume,
             else => return error.BadPathName,
@@ -798,7 +799,7 @@ pub const Reporter = struct {
     }
 };
 
-fn writeLspRange(writer: anytype, range: Range) !void {
+fn writeLspRange(writer: *std.Io.Writer, range: Range) !void {
     const end_line_raw = if (range.end_line == 0) range.start_line else range.end_line;
     const end_col_raw = if (range.end_col == 0) range.start_col else range.end_col;
 
@@ -807,8 +808,7 @@ fn writeLspRange(writer: anytype, range: Range) !void {
     const end_line = zeroBased(end_line_raw);
     const end_col = zeroBased(end_col_raw);
 
-    try std.fmt.format(
-        writer,
+    try writer.print(
         "{{\"start\":{{\"line\":{d},\"character\":{d}}},\"end\":{{\"line\":{d},\"character\":{d}}}}}",
         .{ start_line, start_col, end_line, end_col },
     );
@@ -827,7 +827,7 @@ fn severityToLspValue(severity: Severity) u8 {
     };
 }
 
-fn writeJsonString(writer: anytype, text: []const u8) !void {
+fn writeJsonString(writer: *std.Io.Writer, text: []const u8) !void {
     try writer.writeByte('"');
     for (text) |c| {
         switch (c) {
@@ -932,7 +932,7 @@ fn computeFileFingerprint(self: *Reporter, file_or_uri: []const u8) u64 {
     return if (matched) hasher.final() else 0;
 }
 
-fn writeUnicodeEscape(writer: anytype, value: u16) !void {
+fn writeUnicodeEscape(writer: *std.Io.Writer, value: u16) !void {
     try writer.writeAll("\\u");
     var buffer: [4]u8 = undefined;
     var remaining = value;
@@ -950,18 +950,38 @@ fn hexDigit(value: u8) u8 {
     return lut[value & 0xF];
 }
 
-fn canonicalizePath(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
-    return std.fs.cwd().realpathAlloc(allocator, path) catch |err| switch (err) {
-        error.FileNotFound, error.AccessDenied, error.NotDir => blk: {
-            if (std.fs.path.isAbsolute(path)) {
-                break :blk try allocator.dupe(u8, path);
+fn canonicalizePath(
+    io: std.Io,
+    allocator: std.mem.Allocator,
+    path: []const u8,
+) ![]u8 {
+    if (std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator)) |resolved| {
+        defer allocator.free(resolved);
+        return try allocator.dupe(u8, resolved);
+    } else |err| switch (err) {
+        error.FileNotFound,
+        error.AccessDenied,
+        error.NotDir,
+        => {
+            if (std.Io.Dir.path.isAbsolute(path)) {
+                return try allocator.dupe(u8, path);
             }
-            const cwd = try std.fs.cwd().realpathAlloc(allocator, ".");
+
+            const cwd = try std.Io.Dir.cwd().realPathFileAlloc(
+                io,
+                ".",
+                allocator,
+            );
             defer allocator.free(cwd);
-            break :blk try std.fs.path.join(allocator, &.{ cwd, path });
+
+            return try std.Io.Dir.path.join(
+                allocator,
+                &.{ cwd, path },
+            );
         },
+
         else => return err,
-    };
+    }
 }
 
 pub fn convertPathToUri(allocator: std.mem.Allocator, canonical_path: []const u8) ![]u8 {
@@ -1032,18 +1052,18 @@ pub fn convertUriToPath(allocator: std.mem.Allocator, uri_text: []const u8) ![]u
     const parsed = std.Uri.parse(uri_text) catch return error.InvalidUri;
     if (!std.mem.eql(u8, parsed.scheme, "file")) return error.UnsupportedUriScheme;
 
-    var buffer = std.array_list.Managed(u8).init(allocator);
-    errdefer buffer.deinit();
-    var buf_writer = buffer.writer();
+    var buffer = std.Io.Writer.Allocating.init(allocator);
+    defer buffer.deinit();
+    var buf_writer = &buffer.writer;
 
     if (parsed.host) |host_component| {
         try buf_writer.writeAll("\\\\");
-        var host_buf: [std.Uri.host_name_max]u8 = undefined;
+        var host_buf: [std.Io.net.HostName.max_len]u8 = undefined;
         const host_raw = host_component.toRaw(&host_buf) catch return error.UriHostTooLong;
         try buf_writer.writeAll(host_raw);
-        try appendUriPath(allocator, &buf_writer, parsed.path, .unc);
+        try appendUriPath(buf_writer, parsed.path, .unc);
     } else {
-        try appendUriPath(allocator, &buf_writer, parsed.path, .local);
+        try appendUriPath(buf_writer, parsed.path, .local);
     }
 
     const path = try buffer.toOwnedSlice();
@@ -1061,14 +1081,10 @@ const UriPathMode = enum {
 };
 
 fn appendUriPath(
-    allocator: std.mem.Allocator,
-    writer: anytype,
+    writer: *std.Io.Writer,
     component: std.Uri.Component,
     mode: UriPathMode,
 ) !void {
-    var tmp = std.array_list.Managed(u8).init(allocator);
-    defer tmp.deinit();
-
     var buffer: [1024]u8 = undefined;
     const component_str = component.toRaw(&buffer) catch blk: {
         break :blk switch (component) {
@@ -1076,9 +1092,8 @@ fn appendUriPath(
             .percent_encoded => |s| s,
         };
     };
-    try tmp.writer().writeAll(component_str);
 
-    var raw = tmp.items;
+    const raw = component_str;
     if (raw.len == 0) return;
 
     var start_index: usize = 0;

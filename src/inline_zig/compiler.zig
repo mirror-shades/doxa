@@ -133,6 +133,7 @@ pub fn collectInlineZigDecls(
 }
 
 fn generateWrapperZigFile(
+    io: std.Io,
     allocator: std.mem.Allocator,
     reporter: *Reporter,
     cache_dir: []const u8,
@@ -271,7 +272,7 @@ fn generateWrapperZigFile(
         try sig_buf.appendSlice(expected_argc);
         try sig_buf.appendSlice(") return .bad_arity;\n");
 
-        var string_param_indices = std.ArrayListUnmanaged(usize){};
+        var string_param_indices = std.ArrayListUnmanaged(usize).empty;
         defer string_param_indices.deinit(allocator);
 
         for (sig.param_types, 0..) |pt, i| {
@@ -599,7 +600,7 @@ fn generateWrapperZigFile(
         });
     }
 
-    try std.fs.cwd().writeFile(.{ .sub_path = zig_path, .data = file_buf.items });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = zig_path, .data = file_buf.items });
 
     return .{
         .zig_path = try allocator.dupe(u8, zig_path),
@@ -610,6 +611,7 @@ fn generateWrapperZigFile(
 }
 
 pub fn compileInlineZigObjects(
+    io: std.Io,
     memoryManager: *MemoryManager,
     statements: []ast.Stmt,
     parser: *Parser,
@@ -626,7 +628,7 @@ pub fn compileInlineZigObjects(
 
     const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{cache_dir});
     defer memoryManager.getAllocator().free(zig_cache_path);
-    try std.fs.cwd().makePath(zig_cache_path);
+    try std.Io.Dir.cwd().createDirPath(io, zig_cache_path);
 
     var out_paths = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
     errdefer {
@@ -635,7 +637,7 @@ pub fn compileInlineZigObjects(
     }
 
     for (zig_decls) |decl| {
-        var gen = try generateWrapperZigFile(memoryManager.getAllocator(), reporter, zig_cache_path, decl);
+        var gen = try generateWrapperZigFile(io, memoryManager.getAllocator(), reporter, zig_cache_path, decl);
         defer gen.deinit(memoryManager.getAllocator());
 
         // The object extension follows the target, not the host.
@@ -660,8 +662,8 @@ pub fn compileInlineZigObjects(
         const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}.{s}.{s}", .{ zig_dir, zig_stem, key_hex[0..], obj_ext });
 
         const obj_already_compiled = blk: {
-            const f = std.fs.cwd().openFile(obj_path, .{}) catch break :blk false;
-            f.close();
+            const f = std.Io.Dir.cwd().openFile(io, obj_path, .{}) catch break :blk false;
+            f.close(io);
             break :blk true;
         };
 
@@ -694,13 +696,15 @@ pub fn compileInlineZigObjects(
                 try args_list.append("-lc");
             }
 
-            var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
-            child.cwd = ".";
-            child.stdout_behavior = .Inherit;
-            child.stderr_behavior = .Inherit;
-            const term = try child.spawnAndWait();
+            var child = try std.process.spawn(io, .{
+                .argv = args_list.items,
+                .cwd = .{ .path = "." },
+                .stdout = .inherit,
+                .stderr = .inherit,
+            });
+            const term = try child.wait(io);
             switch (term) {
-                .Exited => |code| if (code != 0) return error.Unexpected,
+                .exited => |code| if (code != 0) return error.Unexpected,
                 else => return error.Unexpected,
             }
         }

@@ -472,7 +472,7 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.handleConst(w, &stack, &id, peek_state, hir.constant_pool, c.constant_id);
                         last_instruction_was_terminator = false;
                     },
-                    .StoreAlias => |_| {
+                    .StoreAlias => {
                         last_instruction_was_terminator = false;
                     },
                     .NarrowVar => |nv| {
@@ -484,11 +484,11 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
-                    .ArraySet => |_| try self.emitArraySet(w, &stack, &id),
-                    .ArrayGet => |_| try self.emitArrayGet(w, &stack, &id),
+                    .ArraySet => try self.emitArraySet(w, &stack, &id),
+                    .ArrayGet => try self.emitArrayGet(w, &stack, &id),
                     .ArrayCompoundAssign => |a| try self.emitArrayGetAndArith(w, &stack, &id, a.op),
                     .ArrayLen => try self.emitArrayLen(w, &stack, &id),
-                    .ArrayPush => |_| try self.emitArrayPush(w, &stack, &id),
+                    .ArrayPush => try self.emitArrayPush(w, &stack, &id),
                     .ArrayPop => try self.emitArrayPop(w, &stack, &id),
                     .ArrayInsert => try self.emitArrayInsert(w, &stack, &id),
                     .ArrayRemove => try self.emitArrayRemove(w, &stack, &id),
@@ -734,18 +734,18 @@ pub fn Methods(comptime Ctx: type) type {
                         had_return = true;
                         last_instruction_was_terminator = true;
                     },
-                    .Unreachable => |_| {
+                    .Unreachable => {
                         try w.writeAll("  call void @doxa_trap_unreachable()\n");
                         try w.writeAll("  unreachable\n");
                         stack.items.len = 0;
                         last_instruction_was_terminator = true;
                     },
-                    .EnterScope => |_| {
+                    .EnterScope => {
                         try w.writeAll("  call void @doxa_scope_enter()\n");
                         self.scope_depth += 1;
                         last_instruction_was_terminator = false;
                     },
-                    .ResetScope => |_| {
+                    .ResetScope => {
                         try w.writeAll("  call void @doxa_scope_reset()\n");
                         last_instruction_was_terminator = false;
                     },
@@ -757,7 +757,7 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                         last_instruction_was_terminator = false;
                     },
-                    .StoreFieldName => |_| {
+                    .StoreFieldName => {
                         // No-op: field names are captured at StructNew time
                         last_instruction_was_terminator = false;
                     },
@@ -775,7 +775,7 @@ pub fn Methods(comptime Ctx: type) type {
                         try stack.append(.{ .name = result, .ty = field_st });
                         last_instruction_was_terminator = false;
                     },
-                    .BindAlias => |_| {
+                    .BindAlias => {
                         if (stack.items.len < 1) continue;
                         _ = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;

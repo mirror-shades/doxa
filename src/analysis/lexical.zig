@@ -32,8 +32,8 @@ pub const LexicalAnalyzer = struct {
     token_line: usize,
     reporter: *Reporter,
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) !LexicalAnalyzer {
-        const file_uri = try reporter.ensureFileUri(file_path);
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) !LexicalAnalyzer {
+        const file_uri = try reporter.ensureFileUri(io, file_path);
         return .{
             .source = source,
             .start = 0,
@@ -1099,7 +1099,6 @@ pub const LexicalAnalyzer = struct {
         const byte_val = std.fmt.parseInt(u8, clean_hex, 16) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
             error.Overflow => return error.ByteValueTooLarge,
-            else => return err,
         };
 
         try self.addToken(.BYTE, .{ .byte = byte_val });

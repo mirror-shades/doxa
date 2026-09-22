@@ -158,7 +158,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack.items[top_idx - 1].region = .Unknown;
         }
 
-        pub fn handleArith(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, a: std.meta.TagPayload(HIRInstruction, .Arith)) !void {
+        pub fn handleArith(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, a: std.meta.fieldInfo(HIRInstruction, .Arith).type) !void {
             if (stack.items.len < 2) return;
             var rhs = stack.items[stack.items.len - 1];
             var lhs = stack.items[stack.items.len - 2];
@@ -413,7 +413,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleCompare(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, cmp: std.meta.TagPayload(HIRInstruction, .Compare)) !void {
+        pub fn handleCompare(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, cmp: std.meta.fieldInfo(HIRInstruction, .Compare).type) !void {
             if (stack.items.len < 2) return;
             const rhs = stack.items[stack.items.len - 1];
             const lhs = stack.items[stack.items.len - 2];
@@ -422,7 +422,7 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(result);
         }
 
-        pub fn handleLogicalOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, lop: std.meta.TagPayload(HIRInstruction, .LogicalOp)) !void {
+        pub fn handleLogicalOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, lop: std.meta.fieldInfo(HIRInstruction, .LogicalOp).type) !void {
             if (lop.op == .Not) {
                 if (stack.items.len < 1) return;
                 const v = stack.items[stack.items.len - 1];
@@ -589,7 +589,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleConvert(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, conv: std.meta.TagPayload(HIRInstruction, .Convert)) !void {
+        pub fn handleConvert(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, conv: std.meta.fieldInfo(HIRInstruction, .Convert).type) !void {
             if (stack.items.len < 1) return;
             const arg = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -625,7 +625,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleTypeCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, tc: std.meta.TagPayload(HIRInstruction, .TypeCheck), peek_state: *PeekEmitState) !void {
+        pub fn handleTypeCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, tc: std.meta.fieldInfo(HIRInstruction, .TypeCheck).type, peek_state: *PeekEmitState) !void {
             if (stack.items.len < 1) return;
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -731,7 +731,7 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(.{ .name = tetra_result, .ty = .I2 });
         }
 
-        pub fn handleStringOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sop: std.meta.TagPayload(HIRInstruction, .StringOp), peek_state: *PeekEmitState) !void {
+        pub fn handleStringOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sop: std.meta.fieldInfo(HIRInstruction, .StringOp).type, peek_state: *PeekEmitState) !void {
             if (sop.op == .Concat) {
                 if (stack.items.len < 2) return;
                 const a = stack.items[stack.items.len - 1];
@@ -1085,7 +1085,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handlePeek(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, pk: std.meta.TagPayload(HIRInstruction, .Peek), peek_state: *PeekEmitState) !void {
+        pub fn handlePeek(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, pk: std.meta.fieldInfo(HIRInstruction, .Peek).type, peek_state: *PeekEmitState) !void {
             if (stack.items.len < 1) return;
             var v = stack.items[stack.items.len - 1];
             self.hydrateStructMetadata(&v, pk.name);
@@ -1559,7 +1559,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
         }
 
-        pub fn handlePeekStruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, ps: std.meta.TagPayload(HIRInstruction, .PeekStruct), peek_state: *PeekEmitState) !void {
+        pub fn handlePeekStruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, ps: std.meta.fieldInfo(HIRInstruction, .PeekStruct).type, peek_state: *PeekEmitState) !void {
             // PeekStruct peeks a struct without popping it
             // Similar to Peek, but for structs
             if (stack.items.len < 1) return;
@@ -1599,7 +1599,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
         }
 
-        pub fn handleGroupCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gc: std.meta.TagPayload(HIRInstruction, .GroupCheck)) !void {
+        pub fn handleGroupCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gc: std.meta.fieldInfo(HIRInstruction, .GroupCheck).type) !void {
             if (stack.items.len < 1) return;
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -1657,7 +1657,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleUnionConstruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, uc: std.meta.TagPayload(HIRInstruction, .UnionConstruct)) !void {
+        pub fn handleUnionConstruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, uc: std.meta.fieldInfo(HIRInstruction, .UnionConstruct).type) !void {
             if (stack.items.len < 1) return;
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -1666,7 +1666,7 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(dv);
         }
 
-        pub fn handleAssertFail(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, af: std.meta.TagPayload(HIRInstruction, .AssertFail), peek_state: *PeekEmitState) !void {
+        pub fn handleAssertFail(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, af: std.meta.fieldInfo(HIRInstruction, .AssertFail).type, peek_state: *PeekEmitState) !void {
             const msg = if (af.has_message)
                 (if (stack.items.len > 0) blk: {
                     const v = stack.items[stack.items.len - 1];
@@ -1810,7 +1810,7 @@ pub fn Methods(comptime Ctx: type) type {
             };
         }
 
-        pub fn handleCall(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, c: std.meta.TagPayload(HIRInstruction, .Call), peek_state: *PeekEmitState, hir: *const HIR.HIRProgram) !void {
+        pub fn handleCall(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, c: std.meta.fieldInfo(HIRInstruction, .Call).type, peek_state: *PeekEmitState, hir: *const HIR.HIRProgram) !void {
             _ = peek_state;
             const argc: usize = @intCast(c.arg_count);
             if (stack.items.len < argc) return;
@@ -2384,7 +2384,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleStoreDeclGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sd: std.meta.TagPayload(HIRInstruction, .StoreDecl)) !void {
+        pub fn handleStoreDeclGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sd: std.meta.fieldInfo(HIRInstruction, .StoreDecl).type) !void {
             if (stack.items.len < 1) {
                 const stack_type = self.hirTypeToStackType(sd.declared_type);
                 _ = try self.global_types.put(sd.var_name, stack_type);
@@ -2452,7 +2452,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll(store_line);
         }
 
-        pub fn handleStoreVarGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sv: std.meta.TagPayload(HIRInstruction, .StoreVar)) !void {
+        pub fn handleStoreVarGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sv: std.meta.fieldInfo(HIRInstruction, .StoreVar).type) !void {
             if (stack.items.len < 1) return;
             var value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
