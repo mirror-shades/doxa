@@ -7,14 +7,37 @@ const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
-const VM = @import("../interpreter/vm.zig").VM;
-const bc = @import("../codegen/bytecode/module.zig");
+const hashing = @import("../utils/hashing.zig");
 const abi_source = @embedFile("abi.zig");
 const generator_source = @embedFile("compiler.zig");
 
 fn cacheSeed() []const u8 {
     return abi_source ++ generator_source;
 }
+
+/// Scalar types an inline-Zig module may use at the ABI boundary. Collection,
+/// enum, function, and union values are not supported as parameters/returns and
+/// are rejected during codegen.
+const AbiType = enum(u8) {
+    Int,
+    Byte,
+    Float,
+    String,
+    Tetra,
+    Nothing,
+    Array,
+    Struct,
+    Map,
+    Enum,
+    Function,
+    Union,
+};
+
+const ZigExportFn = struct {
+    symbol: []const u8,
+    param_types: []AbiType,
+    return_type: AbiType,
+};
 
 const ZigDeclInfo = struct {
     module_name: []const u8,
@@ -26,7 +49,7 @@ const ZigDeclInfo = struct {
 const GeneratedModule = struct {
     zig_path: []const u8,
     lib_path: []const u8,
-    functions: std.StringHashMap(VM.ZigRuntimeFn),
+    functions: std.StringHashMap(ZigExportFn),
     free_sym_owned: []const u8,
 
     pub fn deinit(self: *GeneratedModule, allocator: std.mem.Allocator) void {
@@ -60,151 +83,6 @@ fn appendZigSourceSanitized(buf: *std.array_list.Managed(u8), source: []const u8
         try buf.append(source[i]);
         i += 1;
     }
-}
-
-// Native build directives a Zig module declares via `//doxa:` line comments:
-//   //doxa:include <dir>   -> -I<dir>   (C header search path)
-//   //doxa:libdir  <dir>   -> -L<dir>   (library search path)
-//   //doxa:link    <name>  -> -l<name>  (link a library, e.g. raylib, gdi32)
-// A `@cImport` in the source (or `//doxa:link c`) implies libc (`-lc`).
-const ZigBuildDirectives = struct {
-    includes: std.array_list.Managed([]const u8),
-    lib_dirs: std.array_list.Managed([]const u8),
-    libs: std.array_list.Managed([]const u8),
-    needs_libc: bool,
-
-    fn init(allocator: std.mem.Allocator) ZigBuildDirectives {
-        return .{
-            .includes = std.array_list.Managed([]const u8).init(allocator),
-            .lib_dirs = std.array_list.Managed([]const u8).init(allocator),
-            .libs = std.array_list.Managed([]const u8).init(allocator),
-            .needs_libc = false,
-        };
-    }
-};
-
-// Values are slices into `zig_source`; keep it alive while the result is used.
-fn parseZigBuildDirectives(allocator: std.mem.Allocator, zig_source: []const u8) !ZigBuildDirectives {
-    var d = ZigBuildDirectives.init(allocator);
-
-    if (std.mem.indexOf(u8, zig_source, "@cImport") != null) d.needs_libc = true;
-
-    var lines = std.mem.splitScalar(u8, zig_source, '\n');
-    while (lines.next()) |raw| {
-        const line = std.mem.trim(u8, raw, " \t\r");
-        const prefix = "//doxa:";
-        if (!std.mem.startsWith(u8, line, prefix)) continue;
-        const body = std.mem.trim(u8, line[prefix.len..], " \t");
-        const sep = std.mem.indexOfAny(u8, body, " \t") orelse continue;
-        const kw = body[0..sep];
-        const val = std.mem.trim(u8, body[sep..], " \t");
-        if (val.len == 0) continue;
-        if (std.mem.eql(u8, kw, "include")) {
-            try d.includes.append(val);
-        } else if (std.mem.eql(u8, kw, "libdir")) {
-            try d.lib_dirs.append(val);
-        } else if (std.mem.eql(u8, kw, "link")) {
-            if (std.mem.eql(u8, val, "c")) d.needs_libc = true else try d.libs.append(val);
-        }
-        // Unknown directives are ignored so older compilers tolerate newer files.
-    }
-    return d;
-}
-
-fn fileAccessible(path: []const u8) bool {
-    if (std.fs.path.isAbsolute(path)) {
-        std.fs.accessAbsolute(path, .{}) catch return false;
-    } else {
-        std.fs.cwd().access(path, .{}) catch return false;
-    }
-    return true;
-}
-
-// Find a static archive for `name` in the given library directories. Preferring
-// the static archive avoids a runtime dependency on the matching shared library
-// (e.g. link `libraylib.a` directly instead of importing `raylib.dll`, which the
-// GNU linker would otherwise prefer when both are present). Returns a path
-// (arena-owned) suitable to pass to the linker as a positional input.
-fn findStaticArchive(arena: std.mem.Allocator, lib_dirs: []const []const u8, name: []const u8) ?[]const u8 {
-    for (lib_dirs) |dir| {
-        const a = std.fmt.allocPrint(arena, "lib{s}.a", .{name}) catch return null;
-        const b = std.fmt.allocPrint(arena, "{s}.lib", .{name}) catch return null;
-        const c = std.fmt.allocPrint(arena, "lib{s}.lib", .{name}) catch return null;
-        for ([_][]const u8{ a, b, c }) |fname| {
-            const full = std.fs.path.join(arena, &.{ dir, fname }) catch continue;
-            if (fileAccessible(full)) return full;
-        }
-    }
-    return null;
-}
-
-// Append compile/link flags for one module. Include paths are always added
-// (needed when building the object). Library search paths and libraries are added
-// only for a self-contained `build-lib`; for `build-obj` they are deferred to the
-// final executable link.
-fn appendZigBuildFlags(
-    args: *std.array_list.Managed([]const u8),
-    arena: std.mem.Allocator,
-    d: *const ZigBuildDirectives,
-    include_link: bool,
-) !void {
-    for (d.includes.items) |inc| try args.append(try std.fmt.allocPrint(arena, "-I{s}", .{inc}));
-    if (include_link) {
-        for (d.lib_dirs.items) |ld| try args.append(try std.fmt.allocPrint(arena, "-L{s}", .{ld}));
-        for (d.libs.items) |lib| {
-            if (findStaticArchive(arena, d.lib_dirs.items, lib)) |archive| {
-                try args.append(archive);
-            } else {
-                try args.append(try std.fmt.allocPrint(arena, "-l{s}", .{lib}));
-            }
-        }
-    }
-}
-
-// Aggregate the link flags (`-L`/`-l`) of every reachable Zig module, de-duplicated.
-// Used by the native compile path to link the final executable against the C
-// libraries the inline/imported Zig modules depend on.
-pub fn collectZigLinkFlags(allocator: std.mem.Allocator, statements: []ast.Stmt, parser: *Parser) ![]const []const u8 {
-    const zig_decls = try collectInlineZigDecls(allocator, statements, parser);
-    defer allocator.free(zig_decls);
-
-    var flags = std.array_list.Managed([]const u8).init(allocator);
-    errdefer {
-        for (flags.items) |f| allocator.free(@constCast(f));
-        flags.deinit();
-    }
-
-    var seen = std.StringHashMap(void).init(allocator);
-    defer seen.deinit();
-
-    for (zig_decls) |decl| {
-        var arena = std.heap.ArenaAllocator.init(allocator);
-        defer arena.deinit();
-        const d = try parseZigBuildDirectives(arena.allocator(), decl.zig_source);
-        for (d.lib_dirs.items) |ld| {
-            const flag = try std.fmt.allocPrint(allocator, "-L{s}", .{ld});
-            if (seen.contains(flag)) {
-                allocator.free(flag);
-                continue;
-            }
-            try seen.put(flag, {});
-            try flags.append(flag);
-        }
-        for (d.libs.items) |lib| {
-            const flag = if (findStaticArchive(arena.allocator(), d.lib_dirs.items, lib)) |archive|
-                try allocator.dupe(u8, archive)
-            else
-                try std.fmt.allocPrint(allocator, "-l{s}", .{lib});
-            if (seen.contains(flag)) {
-                allocator.free(flag);
-                continue;
-            }
-            try seen.put(flag, {});
-            try flags.append(flag);
-        }
-    }
-
-    return try flags.toOwnedSlice();
 }
 
 pub fn collectInlineZigDecls(
@@ -255,6 +133,7 @@ pub fn collectInlineZigDecls(
 }
 
 fn generateWrapperZigFile(
+    io: std.Io,
     allocator: std.mem.Allocator,
     reporter: *Reporter,
     cache_dir: []const u8,
@@ -287,7 +166,7 @@ fn generateWrapperZigFile(
     };
     const lib_path = try std.fmt.bufPrint(&lib_path_buf, "{s}/{s}-{s}.{s}", .{ cache_dir, decl.module_name, short_hex, lib_ext });
 
-    var functions = std.StringHashMap(VM.ZigRuntimeFn).init(allocator);
+    var functions = std.StringHashMap(ZigExportFn).init(allocator);
     errdefer {
         var itf = functions.iterator();
         while (itf.next()) |entry| {
@@ -309,18 +188,18 @@ fn generateWrapperZigFile(
         const TypeMeta = struct {
             native_param: ?[]const u8,
             native_ret: ?[]const u8,
-            bytecode: bc.BytecodeType,
+            abi: AbiType,
         };
 
         fn metaFor(t: ast.TypeInfo) TypeMeta {
             return switch (t.base) {
-                .Int => .{ .native_param = "i64", .native_ret = "i64", .bytecode = .Int },
-                .Float => .{ .native_param = "f64", .native_ret = "f64", .bytecode = .Float },
-                .Byte => .{ .native_param = "u8", .native_ret = "u8", .bytecode = .Byte },
-                .Tetra => .{ .native_param = "bool", .native_ret = "bool", .bytecode = .Tetra },
-                .Nothing => .{ .native_param = "void", .native_ret = "void", .bytecode = .Nothing },
-                .String => .{ .native_param = "?[*]const u8", .native_ret = "void", .bytecode = .String },
-                else => .{ .native_param = null, .native_ret = null, .bytecode = .Nothing },
+                .Int => .{ .native_param = "i64", .native_ret = "i64", .abi = .Int },
+                .Float => .{ .native_param = "f64", .native_ret = "f64", .abi = .Float },
+                .Byte => .{ .native_param = "u8", .native_ret = "u8", .abi = .Byte },
+                .Tetra => .{ .native_param = "bool", .native_ret = "bool", .abi = .Tetra },
+                .Nothing => .{ .native_param = "void", .native_ret = "void", .abi = .Nothing },
+                .String => .{ .native_param = "?[*]const u8", .native_ret = "void", .abi = .String },
+                else => .{ .native_param = null, .native_ret = null, .abi = .Nothing },
             };
         }
 
@@ -332,8 +211,8 @@ fn generateWrapperZigFile(
             return metaFor(t).native_ret;
         }
 
-        fn toBytecodeType(t: ast.TypeInfo) bc.BytecodeType {
-            return metaFor(t).bytecode;
+        fn toAbiType(t: ast.TypeInfo) AbiType {
+            return metaFor(t).abi;
         }
     };
 
@@ -359,7 +238,7 @@ fn generateWrapperZigFile(
     try file_buf.appendSlice("    if (v.*.tag != .String) return;\n");
     try file_buf.appendSlice("    if (v.*.payload0 == 0) return;\n");
     try file_buf.appendSlice("    const n: usize = @intCast(v.*.payload1);\n");
-    try file_buf.appendSlice("    const p: [*]u8 = @ptrFromInt(v.*.payload0);\n");
+    try file_buf.appendSlice("    const p: [*]u8 = @ptrFromInt(@as(usize, @intCast(v.*.payload0)));\n");
     try file_buf.appendSlice("    __doxa_std.heap.page_allocator.free(p[0..n]);\n");
     try file_buf.appendSlice("}\n\n");
 
@@ -368,8 +247,8 @@ fn generateWrapperZigFile(
     try file_buf.appendSlice("}\n\n");
 
     for (sigs) |sig| {
-        var param_types_bc = try allocator.alloc(bc.BytecodeType, sig.param_types.len);
-        errdefer allocator.free(param_types_bc);
+        var param_types_abi = try allocator.alloc(AbiType, sig.param_types.len);
+        errdefer allocator.free(param_types_abi);
 
         const sym_ident = try std.fmt.allocPrint(allocator, "__doxa_export__{s}_{s}", .{ decl.module_name, sig.name });
         defer allocator.free(sym_ident);
@@ -393,16 +272,16 @@ fn generateWrapperZigFile(
         try sig_buf.appendSlice(expected_argc);
         try sig_buf.appendSlice(") return .bad_arity;\n");
 
-        var string_param_indices = std.ArrayListUnmanaged(usize){};
+        var string_param_indices = std.ArrayListUnmanaged(usize).empty;
         defer string_param_indices.deinit(allocator);
 
         for (sig.param_types, 0..) |pt, i| {
-            const bytecode_t = zigTypeName.toBytecodeType(pt);
-            if (bytecode_t == .Array or bytecode_t == .Struct or bytecode_t == .Map or bytecode_t == .Enum or bytecode_t == .Function or bytecode_t == .Union) {
-                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+            const abi_t = zigTypeName.toAbiType(pt);
+            if (abi_t == .Array or abi_t == .Struct or abi_t == .Map or abi_t == .Enum or abi_t == .Function or abi_t == .Union) {
+                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type for '{s}.{s}'", .{ decl.module_name, sig.name });
                 return error.NotImplemented;
             }
-            param_types_bc[i] = bytecode_t;
+            param_types_abi[i] = abi_t;
             if (pt.base == .String) {
                 try string_param_indices.append(allocator, i);
             }
@@ -484,9 +363,9 @@ fn generateWrapperZigFile(
                     try sig_buf.appendSlice("_raw: []const u8 = if (__doxa_v");
                     try sig_buf.appendSlice(idx_str);
                     try sig_buf.appendSlice(".payload1 == 0) \"\" else blk: {\n");
-                    try sig_buf.appendSlice("        const __doxa_p: [*]const u8 = @ptrFromInt(__doxa_v");
+                    try sig_buf.appendSlice("        const __doxa_p: [*]const u8 = @ptrFromInt(@as(usize, @intCast(__doxa_v");
                     try sig_buf.appendSlice(idx_str);
-                    try sig_buf.appendSlice(".payload0);\n");
+                    try sig_buf.appendSlice(".payload0)));\n");
                     try sig_buf.appendSlice("        const __doxa_n: usize = @intCast(__doxa_v");
                     try sig_buf.appendSlice(idx_str);
                     try sig_buf.appendSlice(".payload1);\n");
@@ -508,7 +387,7 @@ fn generateWrapperZigFile(
                     try sig_buf.appendSlice("_raw.len] else \"\";\n");
                 },
                 else => {
-                    reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                    reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type for '{s}.{s}'", .{ decl.module_name, sig.name });
                     return error.NotImplemented;
                 },
             }
@@ -545,9 +424,9 @@ fn generateWrapperZigFile(
         }
         try call_buf.appendSlice(")");
 
-        const ret_type = zigTypeName.toBytecodeType(sig.return_type);
+        const ret_type = zigTypeName.toAbiType(sig.return_type);
         if (ret_type == .Array or ret_type == .Struct or ret_type == .Map or ret_type == .Enum or ret_type == .Function or ret_type == .Union) {
-            reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+            reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type for '{s}.{s}'", .{ decl.module_name, sig.name });
             return error.NotImplemented;
         }
 
@@ -601,7 +480,7 @@ fn generateWrapperZigFile(
                 try sig_buf.appendSlice("    return .ok;\n");
             },
             .Array, .Struct, .Map, .Enum, .Function, .Union, .Custom => {
-                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in VM bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type for '{s}.{s}'", .{ decl.module_name, sig.name });
                 return error.NotImplemented;
             },
         }
@@ -661,14 +540,14 @@ fn generateWrapperZigFile(
                 try native_prelude.appendSlice(s_name);
                 try native_prelude.appendSlice(": []const u8 = if (");
                 try native_prelude.appendSlice(arg_name);
-                try native_prelude.appendSlice(") |p| p[0..");
+                try native_prelude.appendSlice(") |p| p[0..@intCast(");
                 try native_prelude.appendSlice(arg_name);
-                try native_prelude.appendSlice("_len] else \"\";\n");
+                try native_prelude.appendSlice("_len)] else \"\";\n");
                 try native_call.appendSlice(s_name);
 
                 try native_buf.appendSlice(", ");
                 try native_buf.appendSlice(arg_name);
-                try native_buf.appendSlice("_len: usize");
+                try native_buf.appendSlice("_len: u64");
             } else {
                 try native_call.appendSlice(arg_name);
             }
@@ -676,7 +555,7 @@ fn generateWrapperZigFile(
 
         if (sig.return_type.base == .String) {
             if (sig.param_types.len > 0) try native_buf.appendSlice(", ");
-            try native_buf.appendSlice("out_ptr: *?[*]u8, out_len: *usize");
+            try native_buf.appendSlice("out_ptr: *?[*]u8, out_len: *u64");
         }
         try native_buf.appendSlice(") callconv(.c) ");
         try native_buf.appendSlice(native_ret_zig);
@@ -713,15 +592,15 @@ fn generateWrapperZigFile(
         const fn_key = try allocator.dupe(u8, sig.name);
         errdefer allocator.free(fn_key);
         errdefer allocator.free(sym_export_abi);
-        errdefer allocator.free(param_types_bc);
+        errdefer allocator.free(param_types_abi);
         try functions.put(fn_key, .{
             .symbol = sym_export_abi,
-            .param_types = param_types_bc,
+            .param_types = param_types_abi,
             .return_type = ret_type,
         });
     }
 
-    try std.fs.cwd().writeFile(.{ .sub_path = zig_path, .data = file_buf.items });
+    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = zig_path, .data = file_buf.items });
 
     return .{
         .zig_path = try allocator.dupe(u8, zig_path),
@@ -731,111 +610,8 @@ fn generateWrapperZigFile(
     };
 }
 
-pub fn compileInlineZigModules(
-    memoryManager: *MemoryManager,
-    statements: []ast.Stmt,
-    parser: *Parser,
-    reporter: *Reporter,
-    zig_exe_path: []const u8,
-    cache_dir: []const u8,
-    zig_opt_flag: []const u8,
-) !?std.StringHashMap(VM.ZigRuntimeModule) {
-    const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
-    defer memoryManager.getAllocator().free(zig_decls);
-    if (zig_decls.len == 0) return null;
-
-    const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{cache_dir});
-    defer memoryManager.getAllocator().free(zig_cache_path);
-    try std.fs.cwd().makePath(zig_cache_path);
-
-    var modules = std.StringHashMap(VM.ZigRuntimeModule).init(memoryManager.getAllocator());
-    errdefer {
-        var it = modules.iterator();
-        while (it.next()) |entry| {
-            memoryManager.getAllocator().free(@constCast(entry.key_ptr.*));
-            var m = entry.value_ptr.*;
-            m.deinit(memoryManager.getAllocator());
-        }
-        modules.deinit();
-    }
-
-    for (zig_decls) |decl| {
-        var gen = try generateWrapperZigFile(memoryManager.getAllocator(), reporter, zig_cache_path, decl);
-        defer gen.deinit(memoryManager.getAllocator());
-
-        const already_compiled = blk: {
-            const f = std.fs.cwd().openFile(gen.lib_path, .{}) catch break :blk false;
-            f.close();
-            break :blk true;
-        };
-
-        if (!already_compiled) {
-            var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
-            defer args_list.deinit();
-            const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{gen.lib_path});
-            defer std.heap.page_allocator.free(emit_flag);
-            try args_list.appendSlice(&[_][]const u8{
-                zig_exe_path,
-                "build-lib",
-                "-dynamic",
-                gen.zig_path,
-                emit_flag,
-                zig_opt_flag,
-            });
-            if (builtin.os.tag == .linux) {
-                try args_list.append("-lc");
-            }
-
-            var dir_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-            defer dir_arena.deinit();
-            const directives = try parseZigBuildDirectives(dir_arena.allocator(), decl.zig_source);
-            try appendZigBuildFlags(&args_list, dir_arena.allocator(), &directives, true);
-            if (directives.needs_libc and builtin.os.tag != .linux) {
-                try args_list.append("-lc");
-            }
-
-            var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
-            child.cwd = ".";
-            child.stdout_behavior = .Inherit;
-            child.stderr_behavior = .Inherit;
-            const term = try child.spawnAndWait();
-            switch (term) {
-                .Exited => |code| if (code != 0) return error.Unexpected,
-                else => return error.Unexpected,
-            }
-        }
-
-        const key_owned = try memoryManager.getAllocator().dupe(u8, decl.module_name);
-        const lib_owned = try memoryManager.getAllocator().dupe(u8, gen.lib_path);
-        const free_sym_owned = try memoryManager.getAllocator().dupe(u8, gen.free_sym_owned);
-
-        var mod_functions = std.StringHashMap(VM.ZigRuntimeFn).init(memoryManager.getAllocator());
-        var fn_it = gen.functions.iterator();
-        while (fn_it.next()) |entry| {
-            const fn_key = try memoryManager.getAllocator().dupe(u8, entry.key_ptr.*);
-            errdefer memoryManager.getAllocator().free(fn_key);
-            const fn_sym = try memoryManager.getAllocator().dupe(u8, entry.value_ptr.*.symbol);
-            errdefer memoryManager.getAllocator().free(fn_sym);
-            const fn_ptypes = try memoryManager.getAllocator().dupe(bc.BytecodeType, entry.value_ptr.*.param_types);
-            try mod_functions.put(fn_key, .{
-                .symbol = fn_sym,
-                .param_types = fn_ptypes,
-                .return_type = entry.value_ptr.*.return_type,
-            });
-        }
-
-        try modules.put(key_owned, .{
-            .lib_path = lib_owned,
-            .lib = null,
-            .free_cstr_symbol = free_sym_owned,
-            .functions = mod_functions,
-        });
-    }
-
-    return modules;
-}
-
 pub fn compileInlineZigObjects(
+    io: std.Io,
     memoryManager: *MemoryManager,
     statements: []ast.Stmt,
     parser: *Parser,
@@ -843,13 +619,16 @@ pub fn compileInlineZigObjects(
     zig_exe_path: []const u8,
     cache_dir: []const u8,
     zig_opt_flag: []const u8,
+    target_triple: []const u8,
+    target_os: []const u8,
+    include_dirs: []const []const u8,
 ) ![]const []const u8 {
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
 
     const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{cache_dir});
     defer memoryManager.getAllocator().free(zig_cache_path);
-    try std.fs.cwd().makePath(zig_cache_path);
+    try std.Io.Dir.cwd().createDirPath(io, zig_cache_path);
 
     var out_paths = std.array_list.Managed([]const u8).init(memoryManager.getAllocator());
     errdefer {
@@ -858,18 +637,33 @@ pub fn compileInlineZigObjects(
     }
 
     for (zig_decls) |decl| {
-        var gen = try generateWrapperZigFile(memoryManager.getAllocator(), reporter, zig_cache_path, decl);
+        var gen = try generateWrapperZigFile(io, memoryManager.getAllocator(), reporter, zig_cache_path, decl);
         defer gen.deinit(memoryManager.getAllocator());
 
-        const obj_ext = if (builtin.os.tag == .windows) "obj" else "o";
+        // The object extension follows the target, not the host.
+        const obj_ext = if (std.mem.eql(u8, target_os, "windows")) "obj" else "o";
         const zig_dir = std.fs.path.dirname(gen.zig_path) orelse ".";
         const zig_stem = std.fs.path.stem(gen.zig_path);
-        var obj_path_buf: [256]u8 = undefined;
-        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}.{s}", .{ zig_dir, zig_stem, obj_ext });
+
+        // Content-addressed cache key: wrapper source (already hashed into the
+        // wrapper path) + target triple + opt mode. Distinct targets or opt
+        // modes therefore produce distinct objects, and unchanged source+target
+        // skips the `build-obj` spawn.
+        var kb = hashing.KeyBuilder.init(cacheSeed());
+        kb.addBytes(gen.zig_path);
+        kb.addBytes(target_triple);
+        kb.addBytes(zig_opt_flag);
+        for (include_dirs) |dir| {
+            kb.addBytes(dir);
+        }
+        const key_hex = hashing.shortHexOf(kb.finish());
+
+        var obj_path_buf: [320]u8 = undefined;
+        const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}.{s}.{s}", .{ zig_dir, zig_stem, key_hex[0..], obj_ext });
 
         const obj_already_compiled = blk: {
-            const f = std.fs.cwd().openFile(obj_path, .{}) catch break :blk false;
-            f.close();
+            const f = std.Io.Dir.cwd().openFile(io, obj_path, .{}) catch break :blk false;
+            f.close(io);
             break :blk true;
         };
 
@@ -885,22 +679,32 @@ pub fn compileInlineZigObjects(
                 emit_flag,
                 zig_opt_flag,
             });
+            if (target_triple.len > 0) {
+                try args_list.append("-target");
+                try args_list.append(target_triple);
+            }
 
             var dir_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
             defer dir_arena.deinit();
-            const directives = try parseZigBuildDirectives(dir_arena.allocator(), decl.zig_source);
-            try appendZigBuildFlags(&args_list, dir_arena.allocator(), &directives, false);
-            if (directives.needs_libc) {
+            // The build module's `--include` dirs apply to every module's
+            // @cImport, matching how the artifact's `zig cc` step consumes them.
+            for (include_dirs) |dir| {
+                try args_list.append(try std.fmt.allocPrint(dir_arena.allocator(), "-I{s}", .{dir}));
+            }
+            // A module that cImports C headers needs libc to resolve them.
+            if (std.mem.indexOf(u8, decl.zig_source, "@cImport") != null) {
                 try args_list.append("-lc");
             }
 
-            var child = std.process.Child.init(args_list.items, std.heap.page_allocator);
-            child.cwd = ".";
-            child.stdout_behavior = .Inherit;
-            child.stderr_behavior = .Inherit;
-            const term = try child.spawnAndWait();
+            var child = try std.process.spawn(io, .{
+                .argv = args_list.items,
+                .cwd = .{ .path = "." },
+                .stdout = .inherit,
+                .stderr = .inherit,
+            });
+            const term = try child.wait(io);
             switch (term) {
-                .Exited => |code| if (code != 0) return error.Unexpected,
+                .exited => |code| if (code != 0) return error.Unexpected,
                 else => return error.Unexpected,
             }
         }

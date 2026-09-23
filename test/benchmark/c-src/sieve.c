@@ -23,6 +23,7 @@ static long long monotonic_ns(void) {
 }
 
 int main(void) {
+    /* const long long limit = 1300000; */
     const long long limit = 130000000;
 
     char* prime = malloc(limit + 1);

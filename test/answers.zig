@@ -21,7 +21,7 @@ pub const expected_brainfuck_results = [_]print_result{
 };
 
 pub const expected_array_storage_results = [_]print_result{
-    .{ .value = "2 3" },
+    .{ .value = "3 3" },
 };
 
 pub const expected_alias_arrays_results = [_]print_result{
@@ -29,6 +29,41 @@ pub const expected_alias_arrays_results = [_]print_result{
     .{ .value = "20.0" },
     .{ .value = "alpha beta" },
     .{ .value = "k0k1k2" },
+};
+
+pub const expected_union_narrow_results = [_]print_result{
+    .{ .value = "single" },
+    .{ .value = "a" },
+    .{ .value = "b" },
+    .{ .value = "c" },
+};
+
+pub const expected_nested_struct_return_results = [_]print_result{
+    .{ .value = "win" },
+    .{ .value = "b1" },
+};
+
+pub const expected_runtime_const_if_results = [_]print_result{
+    .{ .value = "yes" },
+    .{ .value = "checking for args" },
+};
+
+pub const expected_global_array_push_results = [_]print_result{
+    .{ .value = "4 1 4" },
+    .{ .value = "2 7 8" },
+    .{ .value = "9 10" },
+    .{ .value = "9" },
+    .{ .value = "102.0 102.0 102.0" },
+    .{ .value = "ok" },
+    .{ .value = "2 10 20" },
+};
+
+pub const expected_module_string_interp_results = [_]print_result{
+    .{ .value = "frames=1" },
+    .{ .value = "frames=2" },
+    .{ .value = "frames=3" },
+    .{ .value = "limit fps: true" },
+    .{ .value = "x=42 sum=43 greet=hello world" },
 };
 
 pub const expected_inline_zig_test_results = [_]print_result{
@@ -232,6 +267,14 @@ pub const expected_expressions_results = [_]peek_result{
     .{ .type = "int", .value = "4" },
     .{ .type = "int", .value = "6" },
     .{ .type = "int", .value = "4" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
     .{ .type = "string", .value = "\"end\"" },
 };
 
@@ -335,11 +378,15 @@ pub const expected_methods_results = [_]peek_result{
     .{ .type = "int[]", .value = "[]" },
     .{ .type = "nothing", .value = "nothing" },
     .{ .type = "string", .value = "\"\"" },
+    .{ .type = "nothing", .value = "nothing" },
+    .{ .type = "string[]", .value = "[]" },
     .{ .type = "int", .value = "1" },
     .{ .type = "int", .value = "-1" },
     .{ .type = "int", .value = "4" },
     .{ .type = "int", .value = "-1" },
     .{ .type = "int", .value = "-1" },
+    .{ .type = "int", .value = "-1" },
+    .{ .type = "int", .value = "1" },
     .{ .type = "int", .value = "-1" },
 
     .{ .type = "int[]", .value = "[2, 99, 4]" },
@@ -355,11 +402,166 @@ pub const expected_methods_results = [_]peek_result{
     .{ .type = "string", .value = "\"hello\"" },
     .{ .type = "string", .value = "\"hello\"" },
 
+    .{ .type = "string", .value = "\"hello\"" },
+    .{ .type = "string", .value = "\"\"" },
+    .{ .type = "byte[]", .value = "[104, 101, 108, 108, 111]" },
+    .{ .type = "byte[]", .value = "[]" },
+    .{ .type = "tetra", .value = "true" },
+
     .{ .type = "string", .value = "\"end\"" },
 };
 
 pub const expected_module_private_call_results = [_]peek_result{
     .{ .type = "int", .value = "42" },
+};
+
+pub const expected_logic_results = [_]peek_result{
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+};
+
+pub const expected_standard_logic_results = [_]peek_result{
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+    .{ .type = "tetra", .value = "false" },
+    .{ .type = "tetra", .value = "true" },
+};
+
+pub const expected_angel_results = [_]print_result{
+    .{ .value = "Bob is alive" },
+    .{ .value = "Shakespere is dead" },
+    .{ .value = "zombie is alive and dead" },
+    .{ .value = "angel neither alive or dead" },
+};
+
+pub const expected_import_test_results = [_]peek_result{
+    .{ .type = "int", .value = "81" },
+    .{ .type = "string", .value = "\"Overflow\"" },
+    .{ .type = "int", .value = "-1" },
+    .{ .type = "string", .value = "\"imported function\"" },
+    .{ .type = "int", .value = "60" },
+    .{ .type = "int", .value = "100" },
+};
+
+pub const expected_basic_test_results = [_]print_result{
+    .{ .value = "x: 42" },
+};
+
+pub const expected_alias_test_results = [_]print_result{
+    .{ .value = "circle: 20" },
+    .{ .value = "shift: 30" },
+    .{ .value = "result: nothing" },
 };
 
 pub const expected_bigfile_results = [_]peek_result{

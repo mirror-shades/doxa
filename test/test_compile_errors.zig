@@ -1,5 +1,5 @@
 const std = @import("std");
-const builtin = @import("builtin");
+const platform = @import("platform");
 
 const harness = @import("harness.zig");
 
@@ -83,9 +83,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    if (builtin.os.tag == .windows) {
-        _ = std.os.windows.kernel32.SetConsoleOutputCP(65001);
-    }
+    platform.enableUtf8Console();
 
     const error_cases = [_]ErrorCase{
         .{
@@ -129,13 +127,22 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected = .{ .exit_code = 1, .contains_message = "cannot be used with @push", .error_code = "E6018" },
         },
         .{
+            .name = "struct literal undeclared field",
+            .path = "./test/misc/struct_literal_bad_field.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "struct 'Person' has no field 'kind'; declared fields: name, age", .error_code = "E1011" },
+        },
+        .{
+            .name = "struct literal undeclared field in imported module",
+            .path = "./test/misc/module_bad_struct_import.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "struct 'Item' has no field 'kind'; declared fields: name, count, tags", .error_code = "E1011" },
+        },
+        .{
             .name = "unreachable keyword",
             .path = "./test/misc/unreachable.doxa",
             .expected = .{ .exit_code = 2, .contains_message = "Reached unreachable code", .error_code = null },
         },
     };
 
-    harness.printSection("ERROR");
     var passed: usize = 0;
     var failed: usize = 0;
     var untested: usize = 0;

@@ -18,7 +18,7 @@ pub const DiagnosticRenderer = struct {
 
     pub fn render(
         self: *const DiagnosticRenderer,
-        writer: anytype,
+        writer: *std.Io.Writer,
         diag: *const Diagnostic,
     ) !void {
         const loc = diag.loc orelse {
@@ -37,7 +37,7 @@ pub const DiagnosticRenderer = struct {
 
     fn renderPrimary(
         self: *const DiagnosticRenderer,
-        writer: anytype,
+        writer: *std.Io.Writer,
         diag: *const Diagnostic,
         loc: Location,
     ) !void {
@@ -50,7 +50,7 @@ pub const DiagnosticRenderer = struct {
 
     fn renderRelated(
         self: *const DiagnosticRenderer,
-        writer: anytype,
+        writer: *std.Io.Writer,
         diag: *const Diagnostic,
         related: reporting.RelatedInformation,
     ) !void {
@@ -70,7 +70,7 @@ pub const DiagnosticRenderer = struct {
 
     fn renderHeaderLine(
         self: *const DiagnosticRenderer,
-        writer: anytype,
+        writer: *std.Io.Writer,
         diag: *const Diagnostic,
         loc: ?Location,
     ) !void {
@@ -78,7 +78,7 @@ pub const DiagnosticRenderer = struct {
             try writer.writeAll(ansiReset());
         }
 
-        try writer.writeAll("DoxVM: ");
+        try writer.writeAll("Doxa: ");
 
         if (diag.code) |code| {
             if (loc) |l| {
@@ -111,7 +111,7 @@ pub const DiagnosticRenderer = struct {
 
     fn renderSnippet(
         self: *const DiagnosticRenderer,
-        writer: anytype,
+        writer: *std.Io.Writer,
         source_file: *const SourceFile,
         loc: Location,
         severity: Severity,
@@ -211,7 +211,7 @@ pub const DiagnosticRenderer = struct {
 
     fn writeLineExpanded(
         self: *const DiagnosticRenderer,
-        writer: anytype,
+        writer: *std.Io.Writer,
         line: []const u8,
     ) !void {
         var col: usize = 0;

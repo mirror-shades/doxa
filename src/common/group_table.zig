@@ -5,8 +5,8 @@ const GroupId = HIRTypes.GroupId;
 
 pub const GroupTable = struct {
     allocator: std.mem.Allocator,
-    entries: std.ArrayListUnmanaged(Entry) = .{},
-    name_to_id: std.StringHashMapUnmanaged(GroupId) = .{},
+    entries: std.ArrayListUnmanaged(Entry) = .empty,
+    name_to_id: std.StringHashMapUnmanaged(GroupId) = .empty,
 
     pub const MemberKind = enum {
         Enum,

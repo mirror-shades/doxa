@@ -22,7 +22,9 @@ static long long monotonic_ns(void) {
 #endif
 }
 
+/* #define N 100 */
 #define N 400
+/* #define REPEATS 3 */
 #define REPEATS 35
 
 int main(void) {

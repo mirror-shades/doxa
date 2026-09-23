@@ -9,12 +9,119 @@ pub fn Methods(comptime Ctx: type) type {
     const StackVal = Ctx.StackVal;
 
     return struct {
+        /// LLVM type of one element in a dynamic array's packed backing buffer,
+        /// for the element types an inline load can reproduce bit-for-bit.
+        ///
+        /// `null` means the element needs the runtime accessor: a `String` element
+        /// is a two-word `%DoxaString`, and `Array` / `Struct` elements are
+        /// re-homed into the owning array's arena when accessed, which is real
+        /// work rather than a load.
+        fn dynamicElementLLVMType(element_type: HIR.HIRType) ?[]const u8 {
+            return switch (element_type) {
+                .Int, .Enum => "i64",
+                .Float => "double",
+                // `byte` and `tetra` both occupy one byte; tetra keeps its value
+                // in the low two bits, which the caller narrows after loading.
+                .Byte, .Tetra => "i8",
+                else => null,
+            };
+        }
+
+        /// Address of element `idx` in a dynamic array's packed backing buffer.
+        /// Field 0 of `%ArrayHeader` is the data pointer.
+        ///
+        /// Indexing is unchecked here, matching the fixed-size array path and the
+        /// documented intrinsic contract (`docs/methods.md`: out-of-bounds access
+        /// is a runtime trap, not a defined value). Keeping the address
+        /// computation in the IR is what lets LLVM hoist, unroll, and vectorize
+        /// element loops; an opaque accessor call blocks all three.
+        fn emitDynamicElementPtr(
+            self: *IRPrinter,
+            w: anytype,
+            id: *usize,
+            hdr_name: []const u8,
+            elem_llvm_ty: []const u8,
+            idx_name: []const u8,
+        ) ![]const u8 {
+            const data_slot = try self.nextTemp(id);
+            const data_slot_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds %ArrayHeader, ptr {s}, i32 0, i32 0\n",
+                .{ data_slot, hdr_name },
+            );
+            defer self.allocator.free(data_slot_line);
+            try w.writeAll(data_slot_line);
+
+            const data_ptr = try self.nextTemp(id);
+            const data_load_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = load ptr, ptr {s}\n",
+                .{ data_ptr, data_slot },
+            );
+            defer self.allocator.free(data_load_line);
+            try w.writeAll(data_load_line);
+
+            const elem_ptr = try self.nextTemp(id);
+            const elem_gep_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds {s}, ptr {s}, i64 {s}\n",
+                .{ elem_ptr, elem_llvm_ty, data_ptr, idx_name },
+            );
+            defer self.allocator.free(elem_gep_line);
+            try w.writeAll(elem_gep_line);
+
+            return elem_ptr;
+        }
+
+        /// Load element `idx` of a dynamic array directly, returning the value in
+        /// its natural representation. Caller must have checked
+        /// `dynamicElementLLVMType` for this element type.
+        fn emitDynamicElementLoad(
+            self: *IRPrinter,
+            w: anytype,
+            id: *usize,
+            hdr_name: []const u8,
+            element_type: HIR.HIRType,
+            elem_llvm_ty: []const u8,
+            idx_name: []const u8,
+        ) !StackVal {
+            const elem_ptr = try emitDynamicElementPtr(self, w, id, hdr_name, elem_llvm_ty, idx_name);
+
+            const loaded = try self.nextTemp(id);
+            const load_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = load {s}, ptr {s}\n",
+                .{ loaded, elem_llvm_ty, elem_ptr },
+            );
+            defer self.allocator.free(load_line);
+            try w.writeAll(load_line);
+
+            return switch (element_type) {
+                .Int, .Enum => StackVal{ .name = loaded, .ty = .I64 },
+                .Float => StackVal{ .name = loaded, .ty = .F64 },
+                .Byte => StackVal{ .name = loaded, .ty = .I8 },
+                // A tetra is stored masked to its low two bits.
+                .Tetra => blk: {
+                    const narrowed = try self.nextTemp(id);
+                    const trunc_line = try std.fmt.allocPrint(
+                        self.allocator,
+                        "  {s} = trunc i8 {s} to i2\n",
+                        .{ narrowed, loaded },
+                    );
+                    defer self.allocator.free(trunc_line);
+                    try w.writeAll(trunc_line);
+                    break :blk StackVal{ .name = narrowed, .ty = .I2 };
+                },
+                else => unreachable,
+            };
+        }
+
         pub fn emitArrayNew(
             self: *IRPrinter,
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .ArrayNew),
+            inst: std.meta.fieldInfo(HIRInstruction, .ArrayNew).type,
         ) !void {
             // Fixed arrays of scalar types get a flat contiguous buffer
             // (alloca / scope_alloc for functions; alloca in doxa_program_main
@@ -98,6 +205,7 @@ pub fn Methods(comptime Ctx: type) type {
                 try stack.append(.{
                     .name = reg,
                     .ty = .PTR,
+                    .region = self.currentRegionTag(),
                     .array_type = inst.element_type,
                     .fixed_array_depth = total_depth,
                     .fixed_array_sizes = fixed_sizes,
@@ -158,6 +266,7 @@ pub fn Methods(comptime Ctx: type) type {
             const arr_val = StackVal{
                 .name = reg,
                 .ty = .PTR,
+                .region = self.currentRegionTag(),
                 .array_type = inst.element_type,
             };
             try stack.append(arr_val);
@@ -168,7 +277,7 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .Map),
+            inst: std.meta.fieldInfo(HIRInstruction, .Map).type,
         ) !void {
             const entry_count: usize = inst.entries.len;
             const else_inputs: usize = if (inst.has_else_value) @as(usize, 1) else 0;
@@ -255,7 +364,7 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
-            try stack.append(.{ .name = map_reg, .ty = .PTR, .array_type = inst.value_type });
+            try stack.append(.{ .name = map_reg, .ty = .PTR, .region = self.currentRegionTag(), .array_type = inst.value_type });
         }
 
         pub fn emitMapGet(
@@ -263,7 +372,7 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .MapGet),
+            inst: std.meta.fieldInfo(HIRInstruction, .MapGet).type,
         ) !void {
             if (stack.items.len < 2) return;
             const key_val = stack.items[stack.items.len - 1];
@@ -399,6 +508,25 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(payload_sel_line);
                 try w.writeAll(payload_sel_line);
 
+                const len_present = try self.nextTemp(id);
+                const len_present_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 3\n", .{ len_present, dv_present.name });
+                defer self.allocator.free(len_present_line);
+                try w.writeAll(len_present_line);
+
+                const len_absent = try self.nextTemp(id);
+                const len_absent_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 3\n", .{ len_absent, dv_absent.name });
+                defer self.allocator.free(len_absent_line);
+                try w.writeAll(len_absent_line);
+
+                const len_sel = try self.nextTemp(id);
+                const len_sel_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = select i1 {s}, i64 {s}, i64 {s}\n",
+                    .{ len_sel, found, len_present, len_absent },
+                );
+                defer self.allocator.free(len_sel_line);
+                try w.writeAll(len_sel_line);
+
                 const dv0 = try self.nextTemp(id);
                 const dv0_line = try std.fmt.allocPrint(
                     self.allocator,
@@ -426,7 +554,16 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(dv2_line);
                 try w.writeAll(dv2_line);
 
-                try stack.append(.{ .name = dv2, .ty = .Value });
+                const dv3 = try self.nextTemp(id);
+                const dv3_line = try std.fmt.allocPrint(
+                    self.allocator,
+                    "  {s} = insertvalue %DoxaValue {s}, i64 {s}, 3\n",
+                    .{ dv3, dv2, len_sel },
+                );
+                defer self.allocator.free(dv3_line);
+                try w.writeAll(dv3_line);
+
+                try stack.append(.{ .name = dv3, .ty = .Value });
             } else {
                 const value_type = map_val.array_type orelse concrete_value_type;
                 const actual_val = try self.convertArrayStorageToValue(w, storage_val, value_type, id);
@@ -439,7 +576,7 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .MapSet),
+            inst: std.meta.fieldInfo(HIRInstruction, .MapSet).type,
         ) !void {
             if (stack.items.len < 3) return;
             const value = stack.items[stack.items.len - 1];
@@ -651,6 +788,15 @@ pub fn Methods(comptime Ctx: type) type {
                     );
                     defer self.allocator.free(args_line);
                     try self.emitRTCallReturningString(w, stack, id, "doxa_array_get_str", args_line);
+                    // A2 widening: element payloads are re-homed into the array's
+                    // own arena (`hdr.scope`) when stored, so a read shares the
+                    // container's region. A `Deep` container is always a
+                    // producer-fresh (definite) object — `LoadVar` folds recorded
+                    // `Deep` to `Unknown` — so this never manufactures a may-class.
+                    if (stack.items.len > 0) stack.items[stack.items.len - 1].region = arr_ptr.region;
+                } else if (dynamicElementLLVMType(element_type)) |elem_llvm_ty| {
+                    const loaded = try emitDynamicElementLoad(self, w, id, arr_ptr.name, element_type, elem_llvm_ty, idx_i64.name);
+                    try stack.append(loaded);
                 } else {
                     const elem_reg = try self.nextTemp(id);
                     const call_line = try std.fmt.allocPrint(
@@ -662,7 +808,13 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(call_line);
 
                     const stored = StackVal{ .name = elem_reg, .ty = .I64 };
-                    const actual = try self.convertArrayStorageToValue(w, stored, element_type, id);
+                    var actual = try self.convertArrayStorageToValue(w, stored, element_type, id);
+                    // Nested arrays and structs read out of an array were cloned
+                    // into the array's own arena at set time; carry the container's
+                    // region (A2 widening, same caveat as the string branch).
+                    if (element_type == .Array or element_type == .Struct) {
+                        actual.region = arr_ptr.region;
+                    }
                     try stack.append(actual);
                 }
             } else {
@@ -1018,12 +1170,13 @@ pub fn Methods(comptime Ctx: type) type {
             }
             if (element_type == .String) {
                 const str_val = try self.ensureString(w, value, id);
+                const cloned = try self.cloneHeapForStore(w, id, str_val, .String);
                 const str_ptr_ext = try self.nextTemp(id);
-                const str_ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ str_ptr_ext, str_val.name });
+                const str_ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ str_ptr_ext, cloned.name });
                 defer self.allocator.free(str_ext0);
                 try w.writeAll(str_ext0);
                 const str_len_ext = try self.nextTemp(id);
-                const str_ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ str_len_ext, str_val.name });
+                const str_ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ str_len_ext, cloned.name });
                 defer self.allocator.free(str_ext1);
                 try w.writeAll(str_ext1);
 
@@ -1035,7 +1188,8 @@ pub fn Methods(comptime Ctx: type) type {
                 return;
             }
 
-            const stored_val = try self.convertValueToArrayStorage(w, value, element_type, id);
+            const cloned_value = try self.cloneHeapForStore(w, id, value, element_type);
+            const stored_val = try self.convertValueToArrayStorage(w, cloned_value, element_type, id);
 
             const set_line = try std.fmt.allocPrint(
                 self.allocator,
@@ -1123,7 +1277,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {s}, 1\n", .{ result_name, tmp_ds, loaded_len });
                 defer self.allocator.free(ins1);
                 try w.writeAll(ins1);
-                result_val = .{ .name = result_name, .ty = .STRING };
+                result_val = .{ .name = result_name, .ty = .STRING, .region = len_info.array.region };
             } else {
                 const elem_reg = try self.nextTemp(id);
                 const call_line = try std.fmt.allocPrint(
@@ -1136,13 +1290,18 @@ pub fn Methods(comptime Ctx: type) type {
 
                 const stored = StackVal{ .name = elem_reg, .ty = .I64 };
                 result_val = try self.convertArrayStorageToValue(w, stored, element_type, id);
+                // A2 widening (same rule as emitArrayGet): a popped element lives
+                // in the array's own arena until the array itself is freed.
+                if (element_type == .Array or element_type == .Struct) {
+                    result_val.region = len_info.array.region;
+                }
             }
 
             const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ idx, len_info.len_ptr });
             defer self.allocator.free(store_line);
             try w.writeAll(store_line);
 
-            try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = len_info.array.array_type });
+            try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .region = len_info.array.region, .array_type = len_info.array.array_type });
             try stack.append(result_val);
         }
 
@@ -1431,7 +1590,7 @@ pub fn Methods(comptime Ctx: type) type {
             w: anytype,
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
-            inst: std.meta.TagPayload(HIRInstruction, .Range),
+            inst: std.meta.fieldInfo(HIRInstruction, .Range).type,
         ) !void {
             _ = inst;
 
@@ -2114,10 +2273,11 @@ pub fn Methods(comptime Ctx: type) type {
             const elem_size: u64 = self.arrayElementSize(elem_type);
             const elem_tag: u64 = self.arrayElementTag(elem_type);
 
-            const hdr_ptr = try self.nextTemp(id);
-            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_ptr});
-            defer self.allocator.free(alloca_line);
-            try w.writeAll(alloca_line);
+            // Named, not a numeric temp: the alloca is replayed in the entry
+            // block, and LLVM requires unnamed temps to be numbered in order.
+            const hdr_ptr = try std.fmt.allocPrint(self.allocator, "%synth.hdr.{d}", .{self.synth_header_counter});
+            self.synth_header_counter += 1;
+            try self.entry_allocas.append(try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_ptr}));
 
             const data_ptr_reg = try self.nextTemp(id);
             const data_gep = try std.fmt.allocPrint(self.allocator,
@@ -2193,6 +2353,20 @@ pub fn Methods(comptime Ctx: type) type {
             const store_etag = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ etag_val, etag_reg });
             defer self.allocator.free(store_etag);
             try w.writeAll(store_etag);
+
+            // Field 5 (`scope`): a non-owning view of a flat buffer has no
+            // owning arena; leaving it undefined can feed garbage into the
+            // runtime's alloc/rehome paths.
+            const scope_reg = try self.nextTemp(id);
+            const scope_gep = try std.fmt.allocPrint(self.allocator,
+                "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 5\n",
+                .{ scope_reg, hdr_ptr },
+            );
+            defer self.allocator.free(scope_gep);
+            try w.writeAll(scope_gep);
+            const store_scope = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{scope_reg});
+            defer self.allocator.free(store_scope);
+            try w.writeAll(store_scope);
 
             return StackVal{ .name = hdr_ptr, .ty = .PTR, .array_type = elem_type };
         }

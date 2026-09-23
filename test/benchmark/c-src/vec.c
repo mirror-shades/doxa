@@ -21,7 +21,9 @@ static long long monotonic_ns(void) {
 #endif
 }
 
+/* #define N     20000 */
 #define N     2000000
+/* #define OUTER 6 */
 #define OUTER 600
 
 int main(void) {

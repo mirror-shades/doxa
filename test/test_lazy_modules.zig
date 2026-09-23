@@ -16,13 +16,13 @@ const ParseResult = struct {
 };
 
 fn parseSource(allocator: std.mem.Allocator, reporter: *Reporting.Reporter, source: []const u8, path: []const u8) !ParseResult {
-    var lexer = try LexicalAnalyzer.init(allocator, source, path, reporter);
+    var lexer = try LexicalAnalyzer.init(testing.io, allocator, source, path, reporter);
     defer lexer.deinit();
     try lexer.initKeywords();
 
     const tokens = try lexer.lexTokens();
-    const uri = try reporter.ensureFileUri(path);
-    var parser = Parser.init(allocator, tokens.items, path, uri, reporter);
+    const uri = try reporter.ensureFileUri(testing.io, path);
+    var parser = Parser.init(testing.io, allocator, tokens.items, path, uri, reporter);
     _ = try parser.execute();
 
     return .{ .tokens = tokens, .parser = parser };
@@ -33,7 +33,7 @@ test "lazy modules: aggregator children load only when referenced" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module bundle from \"./bundle.doxa\"\n", "test/misc/lazy/main.doxa");
     defer parsed.deinit();
@@ -58,7 +58,7 @@ test "lazy modules: standard-library aggregator stays shallow until child use" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module std from \"std/std.doxa\"\n", "test/misc/lazy/std_user.doxa");
     defer parsed.deinit();
@@ -82,7 +82,7 @@ test "lazy modules: direct imports materialize without transitive siblings" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module direct from \"./direct.doxa\"\n", "test/misc/lazy/direct_user.doxa");
     defer parsed.deinit();
@@ -98,7 +98,7 @@ test "lazy modules: reachable dependencies follow body references" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module parent from \"./uses_a_only.doxa\"\n", "test/misc/lazy/uses_a_only_user.doxa");
     defer parsed.deinit();
@@ -119,7 +119,7 @@ test "lazy modules: duplicate specific symbol names keep distinct import entries
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(
         allocator,
@@ -140,7 +140,7 @@ test "lazy modules: circular imports are detected when reached" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module cycle from \"./cycle_a.doxa\"\n", "test/misc/lazy/cycle_user.doxa");
     defer parsed.deinit();
@@ -156,7 +156,7 @@ test "lazy modules: std.process usage does not expose std.http in module_namespa
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module std from \"std/std.doxa\"\n", "test/misc/lazy/std_user.doxa");
     defer parsed.deinit();
@@ -179,7 +179,7 @@ test "submodule import: `import a from ./bundle.doxa` binds a without exposing t
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "import a from \"./bundle.doxa\"\n", "test/misc/lazy/import_user.doxa");
     defer parsed.deinit();
@@ -196,7 +196,7 @@ test "submodule import: multiple submodules each bind their own namespace" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "import a, b from \"./bundle.doxa\"\n", "test/misc/lazy/import_multi_user.doxa");
     defer parsed.deinit();
@@ -215,7 +215,7 @@ test "submodule import: `module bundle` does not leak submodules as bare namespa
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var parsed = try parseSource(allocator, &reporter, "module bundle from \"./bundle.doxa\"\n", "test/misc/lazy/module_user.doxa");
     defer parsed.deinit();

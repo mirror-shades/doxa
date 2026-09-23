@@ -34,7 +34,7 @@ const TokenImport = @import("../../types/token.zig");
 const TokenType = TokenImport.TokenType;
 const Token = TokenImport.Token;
 
-const Environment = @import("../../interpreter/environment.zig");
+const Environment = Types.Environment;
 
 const helpers = @import("./helpers.zig");
 const scope_management = @import("./scope_management.zig");
@@ -48,6 +48,16 @@ pub const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
 //======================================================================
 
 const NodeId = u32;
+
+/// Returns true when `expr` is an empty array literal (`[]`). Such a literal
+/// carries no element type, so it can only be typed by surrounding context
+/// (an annotation, a reassignment target, an argument, or a return type).
+fn isEmptyArrayLiteral(expr: *const ast.Expr) bool {
+    return switch (expr.data) {
+        .Array => |elements| elements.len == 0,
+        else => false,
+    };
+}
 
 pub const SemanticAnalyzer = struct {
     in_loop_scope: bool = false,
@@ -222,10 +232,12 @@ pub const SemanticAnalyzer = struct {
         return true;
     }
 
-
-
-    // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo
-    pub fn convertCustomTypeInfo(semantic_type: CustomTypeInfo, allocator: std.mem.Allocator) !HIRTypeSystem.TypeSystem.CustomTypeInfo {
+    // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo.
+    // Struct field HIR types go through the centralized AST→HIR lowering so that
+    // custom/array/union fields resolve to concrete struct/enum IDs instead of
+    // collapsing to Struct(0)/Unknown. Callers must run this after all
+    // declarations (enums, structs, groups) are registered; see main.zig.
+    pub fn convertCustomTypeInfo(self: *SemanticAnalyzer, semantic_type: CustomTypeInfo, allocator: std.mem.Allocator) !HIRTypeSystem.TypeSystem.CustomTypeInfo {
         var hir_type = HIRTypeSystem.TypeSystem.CustomTypeInfo{
             .name = semantic_type.name,
             .kind = switch (semantic_type.kind) {
@@ -254,80 +266,7 @@ pub const SemanticAnalyzer = struct {
         if (semantic_type.struct_fields) |fields| {
             const converted_fields = try allocator.alloc(HIRTypeSystem.TypeSystem.CustomTypeInfo.StructField, fields.len);
             for (fields, 0..) |field, i| {
-                // Map to coarse HIRType here without relying on SemanticAnalyzer state
-                const mapped_hir_type: HIRType = switch (field.field_type_info.base) {
-                    .Int => .Int,
-                    .Byte => .Byte,
-                    .Float => .Float,
-                    .String => .String,
-                    .Tetra => .Tetra,
-                    .Nothing => .Nothing,
-                    .Array => array_blk: {
-                        const elem_type = try allocator.create(HIRType);
-                        elem_type.* = .Unknown;
-                        break :array_blk HIRType{ .Array = elem_type };
-                    },
-                    .Struct => HIRType{ .Struct = 0 },
-                    .Enum => HIRType{ .Enum = 0 },
-                    .Custom => HIRType{ .Struct = 0 },
-                    .Map => blk: {
-                        const key_type = try allocator.create(HIRType);
-                        key_type.* = .Unknown;
-                        const value_type = try allocator.create(HIRType);
-                        value_type.* = .Unknown;
-                        break :blk HIRType{ .Map = .{ .key = key_type, .value = value_type } };
-                    },
-                    .Function => blk: {
-                        const ret_type = try allocator.create(HIRType);
-                        ret_type.* = .Unknown;
-                        break :blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type } };
-                    },
-                    .Union => blk: {
-                        if (field.field_type_info.union_type) |ut| {
-                            var member_types = try allocator.alloc(*const HIRType, ut.types.len);
-                            for (ut.types, 0..) |member, in| {
-                                const member_type = try allocator.create(HIRType);
-                                member_type.* = switch (member.base) {
-                                    .Int => .Int,
-                                    .Byte => .Byte,
-                                    .Float => .Float,
-                                    .String => .String,
-                                    .Tetra => .Tetra,
-                                    .Nothing => .Nothing,
-                                    .Array => array_blk: {
-                                        const elem_type = try allocator.create(HIRType);
-                                        elem_type.* = .Unknown;
-                                        break :array_blk HIRType{ .Array = elem_type };
-                                    },
-                                    .Struct => HIRType{ .Struct = 0 },
-                                    .Enum => HIRType{ .Enum = 0 },
-                                    .Custom => HIRType{ .Struct = 0 },
-                                    .Map => blk3: {
-                                        const key_type2 = try allocator.create(HIRType);
-                                        key_type2.* = .Unknown;
-                                        const value_type2 = try allocator.create(HIRType);
-                                        value_type2.* = .Unknown;
-                                        break :blk3 HIRType{ .Map = .{ .key = key_type2, .value = value_type2 } };
-                                    },
-                                    .Function => blk4: {
-                                        const ret_type2 = try allocator.create(HIRType);
-                                        ret_type2.* = .Unknown;
-                                        break :blk4 HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = ret_type2 } };
-                                    },
-                                    .Union => blk5: {
-                                        const unknown_type = try allocator.create(HIRType);
-                                        unknown_type.* = .Unknown;
-                                        break :blk5 HIRType{ .Union = .{ .id = 0, .members = &[_]*const HIRType{unknown_type} } };
-                                    },
-                                };
-                                member_types[in] = member_type;
-                            }
-                            break :blk HIRType{ .Union = .{ .id = 0, .members = member_types } };
-                        } else {
-                            break :blk .Unknown;
-                        }
-                    },
-                };
+                const mapped_hir_type = try helpers.lowerAstTypeToHIR(self, field.field_type_info);
                 converted_fields[i] = .{
                     .name = field.name,
                     .field_type = mapped_hir_type,
@@ -350,6 +289,25 @@ pub const SemanticAnalyzer = struct {
         }
 
         return hir_type;
+    }
+
+    /// Recompute every struct field's HIR type now that all declarations are
+    /// registered. `registerStructType` lowers field types eagerly, before
+    /// referenced structs/enums from other modules are known, which leaves
+    /// Struct(0)/Unknown/Enum(0) placeholders. This pass runs after semantic
+    /// analysis completes and resolves the same field types against the fully
+    /// populated tables via the centralized AST→HIR lowering.
+    pub fn recomputeStructFieldHIRTypes(self: *SemanticAnalyzer) !void {
+        for (self.struct_table.entries.items) |*entry| {
+            for (entry.fields) |*field| {
+                field.hir_type = try helpers.lowerAstTypeToHIR(self, field.type_info);
+                if (helpers.structIdFromTypeInfo(self, field.type_info)) |nested_id| {
+                    field.nested_struct_id = nested_id;
+                } else {
+                    field.nested_struct_id = null;
+                }
+            }
+        }
     }
 
     pub fn analyze(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {
@@ -408,7 +366,8 @@ pub const SemanticAnalyzer = struct {
                         // Module sub-symbols and zig-block functions use dotted keys
                         // (e.g. "std.println", "io.hello"). Skip those so only bare
                         // direct-import names produce a warning.
-                        if (std.mem.indexOf(u8, entry.key_ptr.*, ".")) |_| continue;
+                        const i = std.mem.indexOf(u8, entry.key_ptr.*, ".");
+                        if (i) |_| continue;
                         self.reporter.reportWarning(null, ErrorCode.UNUSED_IMPORT, "unused import '{s}'", .{sym.name});
                     }
                 }
@@ -916,6 +875,16 @@ pub const SemanticAnalyzer = struct {
                     }
 
                     if (decl.initializer) |init_expr| {
+                        if (isEmptyArrayLiteral(init_expr) and type_info.base == .Array and type_info.array_type == null) {
+                            self.reporter.reportCompileError(
+                                getLocationFromBase(stmt.base),
+                                ErrorCode.CANNOT_INFER_ARRAY_ELEMENT_TYPE,
+                                "cannot infer element type of empty array literal; add an element type annotation (e.g. `int[]`)",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                            continue;
+                        }
                         self.tryTagConstLiteralArray(type_info, init_expr);
                     }
 
@@ -1004,7 +973,7 @@ pub const SemanticAnalyzer = struct {
                     try self.collectDeclarations(block_stmts, block_scope);
                     block_scope.deinit();
                 },
-                .FunctionDecl => |_| {
+                .FunctionDecl => {
                     // Already registered in pre-pass. Validation will occur later.
                 },
                 .EnumDecl => |enum_decl| {
@@ -1259,6 +1228,19 @@ pub const SemanticAnalyzer = struct {
 
                             const token_type = eval.convertTypeToTokenType(type_info.base);
 
+                            if (decl.initializer) |init_expr| {
+                                if (isEmptyArrayLiteral(init_expr) and type_info.base == .Array and type_info.array_type == null) {
+                                    self.reporter.reportCompileError(
+                                        getLocationFromBase(stmt.base),
+                                        ErrorCode.CANNOT_INFER_ARRAY_ELEMENT_TYPE,
+                                        "cannot infer element type of empty array literal; add an element type annotation (e.g. `int[]`)",
+                                        .{},
+                                    );
+                                    self.fatal_error = true;
+                                    continue;
+                                }
+                            }
+
                             var value: TokenLiteral = undefined;
 
                             if (decl.initializer) |init_expr| {
@@ -1287,7 +1269,9 @@ pub const SemanticAnalyzer = struct {
                                     .String => TokenLiteral{ .string = "" },
                                     .Tetra => TokenLiteral{ .tetra = .false },
                                     .Byte => TokenLiteral{ .byte = 0 },
-                                    .Array => blk: { break :blk try eval.defaultTypeLiteral(self.allocator, type_info); },
+                                    .Array => blk: {
+                                        break :blk try eval.defaultTypeLiteral(self.allocator, type_info);
+                                    },
                                     .Union => if (type_info.union_type) |ut|
                                         union_handling.getUnionDefaultValue(ut)
                                     else
@@ -1556,7 +1540,8 @@ pub const SemanticAnalyzer = struct {
                 const first_pattern = case.patterns[0]; // Use first pattern for type narrowing
 
                 // Check for array suffix in pattern lexeme (e.g., "int[]", "string[][]")
-                if (std.mem.indexOf(u8, first_pattern.lexeme, "[]")) |_| {
+                const i = std.mem.indexOf(u8, first_pattern.lexeme, "[]");
+                if (i) |_| {
                     narrow_info.* = .{ .base = .Array, .is_mutable = false };
                 } else {
                     narrow_info.* = switch (first_pattern.type) {
@@ -1600,7 +1585,8 @@ pub const SemanticAnalyzer = struct {
         if (type_info.base == .Custom) {
             if (type_info.custom_type) |custom_type_name| {
                 if (helpers.lookupVariable(self, custom_type_name)) |variable| {
-                    if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |_| {
+                    const id = self.memory.scope_manager.value_storage.get(variable.storage_id);
+                    if (id) |_| {
                         // If the custom type refers to a struct or enum declaration, keep it as Custom
                         // This is the correct behavior - variables of struct/enum types should be Custom
                         return type_info;
@@ -1608,7 +1594,8 @@ pub const SemanticAnalyzer = struct {
                 }
 
                 // Check if it's a registered custom type
-                if (self.custom_types.get(custom_type_name)) |_| {
+                const tn = self.custom_types.get(custom_type_name);
+                if (tn) |_| {
                     return type_info;
                 }
             }
@@ -2011,7 +1998,7 @@ pub const SemanticAnalyzer = struct {
                     .is_mutable = map.is_mutable,
                 };
             },
-            .Enum => |_| {
+            .Enum => {
                 type_info.* = .{ .base = .Nothing };
             },
             .Union => |union_types| {

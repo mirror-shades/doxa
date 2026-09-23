@@ -1,0 +1,22 @@
+import build from @std()
+
+var c is build.Context.host()
+c.debug is false
+c.optimization is build.Optimization.Speed
+
+var exe is build.Builder.executable("my-app", "src/main.doxa", "bin/my-app")
+exe.include("include")
+exe.libdir("lib")
+exe.link("raylib")
+
+const os is c.target.os
+match os {
+    "windows" then exe.link(["gdi32", "winmm", "opengl32", "user32", "shell32"]),
+    "linux" then exe.link(["m", "dl", "pthread", "GL", "X11"]),
+    "macos" then exe.framework(["OpenGL", "Cocoa", "IOKit", "CoreVideo"]),
+    else @panic("Unsupported OS"),
+}
+
+c.addArtifact(exe)
+
+build.execute(c, false)

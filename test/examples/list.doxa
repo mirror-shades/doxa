@@ -27,7 +27,7 @@ public struct LinkedList {
     method removeSlot(slot :: int) returns int {
         const value is this.nodes[slot].value
         const next_slot is this.nodes[slot].next
-        if slot equals this.head then {
+        if slot == this.head then {
             this.head is next_slot
         } else {
             var prev is this.head
@@ -38,7 +38,7 @@ public struct LinkedList {
                 this.nodes[prev].next is next_slot
             }
         }
-        if this.cursor equals slot then this.cursor is next_slot
+        if this.cursor == slot then this.cursor is next_slot
         this.nodes[slot] is $Node { value is 0, next is this.free }
         this.free is slot
         return value
@@ -62,7 +62,7 @@ public struct LinkedList {
     public method find(value :: int) returns int | nothing {
         var cur is this.head
         while cur >= 0 {
-            if this.nodes[cur].value equals value then {
+            if this.nodes[cur].value == value then {
                 this.cursor is cur
                 return cur
             }
