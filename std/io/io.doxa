@@ -166,7 +166,8 @@ zig IO {
             }
             return @intCast(byte[0]);
         }
-        const n = std.posix.read(0, &byte) catch {
+        var iov = [1][]u8{&byte};
+        const n = std.Io.File.stdin().readStreaming(std.Io.Threaded.global_single_threaded.io(), &iov) catch {
             setLastError(106);
             return -1;
         };
