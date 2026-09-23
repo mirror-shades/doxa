@@ -43,12 +43,26 @@ fn doxaWrite(slice: []const u8) void {
     }
 }
 
+/// Write a slice to a raw WASI file descriptor. `std.Io.Threaded`'s syscall
+/// path is not usable under wasi preview1 (writes fail with ENOTCAPABLE), so —
+/// like the Windows branch — the runtime uses the platform's direct write call.
+fn writeWasiFd(fd: i32, slice: []const u8) void {
+    if (slice.len == 0) return;
+    var iov = [1]std.os.wasi.ciovec_t{.{ .base = slice.ptr, .len = slice.len }};
+    var written: usize = 0;
+    _ = std.os.wasi.fd_write(fd, &iov, 1, &written);
+}
+
 fn writeStdout(slice: []const u8) void {
     if (builtin.os.tag == .windows) {
         const handle = win32.GetStdHandle(win32.STD_OUTPUT_HANDLE);
         if (handle == std.os.windows.INVALID_HANDLE_VALUE) return;
         var written: u32 = 0;
         _ = win32.WriteFile(handle, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
+        return;
+    }
+    if (builtin.os.tag == .wasi) {
+        writeWasiFd(1, slice);
         return;
     }
     var stdout_buffer: [4096]u8 = undefined;
@@ -66,6 +80,10 @@ fn writeStderr(slice: []const u8) void {
         _ = win32.WriteFile(handle, slice.ptr, @as(u32, @intCast(slice.len)), &written, null);
         return;
     }
+    if (builtin.os.tag == .wasi) {
+        writeWasiFd(2, slice);
+        return;
+    }
     var stderr_buffer: [1024]u8 = undefined;
     var stderr_writer = std.Io.File.stderr().writer(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
     const stderr = &stderr_writer.interface;
@@ -80,9 +98,9 @@ pub export fn doxa_trap_unreachable() callconv(.c) void {
 
 /// Write a byte slice to stderr. Used by assertion failures and other
 /// diagnostics that must not pollute stdout.
-pub export fn doxa_write_stderr(ptr: ?[*]const u8, len: usize) callconv(.c) void {
+pub export fn doxa_write_stderr(ptr: ?[*]const u8, len: u64) callconv(.c) void {
     if (ptr) |p| {
-        writeStderr(p[0..len]);
+        writeStderr(p[0..@intCast(len)]);
     }
 }
 
@@ -94,17 +112,17 @@ pub export fn doxa_exit(code: i64) callconv(.c) void {
 
 /// User-facing panic: write the message to stderr and terminate with code 1.
 /// Code 2 is reserved for compiler-internal traps (`doxa_trap_unreachable`).
-pub export fn doxa_panic(ptr: ?[*]const u8, len: usize) callconv(.c) void {
+pub export fn doxa_panic(ptr: ?[*]const u8, len: u64) callconv(.c) void {
     if (ptr) |p| {
-        writeStderr(p[0..len]);
+        writeStderr(p[0..@intCast(len)]);
     }
     writeStderr("\n");
     std.process.exit(1);
 }
 
-pub export fn doxa_write_cstr(ptr: ?[*]const u8, len: usize) callconv(.c) void {
+pub export fn doxa_write_cstr(ptr: ?[*]const u8, len: u64) callconv(.c) void {
     if (ptr) |p| {
-        doxaWrite(p[0..len]);
+        doxaWrite(p[0..@intCast(len)]);
     }
 }
 
@@ -117,17 +135,17 @@ pub export fn doxa_write_raw(ptr: ?[*:0]const u8) callconv(.c) void {
     }
 }
 
-pub export fn doxa_peek_string(ptr: ?[*]const u8, len: usize) callconv(.c) void {
+pub export fn doxa_peek_string(ptr: ?[*]const u8, len: u64) callconv(.c) void {
     doxaWrite("\"");
     if (ptr) |p| {
         if (len > 0) {
-            doxaWrite(p[0..len]);
+            doxaWrite(p[0..@intCast(len)]);
         }
     }
     doxaWrite("\"");
 }
 
-pub export fn doxa_str_eq(a_ptr: ?[*]const u8, a_len: usize, b_ptr: ?[*]const u8, b_len: usize) callconv(.c) bool {
+pub export fn doxa_str_eq(a_ptr: ?[*]const u8, a_len: u64, b_ptr: ?[*]const u8, b_len: u64) callconv(.c) bool {
     const a = sliceFromDoxaString(.{ .ptr = a_ptr, .len = a_len });
     const b = sliceFromDoxaString(.{ .ptr = b_ptr, .len = b_len });
     return std.mem.eql(u8, a, b);
@@ -147,7 +165,7 @@ pub export fn doxa_str_eq(a_ptr: ?[*]const u8, a_len: usize, b_ptr: ?[*]const u8
 /// DoxaString by value.
 pub const DoxaString = extern struct {
     ptr: ?[*]const u8,
-    len: usize,
+    len: u64,
 };
 
 fn allocDoxaString(bytes: []const u8) DoxaString {
@@ -159,17 +177,17 @@ fn allocDoxaString(bytes: []const u8) DoxaString {
 }
 
 fn sliceFromDoxaString(s: DoxaString) []const u8 {
-    if (s.ptr) |p| return p[0..s.len];
+    if (s.ptr) |p| return p[0..@intCast(s.len)];
     return "";
 }
 
 fn ds_ptr(s: DoxaString) ?[*]const u8 {
     return s.ptr;
 }
-fn ds_len(s: DoxaString) usize {
+fn ds_len(s: DoxaString) u64 {
     return s.len;
 }
-fn ds_from_parts(ptr: ?[*]const u8, len: usize) DoxaString {
+fn ds_from_parts(ptr: ?[*]const u8, len: u64) DoxaString {
     return .{ .ptr = ptr, .len = len };
 }
 
@@ -196,15 +214,15 @@ pub export fn doxa_set_environ(env: ?*const std.process.Environ.Map) callconv(.c
     startup_environ = env;
 }
 
-pub export fn doxa_getenv(name_ptr: ?[*]const u8, name_len: usize, out_len: *usize) callconv(.c) ?[*]const u8 {
+pub export fn doxa_getenv(name_ptr: ?[*]const u8, name_len: u64, out_len: *u64) callconv(.c) ?[*]const u8 {
     const env = startup_environ orelse return null;
-    const name = if (name_ptr) |p| p[0..name_len] else return null;
+    const name = if (name_ptr) |p| p[0..@intCast(name_len)] else return null;
     const value = env.get(name) orelse return null;
     out_len.* = value.len;
     return value.ptr;
 }
 
-pub export fn doxa_int_from_string(ptr: ?[*]const u8, len: usize) callconv(.c) i64 {
+pub export fn doxa_int_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) i64 {
     const raw = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     if (trimmed.len == 0) return 0;
@@ -225,7 +243,7 @@ pub export fn doxa_int_from_string(ptr: ?[*]const u8, len: usize) callconv(.c) i
     return std.fmt.parseInt(i64, trimmed, 10) catch 0;
 }
 
-pub export fn doxa_float_from_string(ptr: ?[*]const u8, len: usize) callconv(.c) f64 {
+pub export fn doxa_float_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) f64 {
     const raw = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
     const trimmed = std.mem.trim(u8, raw, " \t\r\n");
     if (trimmed.len == 0) return 0.0;
@@ -242,7 +260,7 @@ pub export fn doxa_float_from_string(ptr: ?[*]const u8, len: usize) callconv(.c)
     return std.fmt.parseFloat(f64, trimmed) catch 0.0;
 }
 
-pub export fn doxa_int_to_string(value: i64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_int_to_string(value: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     var buf: [64]u8 = undefined;
     const s = std.fmt.bufPrint(&buf, "{d}", .{value}) catch {
         out_ptr.* = null;
@@ -254,7 +272,7 @@ pub export fn doxa_int_to_string(value: i64, out_ptr: *?[*]u8, out_len: *usize) 
     out_len.* = ds.len;
 }
 
-pub export fn doxa_float_to_string(value: f64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_float_to_string(value: f64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     var buf: [64]u8 = undefined;
     const rounded_down = std.math.floor(value);
     const s = if (value - rounded_down == 0)
@@ -274,7 +292,7 @@ pub export fn doxa_float_to_string(value: f64, out_ptr: *?[*]u8, out_len: *usize
     out_len.* = ds.len;
 }
 
-pub export fn doxa_byte_to_string(value: i64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_byte_to_string(value: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     var buf: [16]u8 = undefined;
     const byte_val: u8 = @intCast(value & 0xff);
     const s = std.fmt.bufPrint(&buf, "0x{X:0>2}", .{byte_val}) catch {
@@ -287,7 +305,7 @@ pub export fn doxa_byte_to_string(value: i64, out_ptr: *?[*]u8, out_len: *usize)
     out_len.* = ds.len;
 }
 
-pub export fn doxa_tetra_to_string(value: i64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_tetra_to_string(value: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     const v: u8 = @intCast(value & 0x3);
     const name: []const u8 = switch (v) {
         0 => "false",
@@ -301,13 +319,13 @@ pub export fn doxa_tetra_to_string(value: i64, out_ptr: *?[*]u8, out_len: *usize
     out_len.* = ds.len;
 }
 
-pub export fn doxa_nothing_to_string(out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_nothing_to_string(out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     const ds = allocDoxaString("nothing");
     out_ptr.* = @constCast(ds.ptr);
     out_len.* = ds.len;
 }
 
-pub export fn doxa_enum_to_string(type_name_ptr: ?[*]const u8, type_name_len: usize, bits: i64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_enum_to_string(type_name_ptr: ?[*]const u8, type_name_len: u64, bits: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     var list = std.Io.Writer.Allocating.init(std.heap.page_allocator);
     defer list.deinit();
     printEnumImpl(&list.writer, sliceFromDoxaString(.{ .ptr = type_name_ptr, .len = type_name_len }), bits) catch {
@@ -320,7 +338,7 @@ pub export fn doxa_enum_to_string(type_name_ptr: ?[*]const u8, type_name_len: us
     out_len.* = ds.len;
 }
 
-pub export fn doxa_struct_to_string(instance: ?*anyopaque, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_struct_to_string(instance: ?*anyopaque, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     if (instance == null) {
         const ds = allocDoxaString("");
         out_ptr.* = @constCast(ds.ptr);
@@ -340,7 +358,7 @@ pub export fn doxa_struct_to_string(instance: ?*anyopaque, out_ptr: *?[*]u8, out
     out_len.* = ds.len;
 }
 
-pub export fn doxa_array_to_string(hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_array_to_string(hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     if (hdr == null) {
         const ds = allocDoxaString("");
         out_ptr.* = @constCast(ds.ptr);
@@ -359,26 +377,26 @@ pub export fn doxa_array_to_string(hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len
     out_len.* = ds.len;
 }
 
-pub export fn doxa_pack_bytes(hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_pack_bytes(hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     if (hdr == null) {
         out_ptr.* = null;
         out_len.* = 0;
         return;
     }
     const arr = hdr.?;
-    const buf = scope_arena.allocator().alloc(u8, arr.len) catch {
+    const buf = scope_arena.allocator().alloc(u8, @intCast(arr.len)) catch {
         out_ptr.* = null;
         out_len.* = 0;
         return;
     };
-    for (0..arr.len) |i| {
+    for (0..@intCast(arr.len)) |i| {
         buf[i] = @intCast(doxa_array_get_i64(arr, i));
     }
     out_ptr.* = buf.ptr;
-    out_len.* = arr.len;
+    out_len.* = @intCast(arr.len);
 }
 
-pub export fn doxa_unpack_bytes(ptr: ?[*]const u8, len: usize) callconv(.c) ?*ArrayHeader {
+pub export fn doxa_unpack_bytes(ptr: ?[*]const u8, len: u64) callconv(.c) ?*ArrayHeader {
     const bytes = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
     const result = doxa_array_new(1, 1, bytes.len);
     for (bytes, 0..) |ch, i| {
@@ -387,7 +405,7 @@ pub export fn doxa_unpack_bytes(ptr: ?[*]const u8, len: usize) callconv(.c) ?*Ar
     return result;
 }
 
-pub export fn doxa_str_concat(a_ptr: ?[*]const u8, a_len: usize, b_ptr: ?[*]const u8, b_len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_str_concat(a_ptr: ?[*]const u8, a_len: u64, b_ptr: ?[*]const u8, b_len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     const as = sliceFromDoxaString(.{ .ptr = a_ptr, .len = a_len });
     const bs = sliceFromDoxaString(.{ .ptr = b_ptr, .len = b_len });
     const total_len = as.len + bs.len;
@@ -410,7 +428,7 @@ pub export fn doxa_str_concat(a_ptr: ?[*]const u8, a_len: usize, b_ptr: ?[*]cons
 /// Recover a DoxaString from a null-terminated C-string pointer. This is the
 /// one remaining raw C-string boundary: inline-Zig/module globals loaded via
 /// `LoadModule` and map string values still arrive as C-strings.
-pub export fn doxa_str_from_cstr(ptr: ?[*:0]const u8, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_str_from_cstr(ptr: ?[*:0]const u8, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     if (ptr) |p| {
         const slice = std.mem.span(p);
         const ds = allocDoxaString(slice);
@@ -424,8 +442,8 @@ pub export fn doxa_str_from_cstr(ptr: ?[*:0]const u8, out_ptr: *?[*]u8, out_len:
 
 /// Clone a string into the arena `levels` scopes above the current one. Used
 /// when a value is stored into a variable declared in an outer scope.
-fn strCloneInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) void {
-    const bytes: []const u8 = if (ptr) |p| p[0..len] else "";
+fn strCloneInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) void {
+    const bytes: []const u8 = if (ptr) |p| p[0..@intCast(len)] else "";
     // Allocate at least one byte so an empty string keeps a non-null pointer;
     // string indexing assumes the backing pointer is valid even when len == 0.
     const alloc_len: usize = if (bytes.len == 0) 1 else bytes.len;
@@ -441,17 +459,17 @@ fn strCloneInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: usize, out_p
     out_len.* = bytes.len;
 }
 
-pub export fn doxa_str_clone_at(levels: i64, ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_str_clone_at(levels: i64, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     strCloneInto(scope_arena.scopeAt(@intCast(levels)), ptr, len, out_ptr, out_len);
 }
 
 /// Clone a string into the program-root arena so a global store outlives every
 /// function and block that may have constructed the value.
-pub export fn doxa_str_clone_root(ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_str_clone_root(ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     strCloneInto(scope_arena.rootScope(), ptr, len, out_ptr, out_len);
 }
 
-fn strRehomeInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) void {
+fn strRehomeInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) void {
     if (ptr) |p| {
         if (string_scopes.get(@intFromPtr(p))) |source_scope| {
             if (scope_arena.isEqualOrDescendant(scope, source_scope)) {
@@ -464,20 +482,20 @@ fn strRehomeInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: usize, out_
     strCloneInto(scope, ptr, len, out_ptr, out_len);
 }
 
-pub export fn doxa_str_rehome_at(levels: i64, ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_str_rehome_at(levels: i64, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     strRehomeInto(scope_arena.scopeAt(@intCast(levels)), ptr, len, out_ptr, out_len);
 }
 
-pub export fn doxa_str_rehome_root(ptr: ?[*]const u8, len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_str_rehome_root(ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     strRehomeInto(scope_arena.rootScope(), ptr, len, out_ptr, out_len);
 }
 
 /// Clone with a null terminator, returning the raw C-string pointer. Maps are
 /// the only remaining consumer: they store string keys/values as a single i64
 /// pointer slot and recover the length via `std.mem.span`.
-pub export fn doxa_str_clone_raw(ptr: ?[*]const u8, len: usize) callconv(.c) ?[*:0]u8 {
+pub export fn doxa_str_clone_raw(ptr: ?[*]const u8, len: u64) callconv(.c) ?[*:0]u8 {
     if (ptr) |p| {
-        const slice: []const u8 = p[0..len];
+        const slice: []const u8 = p[0..@intCast(len)];
         const out = scope_arena.allocator().allocSentinel(u8, slice.len, 0) catch return null;
         @memcpy(out[0..slice.len], slice);
         return out.ptr;
@@ -485,7 +503,7 @@ pub export fn doxa_str_clone_raw(ptr: ?[*]const u8, len: usize) callconv(.c) ?[*
     return null;
 }
 
-pub export fn doxa_char_to_string(ch: u8, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_char_to_string(ch: u8, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     const buf = scope_arena.allocator().alloc(u8, 1) catch {
         out_ptr.* = null;
         out_len.* = 0;
@@ -555,13 +573,13 @@ pub export fn doxa_find_array(hdr: ?*ArrayHeader, value: i64) callconv(.c) i64 {
     return -1;
 }
 
-pub export fn doxa_find_array_str(hdr: ?*ArrayHeader, n_ptr: ?[*]const u8, n_len: usize) callconv(.c) i64 {
+pub export fn doxa_find_array_str(hdr: ?*ArrayHeader, n_ptr: ?[*]const u8, n_len: u64) callconv(.c) i64 {
     const h = hdr orelse return -1;
     const ndl = sliceFromDoxaString(.{ .ptr = n_ptr, .len = n_len });
     var idx: u64 = 0;
     while (idx < h.len) : (idx += 1) {
         var elem_ptr: ?[*]u8 = null;
-        var elem_len: usize = 0;
+        var elem_len: u64 = 0;
         doxa_array_get_str(h, idx, &elem_ptr, &elem_len);
         const elem = sliceFromDoxaString(.{ .ptr = elem_ptr, .len = elem_len });
         if (std.mem.eql(u8, elem, ndl)) return @intCast(idx);
@@ -569,7 +587,7 @@ pub export fn doxa_find_array_str(hdr: ?*ArrayHeader, n_ptr: ?[*]const u8, n_len
     return -1;
 }
 
-pub export fn doxa_find_str(h_ptr: ?[*]const u8, h_len: usize, n_ptr: ?[*]const u8, n_len: usize) callconv(.c) i64 {
+pub export fn doxa_find_str(h_ptr: ?[*]const u8, h_len: u64, n_ptr: ?[*]const u8, n_len: u64) callconv(.c) i64 {
     const str = sliceFromDoxaString(.{ .ptr = h_ptr, .len = h_len });
     const ndl = sliceFromDoxaString(.{ .ptr = n_ptr, .len = n_len });
     if (ndl.len == 0) return 0;
@@ -699,11 +717,11 @@ fn cloneDoxaValueInto(scope: ?*scope_arena.Scope, val: *DoxaValue) void {
         .String => {
             const addr: u64 = @bitCast(val.payload_bits);
             if (addr != 0) {
-                const ptr: [*]const u8 = @ptrFromInt(@as(usize, addr));
+                const ptr: [*]const u8 = @ptrFromInt(@as(usize, @intCast(addr)));
                 const len: usize = @intCast(val.payload_len);
                 var cloned_ptr: ?[*]u8 = null;
-                var cloned_len: usize = 0;
-                strCloneInto(scope, ptr, len, &cloned_ptr, &cloned_len);
+                var cloned_len: u64 = 0;
+                strCloneInto(scope, ptr, @intCast(len), &cloned_ptr, &cloned_len);
                 val.payload_bits = @bitCast(@as(u64, if (cloned_ptr) |p| @intFromPtr(p) else 0));
                 val.payload_len = @intCast(cloned_len);
             }
@@ -711,14 +729,14 @@ fn cloneDoxaValueInto(scope: ?*scope_arena.Scope, val: *DoxaValue) void {
         .Array => {
             const addr: u64 = @bitCast(val.payload_bits);
             if (addr != 0) {
-                const hdr: *ArrayHeader = @ptrFromInt(@as(usize, addr));
+                const hdr: *ArrayHeader = @ptrFromInt(@as(usize, @intCast(addr)));
                 val.payload_bits = @intCast(@intFromPtr(arrayCloneIn(scope, hdr)));
             }
         },
         .Struct => {
             const addr: u64 = @bitCast(val.payload_bits);
             if (addr != 0) {
-                if (structCloneInto(scope, @ptrFromInt(@as(usize, addr)))) |cloned| {
+                if (structCloneInto(scope, @ptrFromInt(@as(usize, @intCast(addr))))) |cloned| {
                     val.payload_bits = @intCast(@intFromPtr(cloned));
                 }
             }
@@ -813,7 +831,7 @@ pub export fn doxa_debug_peek(info_ptr: ?*const DoxaPeekInfo) callconv(.c) void 
     }
 }
 
-pub export fn doxa_byte_from_string(ptr: ?[*]const u8, len: usize) callconv(.c) i64 {
+pub export fn doxa_byte_from_string(ptr: ?[*]const u8, len: u64) callconv(.c) i64 {
     const s_val = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
     if (s_val.len == 0) return 0;
     if (s_val.len == 1) return @as(i64, @intCast(s_val[0]));
@@ -844,7 +862,7 @@ pub export fn doxa_byte_from_f64(value: f64) callconv(.c) i64 {
     return 0;
 }
 
-pub export fn doxa_substring(ptr: ?[*]const u8, len: usize, start: i64, length: i64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_substring(ptr: ?[*]const u8, len: u64, start: i64, length: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     const src = sliceFromDoxaString(.{ .ptr = ptr, .len = len });
     if (start < 0 or length < 0) {
         out_ptr.* = null;
@@ -865,7 +883,7 @@ pub export fn doxa_substring(ptr: ?[*]const u8, len: usize, start: i64, length: 
     out_len.* = ds.len;
 }
 
-pub export fn doxa_str_insert(s_ptr: ?[*]const u8, s_len: usize, idx: i64, ins_ptr: ?[*]const u8, ins_len: usize, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_str_insert(s_ptr: ?[*]const u8, s_len: u64, idx: i64, ins_ptr: ?[*]const u8, ins_len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     const src = sliceFromDoxaString(.{ .ptr = s_ptr, .len = s_len });
     const add = sliceFromDoxaString(.{ .ptr = ins_ptr, .len = ins_len });
     const idx_clamped: usize = blk: {
@@ -893,7 +911,7 @@ pub export fn doxa_str_insert(s_ptr: ?[*]const u8, s_len: usize, idx: i64, ins_p
 
 pub export fn doxa_str_remove(
     s_ptr: ?[*]const u8,
-    s_len: usize,
+    s_len: u64,
     idx: i64,
     out_remaining: *DoxaString,
     out_removed: *DoxaString,
@@ -922,7 +940,7 @@ pub export fn doxa_str_remove(
     return 1;
 }
 
-pub export fn doxa_str_pop(s_ptr: ?[*]const u8, s_len: usize, out_remaining: *DoxaString, out_popped: *DoxaString) callconv(.c) u8 {
+pub export fn doxa_str_pop(s_ptr: ?[*]const u8, s_len: u64, out_remaining: *DoxaString, out_popped: *DoxaString) callconv(.c) u8 {
     const src = sliceFromDoxaString(.{ .ptr = s_ptr, .len = s_len });
     if (src.len == 0) {
         out_remaining.* = .{ .ptr = null, .len = 0 };
@@ -949,7 +967,7 @@ pub export fn doxa_str_pop(s_ptr: ?[*]const u8, s_len: usize, out_remaining: *Do
     return 1;
 }
 
-pub export fn doxa_str_len(ptr: ?[*]const u8, len: usize) callconv(.c) i64 {
+pub export fn doxa_str_len(ptr: ?[*]const u8, len: u64) callconv(.c) i64 {
     _ = ptr;
     return @intCast(len);
 }
@@ -1019,8 +1037,8 @@ fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
             const len: usize = @intCast(@as(u64, @bitCast(len_bits)));
             if (addr != 0) {
                 var cloned_ptr: ?[*]u8 = null;
-                var cloned_len: usize = 0;
-                strCloneInto(scope, @ptrFromInt(@as(usize, addr)), len, &cloned_ptr, &cloned_len);
+                var cloned_len: u64 = 0;
+                strCloneInto(scope, @ptrFromInt(@as(usize, @intCast(addr))), @intCast(len), &cloned_ptr, &cloned_len);
                 dst[word] = @bitCast(@as(u64, if (cloned_ptr) |p| @intFromPtr(p) else 0));
                 dst[word + 1] = @bitCast(@as(u64, cloned_len));
             } else {
@@ -1241,7 +1259,7 @@ pub export fn doxa_array_range(start: i64, end: i64) callconv(.c) *ArrayHeader {
     const i64_data: [*]i64 = @ptrCast(@alignCast(data));
     var i: u64 = 0;
     while (i < count) : (i += 1) {
-        i64_data[i] = start + @as(i64, @intCast(i));
+        i64_data[@intCast(i)] = start + @as(i64, @intCast(i));
     }
     return hdr;
 }
@@ -1274,7 +1292,7 @@ pub export fn doxa_array_new_nested(
                 inner_elem_size,
                 inner_elem_tag,
             );
-        doxa_array_set_i64(outer, idx, @as(i64, @bitCast(@intFromPtr(inner))));
+        doxa_array_set_i64(outer, idx, @as(i64, @intCast(@intFromPtr(inner))));
     }
     return outer;
 }
@@ -1286,7 +1304,7 @@ fn arrayCloneIn(scope: ?*scope_arena.Scope, hdr: ?*ArrayHeader) *ArrayHeader {
         var idx: u64 = 0;
         while (idx < src.len) : (idx += 1) {
             var str_ptr: ?[*]u8 = undefined;
-            var str_len: usize = undefined;
+            var str_len: u64 = undefined;
             doxa_array_get_str(src, idx, &str_ptr, &str_len);
             doxa_array_set_str(result, idx, str_ptr, str_len);
         }
@@ -1422,7 +1440,7 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
             ap.* = if (addr == 0)
                 null
             else
-                arrayCloneIn(hdr.scope, @ptrFromInt(@as(usize, addr)));
+                arrayCloneIn(hdr.scope, @ptrFromInt(@as(usize, @intCast(addr))));
         },
         7 => { // struct (pointer encoded as bits)
             const sp: *?*anyopaque = @ptrCast(@alignCast(p));
@@ -1430,7 +1448,7 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
             sp.* = if (addr == 0)
                 null
             else
-                structCloneInto(hdr.scope, @ptrFromInt(@as(usize, addr)));
+                structCloneInto(hdr.scope, @ptrFromInt(@as(usize, @intCast(addr))));
         },
         // Default: store raw 64-bit payload (pointers/unknown).
         // When the element type is unknown (e.g. an empty `[]` literal) and the
@@ -1439,7 +1457,7 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
         else => {
             const addr: u64 = @bitCast(value);
             if (addr != 0) {
-                if (structCloneInto(hdr.scope, @ptrFromInt(@as(usize, addr)))) |cloned| {
+                if (structCloneInto(hdr.scope, @ptrFromInt(@as(usize, @intCast(addr))))) |cloned| {
                     const ip: *i64 = @ptrCast(@alignCast(p));
                     ip.* = @intCast(@intFromPtr(cloned));
                     return;
@@ -1451,7 +1469,7 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
     }
 }
 
-pub export fn doxa_array_get_str(hdr: *ArrayHeader, idx: u64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) void {
+pub export fn doxa_array_get_str(hdr: *ArrayHeader, idx: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     if (hdr.data == null or idx >= hdr.len) {
         out_ptr.* = null;
         out_len.* = 0;
@@ -1464,7 +1482,7 @@ pub export fn doxa_array_get_str(hdr: *ArrayHeader, idx: u64, out_ptr: *?[*]u8, 
         const ptr_slot: *const i64 = @ptrCast(@alignCast(p));
         const len_slot: *const i64 = @ptrCast(@alignCast(p + 8));
         const addr: u64 = @bitCast(ptr_slot.*);
-        const ptr: ?[*]const u8 = if (addr == 0) null else @ptrFromInt(@as(usize, addr));
+        const ptr: ?[*]const u8 = if (addr == 0) null else @ptrFromInt(@as(usize, @intCast(addr)));
         const len_u64: u64 = @bitCast(len_slot.*);
         out_ptr.* = @constCast(ptr);
         out_len.* = @intCast(len_u64);
@@ -1474,14 +1492,14 @@ pub export fn doxa_array_get_str(hdr: *ArrayHeader, idx: u64, out_ptr: *?[*]u8, 
     out_len.* = 0;
 }
 
-pub export fn doxa_array_set_str(hdr: *ArrayHeader, idx: u64, str_ptr: ?[*]const u8, str_len: usize) callconv(.c) void {
+pub export fn doxa_array_set_str(hdr: *ArrayHeader, idx: u64, str_ptr: ?[*]const u8, str_len: u64) callconv(.c) void {
     const needed_len = idx + 1;
     if (!ensureArrayCapacity(hdr, needed_len)) return;
     if (hdr.data == null and hdr.elem_size != 0) return;
     if (idx >= hdr.len) hdr.len = idx + 1;
     if (hdr.elem_tag != 3) return;
     var cloned_ptr: ?[*]u8 = null;
-    var cloned_len: usize = 0;
+    var cloned_len: u64 = 0;
     strCloneInto(hdr.scope, str_ptr, str_len, &cloned_ptr, &cloned_len);
     const base: [*]u8 = @ptrCast(hdr.data.?);
     const off: usize = @intCast(idx * hdr.elem_size);
@@ -1503,7 +1521,7 @@ pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u
             var idx: u64 = 0;
             while (idx < len_a) : (idx += 1) {
                 var str_ptr: ?[*]u8 = undefined;
-                var str_len: usize = undefined;
+                var str_len: u64 = undefined;
                 doxa_array_get_str(hdr_a, idx, &str_ptr, &str_len);
                 doxa_array_set_str(result, idx, str_ptr, str_len);
             }
@@ -1512,7 +1530,7 @@ pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u
             var idx: u64 = 0;
             while (idx < len_b) : (idx += 1) {
                 var str_ptr: ?[*]u8 = undefined;
-                var str_len: usize = undefined;
+                var str_len: u64 = undefined;
                 doxa_array_get_str(hdr_b, idx, &str_ptr, &str_len);
                 doxa_array_set_str(result, len_a + idx, str_ptr, str_len);
             }
@@ -1550,7 +1568,7 @@ pub export fn doxa_array_insert(hdr: ?*ArrayHeader, idx: i64, value: i64) callco
         var i: u64 = old_len;
         while (i > pos) : (i -= 1) {
             var str_ptr: ?[*]u8 = undefined;
-            var str_len: usize = undefined;
+            var str_len: u64 = undefined;
             doxa_array_get_str(h, i - 1, &str_ptr, &str_len);
             doxa_array_set_str(h, i, str_ptr, str_len);
         }
@@ -1577,7 +1595,7 @@ pub export fn doxa_array_remove(hdr: ?*ArrayHeader, idx: i64, out_removed: *i64)
         var i: u64 = pos;
         while (i + 1 < h.len) : (i += 1) {
             var str_ptr: ?[*]u8 = undefined;
-            var str_len: usize = undefined;
+            var str_len: u64 = undefined;
             doxa_array_get_str(h, i + 1, &str_ptr, &str_len);
             doxa_array_set_str(h, i, str_ptr, str_len);
         }
@@ -1592,7 +1610,7 @@ pub export fn doxa_array_remove(hdr: ?*ArrayHeader, idx: i64, out_removed: *i64)
     return h;
 }
 
-pub export fn doxa_array_insert_str(hdr: ?*ArrayHeader, idx: i64, str_ptr: ?[*]const u8, str_len: usize) callconv(.c) *ArrayHeader {
+pub export fn doxa_array_insert_str(hdr: ?*ArrayHeader, idx: i64, str_ptr: ?[*]const u8, str_len: u64) callconv(.c) *ArrayHeader {
     const h = hdr orelse return doxa_array_new(16, 3, 0);
     if (idx < 0) return h;
     const pos: u64 = @intCast(@as(u64, @intCast(idx)));
@@ -1605,7 +1623,7 @@ pub export fn doxa_array_insert_str(hdr: ?*ArrayHeader, idx: i64, str_ptr: ?[*]c
         var i: u64 = old_len;
         while (i > pos) : (i -= 1) {
             var prev_ptr: ?[*]u8 = undefined;
-            var prev_len: usize = undefined;
+            var prev_len: u64 = undefined;
             doxa_array_get_str(h, i - 1, &prev_ptr, &prev_len);
             doxa_array_set_str(h, i, prev_ptr, prev_len);
         }
@@ -1614,7 +1632,7 @@ pub export fn doxa_array_insert_str(hdr: ?*ArrayHeader, idx: i64, str_ptr: ?[*]c
     return h;
 }
 
-pub export fn doxa_array_remove_str(hdr: ?*ArrayHeader, idx: i64, out_ptr: *?[*]u8, out_len: *usize) callconv(.c) *ArrayHeader {
+pub export fn doxa_array_remove_str(hdr: ?*ArrayHeader, idx: i64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) *ArrayHeader {
     const h = hdr orelse return doxa_array_new(16, 3, 0);
     out_ptr.* = null;
     out_len.* = 0;
@@ -1627,7 +1645,7 @@ pub export fn doxa_array_remove_str(hdr: ?*ArrayHeader, idx: i64, out_ptr: *?[*]
         var i: u64 = pos;
         while (i + 1 < h.len) : (i += 1) {
             var next_ptr: ?[*]u8 = undefined;
-            var next_len: usize = undefined;
+            var next_len: u64 = undefined;
             doxa_array_get_str(h, i + 1, &next_ptr, &next_len);
             doxa_array_set_str(h, i, next_ptr, next_len);
         }
@@ -1649,7 +1667,7 @@ pub export fn doxa_array_slice(hdr: ?*ArrayHeader, start: i64, length: i64) call
         var i: u64 = 0;
         while (i < out_len) : (i += 1) {
             var str_ptr: ?[*]u8 = undefined;
-            var str_len: usize = undefined;
+            var str_len: u64 = undefined;
             doxa_array_get_str(h, s + i, &str_ptr, &str_len);
             doxa_array_set_str(out, i, str_ptr, str_len);
         }
@@ -1740,7 +1758,7 @@ fn printTaggedBitsImpl(out: *std.Io.Writer, tag: u64, bits: i64) anyerror!void {
             } else {
                 const nested_hdr = @as(
                     *ArrayHeader,
-                    @ptrCast(@alignCast(@as(?*anyopaque, @ptrFromInt(@as(usize, addr))))),
+                    @ptrCast(@alignCast(@as(?*anyopaque, @ptrFromInt(@as(usize, @intCast(addr)))))),
                 );
                 try printArrayHdrImpl(out, nested_hdr);
             }
@@ -1826,7 +1844,7 @@ fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
         if (tag == 3) {
             const str_addr: u64 = @bitCast(bits);
             const len: usize = @intCast(@as(u64, @bitCast(fields[word + 1])));
-            const s: []const u8 = if (str_addr == 0) "" else @as([*]const u8, @ptrFromInt(@as(usize, str_addr)))[0..len];
+            const s: []const u8 = if (str_addr == 0) "" else @as([*]const u8, @ptrFromInt(@as(usize, @intCast(str_addr))))[0..len];
             try out.print("\"{s}\"", .{s});
         } else if (tag == 8 and idx < enum_type_names.len) {
             const etn: []const u8 = if (enum_type_names[idx]) |n| std.mem.span(n) else "";
@@ -1852,9 +1870,9 @@ fn printArrayHdrImpl(out: *std.Io.Writer, hdr: *ArrayHeader) anyerror!void {
         if (i != 0) try out.print(", ", .{});
         if (hdr.elem_tag == 3) {
             var str_ptr: ?[*]u8 = undefined;
-            var str_len: usize = undefined;
+            var str_len: u64 = undefined;
             doxa_array_get_str(hdr, i, &str_ptr, &str_len);
-            const s = if (str_ptr) |p| p[0..str_len] else "";
+            const s = if (str_ptr) |p| p[0..@intCast(str_len)] else "";
             try out.print("\"{s}\"", .{s});
         } else {
             const elem_bits = doxa_array_get_i64(hdr, i);
@@ -1903,16 +1921,16 @@ fn satisfiesQuantifier(tag: u64, elem_bits: i64, comparison_bits: i64, mode: Qua
     };
 }
 
-fn existsQuantifier(hdr_opt: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize, mode: QuantifierMode) u8 {
+fn existsQuantifier(hdr_opt: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: u64, mode: QuantifierMode) u8 {
     const hdr = hdr_opt orelse return 0;
     if (hdr.elem_tag == 3) {
         const cs = sliceFromDoxaString(.{ .ptr = comparison_ptr, .len = comparison_len });
         var idx: u64 = 0;
         while (idx < hdr.len) : (idx += 1) {
             var str_ptr: ?[*]u8 = undefined;
-            var str_len: usize = undefined;
+            var str_len: u64 = undefined;
             doxa_array_get_str(hdr, idx, &str_ptr, &str_len);
-            const lhs = if (str_ptr) |p| p[0..str_len] else "";
+            const lhs = if (str_ptr) |p| p[0..@intCast(str_len)] else "";
             if (if (mode == .Equal) std.mem.eql(u8, lhs, cs) else lhs.len > cs.len) {
                 return 1;
             }
@@ -1930,24 +1948,24 @@ fn existsQuantifier(hdr_opt: ?*ArrayHeader, comparison_ptr: ?[*]const u8, compar
     return 0;
 }
 
-pub export fn doxa_exists_quantifier_gt(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize) callconv(.c) u8 {
+pub export fn doxa_exists_quantifier_gt(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: u64) callconv(.c) u8 {
     return existsQuantifier(hdr, comparison_ptr, comparison_len, .Greater);
 }
 
-pub export fn doxa_exists_quantifier_eq(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize) callconv(.c) u8 {
+pub export fn doxa_exists_quantifier_eq(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: u64) callconv(.c) u8 {
     return existsQuantifier(hdr, comparison_ptr, comparison_len, .Equal);
 }
 
-fn forallQuantifier(hdr_opt: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize, mode: QuantifierMode) u8 {
+fn forallQuantifier(hdr_opt: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: u64, mode: QuantifierMode) u8 {
     const hdr = hdr_opt orelse return 1;
     if (hdr.elem_tag == 3) {
         const cs = sliceFromDoxaString(.{ .ptr = comparison_ptr, .len = comparison_len });
         var idx: u64 = 0;
         while (idx < hdr.len) : (idx += 1) {
             var str_ptr: ?[*]u8 = undefined;
-            var str_len: usize = undefined;
+            var str_len: u64 = undefined;
             doxa_array_get_str(hdr, idx, &str_ptr, &str_len);
-            const lhs = if (str_ptr) |p| p[0..str_len] else "";
+            const lhs = if (str_ptr) |p| p[0..@intCast(str_len)] else "";
             const ok = if (mode == .Equal) std.mem.eql(u8, lhs, cs) else lhs.len > cs.len;
             if (!ok) {
                 return 0;
@@ -1966,11 +1984,11 @@ fn forallQuantifier(hdr_opt: ?*ArrayHeader, comparison_ptr: ?[*]const u8, compar
     return 1;
 }
 
-pub export fn doxa_forall_quantifier_gt(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize) callconv(.c) u8 {
+pub export fn doxa_forall_quantifier_gt(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: u64) callconv(.c) u8 {
     return forallQuantifier(hdr, comparison_ptr, comparison_len, .Greater);
 }
 
-pub export fn doxa_forall_quantifier_eq(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: usize) callconv(.c) u8 {
+pub export fn doxa_forall_quantifier_eq(hdr: ?*ArrayHeader, comparison_ptr: ?[*]const u8, comparison_len: u64) callconv(.c) u8 {
     return forallQuantifier(hdr, comparison_ptr, comparison_len, .Equal);
 }
 
@@ -1993,7 +2011,7 @@ pub export fn doxa_print_value(val: *const DoxaValue) callconv(.c) void {
         .String => {
             const addr: u64 = @bitCast(val.payload_bits);
             const len: usize = @intCast(val.payload_len);
-            const ptr: ?[*]const u8 = if (addr == 0) null else @ptrFromInt(@as(usize, addr));
+            const ptr: ?[*]const u8 = if (addr == 0) null else @ptrFromInt(@as(usize, @intCast(addr)));
             doxa_peek_string(ptr, len);
         },
         .Array => {
@@ -2001,7 +2019,7 @@ pub export fn doxa_print_value(val: *const DoxaValue) callconv(.c) void {
             if (addr == 0) {
                 doxaWrite("[]");
             } else {
-                const any_ptr: ?*anyopaque = @ptrFromInt(@as(usize, addr));
+                const any_ptr: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(addr)));
                 const hdr = @as(*ArrayHeader, @ptrCast(@alignCast(any_ptr.?)));
                 doxa_print_array_hdr(hdr);
             }

@@ -6,7 +6,7 @@ zig Process {
 
     extern fn doxa_argc() callconv(.c) i32;
     extern fn doxa_argv(index: i32) callconv(.c) ?[*:0]const u8;
-    extern fn doxa_getenv(name_ptr: ?[*]const u8, name_len: usize, out_len: *usize) callconv(.c) ?[*]const u8;
+    extern fn doxa_getenv(name_ptr: ?[*]const u8, name_len: u64, out_len: *u64) callconv(.c) ?[*]const u8;
 
     pub fn errorState(mode: i64, value: i64) i64 {
         var last_error_code: i64 = 0;
@@ -255,13 +255,13 @@ zig Process {
             return "";
         }
 
-        var value_len: usize = 0;
+        var value_len: u64 = 0;
         const value_ptr = doxa_getenv(name.ptr, name.len, &value_len) orelse {
             setLastError(208);
             return "";
         };
 
-        const content = std.heap.page_allocator.dupe(u8, value_ptr[0..value_len]) catch |err| {
+        const content = std.heap.page_allocator.dupe(u8, value_ptr[0..@intCast(value_len)]) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);

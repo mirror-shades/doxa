@@ -44,6 +44,11 @@ pub const ControlFlowHandler = struct {
                 else => false,
             },
             .InterpolatedString, .Array, .Struct, .StructLiteral, .Input => true,
+            // Match lowering can allocate into the current arena: a subject that
+            // is a string index is materialised as a 1-char heap string via
+            // `doxa_char_to_string`, and string pattern comparisons may build
+            // temporaries. Treat every match as arena-live.
+            .Match => true,
             .Block => |block| self.blockNeedsRuntimeScope(block.statements, block.value),
             .If => |if_expr| (if_expr.then_branch != null and self.expressionNeedsRuntimeScope(if_expr.then_branch.?)) or
                 (if_expr.else_branch != null and self.expressionNeedsRuntimeScope(if_expr.else_branch.?)),

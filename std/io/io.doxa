@@ -65,8 +65,21 @@ zig IO {
         return errorState(2, 0);
     }
 
+    /// Write to a raw WASI file descriptor. `std.Io.Threaded`'s syscall path is
+    /// not usable under wasi preview1, so IO uses the platform's direct write.
+    fn writeWasiFd(fd: i32, text: []const u8) void {
+        if (text.len == 0) return;
+        var iov = [1]std.os.wasi.ciovec_t{.{ .base = text.ptr, .len = text.len }};
+        var written: usize = 0;
+        _ = std.os.wasi.fd_write(fd, &iov, 1, &written);
+    }
+
     pub fn print(text: []const u8) void {
         clearLastError();
+        if (builtin.os.tag == .wasi) {
+            writeWasiFd(1, text);
+            return;
+        }
         var stdout_buffer: [1024]u8 = undefined;
         var stdout_writer = std.Io.File.stdout().writer(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
         const stdout = &stdout_writer.interface;
@@ -84,6 +97,10 @@ zig IO {
 
     pub fn eprint(text: []const u8) void {
         clearLastError();
+        if (builtin.os.tag == .wasi) {
+            writeWasiFd(2, text);
+            return;
+        }
         var stderr_buffer: [1024]u8 = undefined;
         var stderr_writer = std.Io.File.stderr().writer(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
         const stderr = &stderr_writer.interface;
@@ -101,6 +118,9 @@ zig IO {
 
     pub fn input() []const u8 {
         clearLastError();
+        // TODO(wasi): read through `std.os.wasi.fd_read`; `std.Io.Threaded`'s
+        // reader path is unusable under wasi preview1, so line input degrades to
+        // the empty string on that target.
         var stdin_buffer: [4096]u8 = undefined;
         var stdin_reader = std.Io.File.stdin().reader(std.Io.Threaded.global_single_threaded.io(), &stdin_buffer);
         const stdin = &stdin_reader.interface;

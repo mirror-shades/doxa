@@ -184,6 +184,14 @@ pub const IRPrinter = struct {
     enum_table: ?*anyopaque = null,
     entry_str_out_ptr: ?[]const u8 = null,
     entry_str_out_len: ?[]const u8 = null,
+    /// Alloca lines discovered while emitting the current function/program body
+    /// that must live in the entry block. Emitting an `alloca` inside a loop
+    /// makes it a *dynamic* alloca, which leaks shadow-stack space on every
+    /// iteration; these are hoisted to entry and replayed before the body.
+    entry_allocas: std.array_list.Managed([]const u8),
+    /// Distinguishes the named registers of hoisted synthetic ArrayHeaders
+    /// within one function. Reset at each function/program entry.
+    synth_header_counter: usize = 0,
     in_function_context: bool = false,
     scope_depth: usize = 0,
     /// Set while emitting a function whose scope arenas are provably unused.

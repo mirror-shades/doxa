@@ -143,7 +143,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
         },
     };
 
-    harness.printSection("ERROR");
     var passed: usize = 0;
     var failed: usize = 0;
     var untested: usize = 0;

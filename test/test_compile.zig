@@ -111,8 +111,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
 
     platform.enableUtf8Console();
 
-    harness.printSection("COMPILE");
-
     // Build every program referenced by a compile-pipeline case exactly once.
     var built = std.StringHashMap(void).init(allocator);
     defer built.deinit();

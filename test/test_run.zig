@@ -79,7 +79,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
 
     platform.enableUtf8Console();
 
-    harness.printSection("RUN");
     var passed: usize = 0;
     var failed: usize = 0;
     var untested: usize = 0;

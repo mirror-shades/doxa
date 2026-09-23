@@ -17,28 +17,39 @@ P (true)
 
 ```bash
 Usage:
+  doxa init [project-name]        # Scaffold a new Doxa project
   doxa run [general options] <file.doxa>
   doxa compile [general options] <file.doxa> -o <output> [compile options]
+  doxa --lsp [--lsp-debug-io]     # Start the Language Server Protocol loop
+  doxa --lsp-debug <file.doxa>    # Run the in-process LSP debug harness
 
 General options:
   --profile                         # Enable profiling
   --help, -h                        # Show this help message
   --debug-[stage]                   # Enable debug output for [stage]
-                                    # lexer, parser, semantic, hir
+                                    # lexer, parser, semantic, hir, memory
   --debug-verbose                   # Enable all debug output
+  --cache-dir=<dir>                 # Build cache directory (default: .doxa-cache)
 
 Compile options:
   -o, --output <path>               # Output executable path (required)
   --arch=<arch>                     # Target CPU architecture (default: host)
   --os=<os>                         # Target operating system (default: host)
   --abi=<abi>                       # Target ABI (optional)
+  --link=<name>                     # Link a native library (-l<name>); repeatable
+  --libdir=<dir>                    # Library search path (-L<dir>); repeatable
+  --framework=<name>                # Link a macOS framework; repeatable
+  --include=<dir>                   # Header search path (-I<dir>); repeatable
   --opt-mode=<debug|safe|fast|small># Zig release mode for the runtime and link step
   -O0..-O3 | --opt=0..3             # clang -O level for the program (-O2 == zig cc -O2)
+  --emit-opt-ir                     # Also write optimized LLVM IR (<stem>.opt.ll) to cache
+  --emit-asm                        # Also write target assembly (<stem>.s) to cache
+  --lsp-debug-io                    # Trace raw LSP I/O when used with --lsp
 
 Examples:
   doxa run file.doxa
-  doxa compile file.doxa -o out/myapp
-  doxa compile file.doxa -o out/myapp --arch=x86_64 --os=linux -O2
+  doxa compile file.doxa -o bin/myapp
+  doxa compile file.doxa -o bin/myapp --arch=x86_64 --os=linux -O2
 ```
 
 ### Building projects
@@ -63,7 +74,7 @@ rather than a silent host default.
 
 ### Building from source
 
-Current build uses Zig 0.15.2, there are no other dependancies.
+Current build uses Zig 0.16.0, there are no other dependencies.
 
 compile from source and run a file
 
@@ -132,12 +143,28 @@ function getInput() returns byte {
 }
 
 function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {
+    if loops > 0 then {
+        if loopSpot[loops - 1] == ip then return
+    }
     if @length(loopSpot) == loops then {
         @push(loopSpot, ip)
     } else {
         loopSpot[loops] is ip
     }
     loops += 1
+}
+
+function matchClose(scan :: string, open :: int) returns int {
+    var depth :: int
+    var cursor is open
+    while cursor < @length(scan) do cursor += 1 {
+        if scan[cursor] == "[" then depth += 1
+        if scan[cursor] == "]" then {
+            depth -= 1
+            if depth == 0 then return cursor
+        }
+    }
+    return cursor
 }
 
 function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], tp :: int) {
@@ -185,9 +212,9 @@ function interpret(scan :: string) {
             "-" then tape[tp] -= 0x01,
             "." then @print("Output: {tape[tp]}\n"),
             "," then tape[tp] is getInput(),
-            "[" then startLoop(^loopSpot, ^loops, ip),
+            "[" then if tape[tp] == 0 then ip is matchClose(scan, ip) else startLoop(^loopSpot, ^loops, ip),
             "]" then endLoop(loopSpot, ^loops, ^ip, tape, tp),
-            else @print("Unrecognized Token: {scan[ip]}\n"),
+            else { },
         }
     }
 }

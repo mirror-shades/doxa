@@ -50,7 +50,7 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn writeFunction(
             self: *IRPrinter,
             hir: *const HIR.HIRProgram,
-            w: anytype,
+            outer_w: anytype,
             func: HIR.HIRProgram.HIRFunction,
             func_start_labels: *std.StringHashMap(bool),
             peek_state: *PeekEmitState,
@@ -188,10 +188,10 @@ pub fn Methods(comptime Ctx: type) type {
 
             const func_decl = try std.fmt.allocPrint(self.allocator, "define {s} @{s}({s}) {{\n", .{ return_type_str, emitted_name, params_str });
             defer self.allocator.free(func_decl);
-            try w.writeAll(func_decl);
+            try outer_w.writeAll(func_decl);
 
             // Add entry block
-            try w.writeAll("entry:\n");
+            try outer_w.writeAll("entry:\n");
 
             // Initialize variables map
             var variables = std.StringHashMap(VariableInfo).init(self.allocator);
@@ -211,17 +211,26 @@ pub fn Methods(comptime Ctx: type) type {
                 const llvm_ty = self.stackTypeToLLVMType(var_info.stack_type);
                 const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ var_info.ptr_name, llvm_ty });
                 defer self.allocator.free(alloca_line);
-                try w.writeAll(alloca_line);
+                try outer_w.writeAll(alloca_line);
 
                 // Add to variables map for later use
                 try variables.put(var_name, var_info);
             }
 
             // Reusable stack slots for string operations (avoid alloca-in-loop stack overflow)
-            try w.writeAll("  %str_out_ptr = alloca ptr\n");
-            try w.writeAll("  %str_out_len = alloca i64\n");
+            try outer_w.writeAll("  %str_out_ptr = alloca ptr\n");
+            try outer_w.writeAll("  %str_out_len = alloca i64\n");
             self.entry_str_out_ptr = "%str_out_ptr";
             self.entry_str_out_len = "%str_out_len";
+
+            // Stage the body so synthetic-header allocas discovered while
+            // emitting it can be replayed in the entry block (see the
+            // `entry_allocas` field). All writes from here on go to the buffer.
+            self.entry_allocas.clearRetainingCapacity();
+            self.synth_header_counter = 0;
+            var body_alloc = std.Io.Writer.Allocating.init(self.allocator);
+            defer body_alloc.deinit();
+            const w = &body_alloc.writer;
 
             // Process function body instructions
             var id: usize = func.param_types.len; // Start after parameters
@@ -1048,6 +1057,15 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             try w.writeAll("}\n\n");
+
+            for (self.entry_allocas.items) |line| {
+                try outer_w.writeAll(line);
+                self.allocator.free(line);
+            }
+            self.entry_allocas.clearRetainingCapacity();
+            const body_bytes = try body_alloc.toOwnedSlice();
+            defer self.allocator.free(body_bytes);
+            try outer_w.writeAll(body_bytes);
         }
 
         pub fn nextTemp(self: *IRPrinter, id: *usize) ![]const u8 {

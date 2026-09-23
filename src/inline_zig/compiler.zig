@@ -238,7 +238,7 @@ fn generateWrapperZigFile(
     try file_buf.appendSlice("    if (v.*.tag != .String) return;\n");
     try file_buf.appendSlice("    if (v.*.payload0 == 0) return;\n");
     try file_buf.appendSlice("    const n: usize = @intCast(v.*.payload1);\n");
-    try file_buf.appendSlice("    const p: [*]u8 = @ptrFromInt(v.*.payload0);\n");
+    try file_buf.appendSlice("    const p: [*]u8 = @ptrFromInt(@as(usize, @intCast(v.*.payload0)));\n");
     try file_buf.appendSlice("    __doxa_std.heap.page_allocator.free(p[0..n]);\n");
     try file_buf.appendSlice("}\n\n");
 
@@ -363,9 +363,9 @@ fn generateWrapperZigFile(
                     try sig_buf.appendSlice("_raw: []const u8 = if (__doxa_v");
                     try sig_buf.appendSlice(idx_str);
                     try sig_buf.appendSlice(".payload1 == 0) \"\" else blk: {\n");
-                    try sig_buf.appendSlice("        const __doxa_p: [*]const u8 = @ptrFromInt(__doxa_v");
+                    try sig_buf.appendSlice("        const __doxa_p: [*]const u8 = @ptrFromInt(@as(usize, @intCast(__doxa_v");
                     try sig_buf.appendSlice(idx_str);
-                    try sig_buf.appendSlice(".payload0);\n");
+                    try sig_buf.appendSlice(".payload0)));\n");
                     try sig_buf.appendSlice("        const __doxa_n: usize = @intCast(__doxa_v");
                     try sig_buf.appendSlice(idx_str);
                     try sig_buf.appendSlice(".payload1);\n");
@@ -540,14 +540,14 @@ fn generateWrapperZigFile(
                 try native_prelude.appendSlice(s_name);
                 try native_prelude.appendSlice(": []const u8 = if (");
                 try native_prelude.appendSlice(arg_name);
-                try native_prelude.appendSlice(") |p| p[0..");
+                try native_prelude.appendSlice(") |p| p[0..@intCast(");
                 try native_prelude.appendSlice(arg_name);
-                try native_prelude.appendSlice("_len] else \"\";\n");
+                try native_prelude.appendSlice("_len)] else \"\";\n");
                 try native_call.appendSlice(s_name);
 
                 try native_buf.appendSlice(", ");
                 try native_buf.appendSlice(arg_name);
-                try native_buf.appendSlice("_len: usize");
+                try native_buf.appendSlice("_len: u64");
             } else {
                 try native_call.appendSlice(arg_name);
             }
@@ -555,7 +555,7 @@ fn generateWrapperZigFile(
 
         if (sig.return_type.base == .String) {
             if (sig.param_types.len > 0) try native_buf.appendSlice(", ");
-            try native_buf.appendSlice("out_ptr: *?[*]u8, out_len: *usize");
+            try native_buf.appendSlice("out_ptr: *?[*]u8, out_len: *u64");
         }
         try native_buf.appendSlice(") callconv(.c) ");
         try native_buf.appendSlice(native_ret_zig);
