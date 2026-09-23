@@ -74,7 +74,7 @@ rather than a silent host default.
 
 ### Building from source
 
-Current build uses Zig 0.16.0, there are no other dependencies.
+Current build uses a vendored Zig 0.16.0, there are no other dependencies.
 
 compile from source and run a file
 
@@ -110,8 +110,6 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - group
 - union
 
-![Pipeline](./pipeline.png)
-
 ## TODO:
 
 - flesh out standard lib
@@ -141,8 +139,6 @@ function getInput() returns byte {
     return value
 }
 
-# Forward scan from an opening `[` to its matching `]`. Bracket balance is
-# validated up front, so a match always exists.
 function findClosingBracket(scan :: string, open :: int) returns int {
     var depth :: int
     var cursor :: int is open
@@ -156,11 +152,6 @@ function findClosingBracket(scan :: string, open :: int) returns int {
     return open
 }
 
-# `loops` is the current nesting depth and `loopSpot` holds the opening `[`
-# position for each depth. A jump-back lands on the `[` again, so a repeat visit
-# at the current depth's own slot is a no-op; every other `[` records its slot
-# (growing the stack only when a deeper level is opened for the first time).
-# A loop whose cell is zero is skipped by jumping straight to its closing `]`.
 function startLoop(scan :: string, tape :: byte[], tp :: int, ^loopSpot :: int[], ^loops :: int, ^ip :: int) {
     if tape[tp] == 0 then {
         ip is findClosingBracket(scan, ip)
