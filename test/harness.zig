@@ -43,7 +43,6 @@ pub fn printCase(name: []const u8, result: Counts) void {
 }
 
 pub fn printSuiteSummary(name: []const u8, result: Counts) void {
-    if (isClean(result)) return;
     std.debug.print(
         "{s}: {d} ok, {d} fail, {d} untested\n",
         .{ name, result.passed, result.failed, result.untested },
