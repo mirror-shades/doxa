@@ -1,4 +1,13 @@
 const std = @import("std");
+const ast = @import("../../../ast/ast.zig");
+const builtin_methods = @import("../../../runtime/builtin_methods.zig");
+
+fn isQuantifierName(name: []const u8) bool {
+    return std.mem.eql(u8, name, "exists_quantifier_gt") or
+        std.mem.eql(u8, name, "exists_quantifier_eq") or
+        std.mem.eql(u8, name, "forall_quantifier_gt") or
+        std.mem.eql(u8, name, "forall_quantifier_eq");
+}
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -120,6 +129,7 @@ pub fn Methods(comptime Ctx: type) type {
             const duped: StackVal = .{
                 .name = top.name,
                 .ty = top.ty,
+                .region = top.region,
                 .array_type = top.array_type,
                 .enum_type_name = top.enum_type_name,
                 .struct_field_types = top.struct_field_types,
@@ -141,9 +151,14 @@ pub fn Methods(comptime Ctx: type) type {
             if (stack.items.len < 2) return;
             const top_idx = stack.items.len - 1;
             std.mem.swap(StackVal, &stack.items[top_idx], &stack.items[top_idx - 1]);
+            // Region tags ride on the value's allocating arena, so swapping which
+            // slot holds which object would mislabel provenance. Clearing both is
+            // conservative: a later store keeps the runtime rehome call.
+            stack.items[top_idx].region = .Unknown;
+            stack.items[top_idx - 1].region = .Unknown;
         }
 
-        pub fn handleArith(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, a: std.meta.TagPayload(HIRInstruction, .Arith)) !void {
+        pub fn handleArith(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, a: std.meta.fieldInfo(HIRInstruction, .Arith).type) !void {
             if (stack.items.len < 2) return;
             var rhs = stack.items[stack.items.len - 1];
             var lhs = stack.items[stack.items.len - 2];
@@ -398,7 +413,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleCompare(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, cmp: std.meta.TagPayload(HIRInstruction, .Compare)) !void {
+        pub fn handleCompare(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, cmp: std.meta.fieldInfo(HIRInstruction, .Compare).type) !void {
             if (stack.items.len < 2) return;
             const rhs = stack.items[stack.items.len - 1];
             const lhs = stack.items[stack.items.len - 2];
@@ -407,7 +422,7 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(result);
         }
 
-        pub fn handleLogicalOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, lop: std.meta.TagPayload(HIRInstruction, .LogicalOp)) !void {
+        pub fn handleLogicalOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, lop: std.meta.fieldInfo(HIRInstruction, .LogicalOp).type) !void {
             if (lop.op == .Not) {
                 if (stack.items.len < 1) return;
                 const v = stack.items[stack.items.len - 1];
@@ -574,7 +589,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleConvert(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, conv: std.meta.TagPayload(HIRInstruction, .Convert)) !void {
+        pub fn handleConvert(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, conv: std.meta.fieldInfo(HIRInstruction, .Convert).type) !void {
             if (stack.items.len < 1) return;
             const arg = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -610,7 +625,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleTypeCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, tc: std.meta.TagPayload(HIRInstruction, .TypeCheck), peek_state: *PeekEmitState) !void {
+        pub fn handleTypeCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, tc: std.meta.fieldInfo(HIRInstruction, .TypeCheck).type, peek_state: *PeekEmitState) !void {
             if (stack.items.len < 1) return;
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -693,7 +708,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.allocator.free(target_gep);
             try w.writeAll(target_gep);
 
-            // Call the legacy ABI helper that takes value bits + type tag +
+            // Call the type-check ABI helper that takes value bits + type tag +
             // target type string. This avoids platform-specific struct
             // passing issues with %DoxaValue on MSVC ABIs.
             const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
@@ -716,7 +731,7 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(.{ .name = tetra_result, .ty = .I2 });
         }
 
-        pub fn handleStringOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sop: std.meta.TagPayload(HIRInstruction, .StringOp), peek_state: *PeekEmitState) !void {
+        pub fn handleStringOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sop: std.meta.fieldInfo(HIRInstruction, .StringOp).type, peek_state: *PeekEmitState) !void {
             if (sop.op == .Concat) {
                 if (stack.items.len < 2) return;
                 const a = stack.items[stack.items.len - 1];
@@ -1070,7 +1085,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handlePeek(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, pk: std.meta.TagPayload(HIRInstruction, .Peek), peek_state: *PeekEmitState) !void {
+        pub fn handlePeek(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, pk: std.meta.fieldInfo(HIRInstruction, .Peek).type, peek_state: *PeekEmitState) !void {
             if (stack.items.len < 1) return;
             var v = stack.items[stack.items.len - 1];
             self.hydrateStructMetadata(&v, pk.name);
@@ -1341,6 +1356,58 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(call_val);
                     }
                 },
+                .I1 => {
+                    // Boolean comparison result: a two-valued tetra, rendered as
+                    // "true"/"false". Doxa has no standalone booleans, so an i1
+                    // on the stack always denotes a comparison outcome.
+                    const true_info = try internPeekString(
+                        self.allocator,
+                        &peek_state.string_map,
+                        &peek_state.strings,
+                        peek_state.next_id_ptr,
+                        &peek_state.globals,
+                        "true",
+                    );
+                    const false_info = try internPeekString(
+                        self.allocator,
+                        &peek_state.string_map,
+                        &peek_state.strings,
+                        peek_state.next_id_ptr,
+                        &peek_state.globals,
+                        "false",
+                    );
+
+                    const tptr = try self.nextTemp(id);
+                    const tgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ tptr, true_info.length, true_info.name });
+                    const fptr = try self.nextTemp(id);
+                    const fgep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ fptr, false_info.length, false_info.name });
+                    defer self.allocator.free(tgep);
+                    defer self.allocator.free(fgep);
+                    try w.writeAll(tgep);
+                    try w.writeAll(fgep);
+
+                    const tlen = try self.nextTemp(id);
+                    const tlen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ tlen, true_info.len_name });
+                    const flen = try self.nextTemp(id);
+                    const flen_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ flen, false_info.len_name });
+                    defer self.allocator.free(tlen_line);
+                    defer self.allocator.free(flen_line);
+                    try w.writeAll(tlen_line);
+                    try w.writeAll(flen_line);
+
+                    const sel_ptr = try self.nextTemp(id);
+                    const sel_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, ptr {s}, ptr {s}\n", .{ sel_ptr, val.name, tptr, fptr });
+                    const sel_len = try self.nextTemp(id);
+                    const sel_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ sel_len, val.name, tlen, flen });
+                    defer self.allocator.free(sel_ptr_line);
+                    defer self.allocator.free(sel_len_line);
+                    try w.writeAll(sel_ptr_line);
+                    try w.writeAll(sel_len_line);
+
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ sel_ptr, sel_len });
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                },
                 .I2 => {
                     // tetra: print false (0), true (1), both (2), or neither (3)
                     const false_info = try internPeekString(
@@ -1492,7 +1559,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
         }
 
-        pub fn handlePeekStruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, ps: std.meta.TagPayload(HIRInstruction, .PeekStruct), peek_state: *PeekEmitState) !void {
+        pub fn handlePeekStruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, ps: std.meta.fieldInfo(HIRInstruction, .PeekStruct).type, peek_state: *PeekEmitState) !void {
             // PeekStruct peeks a struct without popping it
             // Similar to Peek, but for structs
             if (stack.items.len < 1) return;
@@ -1532,7 +1599,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
         }
 
-        pub fn handleGroupCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gc: std.meta.TagPayload(HIRInstruction, .GroupCheck)) !void {
+        pub fn handleGroupCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gc: std.meta.fieldInfo(HIRInstruction, .GroupCheck).type) !void {
             if (stack.items.len < 1) return;
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -1590,7 +1657,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleUnionConstruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, uc: std.meta.TagPayload(HIRInstruction, .UnionConstruct)) !void {
+        pub fn handleUnionConstruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, uc: std.meta.fieldInfo(HIRInstruction, .UnionConstruct).type) !void {
             if (stack.items.len < 1) return;
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -1599,7 +1666,7 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(dv);
         }
 
-        pub fn handleAssertFail(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, af: std.meta.TagPayload(HIRInstruction, .AssertFail), peek_state: *PeekEmitState) !void {
+        pub fn handleAssertFail(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, af: std.meta.fieldInfo(HIRInstruction, .AssertFail).type, peek_state: *PeekEmitState) !void {
             const msg = if (af.has_message)
                 (if (stack.items.len > 0) blk: {
                     const v = stack.items[stack.items.len - 1];
@@ -1609,10 +1676,25 @@ pub fn Methods(comptime Ctx: type) type {
             else
                 null;
             if (msg) |m| {
-                const ptr = if (m.ty == .PTR) m else try self.ensurePointer(w, m, id);
-                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{ptr.name});
-                defer self.allocator.free(call_line);
-                try w.writeAll(call_line);
+                if (m.ty == .STRING) {
+                    const ptr_ext = try self.nextTemp(id);
+                    const ext_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ ptr_ext, m.name });
+                    defer self.allocator.free(ext_line);
+                    try w.writeAll(ext_line);
+                    const len_ext = try self.nextTemp(id);
+                    const len_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ len_ext, m.name });
+                    defer self.allocator.free(len_line);
+                    try w.writeAll(len_line);
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_stderr(ptr {s}, i64 {s})\n", .{ ptr_ext, len_ext });
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                } else {
+                    const ptr = if (m.ty == .PTR) m else try self.ensurePointer(w, m, id);
+                    const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_stderr(ptr {s}, i64 0)\n", .{ptr.name});
+                    defer self.allocator.free(call_line);
+                    try w.writeAll(call_line);
+                }
+                try w.writeAll("  call void @doxa_write_stderr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
             }
             const location_msg = try std.fmt.allocPrint(self.allocator, "Assertion failed", .{});
             defer self.allocator.free(location_msg);
@@ -1628,10 +1710,15 @@ pub fn Methods(comptime Ctx: type) type {
             const loc_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n", .{ loc_ptr, info.length, info.name });
             defer self.allocator.free(loc_gep);
             try w.writeAll(loc_gep);
-            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {d})\n", .{ loc_ptr, info.length });
+            const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_stderr(ptr {s}, i64 {d})\n", .{ loc_ptr, info.length });
             defer self.allocator.free(call_line);
             try w.writeAll(call_line);
-            try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
+            try w.writeAll("  call void @doxa_write_stderr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
+            // A failed assertion terminates execution (docs/methods.md). Emit a
+            // noreturn exit followed by `unreachable` — genuinely unreachable,
+            // not UB-as-control-flow — so the basic block ends with a terminator.
+            try w.writeAll("  call void @doxa_exit(i64 1)\n");
+            try w.writeAll("  unreachable\n");
         }
 
         pub fn handleArrayConcat(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize) !void {
@@ -1658,7 +1745,72 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleCall(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, c: std.meta.TagPayload(HIRInstruction, .Call), peek_state: *PeekEmitState, hir: *const HIR.HIRProgram) !void {
+        /// Map an `ast.Type` to the corresponding `HIR.HIRType`. Array types
+        /// carry an unknown element type here; the concrete element type is
+        /// preserved on the StackVal.
+        fn astTypeToHirType(self: *IRPrinter, t: ast.Type) ?HIR.HIRType {
+            return switch (t) {
+                .Int => .Int,
+                .Byte => .Byte,
+                .Float => .Float,
+                .String => .String,
+                .Tetra => .Tetra,
+                .Nothing => .Nothing,
+                .Array => blk: {
+                    const element_type = self.allocator.create(HIR.HIRType) catch break :blk null;
+                    element_type.* = .Unknown;
+                    break :blk HIR.HIRType{ .Array = element_type };
+                },
+                else => null,
+            };
+        }
+
+        fn builtinTypeMatchesStack(t: ast.Type, arg: StackVal) bool {
+            return switch (t) {
+                .Int, .Enum => arg.ty == .I64,
+                .Byte => arg.ty == .I8,
+                .Float => arg.ty == .F64,
+                .String => arg.ty == .STRING,
+                .Tetra => arg.ty == .I2 or arg.ty == .I1,
+                .Array, .Map, .Struct, .Function => arg.ty == .PTR,
+                .Nothing => arg.ty == .Nothing,
+                else => false,
+            };
+        }
+
+        /// Resolve a builtin argument type spec to the ABI type selected by
+        /// the actual argument. Builtin unions are native ABI unions, unlike
+        /// user-declared HIR unions which are boxed as DoxaValue.
+        fn resolveBuiltinInputType(self: *IRPrinter, spec: builtin_methods.InputTypeSpec, arg: StackVal) ?HIR.HIRType {
+            return switch (spec) {
+                .Single => |t| astTypeToHirType(self, t),
+                .Union => |types| blk: {
+                    var integer_union = true;
+                    for (types) |t| {
+                        if (t != .Int and t != .Byte) {
+                            integer_union = false;
+                            break;
+                        }
+                    }
+                    if (integer_union) break :blk .Int;
+
+                    for (types) |t| {
+                        if (builtinTypeMatchesStack(t, arg)) {
+                            break :blk astTypeToHirType(self, t);
+                        }
+                    }
+                    // The semantic layer should reject an argument that is
+                    // not a member of the builtin union. Keep a declared
+                    // type so codegen cannot silently fall back to the
+                    // argument's stack representation.
+                    break :blk HIR.HIRType.Nothing;
+                },
+                .Integer => .Int,
+                .Any, .Collection => null,
+            };
+        }
+
+        pub fn handleCall(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, c: std.meta.fieldInfo(HIRInstruction, .Call).type, peek_state: *PeekEmitState, hir: *const HIR.HIRProgram) !void {
             _ = peek_state;
             const argc: usize = @intCast(c.arg_count);
             if (stack.items.len < argc) return;
@@ -1681,12 +1833,29 @@ pub fn Methods(comptime Ctx: type) type {
                 const coll_ptr = if (collection.ty == .PTR) collection else try self.ensurePointer(w, collection, id);
 
                 if (collection.array_type != null) {
-                    const needle_i64 = if (needle.ty == .I64) needle else try self.ensureI64(w, needle, id);
-                    const result_name = try self.nextTemp(id);
-                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = call i64 @doxa_find_array(ptr {s}, i64 {s})\n", .{ result_name, coll_ptr.name, needle_i64.name });
-                    defer self.allocator.free(line);
-                    try w.writeAll(line);
-                    try stack.append(.{ .name = result_name, .ty = .I64 });
+                    if (collection.array_type.? == .String) {
+                        const needle_str = if (needle.ty == .STRING) needle else try self.ensureString(w, needle, id);
+                        const n_ptr = try self.nextTemp(id);
+                        const n_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ n_ptr, needle_str.name });
+                        defer self.allocator.free(n_ptr_line);
+                        try w.writeAll(n_ptr_line);
+                        const n_len = try self.nextTemp(id);
+                        const n_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ n_len, needle_str.name });
+                        defer self.allocator.free(n_len_line);
+                        try w.writeAll(n_len_line);
+                        const result_name = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = call i64 @doxa_find_array_str(ptr {s}, ptr {s}, i64 {s})\n", .{ result_name, coll_ptr.name, n_ptr, n_len });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        try stack.append(.{ .name = result_name, .ty = .I64 });
+                    } else {
+                        const needle_i64 = if (needle.ty == .I64) needle else try self.ensureI64(w, needle, id);
+                        const result_name = try self.nextTemp(id);
+                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = call i64 @doxa_find_array(ptr {s}, i64 {s})\n", .{ result_name, coll_ptr.name, needle_i64.name });
+                        defer self.allocator.free(line);
+                        try w.writeAll(line);
+                        try stack.append(.{ .name = result_name, .ty = .I64 });
+                    }
                 } else {
                     const needle_str = if (needle.ty == .STRING) needle else try self.ensureString(w, needle, id);
                     const coll_str = if (collection.ty == .STRING) collection else try self.ensureString(w, collection, id);
@@ -1713,6 +1882,42 @@ pub fn Methods(comptime Ctx: type) type {
                     try stack.append(.{ .name = result_name, .ty = .I64 });
                 }
 
+                return;
+            }
+
+            if (c.call_kind == .BuiltinFunction and isQuantifierName(c.qualified_name) and raw_args.items.len == 2) {
+                const arr = raw_args.items[0];
+                const cmp = raw_args.items[1];
+                const arr_ptr = if (arr.ty == .PTR) arr else try self.ensurePointer(w, arr, id);
+
+                var cmp_ptr: StackVal = undefined;
+                var cmp_len: StackVal = undefined;
+                if (cmp.ty == .STRING) {
+                    const ptr_ext = try self.nextTemp(id);
+                    const len_ext = try self.nextTemp(id);
+                    const ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ ptr_ext, cmp.name });
+                    const ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ len_ext, cmp.name });
+                    defer self.allocator.free(ext0);
+                    defer self.allocator.free(ext1);
+                    try w.writeAll(ext0);
+                    try w.writeAll(ext1);
+                    cmp_ptr = .{ .name = ptr_ext, .ty = .PTR };
+                    cmp_len = .{ .name = len_ext, .ty = .I64 };
+                } else {
+                    const cmp_i64 = try self.ensureI64(w, cmp, id);
+                    const ptr_reg = try self.nextTemp(id);
+                    const inttoptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ ptr_reg, cmp_i64.name });
+                    defer self.allocator.free(inttoptr_line);
+                    try w.writeAll(inttoptr_line);
+                    cmp_ptr = .{ .name = ptr_reg, .ty = .PTR };
+                    cmp_len = .{ .name = "0", .ty = .I64 };
+                }
+
+                const result_name = try self.nextTemp(id);
+                const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call i2 @{s}(ptr {s}, ptr {s}, i64 {s})\n", .{ result_name, c.qualified_name, arr_ptr.name, cmp_ptr.name, cmp_len.name });
+                defer self.allocator.free(call_line);
+                try w.writeAll(call_line);
+                try stack.append(.{ .name = result_name, .ty = .I2 });
                 return;
             }
 
@@ -1817,6 +2022,31 @@ pub fn Methods(comptime Ctx: type) type {
                 return;
             }
 
+            if (c.call_kind == .BuiltinFunction and std.mem.eql(u8, c.qualified_name, "panic") and raw_args.items.len == 1) {
+                const arg = raw_args.items[0];
+                if (arg.ty == .STRING) {
+                    const ptr_ext = try self.nextTemp(id);
+                    const ext_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ ptr_ext, arg.name });
+                    defer self.allocator.free(ext_line);
+                    try w.writeAll(ext_line);
+                    const len_ext = try self.nextTemp(id);
+                    const len_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ len_ext, arg.name });
+                    defer self.allocator.free(len_line);
+                    try w.writeAll(len_line);
+                    const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_panic(ptr {s}, i64 {s})\n", .{ ptr_ext, len_ext });
+                    defer self.allocator.free(line);
+                    try w.writeAll(line);
+                    return;
+                }
+                // Non-string runtime message (should not occur after type checking):
+                // hand the pointer to doxa_panic with a zero length; it still exits.
+                const ptr = if (arg.ty == .PTR) arg else try self.ensurePointer(w, arg, id);
+                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_panic(ptr {s}, i64 0)\n", .{ptr.name});
+                defer self.allocator.free(line);
+                try w.writeAll(line);
+                return;
+            }
+
             if (c.call_kind == .BuiltinFunction and std.mem.eql(u8, c.qualified_name, "range") and raw_args.items.len == 2) {
                 const start = raw_args.items[0];
                 const end = raw_args.items[1];
@@ -1853,6 +2083,7 @@ pub fn Methods(comptime Ctx: type) type {
                 var arg = arg_ptr.*;
                 var declared_type: ?HIR.HIRType = null;
                 var is_alias = false;
+                var is_readonly = false;
                 if (func_info) |info| {
                     if (i < info.param_types.len) {
                         declared_type = info.param_types[i];
@@ -1860,45 +2091,78 @@ pub fn Methods(comptime Ctx: type) type {
                     if (i < info.param_is_alias.len) {
                         is_alias = info.param_is_alias[i];
                     }
+                    if (i < info.param_is_readonly.len) {
+                        is_readonly = info.param_is_readonly[i];
+                    }
                 } else if (c.call_kind == .ModuleFunction) {
                     if (self.zig_fn_param_types.get(c.qualified_name)) |param_types| {
                         if (i < param_types.len) {
                             declared_type = param_types[i];
                         }
                     }
+                } else if (c.call_kind == .BuiltinFunction) {
+                    // Builtin calls carry no function-table metadata, so resolve
+                    // each argument's declared type from the centralized builtin
+                    // method registry. This lets the generic coercions below fire
+                    // (e.g. zext i8 -> i64 for a byte `@exit` code).
+                    if (builtin_methods.getMethodInfoByName(c.qualified_name)) |info| {
+                        if (i < info.input_types.len) {
+                            declared_type = resolveBuiltinInputType(self, info.input_types[i], arg);
+                        }
+                    }
                 }
                 if (!is_alias) {
+                    // A fixed-size array argument is boxed into an ArrayHeader to
+                    // match a dynamic-array parameter. The callee snapshots a
+                    // by-value parameter it mutates, so the boxing copy here would
+                    // be wasted when the body is read-only on this parameter —
+                    // borrow the flat buffer instead, pointing the header's `data`
+                    // at `arg.name` the way `wrapFixedArrayHeader` does for alias
+                    // parameters. Read-only is decided once at signature build
+                    // (`param_is_readonly` from `hir/param_mutation.zig`), so the
+                    // call site needs no re-analysis.
                     if (arg.fixed_array_depth > 0 and declared_type != null and declared_type.? == .Array) {
-                        const elem_type = arg.array_type orelse HIR.HIRType.Int;
-                        const elem_size = self.arrayElementSize(elem_type);
-                        const elem_tag = self.arrayElementTag(elem_type);
-                        var total_elems: u64 = arg.fixed_array_sizes[0];
-                        for (1..@as(usize, arg.fixed_array_depth)) |j| {
-                            total_elems *= arg.fixed_array_sizes[j];
+                        if (is_readonly) {
+                            arg = try self.wrapFixedArrayHeader(w, .{
+                                .name = arg.name,
+                                .ty = .PTR,
+                                .array_type = arg.array_type,
+                                .fixed_array_depth = arg.fixed_array_depth,
+                                .fixed_array_sizes = arg.fixed_array_sizes,
+                            }, id);
+                            arg_ptr.* = arg;
+                        } else {
+                            const elem_type = arg.array_type orelse HIR.HIRType.Int;
+                            const elem_size = self.arrayElementSize(elem_type);
+                            const elem_tag = self.arrayElementTag(elem_type);
+                            var total_elems: u64 = arg.fixed_array_sizes[0];
+                            for (1..@as(usize, arg.fixed_array_depth)) |j| {
+                                total_elems *= arg.fixed_array_sizes[j];
+                            }
+                            const total_bytes = total_elems * elem_size;
+
+                            const dyn_reg = try self.nextTemp(id);
+                            const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n", .{ dyn_reg, elem_size, elem_tag, total_elems });
+                            defer self.allocator.free(new_line);
+                            try w.writeAll(new_line);
+
+                            const data_ptr_ptr = try self.nextTemp(id);
+                            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr_ptr, dyn_reg });
+                            defer self.allocator.free(gep_line);
+                            try w.writeAll(gep_line);
+
+                            const data_ptr = try self.nextTemp(id);
+                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ data_ptr, data_ptr_ptr });
+                            defer self.allocator.free(load_line);
+                            try w.writeAll(load_line);
+
+                            const copy_line = try std.fmt.allocPrint(self.allocator, "  call void @llvm.memcpy.p0.p0.i64(ptr align 1 {s}, ptr align 1 {s}, i64 {d}, i1 false)\n", .{ data_ptr, arg.name, total_bytes });
+                            defer self.allocator.free(copy_line);
+                            try w.writeAll(copy_line);
+
+                            arg = .{ .name = dyn_reg, .ty = .PTR, .array_type = elem_type };
+                            arg_ptr.* = arg;
                         }
-                        const total_bytes = total_elems * elem_size;
-
-                        const dyn_reg = try self.nextTemp(id);
-                        const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n", .{ dyn_reg, elem_size, elem_tag, total_elems });
-                        defer self.allocator.free(new_line);
-                        try w.writeAll(new_line);
-
-                        const data_ptr_ptr = try self.nextTemp(id);
-                        const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr_ptr, dyn_reg });
-                        defer self.allocator.free(gep_line);
-                        try w.writeAll(gep_line);
-
-                        const data_ptr = try self.nextTemp(id);
-                        const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ data_ptr, data_ptr_ptr });
-                        defer self.allocator.free(load_line);
-                        try w.writeAll(load_line);
-
-                        const copy_line = try std.fmt.allocPrint(self.allocator, "  call void @llvm.memcpy.p0.p0.i64(ptr align 1 {s}, ptr align 1 {s}, i64 {d}, i1 false)\n", .{ data_ptr, arg.name, total_bytes });
-                        defer self.allocator.free(copy_line);
-                        try w.writeAll(copy_line);
-
-                        arg = .{ .name = dyn_reg, .ty = .PTR, .array_type = elem_type };
-                        arg_ptr.* = arg;
                     }
                     if (declared_type) |decl| {
                         if (arg.ty == .Value and decl != .Union) {
@@ -1944,6 +2208,42 @@ pub fn Methods(comptime Ctx: type) type {
                         arg = .{ .name = widened, .ty = .I64 };
                         arg_ptr.* = arg;
                     }
+                    // The semantic analyzer lets comptime int literals narrow into
+                    // byte/tetra params and widen into float params, so lower the
+                    // i64 the literal was pushed as to the declared type here.
+                    if (decl == .Byte and arg.ty == .I64) {
+                        const narrowed = try self.nextTemp(id);
+                        const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i8\n", .{ narrowed, arg.name });
+                        defer self.allocator.free(trunc_line);
+                        try w.writeAll(trunc_line);
+                        arg = .{ .name = narrowed, .ty = .I8 };
+                        arg_ptr.* = arg;
+                    }
+                    if (decl == .Tetra and arg.ty == .I64) {
+                        const narrowed = try self.nextTemp(id);
+                        const trunc_line = try std.fmt.allocPrint(self.allocator, "  {s} = trunc i64 {s} to i2\n", .{ narrowed, arg.name });
+                        defer self.allocator.free(trunc_line);
+                        try w.writeAll(trunc_line);
+                        arg = .{ .name = narrowed, .ty = .I2 };
+                        arg_ptr.* = arg;
+                    }
+                    if (decl == .Float and (arg.ty == .I64 or arg.ty == .I8)) {
+                        const src_ty = if (arg.ty == .I8) "i8" else "i64";
+                        const widened = try self.nextTemp(id);
+                        const sitofp_line = try std.fmt.allocPrint(self.allocator, "  {s} = sitofp {s} {s} to double\n", .{ widened, src_ty, arg.name });
+                        defer self.allocator.free(sitofp_line);
+                        try w.writeAll(sitofp_line);
+                        arg = .{ .name = widened, .ty = .F64 };
+                        arg_ptr.* = arg;
+                    }
+                    if ((decl == .Array or decl == .Struct or decl == .Map) and arg.ty == .I64) {
+                        const as_ptr = try self.nextTemp(id);
+                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ as_ptr, arg.name });
+                        defer self.allocator.free(cast_line);
+                        try w.writeAll(cast_line);
+                        arg = .{ .name = as_ptr, .ty = .PTR };
+                        arg_ptr.* = arg;
+                    }
                 }
 
                 const llvm_ty = blk: {
@@ -1956,6 +2256,15 @@ pub fn Methods(comptime Ctx: type) type {
                             break :blk self.hirTypeToLLVMType(decl, false);
                         }
                     }
+                    if (declared_type == null) {
+                        break :blk self.stackTypeToLLVMType(arg.ty);
+                    }
+                    std.debug.print("cannot lower call argument {d} of {s}: declared={s}, stack={s}\n", .{
+                        i,
+                        c.qualified_name,
+                        @tagName(declared_type.?),
+                        @tagName(arg.ty),
+                    });
                     unreachable;
                 };
                 const arg_str = try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ llvm_ty, arg.name });
@@ -1974,9 +2283,19 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
+            const runtime_name_owned: ?[]const u8 = if (c.call_kind == .LocalFunction)
+                if (func_info) |info| try self.functionSymbol(info) else null
+            else
+                null;
+            defer if (runtime_name_owned) |name| self.allocator.free(name);
+            const runtime_name = runtime_name_owned orelse IRPrinter.mapBuiltinToRuntime(c.qualified_name);
+
             if (actual_return_type != .Nothing) {
-                if (c.call_kind == .ModuleFunction and actual_return_type == .String) {
-                    // Module functions use out-params for string returns (ABI compat)
+                // Only inline-Zig module functions (function_index == null) use
+                // out-params for string returns (the inline-Zig ABI). Pure-Doxa
+                // module functions are defined with `%DoxaString` value returns
+                // and must go through the value-return path below.
+                if (c.call_kind == .ModuleFunction and c.function_index == null and actual_return_type == .String) {
                     const out_ptr_slot = try self.nextTemp(id);
                     const out_len_slot = try self.nextTemp(id);
                     const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
@@ -2000,7 +2319,6 @@ pub fn Methods(comptime Ctx: type) type {
                         try std.fmt.allocPrint(self.allocator, "ptr {s}, ptr {s}", .{out_ptr_slot, out_len_slot});
                     defer if (full_args.ptr != args_str.ptr) self.allocator.free(full_args);
 
-                    const runtime_name = IRPrinter.mapBuiltinToRuntime(c.qualified_name);
                     const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ runtime_name, full_args });
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
@@ -2028,12 +2346,17 @@ pub fn Methods(comptime Ctx: type) type {
 
                 const result_name = try self.nextTemp(id);
                 const ret_ty = self.hirTypeToLLVMType(actual_return_type, false);
-                const runtime_name = IRPrinter.mapBuiltinToRuntime(c.qualified_name);
                 const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call {s} @{s}({s})\n", .{ result_name, ret_ty, runtime_name, args_str });
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
                 const stack_ty = self.hirTypeToStackType(actual_return_type);
                 var pushed = StackVal{ .name = result_name, .ty = stack_ty };
+                // A defined Doxa function deep-copies its heap return value into
+                // the arena active at this call site (clone-on-return), so the
+                // result lives in the current region (A1).
+                if (c.function_index != null and (stack_ty == .STRING or stack_ty == .PTR)) {
+                    pushed.region = self.currentRegionTag();
+                }
                 if (stack_ty == .PTR) {
                     switch (actual_return_type) {
                         .Array => |inner| pushed.array_type = inner.*,
@@ -2054,16 +2377,14 @@ pub fn Methods(comptime Ctx: type) type {
                 }
                 try stack.append(pushed);
             } else {
-                const runtime_name = IRPrinter.mapBuiltinToRuntime(c.qualified_name);
                 const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ runtime_name, args_str });
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
-                const nothing_name = try self.nextTemp(id);
-                try stack.append(.{ .name = nothing_name, .ty = .Nothing });
+                try stack.append(.{ .name = "undef", .ty = .Nothing });
             }
         }
 
-        pub fn handleStoreDeclGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sd: std.meta.TagPayload(HIRInstruction, .StoreDecl)) !void {
+        pub fn handleStoreDeclGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sd: std.meta.fieldInfo(HIRInstruction, .StoreDecl).type) !void {
             if (stack.items.len < 1) {
                 const stack_type = self.hirTypeToStackType(sd.declared_type);
                 _ = try self.global_types.put(sd.var_name, stack_type);
@@ -2080,13 +2401,8 @@ pub fn Methods(comptime Ctx: type) type {
             if (sd.declared_type == .Union) {
                 value = try self.buildDoxaValue(w, value, sd.declared_type, id);
             }
-            if (!sd.is_const and sd.declared_type == .Array and value.fixed_array_depth == 0) {
-                const src_ptr = if (value.ty == .PTR) value else try self.ensurePointer(w, value, id);
-                const clone_reg = try self.nextTemp(id);
-                const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_clone(ptr {s})\n", .{ clone_reg, src_ptr.name });
-                defer self.allocator.free(clone_line);
-                try w.writeAll(clone_line);
-                value = .{ .name = clone_reg, .ty = .PTR, .array_type = value.array_type };
+            if (!sd.is_const and !self.plainGlobalStoreProven(value, sd.declared_type)) {
+                value = try self.cloneHeapForGlobalStore(w, id, value, sd.declared_type);
             }
             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
                 value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
@@ -2136,7 +2452,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll(store_line);
         }
 
-        pub fn handleStoreVarGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sv: std.meta.TagPayload(HIRInstruction, .StoreVar)) !void {
+        pub fn handleStoreVarGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sv: std.meta.fieldInfo(HIRInstruction, .StoreVar).type) !void {
             if (stack.items.len < 1) return;
             var value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -2151,6 +2467,14 @@ pub fn Methods(comptime Ctx: type) type {
             if (sv.expected_type == .Union) {
                 value = try self.buildDoxaValue(w, value, sv.expected_type, id);
             }
+            value = switch (sv.heap_copy) {
+                .keep => value,
+                .snapshot => try self.cloneHeapForGlobalStore(w, id, value, sv.expected_type),
+                .rehome => if (self.plainGlobalStoreProven(value, sv.expected_type))
+                    value
+                else
+                    try self.cloneHeapForGlobalStore(w, id, value, sv.expected_type),
+            };
             const llvm_ty = self.stackTypeToLLVMType(value.ty);
             _ = try self.global_types.put(sv.var_name, value.ty);
             if (value.array_type) |array_type| {
@@ -2215,6 +2539,7 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(.{
                 .name = result_name,
                 .ty = st,
+                .region = .Root,
                 .array_type = array_type,
                 .enum_type_name = enum_type_name,
                 .struct_field_types = struct_fields,
@@ -2256,10 +2581,11 @@ pub fn Methods(comptime Ctx: type) type {
                 total_elems *= fixed.fixed_array_sizes[i];
             }
 
-            const hdr_reg = try self.nextTemp(id);
-            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_reg});
-            defer self.allocator.free(alloca_line);
-            try w.writeAll(alloca_line);
+            // Named, not a numeric temp: the alloca is replayed in the entry
+            // block, and LLVM requires unnamed temps to be numbered in order.
+            const hdr_reg = try std.fmt.allocPrint(self.allocator, "%synth.hdr.{d}", .{self.synth_header_counter});
+            self.synth_header_counter += 1;
+            try self.entry_allocas.append(try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_reg}));
 
             const data_ptr = try self.nextTemp(id);
             const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr, hdr_reg });
@@ -2300,6 +2626,17 @@ pub fn Methods(comptime Ctx: type) type {
             const store_tag = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ elem_tag, tag_ptr });
             defer self.allocator.free(store_tag);
             try w.writeAll(store_tag);
+
+            // Field 5 (`scope`) must be initialised: a non-owning view has no
+            // owning arena, and leaving it undefined lets a stack garbage pointer
+            // reach the runtime's rehome/alloc paths.
+            const scope_ptr = try self.nextTemp(id);
+            const scope_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 5\n", .{ scope_ptr, hdr_reg });
+            defer self.allocator.free(scope_gep);
+            try w.writeAll(scope_gep);
+            const store_scope = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{scope_ptr});
+            defer self.allocator.free(store_scope);
+            try w.writeAll(store_scope);
 
             return .{ .name = hdr_reg, .ty = .PTR, .array_type = elem_type };
         }

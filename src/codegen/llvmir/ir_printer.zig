@@ -5,7 +5,7 @@ pub const IRPrinter = struct {
     pub const HIR = @import("../hir/soxa_types.zig");
     pub const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
     pub const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
-    pub const CompareInstruction = std.meta.TagPayload(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare);
+    pub const CompareInstruction = std.meta.fieldInfo(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare).type;
     const Self = @This();
 
     const Ctx = struct {
@@ -13,11 +13,12 @@ pub const IRPrinter = struct {
         pub const HIR = @import("../hir/soxa_types.zig");
         pub const HIRValue = @import("../hir/soxa_values.zig").HIRValue;
         pub const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
-        pub const CompareInstruction = std.meta.TagPayload(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare);
+        pub const CompareInstruction = std.meta.fieldInfo(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare).type;
         pub const PeekEmitState = Self.PeekEmitState;
         pub const PeekStringInfo = Self.PeekStringInfo;
         pub const StackType = Self.StackType;
         pub const StackVal = Self.StackVal;
+        pub const Region = Self.Region;
         pub const VariableInfo = Self.VariableInfo;
         pub const StackIncoming = Self.StackIncoming;
         pub const StackSlot = Self.StackSlot;
@@ -38,7 +39,19 @@ pub const IRPrinter = struct {
     pub const recordStackForLabel = CoreMethods.recordStackForLabel;
     pub const restoreStackForLabel = CoreMethods.restoreStackForLabel;
     pub const mapBuiltinToRuntime = CoreMethods.mapBuiltinToRuntime;
+    pub const functionSymbol = CoreMethods.functionSymbol;
     pub const mangleGlobalName = CoreMethods.mangleGlobalName;
+    pub const cloneHeapForStore = CoreMethods.cloneHeapForStore;
+    pub const cloneHeapForSnapshot = CoreMethods.cloneHeapForSnapshot;
+    pub const cloneHeapForReturn = CoreMethods.cloneHeapForReturn;
+    pub const cloneHeapForGlobalStore = CoreMethods.cloneHeapForGlobalStore;
+    pub const cloneHeapValue = CoreMethods.cloneHeapValue;
+    pub const currentRegionTag = CoreMethods.currentRegionTag;
+    pub const rehomeTypeEligible = CoreMethods.rehomeTypeEligible;
+    pub const plainStoreProven = CoreMethods.plainStoreProven;
+    pub const plainGlobalStoreProven = CoreMethods.plainGlobalStoreProven;
+    pub const recordVarRegion = CoreMethods.recordVarRegion;
+    pub const rehomeForLocalStore = CoreMethods.rehomeForLocalStore;
 
     const ModuleLayoutMethods = @import("./ir_printer/module_layout.zig").Methods(Ctx);
     const SharedHandlerMethods = @import("./ir_printer/shared_handlers.zig").Methods(Ctx);
@@ -53,6 +66,11 @@ pub const IRPrinter = struct {
     pub const writeFunction = FunctionEmitMethods.writeFunction;
     pub const nextTemp = FunctionEmitMethods.nextTemp;
     pub const nextTempText = FunctionEmitMethods.nextTempText;
+    pub const narrowVariable = FunctionEmitMethods.narrowVariable;
+    pub const restoreVariable = FunctionEmitMethods.restoreVariable;
+    pub const clearNarrowedVars = FunctionEmitMethods.clearNarrowedVars;
+    pub const loadNarrowedUnion = FunctionEmitMethods.loadNarrowedUnion;
+    pub const narrowedMemberType = FunctionEmitMethods.narrowedMemberType;
     pub const buildEnumPrintMap = FunctionEmitMethods.buildEnumPrintMap;
     pub const emitEnumPrint = FunctionEmitMethods.emitEnumPrint;
     pub const emitQuantifierWrappers = FunctionEmitMethods.emitQuantifierWrappers;
@@ -124,12 +142,12 @@ pub const IRPrinter = struct {
     pub const emitGetField = StructsEnumsEmitMethods.emitGetField;
     pub const emitSetField = StructsEnumsEmitMethods.emitSetField;
     pub const emitPeekInstruction = StructsEnumsEmitMethods.emitPeekInstruction;
-    pub const emitStructValuePeek = StructsEnumsEmitMethods.emitStructValuePeek;
     pub const hydrateStructMetadata = StructsEnumsEmitMethods.hydrateStructMetadata;
     pub const resolveStructFieldNames = StructsEnumsEmitMethods.resolveStructFieldNames;
     pub const findLabelIndex = StructsEnumsEmitMethods.findLabelIndex;
-    pub const buildFallbackStructType = StructsEnumsEmitMethods.buildFallbackStructType;
     pub const buildI64StructType = StructsEnumsEmitMethods.buildI64StructType;
+    pub const storeStructStringField = StructsEnumsEmitMethods.storeStructStringField;
+    pub const loadStructStringField = StructsEnumsEmitMethods.loadStructStringField;
     pub const getOrCreateStructDescGlobal = StructsEnumsEmitMethods.getOrCreateStructDescGlobal;
     pub const getOrCreateEnumDescGlobal = StructsEnumsEmitMethods.getOrCreateEnumDescGlobal;
     pub const emitEnumInitCalls = StructsEnumsEmitMethods.emitEnumInitCalls;
@@ -139,6 +157,7 @@ pub const IRPrinter = struct {
     pub const hirTypeToLLVMType = StructsEnumsEmitMethods.hirTypeToLLVMType;
 
     allocator: std.mem.Allocator,
+    io: std.Io,
     zig_fn_param_types: std.StringHashMap([]HIR.HIRType),
     peek_string_counter: usize,
     string_pool_len: usize = 0,
@@ -165,7 +184,30 @@ pub const IRPrinter = struct {
     enum_table: ?*anyopaque = null,
     entry_str_out_ptr: ?[]const u8 = null,
     entry_str_out_len: ?[]const u8 = null,
+    /// Alloca lines discovered while emitting the current function/program body
+    /// that must live in the entry block. Emitting an `alloca` inside a loop
+    /// makes it a *dynamic* alloca, which leaks shadow-stack space on every
+    /// iteration; these are hoisted to entry and replayed before the body.
+    entry_allocas: std.array_list.Managed([]const u8),
+    /// Distinguishes the named registers of hoisted synthetic ArrayHeaders
+    /// within one function. Reset at each function/program entry.
+    synth_header_counter: usize = 0,
     in_function_context: bool = false,
+    scope_depth: usize = 0,
+    /// Set while emitting a function whose scope arenas are provably unused.
+    /// Suppresses every `doxa_scope_enter` / `exit` / `reset` in that body so a
+    /// scalar leaf function does not pay two page-allocator round trips per call.
+    scopes_elided: bool = false,
+    exited_scopes: std.AutoHashMap(u32, void),
+    /// Per-variable stack of `as`-cast narrowed member views. `NarrowVar` pushes
+    /// a single-member union view; `RestoreVar` pops it. Loads of the variable
+    /// unwrap the boxed `%DoxaValue` to the active member representation.
+    narrowed_vars: std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)),
+    /// Region class of each local variable's heap payload (A1). Populated while
+    /// a function body is emitted so a `LoadVar` knows whether the object it
+    /// loads provably outlives a later rehome store's destination. Global scope
+    /// kinds never appear here; globals are always `Root`.
+    var_regions: std.StringHashMap(Region),
 
     pub const EnumVariantMeta = struct {
         index: u32,
@@ -179,9 +221,24 @@ pub const IRPrinter = struct {
 
     pub const StackType = enum { I64, F64, I8, I1, I2, PTR, STRING, Value, Nothing };
 
+    /// Static region class of a heap value's allocating arena, relative to the
+    /// function being emitted (A1 region analysis). A value outlives any store
+    /// destination inside the function exactly when its arena is the function's
+    /// own body scope or an ancestor of it (`Func` / `Root`); values born in a
+    /// reusable loop scope (`Deep`) die at the next iteration reset. `Unknown`
+    /// means the analysis could not prove a class, and the emitter must keep the
+    /// conservative runtime rehome call.
+    pub const Region = enum {
+        Root,
+        Func,
+        Deep,
+        Unknown,
+    };
+
     pub const StackVal = struct {
         name: []const u8,
         ty: StackType,
+        region: Region = .Unknown,
         array_type: ?HIR.HIRType = null,
         enum_type_name: ?[]const u8 = null,
         struct_field_types: ?[]HIR.HIRType = null,
@@ -223,7 +280,7 @@ pub const IRPrinter = struct {
             var slots = try allocator.alloc(StackSlot, slot_count);
             var i: usize = 0;
             while (i < slot_count) : (i += 1) {
-                slots[i] = StackSlot{};
+                slots[i] = .empty;
             }
             return .{ .slots = slots };
         }
@@ -273,7 +330,7 @@ pub const IRPrinter = struct {
     };
 
     pub fn escapeLLVMString(allocator: std.mem.Allocator, text: []const u8) ![]u8 {
-        var buffer = std.ArrayListUnmanaged(u8){};
+        var buffer = std.ArrayListUnmanaged(u8).empty;
         defer buffer.deinit(allocator);
         const hex = "0123456789ABCDEF";
         for (text) |ch| {

@@ -29,7 +29,7 @@ struct Result {
     public kernel_time_d :: int,
     public kernel_time_c :: int,
     public is_match :: tetra,
-    public compile_stats :: CompileStats,
+    
     function new(test :: string, runs :: int, user_time_d :: int, user_time_c :: int, kernel_time_d :: int, kernel_time_c :: int, is_match :: tetra) returns Result {
         return $Result {
             test is test,
@@ -236,12 +236,12 @@ function prepareEnv() {
             return
         }
     }
-    const result_d is std.file.makeDir("test/benchmark/d-bin") as nothing else {
-        std.io.println("Failed to create d-bin: {result_d}")
+    std.file.makeDir("test/benchmark/d-bin") as nothing else {
+        std.io.println("Failed to create d-bin")
         return
     }
-    const result_c is std.file.makeDir("test/benchmark/c-bin") as nothing else {
-        std.io.println("Failed to create c-bin: {result_c}")
+    std.file.makeDir("test/benchmark/c-bin") as nothing else {
+        std.io.println("Failed to create c-bin")
         return
     }
 }

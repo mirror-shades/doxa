@@ -3,13 +3,8 @@ const HIRType = @import("soxa_types.zig").HIRType;
 
 pub const SlotManager = struct {
     /// Alias slots start at this offset so they never collide with
-    /// regular/temporary slots that grow upward from 0.
-    ///
-    /// **Constraint**: The bytecode interpreter uses slot IDs as direct array
-    /// indices into `Frame.locals`, so this value must stay small enough that
-    /// per-frame memory (≈ ALIAS_SLOT_BASE × sizeof(HIRValue)) remains
-    /// reasonable.  10 000 gives ~240 KB per frame while leaving ample room
-    /// for regular locals.
+    /// regular/temporary slots that grow upward from 0.  10 000 leaves
+    /// ample headroom for regular locals.
     pub const ALIAS_SLOT_BASE: u32 = 10_000;
 
     allocator: std.mem.Allocator,

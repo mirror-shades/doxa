@@ -25,7 +25,10 @@ static long long leaf_add(long long a, long long b) {
     return a + b;
 }
 
+/* #define ITERS 350000LL */
 #define ITERS 350000000LL
+/* #define SINK_ITERS 35000LL */
+#define SINK_ITERS 35000000LL
 
 long long leaf_sum(long long iters) {
     long long sum = 0;
@@ -42,7 +45,7 @@ int main(void) {
     long long sink = 0;
     long long i;
 
-    for (i = 0; i < 35000000; i++)
+    for (i = 0; i < SINK_ITERS; i++)
         sink += leaf_add(i, (sink % 997) + 1);
 
     long long t0 = monotonic_ns();

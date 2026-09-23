@@ -1,0 +1,107 @@
+# Regression: globals are identity in the program-root arena.
+# - @push / assignment into a global must not clone into a callee arena
+#   (that dangles after doxa_scope_exit).
+# - In-place mutations (@push, field writes) must not snapshot the global
+#   or its struct elements. `each n in neutrons { n.x_pos += 1 }` writes
+#   through to the global element, including structs from Type.new() and
+#   float fields.
+
+struct Particle {
+    pub x :: int
+}
+
+struct Neutron {
+    pub x_pos :: float
+    pub y_pos :: float
+    pub skew :: float
+    pub radius :: float
+
+    public function new(x :: float, y :: float) returns Neutron {
+        return $Neutron {
+            x_pos is x,
+            y_pos is y,
+            skew is 1.0,
+            radius is 10.0,
+        }
+    }
+}
+
+var ints :: int[] is []
+var particles :: Particle[] is []
+var neutrons :: Neutron[] is []
+var label :: string is ""
+
+function push_int(n :: int) {
+    @push(ints, n)
+}
+
+function push_particle(x :: int) {
+    @push(particles, $Particle { x is x })
+}
+
+function spawn_neutron(x :: float, y :: float) {
+    @push(neutrons, Neutron.new(x, y))
+}
+
+function inner_push() {
+    @push(ints, 3)
+}
+
+function outer_push() {
+    inner_push()
+    @push(ints, 4)
+}
+
+function set_label(s :: string) {
+    label is s
+}
+
+function replace_ints() {
+    ints is [10, 20]
+}
+
+function tick() {
+    each n in particles {
+        n.x is n.x + 1
+    }
+}
+
+function tick_neutrons() {
+    each n in neutrons {
+        n.x_pos is n.x_pos + 1.0
+        n.y_pos += n.skew
+    }
+}
+
+function bump(p :: Particle) {
+    p.x is p.x + 100
+}
+
+public entry function main() {
+    push_int(1)
+    push_int(2)
+    outer_push()
+    @print("{@string(@length(ints))} {@string(ints[0])} {@string(ints[3])}\n")
+
+    push_particle(7)
+    push_particle(8)
+    @print("{@string(@length(particles))} {@string(particles[0].x)} {@string(particles[1].x)}\n")
+
+    tick()
+    tick()
+    @print("{@string(particles[0].x)} {@string(particles[1].x)}\n")
+    bump(particles[0])
+    @print("{@string(particles[0].x)}\n")
+
+    spawn_neutron(100.0, 100.0)
+    spawn_neutron(100.0, 100.0)
+    tick_neutrons()
+    tick_neutrons()
+    @print("{@string(neutrons[0].x_pos)} {@string(neutrons[0].y_pos)} {@string(neutrons[1].x_pos)}\n")
+
+    set_label("ok")
+    @print("{label}\n")
+
+    replace_ints()
+    @print("{@string(@length(ints))} {@string(ints[0])} {@string(ints[1])}\n")
+}

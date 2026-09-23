@@ -6,6 +6,7 @@
 !external/**
 !scripts/**
 !std/**
+!demo/**
 !.github/**
 !.gitattributes
 !build.zig

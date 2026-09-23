@@ -1,40 +1,36 @@
 zig Time {
     const std = @import("std");
-    const builtin = @import("builtin");
+
+    fn io() std.Io {
+        return std.Io.Threaded.global_single_threaded.io();
+    }
 
     pub fn unixSeconds() i64 {
-        return std.time.timestamp();
+        return std.Io.Timestamp.now(io(), .real).toSeconds();
     }
 
     pub fn tickNs() i64 {
-        return @intCast(std.time.nanoTimestamp());
+        return @intCast(std.Io.Timestamp.now(io(), .real).toNanoseconds());
     }
 
     pub fn monotonicNs() i64 {
-        if (builtin.os.tag == .windows) {
-            const counter: u128 = std.os.windows.QueryPerformanceCounter();
-            const freq: u128 = std.os.windows.QueryPerformanceFrequency();
-            return @intCast(counter * std.time.ns_per_s / freq);
-        } else {
-            const ts = std.posix.clock_gettime(std.posix.CLOCK.MONOTONIC) catch return 0;
-            return @as(i64, @intCast(ts.sec)) * std.time.ns_per_s + @as(i64, @intCast(ts.nsec));
-        }
+        return @intCast(std.Io.Timestamp.now(io(), .awake).toNanoseconds());
     }
 
     pub fn unixMillis() i64 {
-        return std.time.milliTimestamp();
+        return std.Io.Timestamp.now(io(), .real).toMilliseconds();
     }
 
     pub fn sleepMs(ms_text: []const u8) void {
         const ms = std.fmt.parseInt(i64, ms_text, 10) catch return;
         if (ms <= 0) return;
-        std.Thread.sleep(@as(u64, @intCast(ms)) * std.time.ns_per_ms);
+        std.Io.sleep(io(), std.Io.Duration.fromNanoseconds(@as(i96, ms) * std.time.ns_per_ms), .awake) catch return;
     }
 
     pub fn sleepSeconds(s_text: []const u8) void {
         const s = std.fmt.parseInt(i64, s_text, 10) catch return;
         if (s <= 0) return;
-        std.Thread.sleep(@as(u64, @intCast(s)) * std.time.ns_per_s);
+        std.Io.sleep(io(), std.Io.Duration.fromNanoseconds(@as(i96, s) * std.time.ns_per_s), .awake) catch return;
     }
 }
 

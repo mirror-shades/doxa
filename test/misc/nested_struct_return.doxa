@@ -1,0 +1,37 @@
+# Regression test: constructing a struct that nests another struct and an
+# array, then returning it from a function (which deep-clones it into the
+# caller's scope), must keep every nested field alive. Previously the clone
+# copied nested-struct pointers verbatim, leaving `c.target`/`c.artifacts`
+# dangling into the freed constructing scope and segfaulting at runtime.
+public enum Os {
+    Windows,
+    Linux,
+    MacOS,
+}
+
+public struct Target {
+    public os :: Os,
+    public name :: string,
+}
+
+public struct Builder {
+    public label :: string,
+}
+
+public struct Context {
+    public target :: Target,
+    public artifacts :: Builder[],
+}
+
+public function host() returns Context {
+    return $Context {
+        target is $Target { os is Os.Windows, name is "win" },
+        artifacts is [$Builder { label is "b1" }],
+    }
+}
+
+public entry function main() {
+    const c is host()
+    @print(c.target.name + "\n")
+    @print(c.artifacts[0].label + "\n")
+}

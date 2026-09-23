@@ -4,6 +4,10 @@ zig Process {
     const std = @import("std");
     const builtin = @import("builtin");
 
+    extern fn doxa_argc() callconv(.c) i32;
+    extern fn doxa_argv(index: i32) callconv(.c) ?[*:0]const u8;
+    extern fn doxa_getenv(name_ptr: ?[*]const u8, name_len: u64, out_len: *u64) callconv(.c) ?[*]const u8;
+
     pub fn errorState(mode: i64, value: i64) i64 {
         var last_error_code: i64 = 0;
         if (mode == 0) {
@@ -64,22 +68,30 @@ zig Process {
             return 0;
         }
 
+        const io = std.Io.Threaded.global_single_threaded.io();
+
         const cmd_argv = if (builtin.os.tag == .windows)
             [_][]const u8{ "cmd", "/C", input }
         else
             [_][]const u8{ "sh", "-c", input };
 
-        var cmd = std.process.Child.init(&cmd_argv, std.heap.page_allocator);
-        cmd.stdout_behavior = .Inherit;
-        cmd.stderr_behavior = .Inherit;
-
-        const term = cmd.spawnAndWait() catch |err| {
+        var cmd = std.process.spawn(io, .{
+            .argv = &cmd_argv,
+            .stdout = .inherit,
+            .stderr = .inherit,
+        }) catch |err| {
             setLastError(mapProcessSpawn(@errorName(err)));
+            return 0;
+        };
+        defer cmd.kill(io);
+
+        const term = cmd.wait(io) catch |err| {
+            setLastError(mapProcessWait(@errorName(err)));
             return 0;
         };
 
         return switch (term) {
-            .Exited => |code| blk: {
+            .exited => |code| blk: {
                 if (code != 0) {
                     setLastError(207);
                     break :blk @as(i64, code);
@@ -100,53 +112,54 @@ zig Process {
             return "";
         }
 
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const alloc = std.heap.page_allocator;
+
         const cmd_argv = if (builtin.os.tag == .windows)
             [_][]const u8{ "cmd", "/C", input }
         else
             [_][]const u8{ "sh", "-c", input };
 
-        var cmd = std.process.Child.init(&cmd_argv, std.heap.page_allocator);
-        cmd.stdout_behavior = .Pipe;
-        cmd.stderr_behavior = .Pipe;
-
-        cmd.spawn() catch |err| {
+        var cmd = std.process.spawn(io, .{
+            .argv = &cmd_argv,
+            .stdout = .pipe,
+            .stderr = .pipe,
+        }) catch |err| {
             setLastError(mapProcessSpawn(@errorName(err)));
             return "";
         };
+        defer cmd.kill(io);
 
-        var stdout = std.ArrayList(u8).empty;
-        defer stdout.deinit(std.heap.page_allocator);
-        var stderr = std.ArrayList(u8).empty;
-        defer stderr.deinit(std.heap.page_allocator);
+        var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+        var multi_reader: std.Io.File.MultiReader = undefined;
+        multi_reader.init(alloc, io, multi_reader_buffer.toStreams(), &.{ cmd.stdout.?, cmd.stderr.? });
+        defer multi_reader.deinit();
 
-        cmd.collectOutput(std.heap.page_allocator, &stdout, &stderr, 8 * 1024 * 1024) catch |err| {
-            _ = cmd.kill() catch {
-                setLastError(204);
+        while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
+            error.EndOfStream => {},
+            else => {
+                setLastError(205);
                 return "";
-            };
-            _ = cmd.wait() catch {
-                setLastError(203);
-                return "";
-            };
-            const mc1 = mapCommon(@errorName(err));
-            if (mc1 >= 0) {
-                setLastError(mc1);
-                return "";
-            }
-            setLastError(switch (err) {
-                error.StdoutStreamTooLong, error.StderrStreamTooLong => 206,
-                else => 205,
-            });
+            },
+        }
+        multi_reader.checkAnyError() catch {
+            setLastError(205);
             return "";
         };
 
-        const term = cmd.wait() catch |err| {
+        const stdout_owned = multi_reader.toOwnedSlice(0) catch {
+            setLastError(205);
+            return "";
+        };
+        defer alloc.free(stdout_owned);
+
+        const term = cmd.wait(io) catch |err| {
             setLastError(mapProcessWait(@errorName(err)));
             return "";
         };
 
         switch (term) {
-            .Exited => |code| {
+            .exited => |code| {
                 if (code != 0) {
                     setLastError(207);
                     return "";
@@ -158,13 +171,7 @@ zig Process {
             },
         }
 
-        var cache: ?[]u8 = null;
-
-        if (cache) |prev| {
-            std.heap.page_allocator.free(prev);
-        }
-
-        const duped = std.heap.page_allocator.dupe(u8, stdout.items) catch |err| {
+        const duped = alloc.dupe(u8, stdout_owned) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -174,7 +181,6 @@ zig Process {
             return "";
         };
 
-        cache = duped;
         return duped;
     }
 
@@ -184,17 +190,7 @@ zig Process {
 
     pub fn argCount() i64 {
         clearLastError();
-        const args = std.process.argsAlloc(std.heap.page_allocator) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return 0;
-            }
-            setLastError(208);
-            return 0;
-        };
-        defer std.process.argsFree(std.heap.page_allocator, args);
-        return @intCast(args.len);
+        return doxa_argc();
     }
 
     pub fn argAt(index_text: []const u8) []const u8 {
@@ -209,30 +205,17 @@ zig Process {
             return "";
         }
 
-        const args = std.process.argsAlloc(std.heap.page_allocator) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return "";
-            }
-            setLastError(208);
-            return "";
-        };
-        defer std.process.argsFree(std.heap.page_allocator, args);
-
-        const idx: usize = @intCast(index);
-        if (idx >= args.len) {
+        if (index >= doxa_argc()) {
             setLastError(1);
             return "";
         }
 
-        var cache: ?[]u8 = null;
+        const arg_ptr = doxa_argv(@intCast(index)) orelse {
+            setLastError(1);
+            return "";
+        };
 
-        if (cache) |prev| {
-            std.heap.page_allocator.free(prev);
-        }
-
-        const duped = std.heap.page_allocator.dupe(u8, args[idx]) catch |err| {
+        const duped = std.heap.page_allocator.dupe(u8, std.mem.span(arg_ptr)) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -242,7 +225,6 @@ zig Process {
             return "";
         };
 
-        cache = duped;
         return duped;
     }
 
@@ -253,7 +235,8 @@ zig Process {
 
     pub fn cwd() []const u8 {
         clearLastError();
-        const content = std.process.getCwdAlloc(std.heap.page_allocator) catch |err| {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const content = std.process.currentPathAlloc(io, std.heap.page_allocator) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -262,13 +245,6 @@ zig Process {
             setLastError(208);
             return "";
         };
-
-        var cache: ?[]u8 = null;
-
-        if (cache) |prev| {
-            std.heap.page_allocator.free(prev);
-        }
-        cache = content;
         return content;
     }
 
@@ -279,7 +255,13 @@ zig Process {
             return "";
         }
 
-        const content = std.process.getEnvVarOwned(std.heap.page_allocator, name) catch |err| {
+        var value_len: u64 = 0;
+        const value_ptr = doxa_getenv(name.ptr, name.len, &value_len) orelse {
+            setLastError(208);
+            return "";
+        };
+
+        const content = std.heap.page_allocator.dupe(u8, value_ptr[0..@intCast(value_len)]) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
@@ -288,13 +270,6 @@ zig Process {
             setLastError(208);
             return "";
         };
-
-        var cache: ?[]u8 = null;
-
-        if (cache) |prev| {
-            std.heap.page_allocator.free(prev);
-        }
-        cache = content;
         return content;
     }
 }

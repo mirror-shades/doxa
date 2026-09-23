@@ -208,7 +208,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 }
             } else if (std.mem.eql(u8, op, "<") or std.mem.eql(u8, op, ">") or
                 std.mem.eql(u8, op, "<=") or std.mem.eql(u8, op, ">=") or
-                std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "equals") or std.mem.eql(u8, op, "!="))
+                std.mem.eql(u8, op, "==") or std.mem.eql(u8, op, "!="))
             {
                 const left_numeric = (left_type.base == .Int or left_type.base == .Float or left_type.base == .Byte);
                 const right_numeric = (right_type.base == .Int or right_type.base == .Float or right_type.base == .Byte);
@@ -289,6 +289,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (self.struct_methods.get(ct_name)) |method_table| {
                                 if (method_table.get(method_name)) |method_info| {
                                     if (!method_info.is_static) {
+                                        try inferArgs(self, function_call.arguments);
                                         type_info.* = method_info.return_type.*;
                                         return type_info;
                                     }
@@ -327,6 +328,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (self.struct_methods.get(object_name)) |method_table| {
                                 if (method_table.get(method_name)) |method_info| {
                                     if (method_info.is_static) {
+                                        try inferArgs(self, function_call.arguments);
                                         type_info.* = method_info.return_type.*;
                                         return type_info;
                                     }
@@ -418,6 +420,7 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         if (struct_name) |name| {
                             if (self.struct_methods.get(name)) |tbl| {
                                 if (tbl.get(method_name)) |mi| {
+                                    try inferArgs(self, function_call.arguments);
                                     type_info.* = mi.return_type.*;
                                     return type_info;
                                 }
@@ -1355,7 +1358,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 std.mem.eql(u8, fname, "int") or
                 std.mem.eql(u8, fname, "float") or
                 std.mem.eql(u8, fname, "byte") or
-                std.mem.eql(u8, fname, "type"))
+                std.mem.eql(u8, fname, "type") or
+                std.mem.eql(u8, fname, "pack") or
+                std.mem.eql(u8, fname, "unpack"))
             {
                 // Simple builtins: validate args and return type from centralized data
                 if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
@@ -1373,6 +1378,24 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                     const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
                     if (arg_type.base != .Int and arg_type.base != .Byte) {
                         self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
+                        self.fatal_error = true;
+                    }
+                }
+                // Get return type from centralized data
+                if (builtin_methods.getMethodInfoByName(fname)) |info| {
+                    type_info.* = .{ .base = info.return_type };
+                    return type_info;
+                }
+                type_info.* = .{ .base = .Nothing };
+                return type_info;
+            } else if (std.mem.eql(u8, fname, "panic")) {
+                // Validate argument count using centralized data
+                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
+                // Validate argument type (string)
+                if (bc.arguments.len > 0) {
+                    const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
+                    if (arg_type.base != .String) {
+                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@panic: argument must be a string", .{});
                         self.fatal_error = true;
                     }
                 }
@@ -1796,6 +1819,20 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 },
 
                 .LENGTH => {
+                    var args = try self.allocator.alloc(*ast.Expr, 1);
+                    args[0] = method_call.receiver;
+                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                    return try inferTypeFromExpr(self, expr);
+                },
+
+                .PACK, .UNPACK => {
+                    var args = try self.allocator.alloc(*ast.Expr, 1);
+                    args[0] = method_call.receiver;
+                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
+                    return try inferTypeFromExpr(self, expr);
+                },
+
+                .PANIC => {
                     var args = try self.allocator.alloc(*ast.Expr, 1);
                     args[0] = method_call.receiver;
                     expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
@@ -2230,10 +2267,15 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         if (type_info.struct_fields) |decl_fields| {
                             if (decl_fields.len != struct_lit.fields.len) {
                                 self.reporter.reportCompileError(
-                                    getLocationFromBase(expr.base),
+                                    ast.SourceSpan.fromToken(struct_lit.name).location,
                                     ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
-                                    "Struct field count mismatch: expected {}, got {}",
-                                    .{ decl_fields.len, struct_lit.fields.len },
+                                    "struct '{s}' expects {d} field{s}, but this literal provides {d}",
+                                    .{
+                                        struct_lit.name.lexeme,
+                                        decl_fields.len,
+                                        if (decl_fields.len == 1) "" else "s",
+                                        struct_lit.fields.len,
+                                    },
                                 );
                                 self.fatal_error = true;
                             }
@@ -2255,11 +2297,13 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                     }
                                 }
                                 if (!found) {
+                                    const declared_list = try declaredFieldList(self, decl_fields);
+                                    defer self.allocator.free(declared_list);
                                     self.reporter.reportCompileError(
-                                        getLocationFromBase(lit_field.value.base),
+                                        ast.SourceSpan.fromToken(lit_field.name).location,
                                         ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
-                                        "Field '{s}' not found in struct '{s}'",
-                                        .{ lit_field.name.lexeme, struct_lit.name.lexeme },
+                                        "struct '{s}' has no field '{s}'; declared fields: {s}",
+                                        .{ struct_lit.name.lexeme, lit_field.name.lexeme, declared_list },
                                     );
                                     self.fatal_error = true;
                                 }
@@ -2568,6 +2612,16 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
     return type_info;
 }
 
+/// Resolve each call argument's type. The side effect that matters here is
+/// marking referenced variables as used: struct method calls previously skipped
+/// argument inference, so their arguments were reported as unused.
+fn inferArgs(self: *SemanticAnalyzer, arguments: []const ast.CallArgument) SemanticError!void {
+    for (arguments) |arg_expr_it| {
+        if (arg_expr_it.expr.data == .DefaultArgPlaceholder) continue;
+        _ = try inferTypeFromExpr(self, arg_expr_it.expr);
+    }
+}
+
 fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, arguments: []const ast.CallArgument, func_type: *const ast.FunctionType) SemanticError!bool {
     const expected_arg_count: usize = func_type.params.len;
     var provided_arg_count: usize = 0;
@@ -2840,4 +2894,17 @@ fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast
             }
         }
     }
+}
+
+/// Join declared struct field names into a human-readable list for error
+/// messages, e.g. `name, entry_point, output`.
+fn declaredFieldList(self: *SemanticAnalyzer, fields: []const ast.StructFieldType) ![]u8 {
+    var list = std.array_list.Managed(u8).init(self.allocator);
+    errdefer list.deinit();
+    for (fields, 0..) |field, i| {
+        if (i > 0) try list.appendSlice(", ");
+        try list.appendSlice(field.name);
+    }
+    if (fields.len == 0) try list.appendSlice("(none)");
+    return list.toOwnedSlice();
 }

@@ -29,9 +29,11 @@ long long fib(long long n) {
 }
 
 int main(void) {
+    /* long long warm = fib(28); */
     long long warm = fib(36);
 
     long long t0 = monotonic_ns();
+    /* long long result = fib(30); */
     long long result = fib(44);
     long long t1 = monotonic_ns();
 

@@ -7,7 +7,9 @@ struct Vec4 {
     public w :: int,
 }
 
-const N is 250000
+# const N is 2_500
+const N is 250_000
+# const STEPS is 5
 const STEPS is 550
 const MOD is 65536
 

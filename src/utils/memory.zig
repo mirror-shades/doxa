@@ -46,7 +46,7 @@ pub const Scope = struct {
         return .{
             .id = scope_id,
             .parent = parent,
-            .children = .{},
+            .children = .empty,
             .allocator = memory_manager.allocator,
             .variables = std.AutoHashMap(u32, *Variable).init(memory_manager.allocator),
             .name_map = std.StringHashMap(*Variable).init(memory_manager.allocator),
@@ -66,7 +66,7 @@ pub const Scope = struct {
         self.* = .{
             .id = scope_id,
             .parent = parent,
-            .children = .{},
+            .children = .empty,
             .allocator = arena_alloc,
             .variables = std.AutoHashMap(u32, *Variable).init(arena_alloc),
             .name_map = std.StringHashMap(*Variable).init(arena_alloc),
@@ -332,7 +332,7 @@ pub const MemoryManager = struct {
     analysis_arena: std.heap.ArenaAllocator,
     execution_arena: std.heap.ArenaAllocator,
     scope_manager: *ScopeManager,
-    scope_pool: std.ArrayListUnmanaged(*Scope),
+    scope_pool: std.ArrayList(*Scope),
     type_registry: std.StringHashMap(CustomTypeInfo),
 
     pub fn init(allocator: std.mem.Allocator) !MemoryManager {
@@ -341,7 +341,7 @@ pub const MemoryManager = struct {
             .analysis_arena = std.heap.ArenaAllocator.init(allocator),
             .execution_arena = std.heap.ArenaAllocator.init(allocator),
             .scope_manager = try ScopeManager.init(allocator),
-            .scope_pool = .{},
+            .scope_pool = .empty,
             .type_registry = std.StringHashMap(CustomTypeInfo).init(allocator),
         };
     }
@@ -394,33 +394,7 @@ pub const MemoryManager = struct {
         return self.type_registry.get(type_name);
     }
 
-    pub fn bridgeTypesToVM(self: *MemoryManager, vm: anytype) !void {
-        var it = self.type_registry.iterator();
-        while (it.next()) |entry| {
-            try vm.registerCustomType(entry.value_ptr.*);
-        }
-    }
-
     pub fn dumpState(self: *MemoryManager, reporter: anytype) void {
         self.scope_manager.dumpStateWithReporter(reporter);
-    }
-
-    pub fn transitionToGeneration(self: *MemoryManager) !void {
-        _ = self;
-    }
-
-    pub fn transitionToExecution(self: *MemoryManager) !void {
-        if (self.scope_manager.root_scope == null) {
-            const scope = try self.scope_manager.createScope(null, self);
-            self.scope_manager.root_scope = scope;
-        }
-    }
-
-    pub fn reset(self: *MemoryManager) void {
-        _ = self;
-    }
-
-    pub fn resetExecutionMemory(self: *MemoryManager) void {
-        _ = self;
     }
 };

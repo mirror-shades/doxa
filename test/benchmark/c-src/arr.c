@@ -21,8 +21,12 @@ static long long monotonic_ns(void) {
 #endif
 }
 
+/* #define N         10000 */
 #define N         1000000
+/* #define OUTER     75 */
 #define OUTER     7500
+/* #define SINK_ITERS 750000LL */
+#define SINK_ITERS 75000000LL
 
 long long arr_reduce(long long *arr, long long n) {
     long long sum = 0;
@@ -44,7 +48,7 @@ int main(void) {
         arr[i] = i % 997;
 
     long long sink = 0;
-    for (i = 0; i < 75000000; i++)
+    for (i = 0; i < SINK_ITERS; i++)
         sink += arr[i % N];
 
     long long t0 = monotonic_ns();

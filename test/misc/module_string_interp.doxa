@@ -1,0 +1,15 @@
+module sm from "./moddata/string_mod.doxa"
+
+# Regression: string literals and format-template placeholders inside module
+# files must outlive the module lexer. The module AST borrows the lexer's string
+# buffers; freeing them (as `module_lexer.deinit` did) corrupted interpolations
+# (a placeholder could resolve to `nothing`, a bare `{x}` to an unknown var) and
+# module-level globals used in `@string(...)`.
+
+entry function main() {
+    sm.bump()
+    sm.bump()
+    sm.bump()
+    @print("{@string(sm.label(true))}\n")
+    sm.show(42)
+}

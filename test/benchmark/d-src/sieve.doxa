@@ -1,7 +1,8 @@
 module std from @std()
 
 public entry function main() {
-    const limit is 130000000
+    # const limit is 1_300_000
+    const limit is 130_000_000
 
     var prime :: byte[limit + 1]
 

@@ -65,10 +65,23 @@ zig IO {
         return errorState(2, 0);
     }
 
+    /// Write to a raw WASI file descriptor. `std.Io.Threaded`'s syscall path is
+    /// not usable under wasi preview1, so IO uses the platform's direct write.
+    fn writeWasiFd(fd: i32, text: []const u8) void {
+        if (text.len == 0) return;
+        var iov = [1]std.os.wasi.ciovec_t{.{ .base = text.ptr, .len = text.len }};
+        var written: usize = 0;
+        _ = std.os.wasi.fd_write(fd, &iov, 1, &written);
+    }
+
     pub fn print(text: []const u8) void {
         clearLastError();
+        if (builtin.os.tag == .wasi) {
+            writeWasiFd(1, text);
+            return;
+        }
         var stdout_buffer: [1024]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        var stdout_writer = std.Io.File.stdout().writer(std.Io.Threaded.global_single_threaded.io(), &stdout_buffer);
         const stdout = &stdout_writer.interface;
 
         stdout.print("{s}", .{text}) catch {
@@ -84,8 +97,12 @@ zig IO {
 
     pub fn eprint(text: []const u8) void {
         clearLastError();
+        if (builtin.os.tag == .wasi) {
+            writeWasiFd(2, text);
+            return;
+        }
         var stderr_buffer: [1024]u8 = undefined;
-        var stderr_writer = std.fs.File.stderr().writer(&stderr_buffer);
+        var stderr_writer = std.Io.File.stderr().writer(std.Io.Threaded.global_single_threaded.io(), &stderr_buffer);
         const stderr = &stderr_writer.interface;
 
         stderr.print("{s}", .{text}) catch {
@@ -101,8 +118,11 @@ zig IO {
 
     pub fn input() []const u8 {
         clearLastError();
+        // TODO(wasi): read through `std.os.wasi.fd_read`; `std.Io.Threaded`'s
+        // reader path is unusable under wasi preview1, so line input degrades to
+        // the empty string on that target.
         var stdin_buffer: [4096]u8 = undefined;
-        var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+        var stdin_reader = std.Io.File.stdin().reader(std.Io.Threaded.global_single_threaded.io(), &stdin_buffer);
         const stdin = &stdin_reader.interface;
 
         var line = stdin.takeDelimiterExclusive('\n') catch {
@@ -129,6 +149,32 @@ zig IO {
 
         State.cache = duped;
         return duped;
+    }
+
+    /// Read a single byte from stdin without line buffering. Returns `-1` and
+    /// sets the read-failed error at end of input, so callers can map EOF to a
+    /// value of their choosing.
+    pub fn inputByte() i64 {
+        clearLastError();
+        var byte: [1]u8 = undefined;
+        if (builtin.os.tag == .wasi) {
+            var iov = [1]std.os.wasi.iovec_t{.{ .base = &byte, .len = 1 }};
+            var nread: usize = 0;
+            if (std.os.wasi.fd_read(0, &iov, 1, &nread) != .SUCCESS or nread == 0) {
+                setLastError(106);
+                return -1;
+            }
+            return @intCast(byte[0]);
+        }
+        const n = std.posix.read(0, &byte) catch {
+            setLastError(106);
+            return -1;
+        };
+        if (n == 0) {
+            setLastError(106);
+            return -1;
+        }
+        return @intCast(byte[0]);
     }
 
     pub fn inputPrompt(prompt: []const u8) []const u8 {
@@ -201,6 +247,13 @@ public function input() returns string | error.StdError {
     const value is IO.input();
     const err is IO.takeLastErrorCode()
     if err == 0 then return value
+    return mapIOError(err)
+}
+
+public function inputByte() returns byte | error.StdError {
+    const value is IO.inputByte()
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return @byte(value)
     return mapIOError(err)
 }
 
