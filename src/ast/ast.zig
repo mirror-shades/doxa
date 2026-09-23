@@ -1260,11 +1260,15 @@ pub const ModuleInfo = struct {
     }
 };
 
-fn dumpIndent(writer: anytype, depth: u32) @TypeOf(writer).Error!void {
-    for (0..depth) |_| try writer.writeAll("  ");
+fn dumpIndent(writer: *std.Io.Writer, depth: u32) std.Io.Writer.Error!void {
+    var i = depth;
+    while (i >= 0) {
+        try writer.writeAll("  ");
+        i -= 1;
+    }
 }
 
-pub fn dumpStatements(writer: anytype, statements: []const Stmt) @TypeOf(writer).Error!void {
+pub fn dumpStatements(writer: *std.Io.Writer, statements: []const Stmt) std.Io.Writer.Error!void {
     try writer.writeAll("(ast\n");
     for (statements) |*stmt| {
         try dumpStmt(writer, stmt, 1);
@@ -1272,7 +1276,7 @@ pub fn dumpStatements(writer: anytype, statements: []const Stmt) @TypeOf(writer)
     try writer.writeAll(")\n");
 }
 
-fn dumpStmt(writer: anytype, stmt: *const Stmt, depth: u32) @TypeOf(writer).Error!void {
+fn dumpStmt(writer: *std.Io.Writer, stmt: *const Stmt, depth: u32) std.Io.Writer.Error!void {
     try dumpIndent(writer, depth);
     switch (stmt.data) {
         .Expression => |maybe_expr| {
@@ -1333,7 +1337,7 @@ fn dumpStmt(writer: anytype, stmt: *const Stmt, depth: u32) @TypeOf(writer).Erro
     }
 }
 
-fn dumpExpr(writer: anytype, expr: *const Expr, depth: u32) @TypeOf(writer).Error!void {
+fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer.Error!void {
     try dumpIndent(writer, depth);
     switch (expr.data) {
         .Literal => |lit| {
@@ -1542,7 +1546,7 @@ fn dumpExpr(writer: anytype, expr: *const Expr, depth: u32) @TypeOf(writer).Erro
     }
 }
 
-fn dumpTypeExpr(writer: anytype, type_expr: *const TypeExpr, depth: u32) @TypeOf(writer).Error!void {
+fn dumpTypeExpr(writer: *std.Io.Writer, type_expr: *const TypeExpr, depth: u32) std.Io.Writer.Error!void {
     try dumpIndent(writer, depth);
     switch (type_expr.data) {
         .Basic => |b| try writer.print("TypeExpr.Basic {s}\n", .{@tagName(b)}),
@@ -1725,7 +1729,7 @@ pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*Ty
 
         .Struct => type_info.* = .{ .base = .Struct },
 
-        .Enum => |_| {
+        .Enum => {
             type_info.* = .{
                 .base = .Enum,
                 .custom_type = "ValueError",

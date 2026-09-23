@@ -58,7 +58,7 @@ fn parseModuleSource(self: *Parser) ErrorList![]const u8 {
     self.advance(); // (
     if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
     self.advance(); // )
-    return try resolveStdPath(self.allocator);
+    return try resolveStdPath(self.io, self.allocator);
 }
 
 pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
@@ -237,8 +237,8 @@ pub fn findImportedSymbol(self: *Parser, name: []const u8) ?ImportedSymbol {
     return null;
 }
 
-fn resolveStdPath(allocator: std.mem.Allocator) ![]const u8 {
-    const exe_dir = std.fs.selfExeDirPathAlloc(allocator) catch return error.ModuleNotFound;
+fn resolveStdPath(io: std.Io, allocator: std.mem.Allocator) ![]const u8 {
+    const exe_dir = std.process.executableDirPathAlloc(io, allocator) catch return error.ModuleNotFound;
     defer allocator.free(exe_dir);
     return std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "std", "std.doxa" });
 }

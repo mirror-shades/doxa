@@ -1,0 +1,12 @@
+import build from @std()
+
+var c is build.Context.host()
+c.debug is true
+
+var hello is build.Builder.executable("hello", "src/hello.doxa", "out/hello")
+var other is build.Builder.executable("other", "src/other.doxa", "out/other")
+
+c.addArtifact(hello)
+c.addArtifact(other)
+
+build.execute(c, false)

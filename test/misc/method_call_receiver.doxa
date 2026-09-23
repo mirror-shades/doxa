@@ -1,0 +1,53 @@
+# Regression test: struct method calls whose receiver is not a plain tracked
+# variable (function-returned structs, nested field access, `this`, array
+# elements) must resolve the method and its return type, and must pass the
+# receiver in the form the method's `this` expects. Previously these calls
+# were misclassified as internal calls and silently dropped (or produced an
+# Unknown return type), so the method never ran.
+struct Person {
+    public name :: string,
+    public age :: int,
+
+    public method greet() returns string {
+        return "hi " + this.name
+    }
+
+    public method introduce() returns string {
+        return this.greet() + "!"
+    }
+}
+
+struct Couple {
+    public a :: Person,
+    public b :: Person,
+}
+
+function makePerson(name :: string) returns Person {
+    return $Person {
+        name is name,
+        age is 20,
+    }
+}
+
+function makeCouple() returns Couple {
+    return $Couple {
+        a is $Person { name is "Alice", age is 30 },
+        b is $Person { name is "Bob", age is 25 },
+    }
+}
+
+entry function main() {
+    const p is makePerson("Alice")
+    @print(p.greet() + "\n")
+
+    const c is makeCouple()
+    @print(c.a.greet() + "\n")
+    @print(c.b.introduce() + "\n")
+
+    @print(makePerson("Eve").greet() + "\n")
+    @print(makePerson("Frank").introduce() + "\n")
+
+    var people is [makePerson("A"), makePerson("B")]
+    @print(people[0].greet() + "\n")
+    @print(people[1].introduce() + "\n")
+}

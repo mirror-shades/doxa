@@ -32,8 +32,8 @@ pub const LexicalAnalyzer = struct {
     token_line: usize,
     reporter: *Reporter,
 
-    pub fn init(allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) !LexicalAnalyzer {
-        const file_uri = try reporter.ensureFileUri(file_path);
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, source: []const u8, file_path: []const u8, reporter: *Reporter) !LexicalAnalyzer {
+        const file_uri = try reporter.ensureFileUri(io, file_path);
         return .{
             .source = source,
             .start = 0,
@@ -66,6 +66,15 @@ pub const LexicalAnalyzer = struct {
 
         self.tokens.deinit();
         self.keywords.deinit();
+    }
+
+    /// Detach the string buffers this lexer allocated so `deinit` no longer frees
+    /// them. The parser's AST borrows these buffers (string literal values and
+    /// the lexemes of tokens inside format-string placeholders), so their
+    /// lifetime must match the AST, not the lexer. The analysis arena reclaims
+    /// them at program end.
+    pub fn takeOwnershipOfStrings(self: *LexicalAnalyzer) void {
+        self.allocated_strings.clearRetainingCapacity();
     }
 
     pub fn initKeywords(self: *LexicalAnalyzer) !void {
@@ -105,7 +114,6 @@ pub const LexicalAnalyzer = struct {
         try self.keywords.put("await", .AWAIT);
         try self.keywords.put("entry", .ENTRY);
         try self.keywords.put("is", .ASSIGN);
-        try self.keywords.put("equals", .EQUALITY);
         try self.keywords.put("as", .AS);
         try self.keywords.put("from", .FROM);
         try self.keywords.put("to", .TO);
@@ -410,21 +418,39 @@ pub const LexicalAnalyzer = struct {
         }
 
         const token_line = self.token_line;
-        // Calculate column position relative to the line where the token started
-        // We need to find the line start for the token's line
+        const token_column = self.tokenColumn();
+
+        try self.tokens.append(Token.initWithFile(token_type, tracked_lexeme, tracked_literal, token_line, token_column, self.file_path, self.file_uri));
+    }
+
+    fn tokenColumn(self: *LexicalAnalyzer) usize {
         var token_line_start: usize = 0;
         var current_line: usize = 1;
         var i: usize = 0;
-        while (i < self.start and current_line < token_line) {
+        while (i < self.start and current_line < self.token_line) {
             if (self.source[i] == '\n') {
                 current_line += 1;
                 token_line_start = i + 1;
             }
             i += 1;
         }
-        const token_column = self.start - token_line_start + 1;
+        return self.start - token_line_start + 1;
+    }
 
-        try self.tokens.append(Token.initWithFile(token_type, tracked_lexeme, tracked_literal, token_line, token_column, self.file_path, self.file_uri));
+    fn intLiteralOutOfRange(self: *LexicalAnalyzer, literal: []const u8) ErrorList {
+        const token_column = self.tokenColumn();
+        const location = Location{
+            .file = self.file_path,
+            .file_uri = self.file_uri,
+            .range = .{
+                .start_line = self.token_line,
+                .start_col = token_column,
+                .end_line = self.token_line,
+                .end_col = token_column,
+            },
+        };
+        self.reporter.reportCompileError(location, ErrorCode.INTEGER_VALUE_OUT_OF_RANGE, "integer literal '{s}' is out of range for int (64-bit)", .{literal});
+        return error.IntegerOverflow;
     }
 
     fn peekAt(self: *LexicalAnalyzer, offset: i32) u8 {
@@ -1053,9 +1079,9 @@ pub const LexicalAnalyzer = struct {
 
             try self.addToken(.FLOAT, .{ .float = float_val });
         } else {
-            const int_val = std.fmt.parseInt(i32, num_str, 10) catch |err| switch (err) {
+            const int_val = std.fmt.parseInt(i64, num_str, 10) catch |err| switch (err) {
                 error.InvalidCharacter => return error.InvalidNumber,
-                else => return err,
+                error.Overflow => return self.intLiteralOutOfRange(num_str),
             };
             try self.addToken(.INT, .{ .int = int_val });
         }
@@ -1091,7 +1117,6 @@ pub const LexicalAnalyzer = struct {
         const byte_val = std.fmt.parseInt(u8, clean_hex, 16) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
             error.Overflow => return error.ByteValueTooLarge,
-            else => return err,
         };
 
         try self.addToken(.BYTE, .{ .byte = byte_val });
@@ -1117,14 +1142,9 @@ pub const LexicalAnalyzer = struct {
         const clean_bin = try self.removeUnderscores(bin_digits);
         defer self.allocator.free(clean_bin);
 
-        if (is_negative and std.mem.eql(u8, clean_bin, "10000000000000000000000000000000")) {
-            try self.addToken(.INT, .{ .int = std.math.minInt(i32) });
-            return;
-        }
-
-        var int_val = std.fmt.parseInt(i32, clean_bin, 2) catch |err| switch (err) {
+        var int_val = std.fmt.parseInt(i64, clean_bin, 2) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
-            else => return err,
+            error.Overflow => return self.intLiteralOutOfRange(clean_bin),
         };
 
         if (is_negative) int_val = -int_val;
@@ -1151,9 +1171,9 @@ pub const LexicalAnalyzer = struct {
         const clean_oct = try self.removeUnderscores(oct_digits);
         defer self.allocator.free(clean_oct);
 
-        var int_val = std.fmt.parseInt(i32, clean_oct, 8) catch |err| switch (err) {
+        var int_val = std.fmt.parseInt(i64, clean_oct, 8) catch |err| switch (err) {
             error.InvalidCharacter => return error.InvalidNumber,
-            else => return err,
+            error.Overflow => return self.intLiteralOutOfRange(clean_oct),
         };
 
         if (is_negative) int_val = -int_val;

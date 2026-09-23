@@ -25,7 +25,9 @@ typedef struct {
     long long x, y, z, w;
 } Vec4;
 
+/* #define N 2500 */
 #define N 250000
+/* #define STEPS 5 */
 #define STEPS 550
 #define MOD 65536LL
 

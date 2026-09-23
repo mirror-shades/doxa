@@ -13,12 +13,44 @@ pub fn Methods(comptime Ctx: type) type {
     const StackMergeState = Ctx.StackMergeState;
     const EnumVariantMeta = Ctx.EnumVariantMeta;
     const internPeekString = Ctx.internPeekString;
+    const ScopeElision = @import("./scope_elision.zig").Methods(Ctx);
 
     return struct {
+        /// Scope bookkeeping is suppressed wholesale for functions whose arenas
+        /// are provably unused (see `scope_elision.zig`). Routing every emission
+        /// through these helpers keeps enter/exit balanced: either both sides are
+        /// written or neither is.
+        fn emitScopeEnter(self: *IRPrinter, w: anytype) !void {
+            if (self.scopes_elided) return;
+            try w.writeAll("  call void @doxa_scope_enter()\n");
+        }
+
+        fn emitScopeExit(self: *IRPrinter, w: anytype) !void {
+            if (self.scopes_elided) return;
+            try w.writeAll("  call void @doxa_scope_exit()\n");
+        }
+
+        fn emitScopeReset(self: *IRPrinter, w: anytype) !void {
+            if (self.scopes_elided) return;
+            try w.writeAll("  call void @doxa_scope_reset()\n");
+        }
+
+        /// Unwind the reusable loop scopes still active at a `return`, then the
+        /// function's own scope. Each reusable loop scope contributes two levels.
+        fn emitReturnScopeExits(self: *IRPrinter, w: anytype, loop_scope_count: u32) !void {
+            if (self.scopes_elided) return;
+            var loop_i = loop_scope_count;
+            while (loop_i > 0) : (loop_i -= 1) {
+                try w.writeAll("  call void @doxa_scope_exit()\n");
+                try w.writeAll("  call void @doxa_scope_exit()\n");
+            }
+            try w.writeAll("  call void @doxa_scope_exit()\n");
+        }
+
         pub fn writeFunction(
             self: *IRPrinter,
             hir: *const HIR.HIRProgram,
-            w: anytype,
+            outer_w: anytype,
             func: HIR.HIRProgram.HIRFunction,
             func_start_labels: *std.StringHashMap(bool),
             peek_state: *PeekEmitState,
@@ -26,9 +58,18 @@ pub fn Methods(comptime Ctx: type) type {
             self.in_function_context = true;
             defer self.in_function_context = false;
 
+            self.clearNarrowedVars();
+            self.var_regions.clearRetainingCapacity();
+
             const range = self.getFunctionRange(hir, func, func_start_labels) orelse return;
             const start_idx = range.start;
             const end_idx = range.end;
+
+            // A function that never puts a value in its scope arena does not need
+            // one. Skipping the enter/exit pair removes two page-allocator round
+            // trips per call, which is the whole cost of scalar leaf functions.
+            self.scopes_elided = ScopeElision.functionScopeIsDead(func.param_types, func.return_type, hir.instructions[start_idx..end_idx]);
+            defer self.scopes_elided = false;
 
             // First pass: Collect all variables that need allocation
             var variables_to_allocate = std.StringHashMap(VariableInfo).init(self.allocator);
@@ -142,26 +183,15 @@ pub fn Methods(comptime Ctx: type) type {
             const params_str = if (param_strs.items.len == 0) "" else try std.mem.join(self.allocator, ", ", param_strs.items);
             defer if (param_strs.items.len > 0) self.allocator.free(params_str);
 
-            // Rename user entry function so the generated Zig root can provide `main`
-            const emitted_name_owned = if (func.is_entry and !std.mem.eql(u8, func.qualified_name, "main"))
-                try std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{func.qualified_name})
-            else
-                null;
-            defer if (emitted_name_owned) |name| self.allocator.free(name);
-            const emitted_name = if (func.is_entry)
-                (if (std.mem.eql(u8, func.qualified_name, "main"))
-                    "doxa_user_main"
-                else
-                    emitted_name_owned.?)
-            else
-                func.qualified_name;
+            const emitted_name = try self.functionSymbol(func);
+            defer self.allocator.free(emitted_name);
 
             const func_decl = try std.fmt.allocPrint(self.allocator, "define {s} @{s}({s}) {{\n", .{ return_type_str, emitted_name, params_str });
             defer self.allocator.free(func_decl);
-            try w.writeAll(func_decl);
+            try outer_w.writeAll(func_decl);
 
             // Add entry block
-            try w.writeAll("entry:\n");
+            try outer_w.writeAll("entry:\n");
 
             // Initialize variables map
             var variables = std.StringHashMap(VariableInfo).init(self.allocator);
@@ -181,17 +211,26 @@ pub fn Methods(comptime Ctx: type) type {
                 const llvm_ty = self.stackTypeToLLVMType(var_info.stack_type);
                 const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ var_info.ptr_name, llvm_ty });
                 defer self.allocator.free(alloca_line);
-                try w.writeAll(alloca_line);
+                try outer_w.writeAll(alloca_line);
 
                 // Add to variables map for later use
                 try variables.put(var_name, var_info);
             }
 
             // Reusable stack slots for string operations (avoid alloca-in-loop stack overflow)
-            try w.writeAll("  %str_out_ptr = alloca ptr\n");
-            try w.writeAll("  %str_out_len = alloca i64\n");
+            try outer_w.writeAll("  %str_out_ptr = alloca ptr\n");
+            try outer_w.writeAll("  %str_out_len = alloca i64\n");
             self.entry_str_out_ptr = "%str_out_ptr";
             self.entry_str_out_len = "%str_out_len";
+
+            // Stage the body so synthetic-header allocas discovered while
+            // emitting it can be replayed in the entry block (see the
+            // `entry_allocas` field). All writes from here on go to the buffer.
+            self.entry_allocas.clearRetainingCapacity();
+            self.synth_header_counter = 0;
+            var body_alloc = std.Io.Writer.Allocating.init(self.allocator);
+            defer body_alloc.deinit();
+            const w = &body_alloc.writer;
 
             // Process function body instructions
             var id: usize = func.param_types.len; // Start after parameters
@@ -229,6 +268,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             // Process function body instructions
+            self.scope_depth = 0;
             for (hir.instructions[start_idx..end_idx]) |inst| {
                 const tag = std.meta.activeTag(inst);
                 const requires_new_block = switch (tag) {
@@ -280,6 +320,7 @@ pub fn Methods(comptime Ctx: type) type {
                             if (ret.has_value and stack.items.len > 0) {
                                 stack.items.len -= 1;
                             }
+                            try emitReturnScopeExits(self, w, ret.loop_scope_count);
                             try w.writeAll("  ret void\n");
                             last_instruction_was_terminator = true;
                             continue;
@@ -293,6 +334,8 @@ pub fn Methods(comptime Ctx: type) type {
                             if (v.ty != target_return_stack_type) {
                                 v = try self.coerceForStore(v, target_return_stack_type, &id, w);
                             }
+                            v = try self.cloneHeapForReturn(w, &id, v, func.return_type);
+                            try emitReturnScopeExits(self, w, ret.loop_scope_count);
                             const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, v.name });
                             defer self.allocator.free(ret_line);
                             try w.writeAll(ret_line);
@@ -313,10 +356,17 @@ pub fn Methods(comptime Ctx: type) type {
                                 const zero3_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 2\n", .{ zero3, return_type_str, zero2 });
                                 defer self.allocator.free(zero3_line);
                                 try w.writeAll(zero3_line);
-                                const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero3 });
+                                const zero4 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
+                                id += 1;
+                                const zero4_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 3\n", .{ zero4, return_type_str, zero3 });
+                                defer self.allocator.free(zero4_line);
+                                try w.writeAll(zero4_line);
+                                try emitReturnScopeExits(self, w, ret.loop_scope_count);
+                                const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero4 });
                                 defer self.allocator.free(ret_line);
                                 try w.writeAll(ret_line);
                             } else {
+                                try emitReturnScopeExits(self, w, ret.loop_scope_count);
                                 const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} zeroinitializer\n", .{return_type_str});
                                 defer self.allocator.free(ret_line);
                                 try w.writeAll(ret_line);
@@ -324,7 +374,8 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                         last_instruction_was_terminator = true;
                     },
-                    .Unreachable => |_| {
+                    .Unreachable => {
+                        try w.writeAll("  call void @doxa_trap_unreachable()\n");
                         try w.writeAll("  unreachable\n");
                         stack.items.len = 0;
                         last_instruction_was_terminator = true;
@@ -380,23 +431,23 @@ pub fn Methods(comptime Ctx: type) type {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 1 to ptr\n", .{sentinel});
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            try stack.append(.{ .name = sentinel, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                            try stack.append(.{ .name = sentinel, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                             last_instruction_was_terminator = false;
                             continue;
                         }
 
-                        const struct_type_llvm = try self.buildI64StructType(fcount);
+                        const struct_type_llvm = try self.buildI64StructType(fcount * 2);
                         defer self.allocator.free(struct_type_llvm);
 
-                        // Allocate struct on heap
-                        const struct_size = fcount * @sizeOf(i64);
+                        // Allocate struct on heap (each string field is ptr + len)
+                        const struct_size = fcount * 2 * @sizeOf(i64);
                         const size_reg = try self.nextTemp(&id);
                         const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_reg, struct_size });
                         defer self.allocator.free(size_line);
                         try w.writeAll(size_line);
 
                         const malloc_reg = try self.nextTemp(&id);
-                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @malloc(i64 {s})\n", .{ malloc_reg, size_reg });
+                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {s}, i64 8)\n", .{ malloc_reg, size_reg });
                         defer self.allocator.free(malloc_line);
                         try w.writeAll(malloc_line);
 
@@ -406,7 +457,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(cast_line);
                         try w.writeAll(cast_line);
 
-                        // Populate each field from module globals
+                        // Populate each field from module globals (raw C-strings).
                         var fi: usize = 0;
                         while (fi < fcount) : (fi += 1) {
                             const field_name = lm.field_names[fi];
@@ -422,20 +473,34 @@ pub fn Methods(comptime Ctx: type) type {
                             defer self.allocator.free(load_line);
                             try w.writeAll(load_line);
 
-                            // Convert value to i64 storage representation
-                            const loaded_sv = StackVal{ .name = loaded_val, .ty = field_st };
-                            const loaded_storage = try self.convertValueToArrayStorage(w, loaded_sv, HIR.HIRType{ .String = {} }, &id);
+                            // Recover (ptr, len) from the C-string and store both words.
+                            const out_ptr_slot = try self.nextTemp(&id);
+                            const out_len_slot = try self.nextTemp(&id);
+                            const alloca_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
+                            const alloca_len = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
+                            defer self.allocator.free(alloca_ptr);
+                            defer self.allocator.free(alloca_len);
+                            try w.writeAll(alloca_ptr);
+                            try w.writeAll(alloca_len);
+                            const init_null = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
+                            const init_zero = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
+                            defer self.allocator.free(init_null);
+                            defer self.allocator.free(init_zero);
+                            try w.writeAll(init_null);
+                            try w.writeAll(init_zero);
+                            const from_cstr = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_from_cstr(ptr {s}, ptr {s}, ptr {s})\n", .{ loaded_val, out_ptr_slot, out_len_slot });
+                            defer self.allocator.free(from_cstr);
+                            try w.writeAll(from_cstr);
+                            const cloned_ptr = try self.nextTemp(&id);
+                            const cloned_len = try self.nextTemp(&id);
+                            const load_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ cloned_ptr, out_ptr_slot });
+                            const load_len = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ cloned_len, out_len_slot });
+                            defer self.allocator.free(load_ptr);
+                            defer self.allocator.free(load_len);
+                            try w.writeAll(load_ptr);
+                            try w.writeAll(load_len);
 
-                            // GEP to field position
-                            const field_gep = try self.nextTemp(&id);
-                            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds {s}, ptr {s}, i32 0, i32 {d}\n", .{ field_gep, struct_type_llvm, struct_ptr, @as(i32, @intCast(fi)) });
-                            defer self.allocator.free(gep_line);
-                            try w.writeAll(gep_line);
-
-                            // Store into struct field
-                            const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ loaded_storage.name, field_gep });
-                            defer self.allocator.free(store_line);
-                            try w.writeAll(store_line);
+                            try self.storeStructStringField(w, struct_type_llvm, struct_ptr, fi * 2, cloned_ptr, cloned_len, &id);
                         }
 
                         // Store the module struct pointer to the global so subsequent
@@ -446,11 +511,11 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(store_module_line);
                         try w.writeAll(store_module_line);
 
-                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
-                        if (lv.scope_kind == .GlobalLocal) {
+                        if (lv.scope_kind == .GlobalLocal or lv.scope_kind == .ModuleGlobal) {
                             try self.handleLoadVarGlobal(w, &stack, &id, lv.var_name);
                         } else if (variables.get(lv.var_name)) |entry| {
                             const result_name = try self.nextTemp(&id);
@@ -462,9 +527,25 @@ pub fn Methods(comptime Ctx: type) type {
                             );
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            try stack.append(.{
+                            const loaded = StackVal{
                                 .name = result_name,
                                 .ty = entry.stack_type,
+                                // A region recorded for a *variable* is an upper
+                                // bound, not a fact: the Deep-wins join keeps a
+                                // loop-arena classification even after a later
+                                // `.rehome` store re-homed the payload into the
+                                // function body. Only a producer that allocates in
+                                // the current loop arena at the store site is a
+                                // definite `Deep`. A load therefore must never
+                                // present `Deep` as a clone signal — fold it to
+                                // `Unknown` so the emitter keeps the runtime
+                                // rehome call (which reads the object's real
+                                // arena) instead of statically cloning an object
+                                // the runtime would keep.
+                                .region = switch (self.var_regions.get(lv.var_name) orelse .Unknown) {
+                                    .Deep => .Unknown,
+                                    else => |r| r,
+                                },
                                 .array_type = entry.array_type,
                                 .enum_type_name = entry.enum_type_name,
                                 .struct_field_types = entry.struct_field_types,
@@ -472,7 +553,16 @@ pub fn Methods(comptime Ctx: type) type {
                                 .struct_type_name = entry.struct_type_name,
                                 .fixed_array_depth = entry.fixed_array_depth,
                                 .fixed_array_sizes = entry.fixed_array_sizes,
-                            });
+                            };
+                            if (entry.stack_type == .Value) {
+                                if (try self.loadNarrowedUnion(w, loaded, lv.var_name, &id)) |unwrapped| {
+                                    try stack.append(unwrapped);
+                                } else {
+                                    try stack.append(loaded);
+                                }
+                            } else {
+                                try stack.append(loaded);
+                            }
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
@@ -488,7 +578,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .PushStorageId => |psid| {
-                        if (psid.scope_kind == .GlobalLocal) {
+                        if (psid.scope_kind == .GlobalLocal or psid.scope_kind == .ModuleGlobal) {
                             try self.handlePushStorageIdGlobal(w, &stack, &id, psid.var_name);
                         } else if (variables.get(psid.var_name)) |entry| {
                             if (entry.fixed_array_depth > 0) {
@@ -635,11 +725,11 @@ pub fn Methods(comptime Ctx: type) type {
                     .GetField => |gf| try self.emitGetField(w, &stack, &id, gf),
                     .SetField => |sf| try self.emitSetField(w, &stack, &id, sf),
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
-                    .ArraySet => |_| try self.emitArraySet(w, &stack, &id),
-                    .ArrayGet => |_| try self.emitArrayGet(w, &stack, &id),
+                    .ArraySet => try self.emitArraySet(w, &stack, &id),
+                    .ArrayGet => try self.emitArrayGet(w, &stack, &id),
                     .ArrayCompoundAssign => |a| try self.emitArrayGetAndArith(w, &stack, &id, a.op),
                     .ArrayLen => try self.emitArrayLen(w, &stack, &id),
-                    .ArrayPush => |_| try self.emitArrayPush(w, &stack, &id),
+                    .ArrayPush => try self.emitArrayPush(w, &stack, &id),
                     .ArrayPop => try self.emitArrayPop(w, &stack, &id),
                     .ArrayInsert => try self.emitArrayInsert(w, &stack, &id),
                     .ArrayRemove => try self.emitArrayRemove(w, &stack, &id),
@@ -655,17 +745,24 @@ pub fn Methods(comptime Ctx: type) type {
                         self.handleSwap(&stack);
                         last_instruction_was_terminator = false;
                     },
-                    .StoreFieldName => |_| {
+                    .StoreFieldName => {
                         last_instruction_was_terminator = false;
                     },
-                    .EnterScope => |_| {
-                        // EnterScope is a no-op in LLVM IR generation
-                        // It's used for scope tracking but doesn't generate LLVM IR
+                    .EnterScope => {
+                        try emitScopeEnter(self, w);
+                        self.scope_depth += 1;
                         last_instruction_was_terminator = false;
                     },
-                    .ExitScope => |_| {
-                        // ExitScope is a no-op in LLVM IR generation
-                        // It's used for scope tracking but doesn't generate LLVM IR
+                    .ResetScope => {
+                        try emitScopeReset(self, w);
+                        last_instruction_was_terminator = false;
+                    },
+                    .ExitScope => |s| {
+                        try emitScopeExit(self, w);
+                        if (!self.exited_scopes.contains(s.scope_id)) {
+                            self.scope_depth -|= 1;
+                            self.exited_scopes.put(s.scope_id, {}) catch {};
+                        }
                         last_instruction_was_terminator = false;
                     },
                     .PeekStruct => |ps| {
@@ -717,6 +814,9 @@ pub fn Methods(comptime Ctx: type) type {
                                         },
                                         else => {},
                                     }
+                                    // The empty default was materialised in the arena
+                                    // current at this declaration (A1 region analysis).
+                                    try self.recordVarRegion(sd.var_name, self.currentRegionTag());
                                 }
                                 continue;
                             }
@@ -728,13 +828,22 @@ pub fn Methods(comptime Ctx: type) type {
                             if (sd.declared_type == .Union) {
                                 value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
                             }
-                            if (!sd.is_const and sd.declared_type == .Array and value.fixed_array_depth == 0) {
-                                const src_ptr = if (value.ty == .PTR) value else try self.ensurePointer(w, value, &id);
-                                const clone_reg = try self.nextTemp(&id);
-                                const clone_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_clone(ptr {s})\n", .{ clone_reg, src_ptr.name });
-                                defer self.allocator.free(clone_line);
-                                try w.writeAll(clone_line);
-                                value = .{ .name = clone_reg, .ty = .PTR, .array_type = value.array_type };
+                            // A1: a mutable declaration re-homes (or plain-stores)
+                            // into the function-body arena, so the payload outlives
+                            // every later store. A const keeps its initializer's own
+                            // arena, which the analysis may not know — leave it
+                            // unclassified rather than risk a plain store of a
+                            // short-lived object.
+                            if (!sd.is_const) {
+                                value = try self.rehomeForLocalStore(w, &id, value, sd.declared_type);
+                            }
+                            if (sd.is_const) {
+                                // A const keeps its initializer's own arena, which the
+                                // analysis does not classify; never plain-store a load
+                                // of it (A1).
+                                try self.var_regions.put(sd.var_name, .Unknown);
+                            } else {
+                                try self.recordVarRegion(sd.var_name, .Func);
                             }
                             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
                                 value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
@@ -785,7 +894,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .StoreVar => |sv| {
-                        if (sv.scope_kind == .GlobalLocal) {
+                        if (sv.scope_kind == .GlobalLocal or sv.scope_kind == .ModuleGlobal) {
                             try self.handleStoreVarGlobal(w, &stack, &id, sv);
                         } else {
                             if (stack.items.len < 1) continue;
@@ -801,6 +910,21 @@ pub fn Methods(comptime Ctx: type) type {
                             }
                             if (sv.expected_type == .Union) {
                                 value = try self.buildDoxaValue(w, value, sv.expected_type, &id);
+                            }
+                            value = switch (sv.heap_copy) {
+                                .snapshot => try self.cloneHeapForSnapshot(w, &id, value, sv.expected_type),
+                                .keep => value,
+                                .rehome => try self.rehomeForLocalStore(w, &id, value, sv.expected_type),
+                            };
+                            // A1 region analysis: every local store except an
+                            // in-place `.keep` store-back leaves the payload in the
+                            // function-body arena (or an ancestor), so a later load
+                            // may take the static plain-store path. `.keep` rewrites
+                            // the same object the variable already holds; preserve a
+                            // `Deep` classification (loop-arena payload) if one was
+                            // recorded.
+                            if (sv.heap_copy != .keep or !self.var_regions.contains(sv.var_name)) {
+                                try self.recordVarRegion(sv.var_name, .Func);
                             }
                             var info_ptr = variables.getPtr(sv.var_name);
                             if (info_ptr == null) {
@@ -875,6 +999,14 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.handleUnionConstruct(w, &stack, &id, uc);
                         last_instruction_was_terminator = false;
                     },
+                    .NarrowVar => |nv| {
+                        try self.narrowVariable(nv.var_name, nv.narrowed_type);
+                        last_instruction_was_terminator = false;
+                    },
+                    .RestoreVar => |rv| {
+                        self.restoreVariable(rv.var_name);
+                        last_instruction_was_terminator = false;
+                    },
                     .LogicalOp => |lop| {
                         try self.handleLogicalOp(w, &stack, &id, lop);
                         last_instruction_was_terminator = false;
@@ -886,13 +1018,14 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .AssertFail => |af| {
                         try self.handleAssertFail(w, &stack, &id, af, peek_state);
-                        last_instruction_was_terminator = false;
+                        last_instruction_was_terminator = true;
                     },
                 }
             }
 
             if (!last_instruction_was_terminator) {
                 if (target_return_stack_type == .Nothing) {
+                    try emitScopeExit(self, w);
                     try w.writeAll("  ret void\n");
                 } else if (std.mem.indexOf(u8, return_type_str, "%DoxaValue") != null) {
                     const zero = try self.nextTemp(&id);
@@ -907,10 +1040,16 @@ pub fn Methods(comptime Ctx: type) type {
                     const zero3_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 2\n", .{ zero3, return_type_str, zero2 });
                     defer self.allocator.free(zero3_line);
                     try w.writeAll(zero3_line);
-                    const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero3 });
+                    const zero4 = try self.nextTemp(&id);
+                    const zero4_line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue {s} {s}, i64 0, 3\n", .{ zero4, return_type_str, zero3 });
+                    defer self.allocator.free(zero4_line);
+                    try w.writeAll(zero4_line);
+                    try emitScopeExit(self, w);
+                    const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, zero4 });
                     defer self.allocator.free(ret_line);
                     try w.writeAll(ret_line);
                 } else {
+                    try emitScopeExit(self, w);
                     const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} zeroinitializer\n", .{return_type_str});
                     defer self.allocator.free(ret_line);
                     try w.writeAll(ret_line);
@@ -918,6 +1057,15 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             try w.writeAll("}\n\n");
+
+            for (self.entry_allocas.items) |line| {
+                try outer_w.writeAll(line);
+                self.allocator.free(line);
+            }
+            self.entry_allocas.clearRetainingCapacity();
+            const body_bytes = try body_alloc.toOwnedSlice();
+            defer self.allocator.free(body_bytes);
+            try outer_w.writeAll(body_bytes);
         }
 
         pub fn nextTemp(self: *IRPrinter, id: *usize) ![]const u8 {
@@ -932,6 +1080,63 @@ pub fn Methods(comptime Ctx: type) type {
             return name;
         }
 
+        /// Push a narrowed member view for `var_name`. The narrowed type is a
+        /// single-member union; loads of the variable unwrap to that member.
+        pub fn narrowVariable(self: *IRPrinter, var_name: []const u8, narrowed_type: HIR.HIRType) !void {
+            var entry = try self.narrowed_vars.getOrPut(var_name);
+            if (!entry.found_existing) {
+                entry.value_ptr.* = std.ArrayListUnmanaged(HIR.HIRType).empty;
+            }
+            try entry.value_ptr.append(self.allocator, narrowed_type);
+        }
+
+        /// Drop all narrowing state. Called at function entry so a `RestoreVar`
+        /// skipped after an early `return` never leaks into a later function.
+        pub fn clearNarrowedVars(self: *IRPrinter) void {
+            var it = self.narrowed_vars.iterator();
+            while (it.next()) |entry| {
+                entry.value_ptr.deinit(self.allocator);
+            }
+            self.narrowed_vars.clearRetainingCapacity();
+        }
+
+        /// Pop the narrowed member view for `var_name`, restoring any outer view.
+        pub fn restoreVariable(self: *IRPrinter, var_name: []const u8) void {
+            if (self.narrowed_vars.getPtr(var_name)) |stack| {
+                if (stack.items.len > 0) {
+                    stack.items.len -= 1;
+                    if (stack.items.len == 0) _ = self.narrowed_vars.remove(var_name);
+                }
+            }
+        }
+
+        /// The single member of the variable's active narrowed union view, or
+        /// null when the variable is not narrowed to a single member.
+        pub fn narrowedMemberType(self: *IRPrinter, var_name: []const u8) ?HIR.HIRType {
+            const stack = self.narrowed_vars.get(var_name) orelse return null;
+            if (stack.items.len == 0) return null;
+            const view = stack.items[stack.items.len - 1];
+            if (view != .Union) return null;
+            const members = view.Union.members;
+            if (members.len != 1) return null;
+            return members[0].*;
+        }
+
+        /// Load a union-typed variable that is currently narrowed: emit the raw
+        /// `%DoxaValue` load and unwrap it to the active member representation.
+        /// Returns null when no narrowing applies.
+        pub fn loadNarrowedUnion(
+            self: *IRPrinter,
+            w: anytype,
+            raw: StackVal,
+            var_name: []const u8,
+            id: *usize,
+        ) !?StackVal {
+            const member = self.narrowedMemberType(var_name) orelse return null;
+            const unwrapped = try self.unwrapDoxaValueToType(w, raw, member, id);
+            return unwrapped;
+        }
+
         /// Collect enum variant metadata from the constant pool so we can render
         /// enums by name in native code without needing a dynamic registry at
         /// runtime.
@@ -940,7 +1145,7 @@ pub fn Methods(comptime Ctx: type) type {
                 fn add(printer: *IRPrinter, type_name: []const u8, variant_index: u32, variant_name: []const u8) !void {
                     var entry = try printer.enum_print_map.getOrPut(type_name);
                     if (!entry.found_existing) {
-                        entry.value_ptr.* = std.ArrayListUnmanaged(EnumVariantMeta){};
+                        entry.value_ptr.* = std.ArrayListUnmanaged(EnumVariantMeta).empty;
                     }
 
                     for (entry.value_ptr.items) |existing| {
@@ -975,10 +1180,10 @@ pub fn Methods(comptime Ctx: type) type {
                             const variants = et.variants(member.id) orelse continue;
                             for (variants) |variant| {
                                 try registerVariant.add(self, group_name, variant.index, variant.name);
+                            }
+                        }
                     }
                 }
-            }
-        }
             }
         }
 
@@ -1104,12 +1309,11 @@ pub fn Methods(comptime Ctx: type) type {
                 .{ .name = "forall_quantifier_eq", .runtime = "doxa_forall_quantifier_eq" },
             };
             for (wrappers) |wrap| {
-                const header = try std.fmt.allocPrint(self.allocator, "define i2 @{s}(ptr %hdr, ptr %value) {{\n", .{wrap.name});
+                const header = try std.fmt.allocPrint(self.allocator, "define i2 @{s}(ptr %hdr, ptr %value_ptr, i64 %value_len) {{\n", .{wrap.name});
                 defer self.allocator.free(header);
                 try w.writeAll(header);
                 try w.writeAll("entry:\n");
-                try w.writeAll("  %value_bits = ptrtoint ptr %value to i64\n");
-                const call_line = try std.fmt.allocPrint(self.allocator, "  %res = call i8 @{s}(ptr %hdr, i64 %value_bits)\n", .{wrap.runtime});
+                const call_line = try std.fmt.allocPrint(self.allocator, "  %res = call i8 @{s}(ptr %hdr, ptr %value_ptr, i64 %value_len)\n", .{wrap.runtime});
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
                 try w.writeAll("  %cast = trunc i8 %res to i2\n");

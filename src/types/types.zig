@@ -78,6 +78,22 @@ pub const Environment = struct {
     memory_manager: *MemoryManager,
     module: ?*ModuleEnvironment = null,
 
+    pub fn init(
+        allocator: std.mem.Allocator,
+        enclosing: ?*Environment,
+        debug_enabled: bool,
+        memory_manager: *MemoryManager,
+    ) Environment {
+        return .{
+            .values = std.StringHashMap(TokenLiteral).init(allocator),
+            .types = std.StringHashMap(ast.TypeInfo).init(allocator),
+            .enclosing = enclosing,
+            .debug_enabled = debug_enabled,
+            .allocator = allocator,
+            .memory_manager = memory_manager,
+        };
+    }
+
     pub fn deinit(self: *Environment) void {
         var it = self.values.iterator();
         while (it.next()) |entry| {

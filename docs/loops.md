@@ -15,6 +15,17 @@ for(int x, x < 10; x++) {
 
 Each section of the above the for loop works the same, the key difference being each section is marked by its own keyword. This main advantage this provides is that each section of the for loop becomes decomposable. Doxa allows you to use any combination of loop constructs to add functionality to the loop as needed. Regardless of which construct you use, it will always follow the syntactical precedent of C loops: for -> while -> do.
 
+## Loop Lifetimes
+
+The loop state and body are separate logical scopes. Loop state persists for the
+whole loop, while iteration-local bindings are recreated on each iteration.
+When the body needs managed storage, its physical arena is entered once and
+reset between iterations; it is not created and destroyed on every pass.
+
+`continue` resets the body before continuing, `break` unwinds the body and loop
+scopes, and `return` unwinds every active scope. A loop containing only
+primitive values or borrows does not emit runtime arena operations at all.
+
 ## Core Loop Constructs
 
 ### For Loops
@@ -184,7 +195,8 @@ for i while i < @length(collection) do i++ {
 
 - The `at` variable provides an immutable copy of the current index
 - Nested loops create independent index copies
-- Modifying the collection during iteration may cause undefined behavior
+- Struct (and other heap) items alias the collection element: `each n in neutrons { n.x_pos += 1 }` mutates `neutrons`. Scalar items (`int`, `float`, …) and whole arrays are copies; write `arr[i]` to persist those.
+- Modifying the collection's length during iteration may cause undefined behavior
 
 ## Control Flow
 

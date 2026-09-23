@@ -7,7 +7,6 @@ pub const Phase = enum {
     RESOLVING,
     SEMANTIC_A,
     GENERATE_S,
-    GENERATE_B,
     GENERATE_L,
     EXECUTION,
 };
@@ -19,19 +18,21 @@ const Record = struct {
 };
 
 pub const Profiler = struct {
-    records: std.StringArrayHashMap(Record),
+    io: std.Io,
     allocator: std.mem.Allocator,
     current_phase: Phase,
     start_time: ?u64,
     end_time: ?u64,
     active: bool,
+    records: std.array_hash_map.String(Record),
 
-    pub fn init(allocator: std.mem.Allocator, active: bool) Profiler {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, active: bool) Profiler {
         return .{
+            .io = io,
             .current_phase = .NONE,
             .start_time = null,
             .end_time = null,
-            .records = std.StringArrayHashMap(Record).init(allocator),
+            .records = .empty,
             .allocator = allocator,
             .active = active,
         };
@@ -44,18 +45,18 @@ pub const Profiler = struct {
                 entry.value_ptr.payload = null;
             }
         }
-        self.records.deinit();
+        self.records.deinit(self.allocator);
     }
 
     fn startTimer(self: *Profiler, phase: Phase) void {
         self.end_time = null;
         self.current_phase = phase;
-        const now = std.time.nanoTimestamp();
+        const now = std.Io.Timestamp.now(self.io, .real).nanoseconds;
         self.start_time = @as(u64, @intCast(now));
     }
 
     fn stopTimer(self: *Profiler) void {
-        const now = std.time.nanoTimestamp();
+        const now = std.Io.Timestamp.now(self.io, .real).nanoseconds;
         self.end_time = @as(u64, @intCast(now));
     }
 
@@ -120,7 +121,7 @@ pub const Profiler = struct {
             .duration_ns = end - start,
             .payload = payload,
         };
-        self.records.put(@tagName(record.phase), record) catch {
+        self.records.put(self.allocator, @tagName(record.phase), record) catch {
             std.debug.print("Failed to add record\n", .{});
             return;
         };

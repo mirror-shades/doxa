@@ -1,0 +1,17 @@
+# Regression test for struct-literal validation inside imported modules.
+# A literal that names a field the struct does not declare must be a compile
+# error, not a silent layout desync that crashes at runtime.
+public struct Item {
+    public name :: string,
+    public count :: int,
+    public tags :: string[],
+}
+
+public function makeItem() returns Item {
+    return $Item {
+        name is "thing",
+        count is 1,
+        kind is "extra",
+        tags is [],
+    }
+}

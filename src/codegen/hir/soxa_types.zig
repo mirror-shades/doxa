@@ -97,6 +97,20 @@ pub const ScopeKind = enum {
     Builtin,
 };
 
+/// How a heap value is copied when stored into a variable.
+///
+/// `rehome` keeps identity when the source already outlives the destination
+/// (e.g. `each n in global_array` — `n` should alias the element). `snapshot`
+/// always clones; used for by-value function parameters so the callee cannot
+/// mutate the caller's struct. `keep` stores the pointer as-is after an
+/// in-place mutation (`SetField`, `@push`) — cloning would disconnect the
+/// write from the object that was just updated.
+pub const HeapCopyKind = enum {
+    rehome,
+    snapshot,
+    keep,
+};
+
 pub const CallKind = enum {
     LocalFunction,
     ModuleFunction,
@@ -114,6 +128,7 @@ pub const FunctionInfo = struct {
     local_var_count: u32,
     is_entry: bool,
     param_is_alias: []bool,
+    param_is_readonly: []bool,
     param_types: []HIRType,
 };
 
@@ -150,6 +165,7 @@ pub const HIRProgram = struct {
         local_var_count: u32,
         is_entry: bool,
         param_is_alias: []bool,
+        param_is_readonly: []bool,
         param_types: []HIRType,
     };
 
