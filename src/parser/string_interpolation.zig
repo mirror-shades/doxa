@@ -106,20 +106,33 @@ fn parseFormatTemplate(self: *Parser, format_string: []const u8, span: ast.Sourc
 }
 
 fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: ast.SourceSpan) ErrorList!*ast.Expr {
-    var temp_lexer = try LexicalAnalyzer.init(self.allocator, content, self.current_file, self.reporter);
-    defer temp_lexer.deinit();
+    // The placeholder content is a slice into the enclosing string literal's
+    // buffer, which may be owned by a lexer whose lifetime ends before the AST
+    // is consumed. Duplicate it so every token lexeme produced below (and the
+    // bare-variable fallback) points into parser-owned memory that outlives the
+    // whole compile.
+    const owned_content = try self.allocator.dupe(u8, content);
+
+    var temp_lexer = try LexicalAnalyzer.init(self.io, self.allocator, owned_content, self.current_file, self.reporter);
+    defer {
+        // Keep string literals nested inside the placeholder alive (e.g. a
+        // `{"hi"}` argument): the parsed AST borrows them, so they must outlive
+        // this lexer just like the outer string's buffers do.
+        temp_lexer.takeOwnershipOfStrings();
+        temp_lexer.deinit();
+    }
 
     try temp_lexer.initKeywords();
     const tokens = try temp_lexer.lexTokens();
     defer tokens.deinit();
 
-    var temp_parser = Parser.init(self.allocator, tokens.items, self.current_file, self.current_file_uri, self.reporter);
+    var temp_parser = Parser.init(self.io, self.allocator, tokens.items, self.current_file, self.current_file_uri, self.reporter);
     defer temp_parser.deinit();
 
     const expr = try expression_parser.parseExpression(&temp_parser) orelse {
         const var_token = token.Token{
             .type = .IDENTIFIER,
-            .lexeme = content,
+            .lexeme = owned_content,
             .literal = .{ .nothing = {} },
             .line = 0,
             .column = 0,

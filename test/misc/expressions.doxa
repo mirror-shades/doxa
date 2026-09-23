@@ -338,4 +338,17 @@ c_expr44?
 c_expr45?
 c_expr46?
 
+###
+# BARE COMPARISON PEEKS
+###
+
+(5 > 0)?
+(0 > 0)?
+(5.5 > 2.0)?
+(1 == 1)?
+(1 == 2)?
+("abc" == "abc")?
+(both == both)?
+(neither != neither)?
+
 "end"?

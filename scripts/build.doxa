@@ -44,7 +44,7 @@ function build(os :: string, arch :: string) {
     }
 
     const ext is if os == "windows" then ".zip" else ".tar.xz"
-    const target_string is "zig-" + getTargetString(target) + "-0.15.2"
+    const target_string is "zig-" + getTargetString(target) + "-0.16.0"
     const target_zip_string is "./external/" + target_string + ext
 
     @print("building for {arch}-{os}\n")

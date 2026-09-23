@@ -1,0 +1,33 @@
+# Regression test: struct literals may list their fields in any order, but the
+# struct must always be laid out per the DECLARED field order. Previously a
+# reordered literal silently desynchronized construction from `this.field`
+# access in methods, returning garbage for the reordered fields.
+struct Person {
+    public name :: string,
+    public age :: int,
+
+    public method greet() returns string {
+        return "hi " + this.name
+    }
+}
+
+struct Couple {
+    public a :: Person,
+    public b :: Person,
+}
+
+entry function main() {
+    const p is $Person {
+        age is 30,
+        name is "Alice",
+    }
+    @print(p.greet() + "\n")
+    @print(p.name + " " + @string(p.age) + "\n")
+
+    const c is $Couple {
+        b is $Person { age is 25, name is "Bob" },
+        a is $Person { age is 30, name is "Alice" },
+    }
+    @print(c.a.name + " " + @string(c.a.age) + "\n")
+    @print(c.b.name + " " + @string(c.b.age) + "\n")
+}

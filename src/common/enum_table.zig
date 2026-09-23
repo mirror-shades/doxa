@@ -8,8 +8,8 @@ const EnumId = HIRTypes.EnumId;
 /// compact list of variant names for each enum type.
 pub const EnumTable = struct {
     allocator: std.mem.Allocator,
-    entries: std.ArrayListUnmanaged(Entry) = .{},
-    name_to_id: std.StringHashMapUnmanaged(EnumId) = .{},
+    entries: std.ArrayListUnmanaged(Entry) = .empty,
+    name_to_id: std.StringHashMapUnmanaged(EnumId) = .empty,
 
     pub const Variant = struct {
         name: []const u8,

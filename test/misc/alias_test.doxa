@@ -11,7 +11,7 @@ function testAliasFunction(^_circle :: int, ^_shift :: int) {
     _result?
 }
 
-function main() {
+entry function main() {
     var circle is 10
     var shift is 20
     

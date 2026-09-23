@@ -23,13 +23,9 @@ pub fn isClean(result: Counts) bool {
     return result.failed == 0 and result.untested == 0;
 }
 
-pub fn printSection(name: []const u8) void {
-    std.debug.print("\n== {s} ==\n", .{name});
-}
-
 pub fn printCase(name: []const u8, result: Counts) void {
     if (isClean(result)) {
-        std.debug.print("- {s}: ok ({d})\n", .{ name, result.passed });
+        // TODO: add a verbose test mode that prints "- name: ok (N)".
         return;
     }
     if (result.failed == 0 and result.passed == 0 and result.untested > 0) {
@@ -47,10 +43,6 @@ pub fn printCase(name: []const u8, result: Counts) void {
 }
 
 pub fn printSuiteSummary(name: []const u8, result: Counts) void {
-    if (isClean(result)) {
-        std.debug.print("{s}: {d} ok\n", .{ name, result.passed });
-        return;
-    }
     std.debug.print(
         "{s}: {d} ok, {d} fail, {d} untested\n",
         .{ name, result.passed, result.failed, result.untested },
@@ -58,18 +50,28 @@ pub fn printSuiteSummary(name: []const u8, result: Counts) void {
 }
 
 pub fn repoRootFromEnv(allocator: std.mem.Allocator) !?[]const u8 {
-    return process.getEnvVarOwned(allocator, "DOXA_REPO_ROOT") catch null;
+    return process.Environ.getAlloc(std.testing.environ, allocator, "DOXA_REPO_ROOT") catch null;
+}
+
+fn realPathAlloc(path: []const u8, allocator: std.mem.Allocator) ![]u8 {
+    const io = std.testing.io;
+    const resolved = if (std.fs.path.isAbsolute(path))
+        try std.Io.Dir.realPathFileAbsoluteAlloc(io, path, allocator)
+    else
+        try std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator);
+    defer allocator.free(resolved);
+    return try allocator.dupe(u8, resolved);
 }
 
 pub fn doxaExePath(allocator: std.mem.Allocator) ![]const u8 {
-    if (process.getEnvVarOwned(allocator, "DOXA_BIN") catch null) |custom| {
+    if (process.Environ.getAlloc(std.testing.environ, allocator, "DOXA_BIN") catch null) |custom| {
         defer allocator.free(custom);
-        return try std.fs.cwd().realpathAlloc(allocator, custom);
+        return try realPathAlloc(custom, allocator);
     }
     const exe_name = if (builtin.os.tag == .windows) "doxa.exe" else "doxa";
     const joined = try std.fs.path.join(allocator, &[_][]const u8{ "doxa", "test-bin", exe_name });
     defer allocator.free(joined);
-    return try std.fs.cwd().realpathAlloc(allocator, joined);
+    return try realPathAlloc(joined, allocator);
 }
 
 pub fn runCommandCapture(
@@ -78,59 +80,68 @@ pub fn runCommandCapture(
     cwd: ?[]const u8,
     input: ?[]const u8,
 ) !CommandResult {
+    const io = std.testing.io;
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const child_allocator = arena.allocator();
 
-    var child = process.Child.init(argv, child_allocator);
-    if (cwd) |dir| child.cwd = dir;
-    child.stdout_behavior = .Pipe;
-    child.stderr_behavior = .Pipe;
-    if (input != null) child.stdin_behavior = .Pipe;
-
-    try child.spawn();
+    var child = try process.spawn(io, .{
+        .argv = argv,
+        .cwd = if (cwd) |dir| .{ .path = dir } else .inherit,
+        .stdin = if (input != null) .pipe else .ignore,
+        .stdout = .pipe,
+        .stderr = .pipe,
+    });
+    defer child.kill(io);
 
     if (input) |input_data| {
         var stdin_buffer: [1024]u8 = undefined;
-        var stdin_writer = child.stdin.?.writer(&stdin_buffer);
+        var stdin_writer = child.stdin.?.writer(io, &stdin_buffer);
         const stdin = &stdin_writer.interface;
         try stdin.writeAll(input_data);
         try stdin.flush();
-        child.stdin.?.close();
+        child.stdin.?.close(io);
         child.stdin = null;
     }
 
-    var stdout = std.ArrayList(u8).empty;
-    defer stdout.deinit(child_allocator);
-    var stderr = std.ArrayList(u8).empty;
-    defer stderr.deinit(child_allocator);
-
     // Poll both pipes concurrently to avoid deadlock when one pipe fills up.
-    try child.collectOutput(child_allocator, &stdout, &stderr, 8 * 1024 * 1024);
+    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
+    var multi_reader: std.Io.File.MultiReader = undefined;
+    multi_reader.init(child_allocator, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
+    defer multi_reader.deinit();
 
-    const term = try child.wait();
+    while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
+        error.EndOfStream => {},
+        else => |e| return e,
+    }
+    try multi_reader.checkAnyError();
+
+    const term = try child.wait(io);
+    const out_slice = try multi_reader.toOwnedSlice(0);
+    const err_slice = try multi_reader.toOwnedSlice(1);
+
     const exit_code: u8 = switch (term) {
-        .Exited => |code| @intCast(code),
-        .Signal => |signal| {
+        .exited => |code| code,
+        .signal => |signal| {
             std.debug.print("Command terminated with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
+            std.debug.print("stderr: {s}\n", .{err_slice});
             return error.CommandFailed;
         },
-        .Stopped => |signal| {
+        .stopped => |signal| {
             std.debug.print("Command stopped with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
+            std.debug.print("stderr: {s}\n", .{err_slice});
             return error.CommandFailed;
         },
-        .Unknown => {
+        .unknown => {
             std.debug.print("Command failed with unknown error:\n", .{});
-            std.debug.print("stderr: {s}\n", .{stderr.items});
+            std.debug.print("stderr: {s}\n", .{err_slice});
             return error.CommandFailed;
         },
     };
 
     return .{
-        .stdout = try allocator.dupe(u8, stdout.items),
-        .stderr = try allocator.dupe(u8, stderr.items),
+        .stdout = try allocator.dupe(u8, out_slice),
+        .stderr = try allocator.dupe(u8, err_slice),
         .exit_code = exit_code,
     };
 }
@@ -140,7 +151,7 @@ pub fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ar
 
     var lines = std.mem.splitScalar(u8, output, '\n');
     while (lines.next()) |line| {
-        if (std.mem.startsWith(u8, line, "DoxVM: ")) continue;
+        if (isDiagnosticLine(line)) continue;
         const close_bracket = std.mem.indexOfScalar(u8, line, ']') orelse continue;
         const line_with_var = line[close_bracket + 1 ..];
         const colon = std.mem.indexOfScalar(u8, line_with_var, ':') orelse continue;
@@ -155,6 +166,30 @@ pub fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.ar
     return outputs;
 }
 
+/// Diagnostic headers are rendered by `src/utils/source_render.zig` as
+/// `Doxa: [<Phase>][<Severity>]...` and land on the same stream (stderr) as peek
+/// output. Match on that structural `[<Phase>][<Severity>]` shape rather than
+/// the literal "Doxa: " prefix, so a rename never silently breaks peek parsing.
+pub fn isDiagnosticLine(line: []const u8) bool {
+    const phases = [_][]const u8{ "CompileTime", "Runtime", "Internal", "Debug" };
+    const severities = [_][]const u8{ "Error", "Warning", "Info", "Hint", "Internal" };
+
+    const start = std.mem.indexOfScalar(u8, line, '[') orelse return false;
+    var rest = line[start..];
+    rest = rest[1..]; // past the opening '['
+    for (phases) |phase| {
+        if (!std.mem.startsWith(u8, rest, phase)) continue;
+        const after_phase = rest[phase.len..];
+        if (!std.mem.startsWith(u8, after_phase, "][")) continue;
+        const after_sev_bracket = after_phase[2..];
+        for (severities) |sev| {
+            if (!std.mem.startsWith(u8, after_sev_bracket, sev)) continue;
+            if (after_sev_bracket.len > sev.len and after_sev_bracket[sev.len] == ']') return true;
+        }
+    }
+    return false;
+}
+
 pub fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed([]const u8) {
     var outputs = std.array_list.Managed([]const u8).init(allocator);
 
@@ -162,7 +197,7 @@ pub fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.a
     while (lines.next()) |raw_line| {
         // Normalize Windows line endings: stdlib `io.println` emits the OS-native
         // terminator (`\r\n`), so strip a trailing `\r` before comparing.
-        const line = std.mem.trimRight(u8, raw_line, "\r");
+        const line = std.mem.trimEnd(u8, raw_line, "\r");
         if (line.len == 0) continue;
         try outputs.append(line);
     }
@@ -206,6 +241,14 @@ pub fn validatePrintResults(output: []const u8, expected_results: anytype, alloc
     if (expected_count > actual_count) {
         untested = expected_count - actual_count;
         std.debug.print("WARN: {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
+    } else if (actual_count > expected_count) {
+        const surplus = actual_count - expected_count;
+        std.debug.print("ERROR: {d} unexpected extra line(s) of output:\n", .{surplus});
+        var extra_i: usize = expected_count;
+        while (extra_i < actual_count) : (extra_i += 1) {
+            std.debug.print("  Extra: {s}\n", .{outputs.items[extra_i]});
+        }
+        failed += surplus;
     }
 
     return .{ .passed = passed, .failed = failed, .untested = untested };
@@ -240,6 +283,14 @@ pub fn validatePeekResults(output: []const u8, expected_results: anytype, alloca
     if (expected_count > actual_count) {
         untested = expected_count - actual_count;
         std.debug.print("WARN: {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
+    } else if (actual_count > expected_count) {
+        const surplus = actual_count - expected_count;
+        std.debug.print("ERROR: {d} unexpected extra peek result(s):\n", .{surplus});
+        var extra_i: usize = expected_count;
+        while (extra_i < actual_count) : (extra_i += 1) {
+            std.debug.print("  Extra: {s} = {s}\n", .{ outputs.items[extra_i].type, outputs.items[extra_i].value });
+        }
+        failed += surplus;
     }
 
     return .{ .passed = passed, .failed = failed, .untested = untested };

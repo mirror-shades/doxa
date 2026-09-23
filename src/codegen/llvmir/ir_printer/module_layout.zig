@@ -13,6 +13,9 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn writeModule(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype) !void {
             try w.writeAll("declare void @doxa_write_cstr(ptr, i64)\n");
             try w.writeAll("declare void @doxa_write_raw(ptr)\n");
+            try w.writeAll("declare void @doxa_write_stderr(ptr, i64)\n");
+            try w.writeAll("declare void @doxa_exit(i64) noreturn\n");
+            try w.writeAll("declare void @doxa_panic(ptr, i64)\n");
             try w.writeAll("");
             try w.writeAll("declare void @doxa_print_i64(i64)\n");
             try w.writeAll("declare void @doxa_print_u64(i64)\n");
@@ -20,7 +23,10 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_print_byte(i64)\n");
             try w.writeAll("declare i64 @doxa_str_len(ptr, i64)\n");
             try w.writeAll("declare void @doxa_str_concat(ptr, i64, ptr, i64, ptr, ptr)\n");
-            try w.writeAll("declare void @doxa_str_clone(ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_clone_at(i64, ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_clone_root(ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_rehome_at(i64, ptr, i64, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_str_rehome_root(ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_str_from_cstr(ptr, ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_str_clone_raw(ptr, i64)\n");
             try w.writeAll("declare void @doxa_substring(ptr, i64, i64, i64, ptr, ptr)\n");
@@ -48,6 +54,10 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_new_nested(i64, i64, i64, ptr, i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_clone(ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_clone_at(i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_clone_root(ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_rehome_at(i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_rehome_root(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_len(ptr)\n");
             try w.writeAll("declare i64 @doxa_array_get_i64(ptr, i64)\n");
             try w.writeAll("declare void @doxa_array_get_str(ptr, i64, ptr, ptr)\n");
@@ -67,24 +77,31 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare double @llvm.pow.f64(double, double)\n");
             try w.writeAll("declare void @doxa_set_args(i32, ptr)\n");
             try w.writeAll("declare i64 @doxa_int(double)\n");
-            // Legacy type check ABI (i64 + tag + ptr). Implemented as a shim over
-            // the canonical DoxaValue-based helper so older IR keeps working.
+            // Type check ABI (i64 payload + type tag + target type string).
             try w.writeAll("declare i64 @doxa_type_check(i64, i64, ptr)\n");
-            try w.writeAll("declare i64 @doxa_type_check_value(%DoxaValue, ptr)\n");
             try w.writeAll("declare void @doxa_print_value(ptr)\n");
-            try w.writeAll("declare i64 @doxa_find(ptr, i64)\n");
+            try w.writeAll("declare void @doxa_clone_doxa_value_at(i64, ptr)\n");
+            try w.writeAll("declare void @doxa_clone_doxa_value_root(ptr)\n");
             try w.writeAll("declare i64 @doxa_find_array(ptr, i64)\n");
+            try w.writeAll("declare i64 @doxa_find_array_str(ptr, ptr, i64)\n");
             try w.writeAll("declare i64 @doxa_find_str(ptr, i64, ptr, i64)\n");
             try w.writeAll("declare void @doxa_struct_register(ptr, ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_clone_at(i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_clone_root(ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_rehome_at(i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_rehome_root(ptr)\n");
             try w.writeAll("declare void @doxa_enum_register(ptr)\n");
-            try w.writeAll("declare ptr @malloc(i64)\n");
-            try w.writeAll("declare i8 @doxa_exists_quantifier_gt(ptr, i64)\n");
-            try w.writeAll("declare i8 @doxa_exists_quantifier_eq(ptr, i64)\n");
-            try w.writeAll("declare i8 @doxa_forall_quantifier_gt(ptr, i64)\n");
-            try w.writeAll("declare i8 @doxa_forall_quantifier_eq(ptr, i64)\n");
+            try w.writeAll("declare ptr @doxa_scope_alloc(i64, i64)\n");
+            try w.writeAll("declare void @doxa_scope_enter()\n");
+            try w.writeAll("declare void @doxa_scope_exit()\n");
+            try w.writeAll("declare void @doxa_scope_reset()\n");
+            try w.writeAll("declare i8 @doxa_exists_quantifier_gt(ptr, ptr, i64)\n");
+            try w.writeAll("declare i8 @doxa_exists_quantifier_eq(ptr, ptr, i64)\n");
+            try w.writeAll("declare i8 @doxa_forall_quantifier_gt(ptr, ptr, i64)\n");
+            try w.writeAll("declare i8 @doxa_forall_quantifier_eq(ptr, ptr, i64)\n");
             try w.writeAll("declare void @doxa_clear(ptr)\n");
             try w.writeAll("declare ptr @doxa_array_range(i64, i64)\n");
-            try w.writeAll("declare ptr @doxa_scope_alloc(i64, i64)\n");
+            try w.writeAll("declare void @doxa_trap_unreachable()\n");
             try w.writeAll("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
 
             // Inline zig module functions (external): declare with typed parameters
@@ -129,7 +146,7 @@ pub fn Methods(comptime Ctx: type) type {
                 }
                 if (c.return_type == .String) {
                     if (params_buf.items.len > 0) try params_buf.appendSlice(", ");
-                    try params_buf.appendSlice("ptr, i64");
+                    try params_buf.appendSlice("ptr, ptr");
                 }
 
                 const decl = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ ret_ty, c.qualified_name, params_buf.items });
@@ -166,9 +183,9 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("%DoxaPeekInfo = type { ptr, ptr, ptr, ptr, i32, i32, i32, i32, i32 }\n");
             // Canonical value representation shared with the runtime. The layout
             // must stay in sync with `DoxaValue` in `src/runtime/doxa_rt.zig`.
-            try w.writeAll("%DoxaValue = type { i32, i32, i64 }\n");
+            try w.writeAll("%DoxaValue = type { i32, i32, i64, i64 }\n");
             try w.writeAll("%DoxaString = type { ptr, i64 }\n");
-            try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64 }\n\n");
+            try w.writeAll("%ArrayHeader = type { ptr, i64, i64, i64, i64, ptr }\n\n");
             try w.writeAll("@.doxa.nl = private constant [2 x i8] c\"\\0A\\00\"\n");
             try w.writeAll("@.doxa.empty = private constant [1 x i8] c\"\\00\"\n");
             try w.writeAll("@.doxa.arr_open = private constant [2 x i8] c\"[\\00\"\n");
@@ -189,34 +206,34 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("  [4 x i8] [i8 3, i8 1, i8 2, i8 3]\n");
             try w.writeAll("]\n");
             try w.writeAll("@tetra_iff_lut = private constant [4 x [4 x i8]] [\n");
-            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 3, i8 2],\n");
-            try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 2, i8 3],\n");
-            try w.writeAll("  [4 x i8] [i8 3, i8 2, i8 2, i8 3],\n");
-            try w.writeAll("  [4 x i8] [i8 2, i8 3, i8 3, i8 2]\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 0, i8 1],\n");
+            try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 1, i8 0],\n");
+            try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 1, i8 0],\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 0, i8 1]\n");
             try w.writeAll("]\n");
             try w.writeAll("@tetra_xor_lut = private constant [4 x [4 x i8]] [\n");
-            try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 2, i8 3],\n");
-            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 3, i8 2],\n");
-            try w.writeAll("  [4 x i8] [i8 2, i8 3, i8 2, i8 3],\n");
-            try w.writeAll("  [4 x i8] [i8 3, i8 2, i8 3, i8 2]\n");
+            try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 1, i8 0],\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 0, i8 1],\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 0, i8 1],\n");
+            try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 1, i8 0]\n");
             try w.writeAll("]\n");
             try w.writeAll("@tetra_nand_lut = private constant [4 x [4 x i8]] [\n");
             try w.writeAll("  [4 x i8] [i8 1, i8 1, i8 1, i8 1],\n");
-            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 3, i8 2],\n");
-            try w.writeAll("  [4 x i8] [i8 1, i8 3, i8 3, i8 1],\n");
-            try w.writeAll("  [4 x i8] [i8 1, i8 2, i8 1, i8 2]\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 0, i8 1],\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 0, i8 1],\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 1, i8 1, i8 1]\n");
             try w.writeAll("]\n");
             try w.writeAll("@tetra_nor_lut = private constant [4 x [4 x i8]] [\n");
-            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 3, i8 2],\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 0, i8 1],\n");
             try w.writeAll("  [4 x i8] [i8 0, i8 0, i8 0, i8 0],\n");
-            try w.writeAll("  [4 x i8] [i8 3, i8 0, i8 3, i8 3],\n");
-            try w.writeAll("  [4 x i8] [i8 2, i8 0, i8 3, i8 2]\n");
+            try w.writeAll("  [4 x i8] [i8 0, i8 0, i8 0, i8 0],\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 0, i8 0, i8 1]\n");
             try w.writeAll("]\n");
             try w.writeAll("@tetra_implies_lut = private constant [4 x [4 x i8]] [\n");
             try w.writeAll("  [4 x i8] [i8 1, i8 1, i8 1, i8 1],\n");
-            try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 2, i8 3],\n");
-            try w.writeAll("  [4 x i8] [i8 2, i8 1, i8 2, i8 2],\n");
-            try w.writeAll("  [4 x i8] [i8 3, i8 1, i8 2, i8 3]\n");
+            try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 1, i8 0],\n");
+            try w.writeAll("  [4 x i8] [i8 0, i8 1, i8 1, i8 0],\n");
+            try w.writeAll("  [4 x i8] [i8 1, i8 1, i8 1, i8 1]\n");
             try w.writeAll("]\n\n");
 
             try self.emitQuantifierWrappers(w);
@@ -271,7 +288,7 @@ pub fn Methods(comptime Ctx: type) type {
                 for (hir.instructions[range.start..range.end]) |inst| {
                     switch (inst) {
                         .PushStorageId => |psid| {
-                            if (psid.scope_kind == .GlobalLocal) {
+                            if (psid.scope_kind == .GlobalLocal or psid.scope_kind == .ModuleGlobal) {
                                 if (!self.defined_globals.contains(psid.var_name)) {
                                     _ = try self.global_types.put(psid.var_name, .PTR);
                                     _ = try self.defined_globals.put(psid.var_name, true);
@@ -279,7 +296,7 @@ pub fn Methods(comptime Ctx: type) type {
                             }
                         },
                         .LoadVar => |lv| {
-                            if (lv.scope_kind == .GlobalLocal) {
+                            if (lv.scope_kind == .GlobalLocal or lv.scope_kind == .ModuleGlobal) {
                                 if (!self.defined_globals.contains(lv.var_name)) {
                                     _ = try self.global_types.put(lv.var_name, .PTR);
                                     _ = try self.defined_globals.put(lv.var_name, true);
@@ -300,26 +317,19 @@ pub fn Methods(comptime Ctx: type) type {
             var peek_state = PeekEmitState.init(self.allocator, &self.peek_string_counter);
             defer peek_state.deinit();
 
-            var has_entry_function: bool = false;
-            var entry_function_name: ?[]const u8 = null;
-            for (hir.function_table) |f| {
-                if (f.is_entry) {
-                    has_entry_function = true;
-                    entry_function_name = f.qualified_name;
-                    break;
+            const entry_function = blk: {
+                for (hir.function_table) |f| {
+                    if (f.is_entry) break :blk f;
                 }
-            }
-
-            const entry_mangled_name_owned = if (entry_function_name) |name|
-                (if (std.mem.eql(u8, name, "main")) null else try std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{name}))
+                break :blk null;
+            };
+            const entry_mangled_name_owned = if (entry_function) |ef|
+                try self.functionSymbol(ef)
             else
                 null;
             defer if (entry_mangled_name_owned) |name| self.allocator.free(name);
-            const entry_mangled_name: ?[]const u8 = if (has_entry_function)
-                if (entry_function_name) |name|
-                    (if (std.mem.eql(u8, name, "main")) "doxa_user_main" else entry_mangled_name_owned.?)
-                else
-                    "doxa_user_main"
+            const entry_mangled_name: ?[]const u8 = if (entry_mangled_name_owned) |name|
+                name
             else
                 null;
 
@@ -388,17 +398,28 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn writeMainProgram(
             self: *IRPrinter,
             hir: *const HIR.HIRProgram,
-            w: anytype,
+            outer_w: anytype,
             top_level_end_idx: usize,
             peek_state: *PeekEmitState,
             entry_mangled_name: ?[]const u8,
         ) !void {
-            try w.writeAll("define void @doxa_program_main() {\n");
-            try w.writeAll("entry:\n");
-            try w.writeAll("  %str_out_ptr = alloca ptr\n");
-            try w.writeAll("  %str_out_len = alloca i64\n");
+            try outer_w.writeAll("define void @doxa_program_main() {\n");
+            try outer_w.writeAll("entry:\n");
+            try outer_w.writeAll("  %str_out_ptr = alloca ptr\n");
+            try outer_w.writeAll("  %str_out_len = alloca i64\n");
+            // Root scope arena: lives for the whole program and is never exited.
+            try outer_w.writeAll("  call void @doxa_scope_enter()\n");
             self.entry_str_out_ptr = "%str_out_ptr";
             self.entry_str_out_len = "%str_out_len";
+
+            // Stage the body so synthetic-header allocas discovered while
+            // emitting it can be replayed in the entry block. See
+            // `entry_allocas`.
+            self.entry_allocas.clearRetainingCapacity();
+            self.synth_header_counter = 0;
+            var body_alloc = std.Io.Writer.Allocating.init(self.allocator);
+            defer body_alloc.deinit();
+            const w = &body_alloc.writer;
 
             var id: usize = 0;
             var stack = std.array_list.Managed(StackVal).init(self.allocator);
@@ -435,10 +456,13 @@ pub fn Methods(comptime Ctx: type) type {
             }
             var dead_block_counter: usize = 0;
 
+            self.clearNarrowedVars();
+            self.var_regions.clearRetainingCapacity();
+            self.scope_depth = 0;
             for (hir.instructions[0..top_level_end_idx]) |inst| {
                 const tag = std.meta.activeTag(inst);
                 const requires_new_block = switch (tag) {
-                    .Label, .ExitScope => false,
+                    .Label => false,
                     else => true,
                 };
                 if (last_instruction_was_terminator and requires_new_block) {
@@ -457,15 +481,23 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.handleConst(w, &stack, &id, peek_state, hir.constant_pool, c.constant_id);
                         last_instruction_was_terminator = false;
                     },
-                    .StoreAlias => |_| {
+                    .StoreAlias => {
+                        last_instruction_was_terminator = false;
+                    },
+                    .NarrowVar => |nv| {
+                        try self.narrowVariable(nv.var_name, nv.narrowed_type);
+                        last_instruction_was_terminator = false;
+                    },
+                    .RestoreVar => |rv| {
+                        self.restoreVariable(rv.var_name);
                         last_instruction_was_terminator = false;
                     },
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
-                    .ArraySet => |_| try self.emitArraySet(w, &stack, &id),
-                    .ArrayGet => |_| try self.emitArrayGet(w, &stack, &id),
+                    .ArraySet => try self.emitArraySet(w, &stack, &id),
+                    .ArrayGet => try self.emitArrayGet(w, &stack, &id),
                     .ArrayCompoundAssign => |a| try self.emitArrayGetAndArith(w, &stack, &id, a.op),
                     .ArrayLen => try self.emitArrayLen(w, &stack, &id),
-                    .ArrayPush => |_| try self.emitArrayPush(w, &stack, &id),
+                    .ArrayPush => try self.emitArrayPush(w, &stack, &id),
                     .ArrayPop => try self.emitArrayPop(w, &stack, &id),
                     .ArrayInsert => try self.emitArrayInsert(w, &stack, &id),
                     .ArrayRemove => try self.emitArrayRemove(w, &stack, &id),
@@ -499,9 +531,9 @@ pub fn Methods(comptime Ctx: type) type {
                     .LogicalOp => |lop| {
                         try self.handleLogicalOp(w, &stack, &id, lop);
                         last_instruction_was_terminator = false;
-                },
+                    },
 
-                .Peek => |pk| {
+                    .Peek => |pk| {
                         try self.handlePeek(w, &stack, &id, pk, peek_state);
                         last_instruction_was_terminator = false;
                     },
@@ -601,23 +633,23 @@ pub fn Methods(comptime Ctx: type) type {
                             defer self.allocator.free(store_module_line);
                             try w.writeAll(store_module_line);
 
-                            try stack.append(.{ .name = sentinel, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                            try stack.append(.{ .name = sentinel, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                             last_instruction_was_terminator = false;
                             continue;
                         }
 
-                        const struct_type_llvm = try self.buildI64StructType(fcount);
+                        const struct_type_llvm = try self.buildI64StructType(fcount * 2);
                         defer self.allocator.free(struct_type_llvm);
 
-                        // Allocate struct on heap
-                        const struct_size = fcount * @sizeOf(i64);
+                        // Allocate struct on heap (each string field is ptr + len)
+                        const struct_size = fcount * 2 * @sizeOf(i64);
                         const size_reg = try self.nextTemp(&id);
                         const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_reg, struct_size });
                         defer self.allocator.free(size_line);
                         try w.writeAll(size_line);
 
                         const malloc_reg = try self.nextTemp(&id);
-                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @malloc(i64 {s})\n", .{ malloc_reg, size_reg });
+                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {s}, i64 8)\n", .{ malloc_reg, size_reg });
                         defer self.allocator.free(malloc_line);
                         try w.writeAll(malloc_line);
 
@@ -627,7 +659,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(cast_line);
                         try w.writeAll(cast_line);
 
-                        // Populate each field from module globals
+                        // Populate each field from module globals (raw C-strings).
                         var fi: usize = 0;
                         while (fi < fcount) : (fi += 1) {
                             const field_name = lm.field_names[fi];
@@ -643,20 +675,34 @@ pub fn Methods(comptime Ctx: type) type {
                             defer self.allocator.free(load_line);
                             try w.writeAll(load_line);
 
-                            // Convert value to i64 storage representation
-                            const loaded_sv = StackVal{ .name = loaded_val, .ty = field_st };
-                            const loaded_storage = try self.convertValueToArrayStorage(w, loaded_sv, HIR.HIRType{ .String = {} }, &id);
+                            // Recover (ptr, len) from the C-string and store both words.
+                            const out_ptr_slot = try self.nextTemp(&id);
+                            const out_len_slot = try self.nextTemp(&id);
+                            const alloca_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
+                            const alloca_len = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
+                            defer self.allocator.free(alloca_ptr);
+                            defer self.allocator.free(alloca_len);
+                            try w.writeAll(alloca_ptr);
+                            try w.writeAll(alloca_len);
+                            const init_null = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
+                            const init_zero = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
+                            defer self.allocator.free(init_null);
+                            defer self.allocator.free(init_zero);
+                            try w.writeAll(init_null);
+                            try w.writeAll(init_zero);
+                            const from_cstr = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_from_cstr(ptr {s}, ptr {s}, ptr {s})\n", .{ loaded_val, out_ptr_slot, out_len_slot });
+                            defer self.allocator.free(from_cstr);
+                            try w.writeAll(from_cstr);
+                            const cloned_ptr = try self.nextTemp(&id);
+                            const cloned_len = try self.nextTemp(&id);
+                            const load_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ cloned_ptr, out_ptr_slot });
+                            const load_len = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ cloned_len, out_len_slot });
+                            defer self.allocator.free(load_ptr);
+                            defer self.allocator.free(load_len);
+                            try w.writeAll(load_ptr);
+                            try w.writeAll(load_len);
 
-                            // GEP to field position
-                            const field_gep = try self.nextTemp(&id);
-                            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds {s}, ptr {s}, i32 0, i32 {d}\n", .{ field_gep, struct_type_llvm, struct_ptr, @as(i32, @intCast(fi)) });
-                            defer self.allocator.free(gep_line);
-                            try w.writeAll(gep_line);
-
-                            // Store into struct field
-                            const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ loaded_storage.name, field_gep });
-                            defer self.allocator.free(store_line);
-                            try w.writeAll(store_line);
+                            try self.storeStructStringField(w, struct_type_llvm, struct_ptr, fi * 2, cloned_ptr, cloned_len, &id);
                         }
 
                         // Store the module struct pointer to the global so functions
@@ -668,7 +714,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(store_module_line);
                         try w.writeAll(store_module_line);
 
-                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
+                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
@@ -697,20 +743,30 @@ pub fn Methods(comptime Ctx: type) type {
                         had_return = true;
                         last_instruction_was_terminator = true;
                     },
-                    .Unreachable => |_| {
+                    .Unreachable => {
+                        try w.writeAll("  call void @doxa_trap_unreachable()\n");
                         try w.writeAll("  unreachable\n");
                         stack.items.len = 0;
                         last_instruction_was_terminator = true;
                     },
-                    .EnterScope => |_| {
-                        // EnterScope is a no-op in LLVM IR generation
+                    .EnterScope => {
+                        try w.writeAll("  call void @doxa_scope_enter()\n");
+                        self.scope_depth += 1;
                         last_instruction_was_terminator = false;
                     },
-                    .ExitScope => |_| {
-                        // ExitScope is a no-op in LLVM IR generation
+                    .ResetScope => {
+                        try w.writeAll("  call void @doxa_scope_reset()\n");
                         last_instruction_was_terminator = false;
                     },
-                    .StoreFieldName => |_| {
+                    .ExitScope => |s| {
+                        try w.writeAll("  call void @doxa_scope_exit()\n");
+                        if (!self.exited_scopes.contains(s.scope_id)) {
+                            self.scope_depth -|= 1;
+                            self.exited_scopes.put(s.scope_id, {}) catch {};
+                        }
+                        last_instruction_was_terminator = false;
+                    },
+                    .StoreFieldName => {
                         // No-op: field names are captured at StructNew time
                         last_instruction_was_terminator = false;
                     },
@@ -728,7 +784,7 @@ pub fn Methods(comptime Ctx: type) type {
                         try stack.append(.{ .name = result, .ty = field_st });
                         last_instruction_was_terminator = false;
                     },
-                    .BindAlias => |_| {
+                    .BindAlias => {
                         if (stack.items.len < 1) continue;
                         _ = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
@@ -750,7 +806,7 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .AssertFail => |af| {
                         try self.handleAssertFail(w, &stack, &id, af, peek_state);
-                        last_instruction_was_terminator = false;
+                        last_instruction_was_terminator = true;
                     },
                     .ArrayConcat => {
                         try self.handleArrayConcat(w, &stack, &id);
@@ -771,6 +827,15 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             try w.writeAll("}\n");
+
+            for (self.entry_allocas.items) |line| {
+                try outer_w.writeAll(line);
+                self.allocator.free(line);
+            }
+            self.entry_allocas.clearRetainingCapacity();
+            const body_bytes = try body_alloc.toOwnedSlice();
+            defer self.allocator.free(body_bytes);
+            try outer_w.writeAll(body_bytes);
         }
 
         pub fn getFunctionRange(
@@ -825,6 +890,18 @@ pub fn Methods(comptime Ctx: type) type {
                                 }
                             } else {
                                 self.allocator.free(fields);
+                            }
+                            pending_type_name = null;
+                        } else if (ret.has_value and func.return_type == .Struct and !self.function_struct_return_fields.contains(func.qualified_name)) {
+                            // Pass-through factories (e.g. `executable` delegating to
+                            // `Builder.new`) contain no StructNew of their own, so the
+                            // field metadata is taken from the declared return type.
+                            const sid = func.return_type.Struct;
+                            if (self.struct_fields_by_id.get(sid)) |fts| {
+                                _ = try self.function_struct_return_fields.put(func.qualified_name, try self.allocator.dupe(HIR.HIRType, fts));
+                                if (self.struct_type_names_by_id.get(sid)) |tn| {
+                                    _ = try self.function_struct_return_type_names.put(func.qualified_name, tn);
+                                }
                             }
                             pending_type_name = null;
                         }

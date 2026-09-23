@@ -150,17 +150,17 @@ test "inline zig: collectInlineZigDecls only sees reachable modules" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
-    var reporter = Reporting.Reporter.init(allocator, .{ .log_to_stderr = false }, null);
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
 
-    var lexer = try LexicalAnalyzer.init(allocator, "module std from \"std/std.doxa\"\n", "test/inline_zig_collect.doxa", &reporter);
+    var lexer = try LexicalAnalyzer.init(testing.io, allocator, "module std from \"std/std.doxa\"\n", "test/inline_zig_collect.doxa", &reporter);
     defer lexer.deinit();
     try lexer.initKeywords();
     const tokens = try lexer.lexTokens();
     defer tokens.deinit();
 
-    const uri = try reporter.ensureFileUri("test/inline_zig_collect.doxa");
-    var parser = Parser.init(allocator, tokens.items, "test/inline_zig_collect.doxa", uri, &reporter);
+    const uri = try reporter.ensureFileUri(testing.io, "test/inline_zig_collect.doxa");
+    var parser = Parser.init(testing.io, allocator, tokens.items, "test/inline_zig_collect.doxa", uri, &reporter);
     defer parser.deinit();
     _ = try parser.execute();
 

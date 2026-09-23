@@ -34,12 +34,12 @@ const ResponseSink = struct {
 };
 
 const StdIoSink = struct {
-    allocator: std.mem.Allocator,
+    io: std.Io,
     trace_io: bool,
 
-    fn init(allocator: std.mem.Allocator, trace_io: bool) StdIoSink {
+    fn init(io: std.Io, trace_io: bool) StdIoSink {
         return .{
-            .allocator = allocator,
+            .io = io,
             .trace_io = trace_io,
         };
     }
@@ -53,16 +53,30 @@ const StdIoSink = struct {
 
     fn send(context: *anyopaque, payload: []const u8) !void {
         const self: *StdIoSink = @ptrCast(@alignCast(context));
+
         var stdout_buffer: [4096]u8 = undefined;
-        var stdout_writer = std.fs.File.stdout().writer(&stdout_buffer);
+        var stdout_writer = std.Io.File.stdout().writer(
+            self.io,
+            &stdout_buffer,
+        );
         const writer = &stdout_writer.interface;
-        const framed = try std.fmt.allocPrint(self.allocator, "Content-Length: {d}\r\n\r\n{s}", .{ payload.len, payload });
-        defer self.allocator.free(framed);
+
         if (self.trace_io) {
-            std.debug.print("[lsp-io] writing Content-Length: {d}\n", .{payload.len});
-            std.debug.print("[lsp-io] >> {s}\n", .{payload});
+            std.debug.print(
+                "[lsp-io] writing Content-Length: {d}\n",
+                .{payload.len},
+            );
+            std.debug.print(
+                "[lsp-io] >> {s}\n",
+                .{payload},
+            );
         }
-        try writer.writeAll(framed);
+
+        try writer.print(
+            "Content-Length: {d}\r\n\r\n",
+            .{payload.len},
+        );
+        try writer.writeAll(payload);
         try writer.flush();
     }
 };
@@ -99,30 +113,30 @@ const CaptureSink = struct {
     }
 };
 
-pub fn run(allocator: std.mem.Allocator, options: RunOptions) !void {
+pub fn run(io: std.Io, allocator: std.mem.Allocator, options: RunOptions) !void {
     var cache = source_cache.SourceCache.init(allocator);
     defer cache.deinit();
-    var reporter = Reporter.init(allocator, options.reporter_options, &cache);
+    var reporter = Reporter.init(io, allocator, options.reporter_options, &cache);
     defer reporter.deinit();
 
-    var sink = StdIoSink.init(allocator, options.trace_io);
+    var sink = StdIoSink.init(io, options.trace_io);
     var server = Server.init(allocator, &reporter, sink.asResponseSink(), options.trace_io);
     defer server.deinit();
 
-    try server.loop();
+    try server.loop(io);
 }
 
-pub fn runDebugHarness(allocator: std.mem.Allocator, options: DebugHarnessOptions) !void {
+pub fn runDebugHarness(io: std.Io, allocator: std.mem.Allocator, options: DebugHarnessOptions) !void {
     std.debug.print("=== Doxa LSP Debug Harness ===\n", .{});
     std.debug.print("Target file: {s}\n", .{options.script_path});
 
     var src_cache = source_cache.SourceCache.init(allocator);
     defer src_cache.deinit();
-    var reporter = Reporter.init(allocator, options.reporter_options, &src_cache);
+    var reporter = Reporter.init(io, allocator, options.reporter_options, &src_cache);
     defer reporter.deinit();
 
-    const file_uri = try reporter.ensureFileUri(options.script_path);
-    const document_text = try readFileAlloc(allocator, options.script_path, HARNESS_MAX_FILE_BYTES);
+    const file_uri = try reporter.ensureFileUri(io, options.script_path);
+    const document_text = try readFileAlloc(io, allocator, options.script_path, HARNESS_MAX_FILE_BYTES);
     defer allocator.free(document_text);
 
     var sink = CaptureSink.init(allocator);
@@ -136,9 +150,9 @@ pub fn runDebugHarness(allocator: std.mem.Allocator, options: DebugHarnessOption
     const did_open_request = try buildDidOpenRequest(allocator, file_uri, document_text);
     defer allocator.free(did_open_request);
 
-    try runHarnessMessage(allocator, &server, &sink, "initialize", initialize_request);
-    try runHarnessMessage(allocator, &server, &sink, "initialized", initialized_notification);
-    try runHarnessMessage(allocator, &server, &sink, "textDocument/didOpen", did_open_request);
+    try runHarnessMessage(io, allocator, &server, &sink, "initialize", initialize_request);
+    try runHarnessMessage(io, allocator, &server, &sink, "initialized", initialized_notification);
+    try runHarnessMessage(io, allocator, &server, &sink, "textDocument/didOpen", did_open_request);
 }
 
 const Document = struct {
@@ -313,48 +327,47 @@ const Server = struct {
         self.symbol_index.deinit();
     }
 
-    fn loop(self: *Server) !void {
+    fn loop(self: *Server, io: std.Io) !void {
         var stdin_buffer: [4096]u8 = undefined;
-        var stdin_reader = std.fs.File.stdin().reader(&stdin_buffer);
+        var stdin_reader = std.Io.File.stdin().reader(io, &stdin_buffer);
         const reader = &stdin_reader.interface;
 
         while (!self.should_exit) {
-            const payload = self.readMessage(reader) catch |err| switch (err) {
+            const payload = self.readMessage(io, reader) catch |err| switch (err) {
                 error.EndOfStream => {
                     if (self.shutdown_requested) {
                         return;
                     } else {
-                        std.Thread.sleep(10 * std.time.ns_per_ms);
+                        try io.sleep(.fromMilliseconds(1), .awake);
                         continue;
                     }
                 },
                 error.ReadFailed => {
-                    std.Thread.sleep(10 * std.time.ns_per_ms);
+                    try io.sleep(.fromMilliseconds(1), .awake);
                     continue;
                 },
                 else => return err,
             };
 
             defer self.allocator.free(payload);
-            try self.handlePayload(payload);
+            try self.handlePayload(io, payload);
         }
     }
 
-    fn readLineAlloc(self: *Server, reader: anytype) ![]u8 {
+    fn readLineAlloc(self: *Server, io: std.Io, reader: anytype) ![]u8 {
         var buffer: [4096]u8 = undefined;
         var len: usize = 0;
 
         while (true) {
             if (len >= buffer.len) return error.StreamTooLong;
 
-            const byte = std.io.Reader.takeByte(@constCast(reader)) catch |err| switch (err) {
+            const byte = std.Io.Reader.takeByte(@constCast(reader)) catch |err| switch (err) {
                 error.EndOfStream => break,
                 error.ReadFailed => {
                     // Handle pipe communication issues - retry after brief delay
-                    std.Thread.sleep(1 * std.time.ns_per_ms);
+                    try io.sleep(.fromMilliseconds(1), .awake);
                     continue;
                 },
-                else => return err,
             };
 
             if (byte == '\n') break;
@@ -365,11 +378,11 @@ const Server = struct {
         return self.allocator.dupe(u8, buffer[0..len]);
     }
 
-    fn readMessage(self: *Server, reader: anytype) ![]u8 {
+    fn readMessage(self: *Server, io: std.Io, reader: anytype) ![]u8 {
         var content_length: ?usize = null;
 
         while (true) {
-            const line = try self.readLineAlloc(reader);
+            const line = try self.readLineAlloc(io, reader);
             defer self.allocator.free(line);
 
             if (line.len == 0) {
@@ -406,14 +419,14 @@ const Server = struct {
             std.debug.print("[lsp-io] reading payload ({d} bytes)\n", .{length});
         }
         const payload = try self.allocator.alloc(u8, length);
-        _ = try std.io.Reader.readSliceShort(@constCast(reader), payload);
+        _ = try std.Io.Reader.readSliceShort(@constCast(reader), payload);
         if (self.trace_io) {
             std.debug.print("[lsp-io] << {s}\n", .{payload});
         }
         return payload;
     }
 
-    fn handlePayload(self: *Server, payload: []const u8) !void {
+    fn handlePayload(self: *Server, io: std.Io, payload: []const u8) !void {
         var parsed = std.json.parseFromSlice(JsonValue, self.allocator, payload, .{
             .duplicate_field_behavior = .use_last,
         }) catch {
@@ -454,11 +467,11 @@ const Server = struct {
                 }
                 try self.handleShutdown(id.?);
             } else if (std.mem.eql(u8, method, "textDocument/didOpen")) {
-                try self.handleDidOpen(params);
+                try self.handleDidOpen(io, params);
             } else if (std.mem.eql(u8, method, "textDocument/didChange")) {
-                try self.handleDidChange(params);
+                try self.handleDidChange(io, params);
             } else if (std.mem.eql(u8, method, "textDocument/didClose")) {
-                try self.handleDidClose(params);
+                try self.handleDidClose(io, params);
             } else if (std.mem.eql(u8, method, "textDocument/completion")) {
                 if (id == null) {
                     try self.sendErrorResponse(null, -32600, "Invalid request");
@@ -489,39 +502,51 @@ const Server = struct {
         }
     }
 
-    fn handleInitialize(self: *Server, id: JsonValue, params: ?JsonValue) !void {
+    fn handleInitialize(
+        self: *Server,
+        id: JsonValue,
+        params: ?JsonValue,
+    ) !void {
         _ = params;
-        var buffer = std.array_list.Managed(u8).init(self.allocator);
-        defer buffer.deinit();
-        var writer = buffer.writer();
+
+        var buffer: std.Io.Writer.Allocating = .init(self.allocator);
+        errdefer buffer.deinit();
+
+        const writer = &buffer.writer;
 
         try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
-        try writeJsonValue(&writer, id);
-        try writer.writeAll(",\"result\":{\"capabilities\":{\"textDocumentSync\":{\"openClose\":true,\"change\":1},\"completionProvider\":{\"triggerCharacters\":[\"@\",\".\"]},\"hoverProvider\":true,\"documentSymbolProvider\":true},\"serverInfo\":{\"name\":\"Doxa\"}}}");
+        try writeJsonValue(writer, id);
+        try writer.writeAll(
+            ",\"result\":{\"capabilities\":{\"textDocumentSync\":{\"openClose\":true,\"change\":1},\"completionProvider\":{\"triggerCharacters\":[\"@\",\".\"]},\"hoverProvider\":true,\"documentSymbolProvider\":true},\"serverInfo\":{\"name\":\"Doxa\"}}}",
+        );
 
         const payload = try buffer.toOwnedSlice();
         defer self.allocator.free(payload);
+
         try self.sendMessage(payload);
+
         std.debug.print("INIT: Sent initialize response\n", .{});
     }
 
     fn handleShutdown(self: *Server, id: JsonValue) !void {
         self.shutdown_requested = true;
 
-        var buffer = std.array_list.Managed(u8).init(self.allocator);
-        defer buffer.deinit();
-        var writer = buffer.writer();
+        var buffer: std.Io.Writer.Allocating = .init(self.allocator);
+        errdefer buffer.deinit();
+
+        const writer = &buffer.writer;
 
         try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
-        try writeJsonValue(&writer, id);
+        try writeJsonValue(writer, id);
         try writer.writeAll(",\"result\":null}");
 
         const payload = try buffer.toOwnedSlice();
         defer self.allocator.free(payload);
+
         try self.sendMessage(payload);
     }
 
-    fn handleDidOpen(self: *Server, params: ?JsonValue) !void {
+    fn handleDidOpen(self: *Server, io: std.Io, params: ?JsonValue) !void {
         const params_value = params orelse return;
         if (params_value != .object) return;
 
@@ -535,10 +560,10 @@ const Server = struct {
         if (uri_value != .string or text_value != .string) return;
 
         try self.storeDocument(uri_value.string, text_value.string);
-        try self.analyzeAndPublish(uri_value.string);
+        try self.analyzeAndPublish(io, uri_value.string);
     }
 
-    fn handleDidChange(self: *Server, params: ?JsonValue) !void {
+    fn handleDidChange(self: *Server, io: std.Io, params: ?JsonValue) !void {
         const params_value = params orelse return;
         if (params_value != .object) return;
         const params_obj = params_value.object;
@@ -559,10 +584,10 @@ const Server = struct {
         if (text_value != .string) return;
 
         try self.storeDocument(uri_value.string, text_value.string);
-        try self.analyzeAndPublish(uri_value.string);
+        try self.analyzeAndPublish(io, uri_value.string);
     }
 
-    fn handleDidClose(self: *Server, params: ?JsonValue) !void {
+    fn handleDidClose(self: *Server, io: std.Io, params: ?JsonValue) !void {
         const params_value = params orelse return;
         if (params_value != .object) return;
 
@@ -575,7 +600,7 @@ const Server = struct {
         self.removeDocument(uri_value.string);
         self.reporter.clearByFile(uri_value.string);
         self.reporter.dropPublishedDiagnostics(uri_value.string);
-        try self.publishDiagnostics(uri_value.string);
+        try self.publishDiagnostics(io, uri_value.string);
     }
 
     fn handleCompletion(self: *Server, id: JsonValue, params: ?JsonValue) !void {
@@ -636,28 +661,28 @@ const Server = struct {
         self.allocator.free(doc.text);
     }
 
-    fn analyzeAndPublish(self: *Server, uri: []const u8) !void {
+    fn analyzeAndPublish(self: *Server, io: std.Io, uri: []const u8) !void {
         const doc = self.documents.getPtr(uri) orelse return;
         self.reporter.clearByFile(uri);
         self.reporter.clearByFile(doc.path);
 
-        self.performAnalysis(doc, uri) catch {};
+        self.performAnalysis(io, doc, uri) catch {};
 
-        try self.publishDiagnostics(uri);
+        try self.publishDiagnostics(io, uri);
     }
 
-    fn performAnalysis(self: *Server, doc: *Document, uri: []const u8) Errors.ErrorList!void {
+    fn performAnalysis(self: *Server, io: std.Io, doc: *Document, uri: []const u8) Errors.ErrorList!void {
         var memory_manager = try MemoryManager.init(self.allocator);
         defer memory_manager.deinit();
 
-        var lexer = try LexicalAnalyzer.init(memory_manager.getAnalysisAllocator(), doc.text, doc.path, self.reporter);
+        var lexer = try LexicalAnalyzer.init(io, memory_manager.getAnalysisAllocator(), doc.text, doc.path, self.reporter);
         defer lexer.deinit();
         try lexer.initKeywords();
 
         var tokens = try lexer.lexTokens();
         defer tokens.deinit();
 
-        var parser = Parser.init(memory_manager.getAnalysisAllocator(), tokens.items, doc.path, uri, self.reporter);
+        var parser = Parser.init(io, memory_manager.getAnalysisAllocator(), tokens.items, doc.path, uri, self.reporter);
         defer parser.deinit();
         const statements = try parser.execute();
 
@@ -829,36 +854,45 @@ const Server = struct {
         try gop.value_ptr.append(try alloc.dupe(u8, member_name));
     }
 
-    fn publishDiagnostics(self: *Server, uri: []const u8) !void {
+    fn publishDiagnostics(self: *Server, io: std.Io, uri: []const u8) !void {
         const payload = try self.reporter.buildPublishDiagnosticsPayload(self.allocator, uri);
         defer self.allocator.free(payload);
         try self.sendMessage(payload);
-        try self.reporter.markDiagnosticsPublished(uri, std.time.nanoTimestamp());
+        try self.reporter.markDiagnosticsPublished(uri, std.Io.Timestamp.now(io, .real).toNanoseconds());
     }
 
     fn sendMessage(self: *Server, payload: []const u8) !void {
         try self.sink.sendFn(self.sink.context, payload);
     }
 
-    fn sendErrorResponse(self: *Server, id: ?JsonValue, code: i64, message: []const u8) !void {
-        var buffer = std.array_list.Managed(u8).init(self.allocator);
-        defer buffer.deinit();
-        var writer = buffer.writer();
+    fn sendErrorResponse(
+        self: *Server,
+        id: ?JsonValue,
+        code: i64,
+        message: []const u8,
+    ) !void {
+        var buffer: std.Io.Writer.Allocating = .init(self.allocator);
+        errdefer buffer.deinit();
+
+        const writer = &buffer.writer;
 
         try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
+
         if (id) |value| {
-            try writeJsonValue(&writer, value);
+            try writeJsonValue(writer, value);
         } else {
             try writer.writeAll("null");
         }
+
         try writer.writeAll(",\"error\":{\"code\":");
         try writer.print("{d}", .{code});
         try writer.writeAll(",\"message\":");
-        try writeJsonValue(&writer, message);
+        try writeJsonValue(writer, message);
         try writer.writeAll("}}");
 
         const payload = try buffer.toOwnedSlice();
         defer self.allocator.free(payload);
+
         try self.sendMessage(payload);
     }
 };
@@ -938,17 +972,17 @@ fn computeCompletionAtOffset(text: []const u8, offset: usize) CompletionContext 
 }
 
 fn buildCompletionPayload(self: *Server, id: JsonValue, ctx: CompletionContext) ![]u8 {
-    var buffer = std.array_list.Managed(u8).init(self.allocator);
+    var buffer = std.Io.Writer.Allocating.init(self.allocator);
     defer buffer.deinit();
-    var writer = buffer.writer();
+    var writer = &buffer.writer;
 
     try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
-    try writeJsonValue(&writer, id);
+    try writeJsonValue(writer, id);
     try writer.writeAll(",\"result\":{\"isIncomplete\":false,\"items\":[");
 
     switch (ctx.kind) {
-        .Intrinsic => try writeIntrinsicCompletions(&writer, ctx.prefix),
-        .Dot => try writeMemberCompletions(&self.symbol_index, &writer, ctx),
+        .Intrinsic => try writeIntrinsicCompletions(writer, ctx.prefix),
+        .Dot => try writeMemberCompletions(&self.symbol_index, writer, ctx),
         .None => {},
     }
 
@@ -956,7 +990,7 @@ fn buildCompletionPayload(self: *Server, id: JsonValue, ctx: CompletionContext) 
     return buffer.toOwnedSlice();
 }
 
-fn writeIntrinsicCompletions(writer: anytype, prefix: []const u8) !void {
+fn writeIntrinsicCompletions(writer: *std.Io.Writer, prefix: []const u8) !void {
     var first = true;
     for (InternalMethods.all()) |method| {
         if (!std.mem.startsWith(u8, method.label, prefix)) continue;
@@ -973,7 +1007,7 @@ fn writeIntrinsicCompletions(writer: anytype, prefix: []const u8) !void {
     }
 }
 
-fn writeMemberCompletions(index: *const SymbolIndex, writer: anytype, ctx: CompletionContext) !void {
+fn writeMemberCompletions(index: *const SymbolIndex, writer: *std.Io.Writer, ctx: CompletionContext) !void {
     const obj_name = ctx.object_name orelse return;
     if (obj_name.len == 0) return;
 
@@ -1007,7 +1041,7 @@ fn resolveObjectType(index: *const SymbolIndex, name: []const u8) ?[]const u8 {
     return null;
 }
 
-fn writeTypeMembers(index: *const SymbolIndex, writer: anytype, type_name: []const u8, prefix: []const u8) !void {
+fn writeTypeMembers(index: *const SymbolIndex, writer: *std.Io.Writer, type_name: []const u8, prefix: []const u8) !void {
     var first = true;
 
     if (index.types.get(type_name)) |ct| {
@@ -1051,7 +1085,7 @@ fn isMemberMatch(name: []const u8, prefix: []const u8) bool {
     return std.mem.startsWith(u8, name, prefix);
 }
 
-fn writeFieldCompletionItem(writer: anytype, field: CachedField) !void {
+fn writeFieldCompletionItem(writer: *std.Io.Writer, field: CachedField) !void {
     try writer.writeAll("{\"label\":");
     try writeJsonValue(writer, field.name);
     try writer.writeAll(",\"kind\":5");
@@ -1062,7 +1096,7 @@ fn writeFieldCompletionItem(writer: anytype, field: CachedField) !void {
     try writer.writeAll("}");
 }
 
-fn writeMethodCompletionItem(writer: anytype, method: CachedMethod) !void {
+fn writeMethodCompletionItem(writer: *std.Io.Writer, method: CachedMethod) !void {
     try writer.writeAll("{\"label\":");
     try writeJsonValue(writer, method.name);
     try writer.writeAll(",\"kind\":2");
@@ -1072,7 +1106,7 @@ fn writeMethodCompletionItem(writer: anytype, method: CachedMethod) !void {
     try writer.writeAll("}");
 }
 
-fn writeEnumCompletionItem(writer: anytype, variant: []const u8) !void {
+fn writeEnumCompletionItem(writer: *std.Io.Writer, variant: []const u8) !void {
     try writer.writeAll("{\"label\":");
     try writeJsonValue(writer, variant);
     try writer.writeAll(",\"kind\":13");
@@ -1081,7 +1115,7 @@ fn writeEnumCompletionItem(writer: anytype, variant: []const u8) !void {
     try writer.writeAll("}");
 }
 
-fn writeModuleMemberCompletionItem(writer: anytype, name: []const u8) !void {
+fn writeModuleMemberCompletionItem(writer: *std.Io.Writer, name: []const u8) !void {
     try writer.writeAll("{\"label\":");
     try writeJsonValue(writer, name);
     try writer.writeAll(",\"kind\":9");
@@ -1091,54 +1125,54 @@ fn writeModuleMemberCompletionItem(writer: anytype, name: []const u8) !void {
 }
 
 fn buildDocumentSymbolsPayload(self: *Server, id: JsonValue) ![]u8 {
-    var buffer = std.array_list.Managed(u8).init(self.allocator);
+    var buffer = std.Io.Writer.Allocating.init(self.allocator);
     defer buffer.deinit();
-    var writer = buffer.writer();
+    var writer = &buffer.writer;
 
     try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
-    try writeJsonValue(&writer, id);
+    try writeJsonValue(writer, id);
     try writer.writeAll(",\"result\":[");
 
     var first = true;
     for (self.symbol_index.symbols.items) |sym| {
-            if (!first) try writer.writeAll(",");
-            first = false;
+        if (!first) try writer.writeAll(",");
+        first = false;
 
-            try writer.writeAll("{\"name\":");
-            try writeJsonValue(&writer, sym.name);
-            try writer.writeAll(",\"kind\":");
-            try writer.print("{d}", .{sym.kind});
-            try writer.writeAll(",\"range\":{\"start\":{\"line\":");
-            try writer.print("{d}", .{sym.start_line});
-            try writer.writeAll(",\"character\":");
-            try writer.print("{d}", .{sym.start_character});
-            try writer.writeAll("},\"end\":{\"line\":");
-            try writer.print("{d}", .{sym.end_line});
-            try writer.writeAll(",\"character\":");
-            try writer.print("{d}", .{sym.end_character});
-            try writer.writeAll("}}");
-            try writer.writeAll(",\"selectionRange\":{\"start\":{\"line\":");
-            try writer.print("{d}", .{sym.start_line});
-            try writer.writeAll(",\"character\":");
-            try writer.print("{d}", .{sym.start_character});
-            try writer.writeAll("},\"end\":{\"line\":");
-            try writer.print("{d}", .{sym.start_line});
-            try writer.writeAll(",\"character\":");
-            try writer.print("{d}", .{sym.start_character + sym.name.len});
-            try writer.writeAll("}}}");
-        }
+        try writer.writeAll("{\"name\":");
+        try writeJsonValue(writer, sym.name);
+        try writer.writeAll(",\"kind\":");
+        try writer.print("{d}", .{sym.kind});
+        try writer.writeAll(",\"range\":{\"start\":{\"line\":");
+        try writer.print("{d}", .{sym.start_line});
+        try writer.writeAll(",\"character\":");
+        try writer.print("{d}", .{sym.start_character});
+        try writer.writeAll("},\"end\":{\"line\":");
+        try writer.print("{d}", .{sym.end_line});
+        try writer.writeAll(",\"character\":");
+        try writer.print("{d}", .{sym.end_character});
+        try writer.writeAll("}}");
+        try writer.writeAll(",\"selectionRange\":{\"start\":{\"line\":");
+        try writer.print("{d}", .{sym.start_line});
+        try writer.writeAll(",\"character\":");
+        try writer.print("{d}", .{sym.start_character});
+        try writer.writeAll("},\"end\":{\"line\":");
+        try writer.print("{d}", .{sym.start_line});
+        try writer.writeAll(",\"character\":");
+        try writer.print("{d}", .{sym.start_character + sym.name.len});
+        try writer.writeAll("}}}");
+    }
 
     try writer.writeAll("]}");
     return buffer.toOwnedSlice();
 }
 
 fn buildHoverPayload(self: *Server, id: JsonValue, params: ?JsonValue) ![]u8 {
-    var buffer = std.array_list.Managed(u8).init(self.allocator);
+    var buffer = std.Io.Writer.Allocating.init(self.allocator);
     defer buffer.deinit();
-    var writer = buffer.writer();
+    var writer = &buffer.writer;
 
     try writer.writeAll("{\"jsonrpc\":\"2.0\",\"id\":");
-    try writeJsonValue(&writer, id);
+    try writeJsonValue(writer, id);
     try writer.writeAll(",\"result\":");
 
     if (extractDocumentContext(self, params)) |ctx| {
@@ -1149,7 +1183,7 @@ fn buildHoverPayload(self: *Server, id: JsonValue, params: ?JsonValue) ![]u8 {
                 const end_pos = offsetToPosition(ctx.text, method_range.end);
 
                 try writer.writeAll("{\"contents\":{\"kind\":\"markdown\",\"value\":");
-                try writeJsonValue(&writer, info.documentation);
+                try writeJsonValue(writer, info.documentation);
                 try writer.writeAll("},\"range\":{\"start\":{\"line\":");
                 try writer.print("{d}", .{start_pos.line});
                 try writer.writeAll(",\"character\":");
@@ -1167,7 +1201,7 @@ fn buildHoverPayload(self: *Server, id: JsonValue, params: ?JsonValue) ![]u8 {
 
         const dot_ctx = computeCompletionAtOffset(ctx.text, ctx.offset);
         if (dot_ctx.kind == .Dot and dot_ctx.object_name != null and dot_ctx.object_name.?.len > 0) {
-            if (try buildDotHover(&self.symbol_index, &writer, dot_ctx)) {
+            if (try buildDotHover(&self.symbol_index, writer, dot_ctx)) {
                 const payload = try buffer.toOwnedSlice();
                 return payload;
             }
@@ -1179,7 +1213,7 @@ fn buildHoverPayload(self: *Server, id: JsonValue, params: ?JsonValue) ![]u8 {
     return buffer.toOwnedSlice();
 }
 
-fn buildDotHover(index: *const SymbolIndex, writer: anytype, comp_ctx: CompletionContext) !bool {
+fn buildDotHover(index: *const SymbolIndex, writer: *std.Io.Writer, comp_ctx: CompletionContext) !bool {
     const obj_name = comp_ctx.object_name.?;
     const type_name = resolveObjectType(index, obj_name) orelse return false;
     const ct = index.types.get(type_name) orelse return false;
@@ -1219,7 +1253,6 @@ fn buildDotHover(index: *const SymbolIndex, writer: anytype, comp_ctx: Completio
     }
     return false;
 }
-
 
 fn extractDocumentContext(self: *Server, params: ?JsonValue) ?DocumentContext {
     const params_value = params orelse return null;
@@ -1371,11 +1404,12 @@ fn trimLine(line: []const u8) []const u8 {
     return line;
 }
 
-fn writeJsonValue(writer: anytype, value: anytype) !void {
+fn writeJsonValue(writer: *std.Io.Writer, value: anytype) !void {
     try writer.print("{f}", .{std.json.fmt(value, .{})});
 }
 
 fn runHarnessMessage(
+    io: std.Io,
     allocator: std.mem.Allocator,
     server: *Server,
     sink: *CaptureSink,
@@ -1384,7 +1418,7 @@ fn runHarnessMessage(
 ) !void {
     std.debug.print("\n[harness] --> {s}\n", .{label});
     try prettyPrintJson(allocator, payload);
-    try server.handlePayload(payload);
+    try server.handlePayload(io, payload);
     try drainCapturedResponses(allocator, sink);
 }
 
@@ -1417,10 +1451,13 @@ fn prettyPrintJson(allocator: std.mem.Allocator, payload: []const u8) !void {
     std.debug.print("{s}\n", .{pretty});
 }
 
-fn readFileAlloc(allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) ![]u8 {
-    var file = try std.fs.cwd().openFile(path, .{});
-    defer file.close();
-    return try file.readToEndAlloc(allocator, max_bytes);
+fn readFileAlloc(io: std.Io, allocator: std.mem.Allocator, path: []const u8, max_bytes: usize) ![]u8 {
+    return std.Io.Dir.cwd().readFileAlloc(
+        io,
+        path,
+        allocator,
+        .limited(max_bytes),
+    );
 }
 
 fn buildDidOpenRequest(allocator: std.mem.Allocator, uri: []const u8, text: []const u8) ![]u8 {
@@ -1437,9 +1474,19 @@ fn buildDidOpenRequest(allocator: std.mem.Allocator, uri: []const u8, text: []co
     );
 }
 
-fn jsonStringifyAlloc(allocator: std.mem.Allocator, value: anytype, options: std.json.Stringify.Options) ![]u8 {
-    var aw: std.io.Writer.Allocating = .init(allocator);
-    defer aw.deinit();
-    try std.json.Stringify.value(value, options, &aw.writer);
-    return aw.toOwnedSlice();
+fn jsonStringifyAlloc(
+    allocator: std.mem.Allocator,
+    value: anytype,
+    options: std.json.Stringify.Options,
+) ![]u8 {
+    var aw: std.Io.Writer.Allocating = .init(allocator);
+    errdefer aw.deinit();
+
+    try std.json.Stringify.value(
+        value,
+        options,
+        &aw.writer,
+    );
+
+    return try aw.toOwnedSlice();
 }

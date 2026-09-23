@@ -8,6 +8,11 @@ pub const BuiltinMethodInfo = struct {
     input_types: []const InputTypeSpec,
     return_type: ast.Type,
     can_panic: bool,
+    /// Whether the builtin writes through its subject argument in place
+    /// (`@push`/`@pop`/`@insert`/`@remove`/`@clear`). Defaults to `true` so an
+    /// unannotated builtin is treated as mutating; read-only intrinsics opt out
+    /// (the read-only analysis in `param_mutation.zig` relies on this).
+    mutates_arg: bool = true,
     name: []const u8,
 };
 
@@ -109,6 +114,7 @@ const int_float_string = [_]ast.Type{ T.Int, T.Float, T.String };
 const METHODS = [_]BuiltinMethodInfo{
     .{
         .name = "length",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Union = &array_string }},
@@ -167,6 +173,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "find",
+        .mutates_arg = false,
         .arg_count_min = 2,
         .arg_count_max = 2,
         .input_types = &[_]InputTypeSpec{
@@ -178,6 +185,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "slice",
+        .mutates_arg = false,
         .arg_count_min = 3,
         .arg_count_max = 3,
         .input_types = &[_]InputTypeSpec{
@@ -190,6 +198,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "string",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Any = {} }},
@@ -198,6 +207,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "int",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Union = &float_byte_string }},
@@ -206,6 +216,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "float",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Union = &int_byte_string }},
@@ -214,6 +225,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "byte",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Union = &int_float_string }},
@@ -222,6 +234,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "type",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Any = {} }},
@@ -230,6 +243,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "print",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = null,
         .input_types = &[_]InputTypeSpec{Input{ .Single = T.String }},
@@ -238,6 +252,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "assert",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 2,
         .input_types = &[_]InputTypeSpec{
@@ -249,6 +264,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "panic",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Single = T.String }},
@@ -257,6 +273,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "exit",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Union = &int_byte }},
@@ -265,6 +282,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "std",
+        .mutates_arg = false,
         .arg_count_min = 0,
         .arg_count_max = 0,
         .input_types = &[_]InputTypeSpec{},
@@ -273,6 +291,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "pack",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Single = T.Array }},
@@ -281,6 +300,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "unpack",
+        .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Single = T.String }},
