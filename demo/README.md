@@ -10,7 +10,7 @@ From the repository root, with the compiler built (`zig build`):
 doxa compile demo/bf.doxa -o ./demo/dist/bf.wasm --arch=wasm32 --os=wasi --opt-mode=small
 ```
 
-This writes `demo/dist/bf.wasm` — **143,256 bytes**.
+This writes `demo/dist/bf.wasm` — **81,980 bytes**.
 
 `--os=wasi` suppresses the host `.exe` suffix, so the output lands exactly where named.
 

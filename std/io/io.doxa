@@ -151,6 +151,32 @@ zig IO {
         return duped;
     }
 
+    /// Read a single byte from stdin without line buffering. Returns `-1` and
+    /// sets the read-failed error at end of input, so callers can map EOF to a
+    /// value of their choosing.
+    pub fn inputByte() i64 {
+        clearLastError();
+        var byte: [1]u8 = undefined;
+        if (builtin.os.tag == .wasi) {
+            var iov = [1]std.os.wasi.iovec_t{.{ .base = &byte, .len = 1 }};
+            var nread: usize = 0;
+            if (std.os.wasi.fd_read(0, &iov, 1, &nread) != .SUCCESS or nread == 0) {
+                setLastError(106);
+                return -1;
+            }
+            return @intCast(byte[0]);
+        }
+        const n = std.posix.read(0, &byte) catch {
+            setLastError(106);
+            return -1;
+        };
+        if (n == 0) {
+            setLastError(106);
+            return -1;
+        }
+        return @intCast(byte[0]);
+    }
+
     pub fn inputPrompt(prompt: []const u8) []const u8 {
         print(prompt);
         if (errorState(1, 0) != 0) {
@@ -221,6 +247,13 @@ public function input() returns string | error.StdError {
     const value is IO.input();
     const err is IO.takeLastErrorCode()
     if err == 0 then return value
+    return mapIOError(err)
+}
+
+public function inputByte() returns byte | error.StdError {
+    const value is IO.inputByte()
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return @byte(value)
     return mapIOError(err)
 }
 
