@@ -1,0 +1,97 @@
+module std from @std()
+
+# a brainfuck interpreter implemented in doxa
+# mirror-shades
+
+function getInput() returns byte {
+    const input is std.io.input() as string else {
+        @print("Failed to get input: {input}")
+        return 0x00
+    }
+    const inputByte is @byte(input[0])
+    return inputByte
+}
+
+# `loops` is the current nesting depth and `loopSpot` holds the opening `[`
+# position for each depth. A jump-back lands on the `[` again, so a repeat visit
+# at the current depth's own slot is a no-op; every other `[` records its slot
+# (growing the stack only when a deeper level is opened for the first time).
+function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {
+    if loops > 0 then {
+        if loopSpot[loops - 1] == ip then return
+    }
+    if @length(loopSpot) == loops then {
+        @push(loopSpot, ip)
+    } else {
+        loopSpot[loops] is ip
+    }
+    loops += 1
+}
+
+function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], tp :: int) {
+    if loops >= 0 then {
+        if tape[tp] == 0 then {
+            loops -= 1
+        } else {
+            const loopPointer is loops - 1
+            ip is loopSpot[loopPointer]
+            # cancels the ip += 1 from the main loop
+            ip -= 1
+        }
+    }
+}
+
+function checkClosingBracket(scan :: string) returns tetra {
+    var pointer :: int
+    var openBrackets :: int
+    while pointer < @length(scan) do pointer += 1 {
+        if scan[pointer] == "[" then openBrackets += 1
+        if scan[pointer] == "]" then openBrackets -= 1
+        if openBrackets < 0 then return false
+    }
+    return(openBrackets == 0)
+}
+
+function interpret(scan :: string) returns byte[] {
+    const tapeSize is 30000
+    var tape :: byte[tapeSize]
+    var loops :: int
+    var loopSpot :: int[]
+    var tp :: int
+    var ip :: int
+    var output :: byte[]
+
+    const scanLength is @length(scan)
+
+    var closedBrackets :: tetra is checkClosingBracket(scan)
+    @assert(closedBrackets, "Unmatched brackets")
+
+    while(ip < scanLength) do ip += 1 {
+        match scan[ip] {
+            ">" then tp += 1,
+            "<" then tp -= 1,
+            "+" then tape[tp] += 0x01,
+            "-" then tape[tp] -= 0x01,
+            "." then @push(output, tape[tp]),
+            "," then tape[tp] is getInput(),
+            "[" then startLoop(^loopSpot, ^loops, ip),
+            "]" then endLoop(loopSpot, ^loops, ^ip, tape, tp),
+            else @print("Unrecognized Token: {scan[ip]}\n"),
+        }
+    }
+
+    return output
+}
+
+public entry function main() {
+    const argc is std.process.argc() as int else 0
+    if argc < 2 then @panic("usage: bf <source>")
+
+    const source is std.process.argv(1) as string else {
+        @panic("bad argv")
+        return
+    }
+
+    const output is interpret(source)
+    @print(@pack(output))
+}
