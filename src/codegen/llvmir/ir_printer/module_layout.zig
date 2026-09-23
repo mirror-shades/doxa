@@ -146,7 +146,7 @@ pub fn Methods(comptime Ctx: type) type {
                 }
                 if (c.return_type == .String) {
                     if (params_buf.items.len > 0) try params_buf.appendSlice(", ");
-                    try params_buf.appendSlice("ptr, i64");
+                    try params_buf.appendSlice("ptr, ptr");
                 }
 
                 const decl = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ ret_ty, c.qualified_name, params_buf.items });
@@ -398,19 +398,28 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn writeMainProgram(
             self: *IRPrinter,
             hir: *const HIR.HIRProgram,
-            w: anytype,
+            outer_w: anytype,
             top_level_end_idx: usize,
             peek_state: *PeekEmitState,
             entry_mangled_name: ?[]const u8,
         ) !void {
-            try w.writeAll("define void @doxa_program_main() {\n");
-            try w.writeAll("entry:\n");
-            try w.writeAll("  %str_out_ptr = alloca ptr\n");
-            try w.writeAll("  %str_out_len = alloca i64\n");
+            try outer_w.writeAll("define void @doxa_program_main() {\n");
+            try outer_w.writeAll("entry:\n");
+            try outer_w.writeAll("  %str_out_ptr = alloca ptr\n");
+            try outer_w.writeAll("  %str_out_len = alloca i64\n");
             // Root scope arena: lives for the whole program and is never exited.
-            try w.writeAll("  call void @doxa_scope_enter()\n");
+            try outer_w.writeAll("  call void @doxa_scope_enter()\n");
             self.entry_str_out_ptr = "%str_out_ptr";
             self.entry_str_out_len = "%str_out_len";
+
+            // Stage the body so synthetic-header allocas discovered while
+            // emitting it can be replayed in the entry block. See
+            // `entry_allocas`.
+            self.entry_allocas.clearRetainingCapacity();
+            self.synth_header_counter = 0;
+            var body_alloc = std.Io.Writer.Allocating.init(self.allocator);
+            defer body_alloc.deinit();
+            const w = &body_alloc.writer;
 
             var id: usize = 0;
             var stack = std.array_list.Managed(StackVal).init(self.allocator);
@@ -818,6 +827,15 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             try w.writeAll("}\n");
+
+            for (self.entry_allocas.items) |line| {
+                try outer_w.writeAll(line);
+                self.allocator.free(line);
+            }
+            self.entry_allocas.clearRetainingCapacity();
+            const body_bytes = try body_alloc.toOwnedSlice();
+            defer self.allocator.free(body_bytes);
+            try outer_w.writeAll(body_bytes);
         }
 
         pub fn getFunctionRange(

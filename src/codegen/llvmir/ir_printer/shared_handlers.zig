@@ -2581,10 +2581,11 @@ pub fn Methods(comptime Ctx: type) type {
                 total_elems *= fixed.fixed_array_sizes[i];
             }
 
-            const hdr_reg = try self.nextTemp(id);
-            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_reg});
-            defer self.allocator.free(alloca_line);
-            try w.writeAll(alloca_line);
+            // Named, not a numeric temp: the alloca is replayed in the entry
+            // block, and LLVM requires unnamed temps to be numbered in order.
+            const hdr_reg = try std.fmt.allocPrint(self.allocator, "%synth.hdr.{d}", .{self.synth_header_counter});
+            self.synth_header_counter += 1;
+            try self.entry_allocas.append(try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_reg}));
 
             const data_ptr = try self.nextTemp(id);
             const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr, hdr_reg });
@@ -2625,6 +2626,17 @@ pub fn Methods(comptime Ctx: type) type {
             const store_tag = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ elem_tag, tag_ptr });
             defer self.allocator.free(store_tag);
             try w.writeAll(store_tag);
+
+            // Field 5 (`scope`) must be initialised: a non-owning view has no
+            // owning arena, and leaving it undefined lets a stack garbage pointer
+            // reach the runtime's rehome/alloc paths.
+            const scope_ptr = try self.nextTemp(id);
+            const scope_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 5\n", .{ scope_ptr, hdr_reg });
+            defer self.allocator.free(scope_gep);
+            try w.writeAll(scope_gep);
+            const store_scope = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{scope_ptr});
+            defer self.allocator.free(store_scope);
+            try w.writeAll(store_scope);
 
             return .{ .name = hdr_reg, .ty = .PTR, .array_type = elem_type };
         }

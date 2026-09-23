@@ -621,6 +621,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .enum_table = enum_table,
                 .entry_str_out_ptr = null,
                 .entry_str_out_len = null,
+                .entry_allocas = std.array_list.Managed([]const u8).init(allocator),
                 .exited_scopes = std.AutoHashMap(u32, void).init(allocator),
                 .narrowed_vars = std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)).init(allocator),
                 .var_regions = std.StringHashMap(Region).init(allocator),
@@ -647,6 +648,8 @@ pub fn Methods(comptime Ctx: type) type {
             }
             self.narrowed_vars.deinit();
             self.var_regions.deinit();
+            for (self.entry_allocas.items) |line| self.allocator.free(line);
+            self.entry_allocas.deinit();
             var ret_it = self.function_struct_return_fields.iterator();
             while (ret_it.next()) |entry| {
                 self.allocator.free(entry.value_ptr.*);

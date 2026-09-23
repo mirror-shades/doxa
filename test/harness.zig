@@ -23,13 +23,9 @@ pub fn isClean(result: Counts) bool {
     return result.failed == 0 and result.untested == 0;
 }
 
-pub fn printSection(name: []const u8) void {
-    std.debug.print("\n== {s} ==\n", .{name});
-}
-
 pub fn printCase(name: []const u8, result: Counts) void {
     if (isClean(result)) {
-        std.debug.print("- {s}: ok ({d})\n", .{ name, result.passed });
+        // TODO: add a verbose test mode that prints "- name: ok (N)".
         return;
     }
     if (result.failed == 0 and result.passed == 0 and result.untested > 0) {
@@ -47,10 +43,7 @@ pub fn printCase(name: []const u8, result: Counts) void {
 }
 
 pub fn printSuiteSummary(name: []const u8, result: Counts) void {
-    if (isClean(result)) {
-        std.debug.print("{s}: {d} ok\n", .{ name, result.passed });
-        return;
-    }
+    if (isClean(result)) return;
     std.debug.print(
         "{s}: {d} ok, {d} fail, {d} untested\n",
         .{ name, result.passed, result.failed, result.untested },

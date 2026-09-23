@@ -2273,10 +2273,11 @@ pub fn Methods(comptime Ctx: type) type {
             const elem_size: u64 = self.arrayElementSize(elem_type);
             const elem_tag: u64 = self.arrayElementTag(elem_type);
 
-            const hdr_ptr = try self.nextTemp(id);
-            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_ptr});
-            defer self.allocator.free(alloca_line);
-            try w.writeAll(alloca_line);
+            // Named, not a numeric temp: the alloca is replayed in the entry
+            // block, and LLVM requires unnamed temps to be numbered in order.
+            const hdr_ptr = try std.fmt.allocPrint(self.allocator, "%synth.hdr.{d}", .{self.synth_header_counter});
+            self.synth_header_counter += 1;
+            try self.entry_allocas.append(try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_ptr}));
 
             const data_ptr_reg = try self.nextTemp(id);
             const data_gep = try std.fmt.allocPrint(self.allocator,
@@ -2352,6 +2353,20 @@ pub fn Methods(comptime Ctx: type) type {
             const store_etag = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ etag_val, etag_reg });
             defer self.allocator.free(store_etag);
             try w.writeAll(store_etag);
+
+            // Field 5 (`scope`): a non-owning view of a flat buffer has no
+            // owning arena; leaving it undefined can feed garbage into the
+            // runtime's alloc/rehome paths.
+            const scope_reg = try self.nextTemp(id);
+            const scope_gep = try std.fmt.allocPrint(self.allocator,
+                "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 5\n",
+                .{ scope_reg, hdr_ptr },
+            );
+            defer self.allocator.free(scope_gep);
+            try w.writeAll(scope_gep);
+            const store_scope = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{scope_reg});
+            defer self.allocator.free(store_scope);
+            try w.writeAll(store_scope);
 
             return StackVal{ .name = hdr_ptr, .ty = .PTR, .array_type = elem_type };
         }

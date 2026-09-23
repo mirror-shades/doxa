@@ -98,6 +98,26 @@ Behavior:
 - call user Zig function only after successful decode
 - encode return into `out_ret`, return `ok`
 
+### Native bridge ABI (fixed 64-bit lengths)
+
+The `argv/argc` wrapper above is the VM boundary. `doxa compile` calls the same Zig
+functions directly through generated native wrappers, whose ABI is deliberately
+target-independent:
+
+- Scalars (`int`/`float`/`byte`/`tetra`/`nothing`) pass as their Zig types.
+- A `string` parameter passes as `(ptr, u64 len)` — a pointer followed by a
+  **fixed 64-bit** byte length.
+- A `string` return writes through `out_ptr: *?[*]u8, out_len: *u64` — two
+  pointers, not a `(ptr, len)` pair.
+- The runtime's exported string helpers (`doxa_str_*`, `doxa_*_to_string`, …) use a
+  fixed 64-bit `len: u64` / `*u64` for lengths and byte counts.
+
+Lengths are 64-bit on every target so the emitted LLVM IR — which declares
+`%DoxaString = { ptr, i64 }` and `i64` length parameters — needs no target-specific
+rewriting. Pointers themselves keep the target's pointer width (32-bit on
+`wasm32`); a pointer stored in a 64-bit `payload0`/`payload1` or runtime length slot
+is narrowed back with `@intCast`.
+
 ### Encoding rules
 
 - `Int`: `payload0 = bitcast(i64 -> u64)`

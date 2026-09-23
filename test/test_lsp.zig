@@ -2,7 +2,6 @@ const std = @import("std");
 const builtin = @import("builtin");
 const testing = std.testing;
 const reporting = @import("reporting");
-const harness = @import("harness.zig");
 
 const Reporter = reporting.Reporter;
 const Location = reporting.Location;
@@ -10,16 +9,12 @@ const Range = reporting.Range;
 const RelatedInformation = reporting.RelatedInformation;
 const convertPathToUri = reporting.convertPathToUri;
 
-fn runCheck(name: []const u8, func: anytype, passed: *usize, skipped: *usize) anyerror!void {
-    _ = name;
+fn runCheck(name: []const u8, func: anytype) anyerror!void {
     func() catch |err| {
-        if (err == error.SkipZigTest) {
-            skipped.* += 1;
-            return;
-        }
+        if (err == error.SkipZigTest) return;
+        std.debug.print("LSP check '{s}' failed: {t}\n", .{ name, err });
         return err;
     };
-    passed.* += 1;
 }
 
 fn checkConvertPathToUriPosixPath() !void {
@@ -157,19 +152,12 @@ fn checkReporterPublishTrackingDetectsChangesAndThrottles() !void {
 }
 
 test "lsp suite" {
-    harness.printSection("LSP");
-
-    var passed: usize = 0;
-    var skipped: usize = 0;
-
-    try runCheck("convertPathToUri posix path", checkConvertPathToUriPosixPath, &passed, &skipped);
-    try runCheck("convertPathToUri windows drive", checkConvertPathToUriWindowsDrive, &passed, &skipped);
-    try runCheck("convertPathToUri windows unc", checkConvertPathToUriWindowsUnc, &passed, &skipped);
-    try runCheck("convertUriToPath posix path", checkConvertUriToPathPosixPath, &passed, &skipped);
-    try runCheck("convertUriToPath windows drive", checkConvertUriToPathWindowsDrive, &passed, &skipped);
-    try runCheck("convertUriToPath windows unc", checkConvertUriToPathWindowsUnc, &passed, &skipped);
-    try runCheck("Reporter.toLspDiagnostics", checkReporterToLspDiagnosticsSerializesRelatedInfo, &passed, &skipped);
-    try runCheck("Reporter publish tracking", checkReporterPublishTrackingDetectsChangesAndThrottles, &passed, &skipped);
-
-    harness.printSuiteSummary("LSP", .{ .passed = passed, .failed = 0, .untested = skipped });
+    try runCheck("convertPathToUri posix path", checkConvertPathToUriPosixPath);
+    try runCheck("convertPathToUri windows drive", checkConvertPathToUriWindowsDrive);
+    try runCheck("convertPathToUri windows unc", checkConvertPathToUriWindowsUnc);
+    try runCheck("convertUriToPath posix path", checkConvertUriToPathPosixPath);
+    try runCheck("convertUriToPath windows drive", checkConvertUriToPathWindowsDrive);
+    try runCheck("convertUriToPath windows unc", checkConvertUriToPathWindowsUnc);
+    try runCheck("Reporter.toLspDiagnostics", checkReporterToLspDiagnosticsSerializesRelatedInfo);
+    try runCheck("Reporter publish tracking", checkReporterPublishTrackingDetectsChangesAndThrottles);
 }

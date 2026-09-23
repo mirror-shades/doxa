@@ -5,7 +5,7 @@ zig Build {
     const std = @import("std");
     const builtin = @import("builtin");
 
-    extern fn doxa_getenv(name_ptr: ?[*]const u8, name_len: usize, out_len: *usize) callconv(.c) ?[*]const u8;
+    extern fn doxa_getenv(name_ptr: ?[*]const u8, name_len: u64, out_len: *u64) callconv(.c) ?[*]const u8;
 
     pub fn errorState(mode: i64, value: i64) i64 {
         const State = struct {
@@ -79,9 +79,9 @@ zig Build {
         const io = std.Io.Threaded.global_single_threaded.io();
 
         const doxa_path = blk: {
-            var env_len: usize = 0;
+            var env_len: u64 = 0;
             if (doxa_getenv("DOXA_BIN", "DOXA_BIN".len, &env_len)) |ptr| {
-                break :blk ptr[0..env_len];
+                break :blk ptr[0..@intCast(env_len)];
             }
             break :blk std.process.executablePathAlloc(io, a) catch {
                 setLastError(105);

@@ -9,7 +9,9 @@ boundary, strings use the tagged `DoxaAbiValue` encoding (`payload0` = pointer,
 The LLVM backend still declares many string builtins (`@doxa_str_*`, etc.) as `ptr` into
 NUL-terminated allocations for C-style helpers—so compiled programs may still touch
 null-terminated buffers **inside** those runtime calls, even though the language model is
-pointer + length.
+pointer + length. Byte lengths at that compiled boundary are a fixed 64-bit `u64` on every
+target (matching the emitted IR's `i64` lengths); only pointers follow the target's pointer
+width.
 
 ## Quote semantics
 
