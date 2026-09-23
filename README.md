@@ -128,21 +128,44 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 ## Example
 
 ```solidity
+module std from @std()
+
 # a brainfuck interpreter implemented in doxa
 # mirror-shades
 
-module std from @std()
-
 function getInput() returns byte {
-    const input is std.io.input() as string else {
-        @print("Failed to get input: {input}")
+    const value is std.io.inputByte() as byte else {
+        # end of input: report NUL so `,` can terminate a read loop
         return 0x00
     }
-    const inputByte is @byte(input[0])
-    return inputByte
+    return value
 }
 
-function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {
+# Forward scan from an opening `[` to its matching `]`. Bracket balance is
+# validated up front, so a match always exists.
+function findClosingBracket(scan :: string, open :: int) returns int {
+    var depth :: int
+    var cursor :: int is open
+    while cursor < @length(scan) do cursor += 1 {
+        if scan[cursor] == "[" then depth += 1
+        if scan[cursor] == "]" then {
+            depth -= 1
+            if depth == 0 then return cursor
+        }
+    }
+    return open
+}
+
+# `loops` is the current nesting depth and `loopSpot` holds the opening `[`
+# position for each depth. A jump-back lands on the `[` again, so a repeat visit
+# at the current depth's own slot is a no-op; every other `[` records its slot
+# (growing the stack only when a deeper level is opened for the first time).
+# A loop whose cell is zero is skipped by jumping straight to its closing `]`.
+function startLoop(scan :: string, tape :: byte[], tp :: int, ^loopSpot :: int[], ^loops :: int, ^ip :: int) {
+    if tape[tp] == 0 then {
+        ip is findClosingBracket(scan, ip)
+        return
+    }
     if loops > 0 then {
         if loopSpot[loops - 1] == ip then return
     }
@@ -152,19 +175,6 @@ function startLoop(^loopSpot :: int[], ^loops :: int, ip :: int) {
         loopSpot[loops] is ip
     }
     loops += 1
-}
-
-function matchClose(scan :: string, open :: int) returns int {
-    var depth :: int
-    var cursor is open
-    while cursor < @length(scan) do cursor += 1 {
-        if scan[cursor] == "[" then depth += 1
-        if scan[cursor] == "]" then {
-            depth -= 1
-            if depth == 0 then return cursor
-        }
-    }
-    return cursor
 }
 
 function endLoop(loopSpot :: int[], ^loops :: int, ^ip :: int, tape :: byte[], tp :: int) {
@@ -191,13 +201,14 @@ function checkClosingBracket(scan :: string) returns tetra {
     return(openBrackets == 0)
 }
 
-function interpret(scan :: string) {
+function interpret(scan :: string) returns byte[] {
     const tapeSize is 30000
     var tape :: byte[tapeSize]
     var loops :: int
     var loopSpot :: int[]
     var tp :: int
     var ip :: int
+    var output :: byte[]
 
     const scanLength is @length(scan)
 
@@ -210,12 +221,27 @@ function interpret(scan :: string) {
             "<" then tp -= 1,
             "+" then tape[tp] += 0x01,
             "-" then tape[tp] -= 0x01,
-            "." then @print("Output: {tape[tp]}\n"),
+            "." then @push(output, tape[tp]),
             "," then tape[tp] is getInput(),
-            "[" then if tape[tp] == 0 then ip is matchClose(scan, ip) else startLoop(^loopSpot, ^loops, ip),
+            "[" then startLoop(scan, tape, tp, ^loopSpot, ^loops, ^ip),
             "]" then endLoop(loopSpot, ^loops, ^ip, tape, tp),
-            else { },
+            else @print("Unrecognized Token: {scan[ip]}\n"),
         }
     }
+
+    return output
+}
+
+public entry function main() {
+    const argc is std.process.argc() as int else 0
+    if argc < 2 then @panic("usage: bf <source>")
+
+    const source is std.process.argv(1) as string else {
+        @panic("bad argv")
+        return
+    }
+
+    const output is interpret(source)
+    @print(@pack(output))
 }
 ```
