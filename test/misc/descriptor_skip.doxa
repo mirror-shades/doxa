@@ -1,0 +1,30 @@
+# B2 regression: a scalar-only struct that is never reflected and never crosses a
+# container boundary skips the runtime descriptor registry and is cloned with the
+# typed scalar word-copy path. Reflection (@string / interpolation) and dynamic
+# container element stores still keep and use the descriptor, so their output is
+# unchanged.
+
+struct P {
+    public x :: int,
+    public y :: int,
+}
+
+public entry function main() {
+    # Typed scalar clone across a loop-reset boundary: `b` is re-homed out of the
+    # loop arena. The descriptor-free path must copy rather than alias.
+    var b is $P { x is 0, y is 0 }
+    for i while i < 3 do i++ {
+        const a is $P { x is i, y is i + 1 }
+        b is a
+    }
+    @print("{b.x} {b.y}\n")
+
+    # Reflection: @string(struct) prints through the descriptor registry.
+    const a is $P { x is 7, y is 8 }
+    @print(@string(a) + "\n")
+
+    # Dynamic array of structs: element store clones through the descriptor.
+    var dyn is [$P { x is 1, y is 2 }]
+    @push(dyn, $P { x is 3, y is 4 })
+    @print("{dyn[0].x} {dyn[1].y}\n")
+}

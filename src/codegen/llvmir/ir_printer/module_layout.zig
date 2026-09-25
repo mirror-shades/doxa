@@ -10,7 +10,190 @@ pub fn Methods(comptime Ctx: type) type {
     const escapeLLVMString = Ctx.escapeLLVMString;
 
     return struct {
+        /// B2: classify struct types that never need the runtime descriptor
+        /// registry. A struct may skip it only when every field is scalar (so the
+        /// typed word-copy clone can reproduce it) and it never needs the
+        /// descriptor for reflection or the scope-tracking rehome walk. That is:
+        /// it is not reflected (per the generator's whole-program predicate) and
+        /// its type never appears in a function signature, container, union, or
+        /// global declaration — the only ways a value can reach a runtime
+        /// `Unknown` rehome or an out-of-function clone.
+        pub fn computeDescriptorSkips(self: *IRPrinter, hir: *const HIR.HIRProgram) !void {
+            const alloc = self.allocator;
+            var fields_by_id = std.AutoHashMap(HIR.StructId, []HIR.HIRType).init(alloc);
+            defer fields_by_id.deinit();
+            var name_by_id = std.AutoHashMap(HIR.StructId, []const u8).init(alloc);
+            defer name_by_id.deinit();
+
+            for (hir.instructions) |inst| {
+                switch (inst) {
+                    .StructNew => |sn| {
+                        fields_by_id.put(sn.struct_id, sn.field_types) catch {};
+                        name_by_id.put(sn.struct_id, sn.type_name) catch {};
+                    },
+                    else => {},
+                }
+            }
+
+            var needs = std.AutoHashMap(HIR.StructId, void).init(alloc);
+            defer needs.deinit();
+
+            for (hir.function_table) |func| {
+                // A struct that crosses a call boundary as a by-value parameter
+                // or result is snapshotted/rehomed from the callee side; keep its
+                // descriptor so those runtime clones can resolve its layout
+                // regardless of source spelling.
+                self.markNestedStructs(&needs, func.return_type);
+                for (func.param_types) |pt| self.markNestedStructs(&needs, pt);
+            }
+            for (hir.instructions) |inst| self.markInstructionNeeds(&needs, inst);
+
+            if (self.force_struct_descriptors) return;
+
+            var it = fields_by_id.iterator();
+            while (it.next()) |entry| {
+                const sid = entry.key_ptr.*;
+                const field_types = entry.value_ptr.*;
+                if (needs.contains(sid)) continue;
+                if (!structFieldsAllScalar(field_types)) continue;
+                const name = name_by_id.get(sid) orelse continue;
+                if (self.reflectedContains(name)) continue;
+                self.skip_descriptor_structs.put(name, {}) catch {};
+            }
+        }
+
+        pub fn structFieldsAllScalar(field_types: []const HIR.HIRType) bool {
+            if (field_types.len == 0) return false;
+            for (field_types) |t| {
+                switch (t) {
+                    .Int, .Byte, .Float, .Tetra, .Enum, .Nothing => {},
+                    else => return false,
+                }
+            }
+            return true;
+        }
+
+        /// Whether a struct type name matches the generator's reflected set. The
+        /// struct table uses qualified names while a literal carries the source
+        /// spelling, so match on the final dot-segment too. Over-matching is safe
+        /// (it only keeps a descriptor).
+        pub fn reflectedContains(self: *IRPrinter, name: []const u8) bool {
+            const reflected = self.reflected_structs orelse return false;
+            if (reflected.contains(name)) return true;
+            const bare = if (std.mem.lastIndexOfScalar(u8, name, '.')) |d| name[d + 1 ..] else name;
+            var it = reflected.iterator();
+            while (it.next()) |entry| {
+                const key = entry.key_ptr.*;
+                if (std.mem.eql(u8, key, name)) return true;
+                const key_bare = if (std.mem.lastIndexOfScalar(u8, key, '.')) |d| key[d + 1 ..] else key;
+                if (std.mem.eql(u8, key_bare, bare)) return true;
+            }
+            return false;
+        }
+
+        /// A type in a *value* position that merely *is* a struct does not by
+        /// itself need a descriptor (typed clones cover scalar structs). Only a
+        /// struct reachable *inside* a container whose runtime operations walk the
+        /// registry — an array/map element, a union member, a function-type
+        /// signature — forces it.
+        pub fn markTypeNeeds(self: *IRPrinter, needs: *std.AutoHashMap(HIR.StructId, void), t: HIR.HIRType) void {
+            switch (t) {
+                .Struct => {},
+                .Array => |inner| self.markNestedStructs(needs, inner.*),
+                .Map => |kv| {
+                    self.markNestedStructs(needs, kv.key.*);
+                    self.markNestedStructs(needs, kv.value.*);
+                },
+                .Union => |u| for (u.members) |m| self.markNestedStructs(needs, m.*),
+                .Function => |f| {
+                    for (f.params) |p| self.markNestedStructs(needs, p.*);
+                    self.markNestedStructs(needs, f.ret.*);
+                },
+                .Group, .Unknown, .Poison => self.force_struct_descriptors = true,
+                else => {},
+            }
+        }
+
+        /// Mark every struct reachable through container types. Used for positions
+        /// whose runtime operations consult the descriptor: array/map elements,
+        /// union members, and (nested) struct fields.
+        pub fn markNestedStructs(self: *IRPrinter, needs: *std.AutoHashMap(HIR.StructId, void), t: HIR.HIRType) void {
+            switch (t) {
+                .Struct => |sid| {
+                    if (sid == 0) {
+                        self.force_struct_descriptors = true;
+                    } else {
+                        needs.put(sid, {}) catch {};
+                    }
+                },
+                .Array => |inner| self.markNestedStructs(needs, inner.*),
+                .Map => |kv| {
+                    self.markNestedStructs(needs, kv.key.*);
+                    self.markNestedStructs(needs, kv.value.*);
+                },
+                .Union => |u| for (u.members) |m| self.markNestedStructs(needs, m.*),
+                .Function => |f| {
+                    for (f.params) |p| self.markNestedStructs(needs, p.*);
+                    self.markNestedStructs(needs, f.ret.*);
+                },
+                .Group, .Unknown, .Poison => self.force_struct_descriptors = true,
+                else => {},
+            }
+        }
+
+        /// Per-instruction descriptor requirements. A struct stored, returned, or
+        /// held by value is cloned with the typed scalar path and needs nothing;
+        /// what forces a descriptor is a struct that is an element/member of a
+        /// container or a nested field of another struct.
+        pub fn markInstructionNeeds(self: *IRPrinter, needs: *std.AutoHashMap(HIR.StructId, void), inst: Ctx.HIRInstruction) void {
+            switch (inst) {
+                .ArrayNew => |a| {
+                    self.markNestedStructs(needs, a.element_type);
+                    if (a.nested_element_type) |ne| self.markNestedStructs(needs, ne);
+                },
+                .Map => |m| {
+                    self.markNestedStructs(needs, m.key_type);
+                    self.markNestedStructs(needs, m.value_type);
+                },
+                .MapGet => |m| {
+                    self.markNestedStructs(needs, m.key_type);
+                    self.markNestedStructs(needs, m.value_type);
+                },
+                .MapSet => |m| self.markNestedStructs(needs, m.key_type),
+                .StructNew => |sn| for (sn.field_types) |ft| self.markNestedStructs(needs, ft),
+                .UnionConstruct => |u| self.markNestedStructs(needs, u.union_type),
+                .GetField => |g| {
+                    self.markTypeNeeds(needs, g.container_type);
+                    self.markNestedStructs(needs, g.field_type);
+                },
+                .SetField => |s| {
+                    self.markTypeNeeds(needs, s.container_type);
+                    self.markNestedStructs(needs, s.field_type);
+                },
+                // Value-position types: a top-level struct here needs no
+                // descriptor, but a container type can hide a struct element or
+                // member that a runtime operation will walk the registry for.
+                .StoreDecl => |sd| self.markTypeNeeds(needs, sd.declared_type),
+                .StoreVar => |sv| self.markTypeNeeds(needs, sv.expected_type),
+                .StoreAlias => |sa| self.markTypeNeeds(needs, sa.expected_type),
+                .BindAlias => |ba| self.markTypeNeeds(needs, ba.target_type),
+                .NarrowVar => |nv| self.markTypeNeeds(needs, nv.narrowed_type),
+                .Return => |r| self.markTypeNeeds(needs, r.return_type),
+                .Call => |c| self.markTypeNeeds(needs, c.return_type),
+                .Peek => |p| self.markTypeNeeds(needs, p.value_type),
+                .PeekStruct => |p| for (p.field_types) |ft| self.markNestedStructs(needs, ft),
+                .Arith => |a| self.markTypeNeeds(needs, a.operand_type),
+                .Convert => |c| {
+                    self.markTypeNeeds(needs, c.from_type);
+                    self.markTypeNeeds(needs, c.to_type);
+                },
+                .Compare => |c| self.markTypeNeeds(needs, c.operand_type),
+                else => {},
+            }
+        }
+
         pub fn writeModule(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype) !void {
+            try self.computeDescriptorSkips(hir);
             try w.writeAll("declare void @doxa_write_cstr(ptr, i64)\n");
             try w.writeAll("declare void @doxa_write_raw(ptr)\n");
             try w.writeAll("declare void @doxa_write_stderr(ptr, i64)\n");
@@ -25,8 +208,6 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_str_concat(ptr, i64, ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_str_clone_at(i64, ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_str_clone_root(ptr, i64, ptr, ptr)\n");
-            try w.writeAll("declare void @doxa_str_rehome_at(i64, ptr, i64, ptr, ptr)\n");
-            try w.writeAll("declare void @doxa_str_rehome_root(ptr, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_str_from_cstr(ptr, ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_str_clone_raw(ptr, i64)\n");
             try w.writeAll("declare void @doxa_substring(ptr, i64, i64, i64, ptr, ptr)\n");
@@ -48,10 +229,11 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_array_to_string(ptr, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_pack_bytes(ptr, ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_unpack_bytes(ptr, i64)\n");
-            try w.writeAll("declare void @doxa_debug_peek(ptr)\ndeclare void @doxa_peek_string(ptr, i64)\n");
+            try w.writeAll("declare void @doxa_debug_peek(ptr)\ndeclare void @doxa_peek_string(ptr, i64)\ndeclare void @doxa_peek_end()\n");
             try w.writeAll("declare void @doxa_print_array_hdr(ptr)\n");
             try w.writeAll("declare i1 @doxa_str_eq(ptr, i64, ptr, i64)\n");
             try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
+            try w.writeAll("declare ptr @doxa_array_new_at(i64, i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_new_nested(i64, i64, i64, ptr, i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_clone(ptr)\n");
             try w.writeAll("declare ptr @doxa_array_clone_at(i64, ptr)\n");
@@ -86,12 +268,16 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare i64 @doxa_find_array_str(ptr, ptr, i64)\n");
             try w.writeAll("declare i64 @doxa_find_str(ptr, i64, ptr, i64)\n");
             try w.writeAll("declare void @doxa_struct_register(ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_struct_register_at(i64, ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_struct_clone_at(i64, ptr)\n");
             try w.writeAll("declare ptr @doxa_struct_clone_root(ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_clone_scalar_at(i64, i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_struct_clone_scalar_root(i64, ptr)\n");
             try w.writeAll("declare ptr @doxa_struct_rehome_at(i64, ptr)\n");
             try w.writeAll("declare ptr @doxa_struct_rehome_root(ptr)\n");
             try w.writeAll("declare void @doxa_enum_register(ptr)\n");
             try w.writeAll("declare ptr @doxa_scope_alloc(i64, i64)\n");
+            try w.writeAll("declare ptr @doxa_scope_alloc_at(i64, i64, i64)\n");
             try w.writeAll("declare void @doxa_scope_enter()\n");
             try w.writeAll("declare void @doxa_scope_exit()\n");
             try w.writeAll("declare void @doxa_scope_reset()\n");

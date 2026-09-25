@@ -76,6 +76,12 @@ pub const CollectionsHandler = struct {
 
     /// Internal array generation with nesting control
     pub fn generateArrayInternal(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
+        // A3: consume a pending return-placement intent. Clearing it before the
+        // elements are lowered keeps nested arrays/literals in the callee arena;
+        // the element-store path re-homes them into this array's arena.
+        const place_intent = self.generator.place_return_value;
+        self.generator.place_return_value = false;
+
         // Consume the declared element type (if the enclosing declaration had an
         // explicit array annotation). Reset the field so it doesn't leak into
         // unrelated sub-expressions; we re-thread it explicitly for nested arrays.
@@ -151,6 +157,9 @@ pub const CollectionsHandler = struct {
             .storage_kind = storage_kind,
             .nested_sizes = nested_sizes,
             .nested_depth = nested_depth,
+            .place_in_caller = place_intent and storage_kind == .dynamic and nested_depth == 0,
+            .element_struct_field_types = self.generator.elementStructFieldTypes(element_type),
+            .element_struct_type_name = self.generator.elementStructTypeName(element_type),
         } });
 
         // Declared element type to apply to direct (non-nested) literal elements.

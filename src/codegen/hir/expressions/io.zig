@@ -103,6 +103,8 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
         }
 
         // Generate peek instruction with full path and correct type
+        // B2: peeking a struct prints it through the descriptor registry.
+        self.generator.markReflectedType(inferred_type);
         try self.generator.instructions.append(.{ .Peek = .{
             .name = peek_path,
             .value_type = inferred_type,
@@ -210,6 +212,9 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
         else
             self.generator.inferTypeFromExpression(peek_data.expr);
         const peek_sid: u32 = if (peek_struct_type == .Struct) peek_struct_type.Struct else 0;
+
+        // B2: a struct peek prints through the descriptor registry.
+        self.generator.markReflectedType(peek_struct_type);
 
         // Add the PeekStruct instruction with the gathered info
         try self.generator.instructions.append(.{ .PeekStruct = .{

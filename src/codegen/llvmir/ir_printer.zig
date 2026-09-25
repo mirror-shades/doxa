@@ -47,16 +47,25 @@ pub const IRPrinter = struct {
     pub const cloneHeapForGlobalStore = CoreMethods.cloneHeapForGlobalStore;
     pub const cloneHeapValue = CoreMethods.cloneHeapValue;
     pub const currentRegionTag = CoreMethods.currentRegionTag;
+    pub const callerLevels = CoreMethods.callerLevels;
     pub const rehomeTypeEligible = CoreMethods.rehomeTypeEligible;
+    pub const rehomeUnknownToClone = CoreMethods.rehomeUnknownToClone;
     pub const plainStoreProven = CoreMethods.plainStoreProven;
     pub const plainGlobalStoreProven = CoreMethods.plainGlobalStoreProven;
     pub const recordVarRegion = CoreMethods.recordVarRegion;
     pub const rehomeForLocalStore = CoreMethods.rehomeForLocalStore;
+    pub const rehomeForGlobalStore = CoreMethods.rehomeForGlobalStore;
 
     const ModuleLayoutMethods = @import("./ir_printer/module_layout.zig").Methods(Ctx);
     const SharedHandlerMethods = @import("./ir_printer/shared_handlers.zig").Methods(Ctx);
     pub const writeModule = ModuleLayoutMethods.writeModule;
     pub const writeMainProgram = ModuleLayoutMethods.writeMainProgram;
+    pub const computeDescriptorSkips = ModuleLayoutMethods.computeDescriptorSkips;
+    pub const structFieldsAllScalar = ModuleLayoutMethods.structFieldsAllScalar;
+    pub const reflectedContains = ModuleLayoutMethods.reflectedContains;
+    pub const markTypeNeeds = ModuleLayoutMethods.markTypeNeeds;
+    pub const markNestedStructs = ModuleLayoutMethods.markNestedStructs;
+    pub const markInstructionNeeds = ModuleLayoutMethods.markInstructionNeeds;
     pub const findFunctionsSectionStart = ModuleLayoutMethods.findFunctionsSectionStart;
     pub const findTopLevelInitEnd = ModuleLayoutMethods.findTopLevelInitEnd;
     pub const getFunctionRange = ModuleLayoutMethods.getFunctionRange;
@@ -208,6 +217,17 @@ pub const IRPrinter = struct {
     /// loads provably outlives a later rehome store's destination. Global scope
     /// kinds never appear here; globals are always `Root`.
     var_regions: std.StringHashMap(Region),
+    /// B2: struct type names that reach a reflection site anywhere in the program
+    /// (borrowed from the generator). Such a type must keep its descriptor.
+    reflected_structs: ?*const std.StringHashMap(void) = null,
+    /// B2: set when a group/unknown reflection target makes per-type reasoning
+    /// impossible; then no struct may skip its descriptor.
+    force_struct_descriptors: bool = false,
+    /// B2: scalar-only struct type names proven never to need the descriptor
+    /// (non-reflected and never crossing a signature/container/global boundary).
+    /// Computed once before emission; `emitStructNew` skips the registry write
+    /// for these and clones use the typed scalar path.
+    skip_descriptor_structs: std.StringHashMap(void),
 
     pub const EnumVariantMeta = struct {
         index: u32,
@@ -232,6 +252,11 @@ pub const IRPrinter = struct {
         Root,
         Func,
         Deep,
+        /// A3: a value constructed directly in a `return` and allocated in the
+        /// caller's arena at construction. It outlives the callee body, so the
+        /// return clone is skipped; it is not necessarily resident in the frame
+        /// that consumes the call, so store decisions stay conservative.
+        Caller,
         Unknown,
     };
 

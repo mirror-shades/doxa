@@ -111,6 +111,8 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
 
     platform.enableUtf8Console();
 
+    const verbose = harness.verboseFromEnv(allocator);
+
     // Build every program referenced by a compile-pipeline case exactly once.
     var built = std.StringHashMap(void).init(allocator);
     defer built.deinit();
@@ -124,7 +126,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             return err;
         };
     }
-    harness.printCase("build test files", .{ .passed = 1, .failed = 0, .untested = 0 });
+    harness.printCase("build test files", .{ .passed = 1, .failed = 0, .untested = 0 }, verbose);
 
     var passed: usize = 0;
     var failed: usize = 0;
@@ -132,7 +134,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     for (cases.cases) |tc| {
         if (!tc.runsOn(.compile)) continue;
         const result = try runTestCase(allocator, tc);
-        harness.printCase(tc.name, result);
+        harness.printCase(tc.name, result, verbose);
         if (!harness.isClean(result)) {
             std.debug.print("  src: {s}\n", .{tc.path});
         }
@@ -142,6 +144,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     }
 
     const summary = test_results{ .passed = passed, .failed = failed, .untested = untested };
-    harness.printSuiteSummary("COMPILE", summary);
+    harness.printSuiteSummary("COMPILE", summary, verbose);
     return summary;
 }

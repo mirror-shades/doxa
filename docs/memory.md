@@ -12,11 +12,13 @@ The fundamental rule is that **every `{` creates a lexical lifetime boundary and
 fn registerEmployee(name :: string, age :: int) returns Employee
 { # arena scope created for this function body
     return $Employee {name is name, age is age}
-} # arena scope bulk-freed — returned value is deep-copied to caller
+} # arena scope bulk-freed — returned value is copied (or constructed) into the caller's arena
 ```
 
 Nothing can outlive its allocating scope. This means:
 - Any value returned from a scope must be deep-copied into the parent scope's arena.
+  The compiler satisfies this either by cloning after the fact or, for a value
+  built directly in the `return`, by constructing it in the parent arena.
 - There are no dangling pointers, no use-after-free, no memory leaks.
 - Deep copies are the cost of this guarantee; aliases are the escape hatch.
 
@@ -80,8 +82,17 @@ Because a value can only be reached while its allocating scope is on the stack, 
   - **Globals** live in the program-root arena. Storing a new value into a global rehomes it there. In-place mutations (`@push`, `arr[i] is x`, `n.field is …`) write through the existing root-owned object — they do not snapshot it.
   - **Structs** keep identity when they already outlive the destination (a global array element, a same-scope struct). An unknown allocation is treated as long-lived, so `each n in neutrons { n.x_pos += 1 }` mutates the element. By-value parameters always snapshot.
   - **Arrays** preserve identity when their owning arena already outlives the destination and are cloned only when the source could be destroyed first. Explicit snapshot operations still produce independent arrays.
+  - **Strings** never carry identity: they are immutable, so a store that does not already outlive its destination is simply a copy. Because a copy is observationally identical to keeping the original, the compiler decides every string store statically — there is no runtime scope lookup for strings.
 
-- **Clone on return.** A function frees its body scope on `return`; heap return values are copied into the caller's scope first (`doxa_str_clone_at`, `doxa_array_clone_at`, `doxa_struct_clone_at`, `doxa_clone_doxa_value_at`).
+- **Clone on return.** A function frees its body scope on `return`; heap return
+  values are copied into the caller's scope first (`doxa_str_clone_at`,
+  `doxa_array_clone_at`, `doxa_struct_clone_at`, `doxa_clone_doxa_value_at`).
+  A value constructed *directly* in the `return` (a struct or array literal) is
+  an exception: its destination is statically one region up the nest, so it is
+  allocated in the caller's arena at construction instead of being cloned there
+  (`doxa_scope_alloc_at`, `doxa_array_new_at`, `doxa_struct_register_at`). The
+  result is identical — a fresh object owned by the caller — with the deep copy
+  folded into construction.
 - **Clone on element store.** Pushing or assigning a heap element into an array re-homes it into the array's own arena (tracked in the `ArrayHeader.scope` field), which is what makes `^`-aliased arrays safe — structs built in a callee are copied into the caller's array before the callee tears down.
 
 Structs and arrays are cloned recursively: string fields and array fields are re-cloned into the destination arena, so a deep copy is genuinely independent of the source.
@@ -106,8 +117,8 @@ Structs and arrays are cloned recursively: string fields and array fields are re
 | Issue | Rationale |
 |-------|-----------|
 | **Arena buffer accumulation on resize** — When an array or map grows, the old buffer is abandoned in the arena. Repeated resizes accumulate dead buffers. | All buffers bulk-freed on scope exit in O(1). |
-| **Rehome decisions follow lifetime, not access** — Arrays and strings preserve identity when their owner outlives the destination, while explicit snapshots remain independent. `@push` / index assignment mutate the header in place and keep it. Struct stores keep identity when the source already outlives the destination, which is what makes `each n in arr { n.field is ... }` mutate the element. | Only an actual escape needs a copy. Globals and longer-lived containers still receive storage that survives the source scope. |
-| **Struct clones are registered, not garbage-collected** — `struct_registry` entries (address → descriptor) are appended, never removed. | Needed for `@string(struct)` and recursive cloning. Bounded by the number of structs created; acceptable for program lifetime. |
+| **Rehome decisions follow lifetime, not access** — Arrays preserve identity when their owner outlives the destination, while explicit snapshots remain independent. `@push` / index assignment mutate the header in place and keep it. Struct stores keep identity when the source already outlives the destination, which is what makes `each n in arr { n.field is ... }` mutate the element. Strings are immutable, so they are simply copied when they do not already outlive the destination; identity never matters. | Only an actual escape needs a copy. Globals and longer-lived containers still receive storage that survives the source scope. |
+| **Struct clones are registered, not garbage-collected** — `struct_registry` entries (address → descriptor) are appended, never removed. A scalar-only struct that is never reflected and never crosses a container/union/signature boundary skips the registry entirely and is cloned with a typed word copy (B2/B3-lite). | Needed for `@string(struct)` and descriptor-backed recursive cloning. Bounded by the number of structs created; acceptable for program lifetime. |
 | **Empty array literals require an element type** — `var x is []` is a compile error (E6019); the element type must come from an annotation (`var x :: int[] is []`) or surrounding context (`x = []`, `foo([])`, `return []`). | An unannotated empty literal has no element type to infer, so it would otherwise carry tag 255 and be treated as struct pointers by the runtime. |
 
 ## Edge Cases

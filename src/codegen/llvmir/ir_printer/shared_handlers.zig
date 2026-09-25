@@ -77,7 +77,11 @@ pub fn Methods(comptime Ctx: type) type {
                         const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 0, 1\n", .{ str_name, tmp_name });
                         defer self.allocator.free(ins1);
                         try w.writeAll(ins1);
-                        try stack.append(.{ .name = str_name, .ty = .STRING, .string_literal_value = s });
+                        // A string literal points into the module-level `.str`
+                        // global (or the `.doxa.empty` sentinel); it outlives every
+                        // scope, so it is `Root` for the region analysis. Strings are
+                        // immutable, so sharing a literal is always safe.
+                        try stack.append(.{ .name = str_name, .ty = .STRING, .string_literal_value = s, .region = .Root });
                     } else {
                         const str_idx = self.string_pool_len + constant_id;
                         const global_name = try std.fmt.allocPrint(self.allocator, "@.str.{d}", .{str_idx});
@@ -101,7 +105,11 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(ins1);
                         try w.writeAll(ins1);
 
-                        try stack.append(.{ .name = str_name, .ty = .STRING, .string_literal_value = s });
+                        // A string literal points into the module-level `.str`
+                        // global (or the `.doxa.empty` sentinel); it outlives every
+                        // scope, so it is `Root` for the region analysis. Strings are
+                        // immutable, so sharing a literal is always safe.
+                        try stack.append(.{ .name = str_name, .ty = .STRING, .string_literal_value = s, .region = .Root });
                     }
                 },
                 .enum_variant => |ev| {
@@ -150,12 +158,9 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn handleSwap(_: *IRPrinter, stack: *std.array_list.Managed(StackVal)) void {
             if (stack.items.len < 2) return;
             const top_idx = stack.items.len - 1;
+            // The region rides on the `StackVal` itself, so swapping the two
+            // slots moves each value's provenance with it (A2); no clearing.
             std.mem.swap(StackVal, &stack.items[top_idx], &stack.items[top_idx - 1]);
-            // Region tags ride on the value's allocating arena, so swapping which
-            // slot holds which object would mislabel provenance. Clearing both is
-            // conservative: a later store keeps the runtime rehome call.
-            stack.items[top_idx].region = .Unknown;
-            stack.items[top_idx - 1].region = .Unknown;
         }
 
         pub fn handleArith(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, a: std.meta.fieldInfo(HIRInstruction, .Arith).type) !void {
@@ -916,7 +921,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 0, 1\n", .{ str_name, tmp_name });
                                 defer self.allocator.free(ins1);
                                 try w.writeAll(ins1);
-                                try stack.append(.{ .name = str_name, .ty = .STRING });
+                                try stack.append(.{ .name = str_name, .ty = .STRING, .region = arg.region });
                             }
                         },
                         .I64 => {
@@ -1011,7 +1016,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_unpack_bytes(ptr {s}, i64 {s})\n", .{ result_name, ptr_ext, len_ext });
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
-                    try stack.append(.{ .name = result_name, .ty = .PTR, .array_type = HIR.HIRType{ .Byte = {} } });
+                    try stack.append(.{ .name = result_name, .ty = .PTR, .array_type = HIR.HIRType{ .Byte = {} }, .region = self.currentRegionTag() });
                 },
                 .Pop => {
                     const str_val = try self.ensureString(w, arg, id);
@@ -1051,8 +1056,10 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(pop_load);
                     try w.writeAll(pop_load);
 
-                    try stack.append(.{ .name = rem_name, .ty = .STRING });
-                    try stack.append(.{ .name = pop_name, .ty = .STRING });
+                    // `doxa_str_pop` allocates both results fresh in the active
+                    // scope (`allocDoxaString`).
+                    try stack.append(.{ .name = rem_name, .ty = .STRING, .region = self.currentRegionTag() });
+                    try stack.append(.{ .name = pop_name, .ty = .STRING, .region = self.currentRegionTag() });
                 },
                 .Substring => {
                     if (stack.items.len < 2) return;
@@ -1131,7 +1138,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const nothing_call = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {d})\n", .{ nothing_ptr, nothing_info.length });
                 defer self.allocator.free(nothing_call);
                 try w.writeAll(nothing_call);
-                try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
+                try w.writeAll("  call void @doxa_peek_end()\n");
                 return;
             }
 
@@ -1140,11 +1147,11 @@ pub fn Methods(comptime Ctx: type) type {
             if (pk.value_type == .Enum) {
                 if (pk.enum_type_name) |etype| {
                     try self.emitEnumPrint(peek_state, w, id, etype, val.name);
-                    try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
+                    try w.writeAll("  call void @doxa_peek_end()\n");
                     return;
                 } else if (val.enum_type_name) |etype2| {
                     try self.emitEnumPrint(peek_state, w, id, etype2, val.name);
-                    try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
+                    try w.writeAll("  call void @doxa_peek_end()\n");
                     return;
                 }
             }
@@ -1556,7 +1563,7 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 else => {},
             }
-            try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
+            try w.writeAll("  call void @doxa_peek_end()\n");
         }
 
         pub fn handlePeekStruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, ps: std.meta.fieldInfo(HIRInstruction, .PeekStruct).type, peek_state: *PeekEmitState) !void {
@@ -1596,7 +1603,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.allocator.free(call_line);
             try w.writeAll(call_line);
             // Print newline
-            try w.writeAll("  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n");
+            try w.writeAll("  call void @doxa_peek_end()\n");
         }
 
         pub fn handleGroupCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gc: std.meta.fieldInfo(HIRInstruction, .GroupCheck).type) !void {
@@ -2056,7 +2063,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_range(i64 {s}, i64 {s})\n", .{ result_name, start_i64.name, end_i64.name });
                 defer self.allocator.free(line);
                 try w.writeAll(line);
-                try stack.append(.{ .name = result_name, .ty = .PTR, .array_type = HIR.HIRType.Int });
+                try stack.append(.{ .name = result_name, .ty = .PTR, .array_type = HIR.HIRType.Int, .region = self.currentRegionTag() });
                 return;
             }
 
@@ -2340,7 +2347,12 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(ins1);
                     try w.writeAll(ins0);
                     try w.writeAll(ins1);
-                    try stack.append(.{ .name = str_name, .ty = .STRING });
+                    // The inline-Zig ABI returns heap strings by copying into a
+                    // `page_allocator` buffer (see `__doxa_export__…`), which the
+                    // Doxa scope arenas never free; it outlives every scope, so it
+                    // is `Root`. (The ABI rejects array/struct/map returns, so this
+                    // is the only foreign heap shape.)
+                    try stack.append(.{ .name = str_name, .ty = .STRING, .region = .Root });
                     return;
                 }
 
@@ -2401,8 +2413,8 @@ pub fn Methods(comptime Ctx: type) type {
             if (sd.declared_type == .Union) {
                 value = try self.buildDoxaValue(w, value, sd.declared_type, id);
             }
-            if (!sd.is_const and !self.plainGlobalStoreProven(value, sd.declared_type)) {
-                value = try self.cloneHeapForGlobalStore(w, id, value, sd.declared_type);
+            if (!sd.is_const) {
+                value = try self.rehomeForGlobalStore(w, id, value, sd.declared_type);
             }
             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
                 value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
@@ -2469,11 +2481,8 @@ pub fn Methods(comptime Ctx: type) type {
             }
             value = switch (sv.heap_copy) {
                 .keep => value,
-                .snapshot => try self.cloneHeapForGlobalStore(w, id, value, sv.expected_type),
-                .rehome => if (self.plainGlobalStoreProven(value, sv.expected_type))
-                    value
-                else
-                    try self.cloneHeapForGlobalStore(w, id, value, sv.expected_type),
+                .snapshot => try self.cloneHeapValue(w, id, value, sv.expected_type, .program_root, true),
+                .rehome => try self.rehomeForGlobalStore(w, id, value, sv.expected_type),
             };
             const llvm_ty = self.stackTypeToLLVMType(value.ty);
             _ = try self.global_types.put(sv.var_name, value.ty);

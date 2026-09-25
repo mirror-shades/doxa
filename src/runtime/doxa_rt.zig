@@ -30,17 +30,36 @@ pub export fn doxa_scope_alloc(size: i64, alignment: i64) callconv(.c) ?*anyopaq
     return scope_arena.allocator().rawAlloc(sz, alignment_enum, @returnAddress());
 }
 
+/// Heap allocation into the arena `levels` scopes above the current one. Used by
+/// A3 copy-free returns: a value constructed directly in a `return` is born in
+/// the caller's arena instead of being cloned there after the fact.
+pub export fn doxa_scope_alloc_at(levels: i64, size: i64, alignment: i64) callconv(.c) ?*anyopaque {
+    const sz: usize = @intCast(size);
+    const align_val: u29 = if (alignment > 0) @intCast(alignment) else @alignOf(u64);
+    const alignment_enum = std.mem.Alignment.fromByteUnits(align_val);
+    const raw = scope_arena.allocAt(@intCast(levels), sz, alignment_enum, @returnAddress()) orelse return null;
+    return @ptrCast(raw);
+}
+
 var peek_output_active: bool = false;
 
 fn doxaWrite(slice: []const u8) void {
     if (peek_output_active) {
         writeStderr(slice);
-        if (std.mem.endsWith(u8, slice, "\n")) {
-            peek_output_active = false;
-        }
     } else {
         writeStdout(slice);
     }
+}
+
+/// Close an active peek record. The IR printer emits this after the value of
+/// every `?` peek, instead of routing the terminating newline through
+/// `doxaWrite`: a peeked string may itself contain newlines, and inferring the
+/// end of the record from written content would truncate the record onto
+/// stdout mid-value.
+pub export fn doxa_peek_end() callconv(.c) void {
+    if (!peek_output_active) return;
+    writeStderr("\n");
+    peek_output_active = false;
 }
 
 /// Write a slice to a raw WASI file descriptor. `std.Io.Threaded`'s syscall
@@ -135,11 +154,43 @@ pub export fn doxa_write_raw(ptr: ?[*:0]const u8) callconv(.c) void {
     }
 }
 
+/// Write `slice` with control characters and `"`/`\` escaped. Peek values are
+/// rendered inside quotes on a single line, so a string containing `\n`, `\r`,
+/// or `\t` (common for captured subprocess output on Windows) must not spill
+/// the record across lines.
+fn writeEscaped(out: *std.Io.Writer, slice: []const u8) !void {
+    const hex_digits = "0123456789abcdef";
+    var start: usize = 0;
+    for (slice, 0..) |byte, i| {
+        const escape: ?[]const u8 = switch (byte) {
+            '\n' => "\\n",
+            '\r' => "\\r",
+            '\t' => "\\t",
+            '\\' => "\\\\",
+            '"' => "\\\"",
+            else => null,
+        };
+        if (escape == null and byte >= 0x20) continue;
+        if (i > start) try out.writeAll(slice[start..i]);
+        if (escape) |esc| {
+            try out.writeAll(esc);
+        } else {
+            const buf = [4]u8{ '\\', 'x', hex_digits[byte >> 4], hex_digits[byte & 0x0f] };
+            try out.writeAll(&buf);
+        }
+        start = i + 1;
+    }
+    if (start < slice.len) try out.writeAll(slice[start..]);
+}
+
 pub export fn doxa_peek_string(ptr: ?[*]const u8, len: u64) callconv(.c) void {
     doxaWrite("\"");
     if (ptr) |p| {
         if (len > 0) {
-            doxaWrite(p[0..@intCast(len)]);
+            var escaped = std.Io.Writer.Allocating.init(std.heap.page_allocator);
+            defer escaped.deinit();
+            writeEscaped(&escaped.writer, p[0..@intCast(len)]) catch {};
+            doxaWrite(escaped.written());
         }
     }
     doxaWrite("\"");
@@ -172,7 +223,6 @@ fn allocDoxaString(bytes: []const u8) DoxaString {
     if (bytes.len == 0) return .{ .ptr = null, .len = 0 };
     const buf = scope_arena.allocator().alloc(u8, bytes.len) catch return .{ .ptr = null, .len = 0 };
     @memcpy(buf, bytes);
-    string_scopes.put(std.heap.page_allocator, @intFromPtr(buf.ptr), scope_arena.currentScope()) catch {};
     return .{ .ptr = buf.ptr, .len = bytes.len };
 }
 
@@ -454,7 +504,6 @@ fn strCloneInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: u64, out_ptr
     };
     @memset(buf[0..alloc_len], 0);
     @memcpy(buf[0..bytes.len], bytes);
-    string_scopes.put(std.heap.page_allocator, @intFromPtr(buf), scope) catch {};
     out_ptr.* = buf;
     out_len.* = bytes.len;
 }
@@ -467,27 +516,6 @@ pub export fn doxa_str_clone_at(levels: i64, ptr: ?[*]const u8, len: u64, out_pt
 /// function and block that may have constructed the value.
 pub export fn doxa_str_clone_root(ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     strCloneInto(scope_arena.rootScope(), ptr, len, out_ptr, out_len);
-}
-
-fn strRehomeInto(scope: ?*scope_arena.Scope, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) void {
-    if (ptr) |p| {
-        if (string_scopes.get(@intFromPtr(p))) |source_scope| {
-            if (scope_arena.isEqualOrDescendant(scope, source_scope)) {
-                out_ptr.* = @constCast(p);
-                out_len.* = len;
-                return;
-            }
-        }
-    }
-    strCloneInto(scope, ptr, len, out_ptr, out_len);
-}
-
-pub export fn doxa_str_rehome_at(levels: i64, ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    strRehomeInto(scope_arena.scopeAt(@intCast(levels)), ptr, len, out_ptr, out_len);
-}
-
-pub export fn doxa_str_rehome_root(ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    strRehomeInto(scope_arena.rootScope(), ptr, len, out_ptr, out_len);
 }
 
 /// Clone with a null terminator, returning the raw C-string pointer. Maps are
@@ -993,7 +1021,6 @@ pub const StructDesc = extern struct {
 
 var struct_registry: std.AutoHashMapUnmanaged(usize, *const StructDesc) = .{};
 var struct_scopes: std.AutoHashMapUnmanaged(usize, ?*scope_arena.Scope) = .{};
-var string_scopes: std.AutoHashMapUnmanaged(usize, ?*scope_arena.Scope) = .{};
 
 pub export fn doxa_struct_register(instance: ?*anyopaque, desc: ?*const StructDesc) callconv(.c) void {
     const inst = instance orelse return;
@@ -1001,6 +1028,16 @@ pub export fn doxa_struct_register(instance: ?*anyopaque, desc: ?*const StructDe
     // Best-effort registration; OOM in a runtime struct registry is non-recoverable
     struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), sd) catch {};
     struct_scopes.put(std.heap.page_allocator, @intFromPtr(inst), scope_arena.currentScope()) catch {};
+}
+
+/// Register a struct whose storage was placed `levels` scopes above the current
+/// one (A3 copy-free returns). Recording the true owning arena keeps later
+/// rehome decisions correct after the constructing function's scope exits.
+pub export fn doxa_struct_register_at(levels: i64, instance: ?*anyopaque, desc: ?*const StructDesc) callconv(.c) void {
+    const inst = instance orelse return;
+    const sd = desc orelse return;
+    struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), sd) catch {};
+    struct_scopes.put(std.heap.page_allocator, @intFromPtr(inst), scope_arena.scopeAt(@intCast(levels))) catch {};
 }
 
 /// Word count of a single struct field given its runtime tag. String fields
@@ -1087,6 +1124,33 @@ pub export fn doxa_struct_clone_root(ptr: ?*anyopaque) callconv(.c) ?*anyopaque 
     return structCloneInto(scope_arena.rootScope(), ptr);
 }
 
+/// B2/B3 scalar-struct typed clone: allocate `word_count` i64 words in the arena
+/// `levels` above the current one and copy them verbatim. A struct with only
+/// scalar fields has no heap field to re-clone, so it needs no descriptor
+/// registry lookup — this is what lets a non-reflected scalar struct skip
+/// `doxa_struct_register` entirely.
+pub export fn doxa_struct_clone_scalar_at(levels: i64, word_count: u64, ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
+    return structCloneScalarInto(scope_arena.scopeAt(@intCast(levels)), @intCast(word_count), ptr);
+}
+
+/// B2/B3 scalar-struct typed clone into the program-root arena.
+pub export fn doxa_struct_clone_scalar_root(word_count: u64, ptr: ?*anyopaque) callconv(.c) ?*anyopaque {
+    return structCloneScalarInto(scope_arena.rootScope(), @intCast(word_count), ptr);
+}
+
+fn structCloneScalarInto(scope: ?*scope_arena.Scope, word_count: usize, ptr: ?*anyopaque) ?*anyopaque {
+    const src = ptr orelse return null;
+    const dst = scope_arena.allocSliceInScope(scope, i64, word_count);
+    const src_words: [*]const i64 = @ptrCast(@alignCast(src));
+    @memcpy(dst, src_words[0..word_count]);
+    return @ptrCast(dst.ptr);
+}
+
+// TODO(A2 residue): array/struct rehome survives only for the latent mixed
+// Root/Deep phi; no corpus program emits a call. Remove this family
+// (`struct_scopes`, `ArrayHeader.scope`, `isEqualOrDescendant`,
+// `doxa_struct_rehome_*`, `doxa_array_rehome_*`) once that edge is resolved —
+// see plan/performance-upgrades.md, "A2 completion landing notes".
 /// Like `structCloneInto`, but keep the original pointer when its allocating
 /// arena already outlives `scope` (same arena or an ancestor). That preserves
 /// identity for `each n in arr { n.field is ... }` — a snapshot clone would
@@ -1250,6 +1314,13 @@ pub export fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callc
     return arrayNewAt(0, elem_size, elem_tag, init_len);
 }
 
+/// Create an array whose header and backing buffer live `levels` scopes above
+/// the current one (A3 copy-free returns). `ArrayHeader.scope` is set to that
+/// arena so elements pushed during literal construction re-home there.
+pub export fn doxa_array_new_at(levels: i64, elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *ArrayHeader {
+    return arrayNewAt(@intCast(levels), elem_size, elem_tag, init_len);
+}
+
 pub export fn doxa_array_range(start: i64, end: i64) callconv(.c) *ArrayHeader {
     const count: u64 = if (end >= start) @intCast(end - start + 1) else 0;
     const hdr = doxa_array_new(8, 0, count);
@@ -1340,6 +1411,9 @@ pub export fn doxa_array_clone_root(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeade
 /// Preserve an array when its owner already outlives the destination; clone
 /// only when storing across a scope boundary would otherwise leave a dangling
 /// header or backing buffer.
+///
+/// TODO(A2 residue): see `structRehomeInto` — retained only for the latent mixed
+/// Root/Deep phi and unreachable from the corpus.
 fn arrayRehomeIn(scope: ?*scope_arena.Scope, hdr: ?*ArrayHeader) *ArrayHeader {
     const src = hdr orelse return arrayNewIn(scope, 8, 0, 0);
     if (scope_arena.isEqualOrDescendant(scope, src.scope)) return src;
@@ -1845,7 +1919,9 @@ fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
             const str_addr: u64 = @bitCast(bits);
             const len: usize = @intCast(@as(u64, @bitCast(fields[word + 1])));
             const s: []const u8 = if (str_addr == 0) "" else @as([*]const u8, @ptrFromInt(@as(usize, @intCast(str_addr))))[0..len];
-            try out.print("\"{s}\"", .{s});
+            try out.writeAll("\"");
+            try writeEscaped(out, s);
+            try out.writeAll("\"");
         } else if (tag == 8 and idx < enum_type_names.len) {
             const etn: []const u8 = if (enum_type_names[idx]) |n| std.mem.span(n) else "";
             try printEnumImpl(out, etn, bits);
@@ -1873,7 +1949,9 @@ fn printArrayHdrImpl(out: *std.Io.Writer, hdr: *ArrayHeader) anyerror!void {
             var str_len: u64 = undefined;
             doxa_array_get_str(hdr, i, &str_ptr, &str_len);
             const s = if (str_ptr) |p| p[0..@intCast(str_len)] else "";
-            try out.print("\"{s}\"", .{s});
+            try out.writeAll("\"");
+            try writeEscaped(out, s);
+            try out.writeAll("\"");
         } else {
             const elem_bits = doxa_array_get_i64(hdr, i);
             try printTaggedBitsImpl(out, hdr.elem_tag, elem_bits);

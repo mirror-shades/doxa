@@ -197,6 +197,13 @@ pub const Scope = struct {
         return null;
     }
 
+    /// Look up a binding declared directly in this scope, ignoring ancestors.
+    /// Use this to decide whether a declaration belongs here (shadowing) rather
+    /// than whether the name is visible.
+    pub fn lookupLocalVariable(self: *Scope, name: []const u8) ?*Variable {
+        return self.name_map.get(name);
+    }
+
     pub fn markUsed(self: *Scope, name: []const u8) void {
         if (self.name_map.get(name)) |v| {
             v.used = true;

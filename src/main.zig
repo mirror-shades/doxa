@@ -21,9 +21,9 @@ const HIRType = @import("./codegen/hir/soxa_types.zig").HIRType;
 const ConstantFolder = @import("./analysis/constant_folder.zig").ConstantFolder;
 const Errors = @import("./utils/errors.zig");
 const ErrorCode = Errors.ErrorCode;
-const ProfilerImport = @import("./utils/profiler.zig");
-const Phase = ProfilerImport.Phase;
-const Profiler = ProfilerImport.Profiler;
+const Profiler = @import("./utils/profiler.zig").Profiler;
+const ArtifactCache = @import("./utils/artifact_cache.zig").ArtifactCache;
+const hashing = @import("./utils/hashing.zig");
 const source_cache = @import("./utils/source_cache.zig");
 const inline_zig_compiler = @import("./inline_zig/compiler.zig");
 const StructMethodInfo = @import("./analysis/semantic/semantic.zig").StructMethodInfo;
@@ -33,6 +33,7 @@ const platform = @import("./utils/platform.zig");
 
 const constants = @import("common/constants.zig");
 const MAX_FILE_SIZE = constants.MAX_SOURCE_FILE_BYTES;
+const MAX_RUNTIME_SOURCE_BYTES = 4 * 1024 * 1024;
 const EXIT_CODE_USAGE = constants.EXIT_CODE_USAGE;
 const DOXA_EXTENSION = ".doxa";
 const DEFAULT_CACHE_DIR = ".doxa-cache";
@@ -55,6 +56,7 @@ const CLI = struct {
     reporter_options: ReporterOptions,
     script_path: ?[]const u8,
     profile: bool,
+    profile_out: ?[]const u8,
     output_path: ?[]const u8,
     cache_dir: []const u8,
     target_arch: ?[]const u8,
@@ -78,6 +80,7 @@ const CLI = struct {
     pub fn deinit(self: *const CLI, allocator: std.mem.Allocator) void {
         if (self.script_path) |p| allocator.free(p);
         if (self.output_path) |p| allocator.free(p);
+        if (self.profile_out) |p| allocator.free(p);
         if (!std.mem.eql(u8, self.cache_dir, DEFAULT_CACHE_DIR)) allocator.free(self.cache_dir);
         if (self.target_arch) |p| allocator.free(p);
         if (self.target_os) |p| allocator.free(p);
@@ -184,6 +187,18 @@ const TargetTriple = struct {
             @tagName(builtin.target.abi),
         }));
     }
+
+    /// The string passed to `-target`, resolved the same way for native and
+    /// cross builds. Used verbatim in cache keys so an artifact never outlives
+    /// the target it was built for.
+    fn targetArgAlloc(self: TargetTriple, allocator: std.mem.Allocator) ![]u8 {
+        if (self.isCross()) return allocator.dupe(u8, self.triple);
+        return std.fmt.allocPrint(allocator, "{s}-{s}-{s}", .{
+            @tagName(builtin.target.cpu.arch),
+            @tagName(builtin.target.os.tag),
+            @tagName(builtin.target.abi),
+        });
+    }
 };
 
 fn withExeSuffix(allocator: std.mem.Allocator, path: []const u8, is_windows: bool) ![]u8 {
@@ -273,18 +288,21 @@ fn registerMissingTypesFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
     }
 }
 
-fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter) !HIRProgram {
+fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter, profiler: *Profiler) !HIRProgram {
     const root_scope = semantic_analyzer.memory.scope_manager.root_scope orelse return error.MissingRootScope;
     var constant_folder = ConstantFolder.init(memoryManager.getAnalysisAllocator(), root_scope);
     var folded_statements = std.array_list.Managed(AST.Stmt).init(memoryManager.getAnalysisAllocator());
     defer folded_statements.deinit();
 
+    profiler.begin("constant-fold");
     for (statements) |stmt| {
         var mutable_stmt = stmt;
         const folded_stmt = try constant_folder.foldStmt(&mutable_stmt);
         try folded_statements.append(folded_stmt);
     }
+    profiler.end();
 
+    profiler.begin("register-types");
     // Enums, groups, and structs declared in dependency modules may not appear
     // on the root parser's `imported_symbols` map (private structs are never
     // direct imports, yet public structs reference them in fields). Register them
@@ -296,7 +314,10 @@ fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []A
     // module are registered. The eager lowering in registerStructType ran before
     // cross-module types were known and left Struct(0)/Unknown placeholders.
     try semantic_analyzer.recomputeStructFieldHIRTypes();
+    profiler.end();
 
+    profiler.begin("hir-lower");
+    defer profiler.end();
     var hir_generator = HIRGenerator.init(io, memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer);
     defer hir_generator.deinit();
 
@@ -331,10 +352,10 @@ fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []A
     return hir_program;
 }
 
-fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8) ![]const []const u8 {
+fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8, toolchain: []const u8, profiler: *Profiler) ![]const []const u8 {
     const zig_exe_path = try resolveBundledZigExecutable(io, memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
-    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target.triple, target.os, include_dirs);
+    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target.triple, target.os, include_dirs, toolchain, profiler);
 }
 
 fn openDirMaybeAbs(io: std.Io, path: []const u8, opts: std.Io.Dir.OpenOptions) !std.Io.Dir {
@@ -381,42 +402,75 @@ fn resolveRuntimeSourceDir(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
     return error.RuntimeSourceNotFound;
 }
 
-// Copy the runtime `.zig` sources into `<cache_dir>/runtime/` so the generated
-// root can `@import` them as a subpath (Zig forbids imports outside the root
-// file's directory). Returns the owned destination directory path.
-fn copyRuntimeToCache(io: std.Io, allocator: std.mem.Allocator, src_dir: []const u8, cache_dir: []const u8) ![]u8 {
-    const dst_dir = try std.fs.path.join(allocator, &.{ cache_dir, "runtime" });
-    errdefer allocator.free(dst_dir);
-    try std.Io.Dir.cwd().createDirPath(io, dst_dir);
+// A single runtime `.zig` source held in memory. The closure is read once so
+// it can be hashed (for the object cache key) and staged without a second pass.
+const RuntimeSource = struct {
+    name: []const u8,
+    content: []const u8,
+};
 
+fn lessRuntimeSource(_: void, a: RuntimeSource, b: RuntimeSource) bool {
+    return std.mem.lessThan(u8, a.name, b.name);
+}
+
+// Read the runtime `.zig` sources into memory, sorted by name so the cache key
+// is independent of directory iteration order.
+fn readRuntimeSources(io: std.Io, allocator: std.mem.Allocator, src_dir: []const u8) ![]RuntimeSource {
     var src = try openDirMaybeAbs(io, src_dir, .{ .iterate = true });
     defer src.close(io);
-    var dst = try openDirMaybeAbs(io, dst_dir, .{});
-    defer dst.close(io);
+
+    var list = std.array_list.Managed(RuntimeSource).init(allocator);
+    errdefer {
+        for (list.items) |s| {
+            allocator.free(s.name);
+            allocator.free(s.content);
+        }
+        list.deinit();
+    }
 
     var it = src.iterate();
     while (try it.next(io)) |entry| {
         if (entry.kind != .file) continue;
         if (!std.mem.endsWith(u8, entry.name, ".zig")) continue;
-        try src.copyFile(entry.name, dst, entry.name, io, .{});
+        const content = try src.readFileAlloc(io, entry.name, allocator, .limited(MAX_RUNTIME_SOURCE_BYTES));
+        errdefer allocator.free(content);
+        const name = try allocator.dupe(u8, entry.name);
+        try list.append(.{ .name = name, .content = content });
     }
 
+    std.mem.sort(RuntimeSource, list.items, {}, lessRuntimeSource);
+    return list.toOwnedSlice();
+}
+
+fn freeRuntimeSources(allocator: std.mem.Allocator, sources: []RuntimeSource) void {
+    for (sources) |s| {
+        allocator.free(s.name);
+        allocator.free(s.content);
+    }
+    allocator.free(sources);
+}
+
+// Write the runtime sources into `<cache_dir>/runtime/` so the generated root
+// can `@import("runtime/doxa_rt.zig")` (Zig forbids imports outside the root
+// file's directory). Returns the owned destination directory path.
+fn stageRuntimeSources(io: std.Io, allocator: std.mem.Allocator, sources: []const RuntimeSource, cache_dir: []const u8) ![]u8 {
+    const dst_dir = try std.fs.path.join(allocator, &.{ cache_dir, "runtime" });
+    errdefer allocator.free(dst_dir);
+    try std.Io.Dir.cwd().createDirPath(io, dst_dir);
+    for (sources) |s| {
+        const path = try std.fs.path.join(allocator, &.{ dst_dir, s.name });
+        defer allocator.free(path);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = path, .data = s.content });
+    }
     return dst_dir;
 }
 
-// Stage the runtime under the cache dir and write the generated Zig root that owns
-// the platform entry point. Returns the owned path to the root file.
-fn prepareZigRoot(io: std.Io, allocator: std.mem.Allocator, cache_dir: []const u8) ![]const u8 {
-    const runtime_src = try resolveRuntimeSourceDir(io, allocator);
-    defer allocator.free(runtime_src);
-    const runtime_dst = try copyRuntimeToCache(io, allocator, runtime_src, cache_dir);
-    defer allocator.free(runtime_dst);
-
-    const root_path = try std.fmt.allocPrint(allocator, "{s}/__doxa_main.zig", .{cache_dir});
-    errdefer allocator.free(root_path);
-
+// The generated Zig root that owns the platform entry point and hands off to
+// the Doxa program. Its content is constant for a given compiler build; hashing
+// it into the object key keeps entry-glue changes from reusing stale objects.
+fn buildRootSource(allocator: std.mem.Allocator) ![]u8 {
     var content = std.array_list.Managed(u8).init(allocator);
-    defer content.deinit();
+    errdefer content.deinit();
     try content.appendSlice("const std = @import(\"std\");\n");
     try content.appendSlice("const doxa_rt = @import(\"runtime/doxa_rt.zig\");\n");
 
@@ -436,8 +490,45 @@ fn prepareZigRoot(io: std.Io, allocator: std.mem.Allocator, cache_dir: []const u
     try content.appendSlice("    doxa_program_main();\n");
     try content.appendSlice("}\n");
 
-    try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = root_path, .data = content.items });
-    return root_path;
+    return content.toOwnedSlice();
+}
+
+// Cache key for the compiled root+runtime object. Everything that can change
+// the object participates: toolchain, target, optimization, the runtime source
+// closure, and the generated root source.
+fn runtimeObjectKey(
+    sources: []const RuntimeSource,
+    root_source: []const u8,
+    toolchain: []const u8,
+    target_arg: []const u8,
+    opt_flag: []const u8,
+    include_dirs: []const []const u8,
+) hashing.Digest {
+    var kb = hashing.KeyBuilder.init("doxa-runtime-object-v1");
+    kb.addBytes(toolchain);
+    kb.addBytes(target_arg);
+    kb.addBytes(opt_flag);
+    kb.addBytes(root_source);
+    for (include_dirs) |dir| kb.addBytes(dir);
+    for (sources) |s| kb.addSource(.{ .name = s.name, .content = s.content });
+    return kb.finish();
+}
+
+// Cache key for the object produced from the emitted user IR.
+fn userObjectKey(
+    ll_source: []const u8,
+    toolchain: []const u8,
+    target_arg: []const u8,
+    clang_flag: []const u8,
+    include_dirs: []const []const u8,
+) hashing.Digest {
+    var kb = hashing.KeyBuilder.init("doxa-user-object-v1");
+    kb.addBytes(toolchain);
+    kb.addBytes(target_arg);
+    kb.addBytes(clang_flag);
+    for (include_dirs) |dir| kb.addBytes(dir);
+    kb.addBytes(ll_source);
+    return kb.finish();
 }
 
 fn resolveBundledZigExecutable(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
@@ -458,6 +549,24 @@ fn resolveBundledZigExecutable(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
     defer file.close(io);
 
     return zig_path;
+}
+
+// Identity of the bundled toolchain, part of every artifact cache key: an
+// artifact must be invalidated when the compiler that produced it changes.
+// `zig version` is authoritative and cheap (~20ms); a failure degrades to a
+// constant that disables cross-toolchain reuse rather than aborting the build.
+fn toolchainIdentity(io: std.Io, allocator: std.mem.Allocator, zig_exe_path: []const u8) ![]u8 {
+    const result = std.process.run(allocator, io, .{ .argv = &.{ zig_exe_path, "version" } }) catch {
+        return allocator.dupe(u8, "unknown");
+    };
+    defer allocator.free(result.stdout);
+    defer allocator.free(result.stderr);
+
+    switch (result.term) {
+        .exited => |code| if (code != 0) return allocator.dupe(u8, "unknown"),
+        else => return allocator.dupe(u8, "unknown"),
+    }
+    return allocator.dupe(u8, std.mem.trim(u8, result.stdout, " \t\r\n"));
 }
 
 // Optimization is described on two axes that govern different parts of the
@@ -610,10 +719,14 @@ fn compileToNative(
     hir_program: *const HIRProgram,
     exe_path: []const u8,
     target: TargetTriple,
+    profiler: *Profiler,
 ) !void {
+    profiler.begin("resolve-zig");
     const zig_exe_path = try resolveBundledZigExecutable(io, allocator);
+    profiler.end();
     defer allocator.free(zig_exe_path);
 
+    profiler.begin("dirs");
     std.Io.Dir.cwd().createDir(io, cli_options.cache_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
@@ -622,6 +735,7 @@ fn compileToNative(
     if (std.fs.path.dirname(exe_path)) |dir| {
         try std.Io.Dir.cwd().createDirPath(io, dir);
     }
+    profiler.end();
 
     const stem_for_derivatives = blk: {
         const filename = std.fs.path.basename(exe_path);
@@ -630,9 +744,26 @@ fn compileToNative(
         break :blk filename;
     };
 
+    // Every artifact key includes the producing toolchain, so a swapped-in Zig
+    // cannot resurrect objects built by a different compiler.
+    profiler.begin("toolchain");
+    const toolchain = try toolchainIdentity(io, allocator, zig_exe_path);
+    profiler.end();
+    defer allocator.free(toolchain);
+    const target_arg = try target.targetArgAlloc(allocator);
+    defer allocator.free(target_arg);
+    const obj_ext: []const u8 = if (target.isWindows()) "obj" else "o";
+
+    const artifacts_dir = try std.fs.path.join(allocator, &.{ cli_options.cache_dir, "artifacts" });
+    defer allocator.free(artifacts_dir);
+    var artifact_cache = try ArtifactCache.init(io, allocator, artifacts_dir);
+    defer artifact_cache.deinit();
+
     var ir_path_buf: [512]u8 = undefined;
     const ir_path = try std.fmt.bufPrint(&ir_path_buf, "{s}/{s}.ll", .{ cli_options.cache_dir, stem_for_derivatives });
     {
+        profiler.begin("emit-ir");
+        defer profiler.end();
         var zig_fn_param_types = std.StringHashMap([]HIRType).init(memoryManager.getExecutionAllocator());
         if (parser.imported_symbols) |imported_symbols| {
             var it = imported_symbols.iterator();
@@ -657,20 +788,25 @@ fn compileToNative(
                 }
             }
         }
-        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), zig_fn_param_types);
+        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), zig_fn_param_types, hir_program.reflected_structs, hir_program.force_struct_descriptors);
         try printer.emitToFile(hir_program, ir_path);
     }
 
-    var obj_path_buf: [512]u8 = undefined;
-    const obj_path = try std.fmt.bufPrint(&obj_path_buf, "{s}/{s}.o", .{ cli_options.cache_dir, stem_for_derivatives });
-    {
+    profiler.begin("cc-object");
+    const obj_path = blk: {
+        const ll_source = try std.Io.Dir.cwd().readFileAlloc(io, ir_path, allocator, .unlimited);
+        defer allocator.free(ll_source);
+        const key = userObjectKey(ll_source, toolchain, target_arg, cli_options.opt.clangFlag(), cli_options.include_dirs.items);
+        if (artifact_cache.contains(key, obj_ext)) break :blk try artifact_cache.pathAlloc(key, obj_ext);
+
+        const staged = try artifact_cache.stagingPathAlloc(key, obj_ext);
+        defer allocator.free(staged);
+
+        profiler.begin("cc-compile");
+        defer profiler.end();
         var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
         defer args.deinit();
-        const ir_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.ll", .{stem_for_derivatives});
-        defer std.heap.page_allocator.free(ir_filename);
-        const obj_filename = try std.fmt.allocPrint(std.heap.page_allocator, "{s}.o", .{stem_for_derivatives});
-        defer std.heap.page_allocator.free(obj_filename);
-        try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-Wno-override-module", "-Wno-unused-command-line-argument", "-c", ir_filename, "-o", obj_filename });
+        try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-Wno-override-module", "-Wno-unused-command-line-argument", "-c", ir_path, "-o", staged });
         try target.appendTargetArg(&args);
         try args.append(cli_options.opt.clangFlag());
         var include_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
@@ -685,7 +821,7 @@ fn compileToNative(
         }
         var child = try std.process.spawn(io, .{
             .argv = args.items,
-            .cwd = .{ .path = cli_options.cache_dir },
+            .cwd = .{ .path = "." },
             .stdout = .inherit,
             .stderr = .inherit,
         });
@@ -694,30 +830,99 @@ fn compileToNative(
             .exited => |code| if (code != 0) return error.Unexpected,
             else => return error.Unexpected,
         }
+        break :blk try artifact_cache.publish(key, obj_ext);
+    };
+    defer allocator.free(obj_path);
+    profiler.end();
+
+    if (cli_options.emit_opt_ir) {
+        profiler.begin("emit-opt-ir");
+        defer profiler.end();
+        try emitInspectionArtifact(io, zig_exe_path, cli_options, stem_for_derivatives, .opt_ir, target);
+    }
+    if (cli_options.emit_asm) {
+        profiler.begin("emit-asm");
+        defer profiler.end();
+        try emitInspectionArtifact(io, zig_exe_path, cli_options, stem_for_derivatives, .asm_, target);
     }
 
-    if (cli_options.emit_opt_ir) try emitInspectionArtifact(io, zig_exe_path, cli_options, stem_for_derivatives, .opt_ir, target);
-    if (cli_options.emit_asm) try emitInspectionArtifact(io, zig_exe_path, cli_options, stem_for_derivatives, .asm_, target);
-
-    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, parsed_statements, parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items);
+    profiler.begin("inline-zig");
+    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, parsed_statements, parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items, toolchain, profiler);
+    profiler.end();
     defer {
         for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
         memoryManager.getAllocator().free(inline_zig_wrapper_paths);
     }
 
-    const root_path = try prepareZigRoot(
-        io,
-        memoryManager.getAllocator(),
-        cli_options.cache_dir,
-    );
-    defer memoryManager.getAllocator().free(root_path);
+    // The root+runtime object is invariant across programs that share a target,
+    // optimizer level, and toolchain. Compiling it dominates the backend, so it
+    // is staged onto disk and cached; a hit skips `zig build-obj` entirely.
+    profiler.begin("runtime");
+    const runtime_obj_path = blk: {
+        const runtime_src_dir = try resolveRuntimeSourceDir(io, allocator);
+        defer allocator.free(runtime_src_dir);
+        const runtime_sources = try readRuntimeSources(io, allocator, runtime_src_dir);
+        defer freeRuntimeSources(allocator, runtime_sources);
+        const root_source = try buildRootSource(allocator);
+        defer allocator.free(root_source);
+
+        const key = runtimeObjectKey(runtime_sources, root_source, toolchain, target_arg, cli_options.opt.zigFlag(), cli_options.include_dirs.items);
+        if (artifact_cache.contains(key, obj_ext)) break :blk try artifact_cache.pathAlloc(key, obj_ext);
+
+        profiler.begin("runtime-stage");
+        const runtime_dst = try stageRuntimeSources(io, allocator, runtime_sources, cli_options.cache_dir);
+        defer allocator.free(runtime_dst);
+        const root_path = try std.fmt.allocPrint(allocator, "{s}/__doxa_main.zig", .{cli_options.cache_dir});
+        defer allocator.free(root_path);
+        try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = root_path, .data = root_source });
+        profiler.end();
+
+        profiler.begin("runtime-build");
+        defer profiler.end();
+        const staged = try artifact_cache.stagingPathAlloc(key, obj_ext);
+        defer allocator.free(staged);
+        var args = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        defer args.deinit();
+        const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{staged});
+        defer std.heap.page_allocator.free(emit_flag);
+        try args.appendSlice(&[_][]const u8{ zig_exe_path, "build-obj", root_path, emit_flag });
+        try target.appendTargetArg(&args);
+        try args.append(cli_options.opt.zigFlag());
+        try args.append("-lc");
+        var include_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        defer {
+            for (include_flags.items) |f| std.heap.page_allocator.free(f);
+            include_flags.deinit();
+        }
+        for (cli_options.include_dirs.items) |dir| {
+            const flag = try std.fmt.allocPrint(std.heap.page_allocator, "-I{s}", .{dir});
+            try include_flags.append(flag);
+            try args.append(flag);
+        }
+        var child = try std.process.spawn(io, .{
+            .argv = args.items,
+            .cwd = .{ .path = "." },
+            .stdout = .inherit,
+            .stderr = .inherit,
+        });
+        const term = try child.wait(io);
+        switch (term) {
+            .exited => |code| if (code != 0) return error.Unexpected,
+            else => return error.Unexpected,
+        }
+        break :blk try artifact_cache.publish(key, obj_ext);
+    };
+    defer allocator.free(runtime_obj_path);
+    profiler.end();
 
     {
+        profiler.begin("link");
+        defer profiler.end();
         var args_ln = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
         defer args_ln.deinit();
         try args_ln.append(zig_exe_path);
         try args_ln.append("build-exe");
-        try args_ln.append(root_path);
+        try args_ln.append(runtime_obj_path);
         try args_ln.append(obj_path);
         for (inline_zig_wrapper_paths) |p| {
             try args_ln.append(p);
@@ -828,6 +1033,7 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
         .mode = .UNDEFINED,
         .script_path = null,
         .profile = false,
+        .profile_out = null,
         .output_path = null,
         .cache_dir = DEFAULT_CACHE_DIR,
         .target_arch = null,
@@ -963,6 +1169,15 @@ fn parseArgs(allocator: std.mem.Allocator, init: std.process.Init) !CLI {
             continue;
         } else if (stringEquals(arg, "--profile")) {
             options.profile = true;
+            continue;
+        } else if (std.mem.startsWith(u8, arg, "--profile-out=")) {
+            const path = arg["--profile-out=".len..];
+            if (path.len == 0) {
+                std.debug.print("Error: --profile-out requires a file path\n", .{});
+                std.process.exit(EXIT_CODE_USAGE);
+            }
+            options.profile = true;
+            options.profile_out = try allocator.dupe(u8, path);
             continue;
         } else if (stringEquals(arg, "-o") or stringEquals(arg, "--output")) {
             expecting_output = true;
@@ -1166,7 +1381,8 @@ fn printUsage() void {
     std.debug.print("  doxa --lsp [--lsp-debug-io]     # Start the Language Server Protocol loop\n", .{});
     std.debug.print("  doxa --lsp-debug <file.doxa>    # Run the in-process LSP debug harness\n", .{});
     std.debug.print("\nGeneral options:\n", .{});
-    std.debug.print("  --profile                         # Enable profiling\n", .{});
+    std.debug.print("  --profile                         # Print a per-phase compilation profile\n", .{});
+    std.debug.print("  --profile-out=<path>              # Also write the profile as JSON to <path>\n", .{});
     std.debug.print("  --help, -h                        # Show this help message\n", .{});
     std.debug.print("  --debug-[stage]                   # Enable debug output for [stage]\n", .{});
     std.debug.print("                                    # lexer, parser, semantic, hir, memory\n", .{});
@@ -1321,7 +1537,9 @@ pub fn main(init: std.process.Init) !void {
 }
 
 fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8, memoryManager: *MemoryManager, reporter: *Reporter, profiler: *Profiler, source: []const u8) !void {
-    profiler.startPhase(Phase.LEXIC_A);
+    profiler.begin("compile");
+
+    profiler.begin("lex");
     const lexedTokens = try lexicAnalysis(io, memoryManager, source, script_path, reporter);
     defer lexedTokens.deinit();
     if (cli_options.reporter_options.debug_lexer) {
@@ -1329,13 +1547,13 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
             std.debug.print("{t} {s}\n", .{ token.type, token.lexeme });
         }
     }
-    profiler.stopPhase();
+    profiler.end();
 
-    profiler.startPhase(Phase.PARSING);
+    profiler.begin("parse");
     var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter);
     defer parser.deinit();
     const parsedStatements = try parser.execute();
-    profiler.stopPhase();
+    profiler.end();
     exitIfCompileErrors(reporter);
 
     if (cli_options.reporter_options.debug_parser) {
@@ -1345,33 +1563,33 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
         reporter.report(.Debug, .Hint, null, "AST", "{s}", .{ast_dump.written()});
     }
 
-    profiler.startPhase(Phase.RESOLVING);
+    profiler.begin("resolve");
     var resolver = Resolver.init(memoryManager.getAnalysisAllocator(), &parser);
     defer resolver.deinit();
     try resolver.resolve(parsedStatements);
-    profiler.stopPhase();
+    profiler.end();
     exitIfCompileErrors(reporter);
 
-    profiler.startPhase(Phase.SEMANTIC_A);
+    profiler.begin("semantic");
     var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), reporter, memoryManager, &parser);
     defer semantic_analyzer.deinit();
     try semantic_analyzer.analyze(parsedStatements);
-    profiler.stopPhase();
+    profiler.end();
     exitIfCompileErrors(reporter);
 
     if (cli_options.reporter_options.debug_memory) {
         memoryManager.dumpState(reporter);
     }
 
-    profiler.startPhase(Phase.GENERATE_S);
+    profiler.begin("hir");
 
     var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
     defer reachable_modules.deinit();
-    const hir_program = try generateHIRProgram(io, memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, reporter);
+    const hir_program = try generateHIRProgram(io, memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, reporter, profiler);
     exitIfCompileErrors(reporter);
-    profiler.stopPhase();
+    profiler.end();
 
-    profiler.startPhase(Phase.GENERATE_L);
+    profiler.begin("native");
     var target = TargetTriple.resolve(&cli_options, allocator) catch |err| switch (err) {
         error.MissingTargetOs => {
             std.debug.print("Error: cross-compiling requires --os=<os>; a target without an OS would silently fall back to the host\n", .{});
@@ -1398,21 +1616,32 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
         &hir_program,
         exe_path,
         target,
+        profiler,
     );
-    profiler.stopPhase();
+    profiler.end();
+
+    profiler.end();
 
     if (cli_options.mode == .RUN) {
-        profiler.startPhase(Phase.EXECUTION);
+        profiler.begin("execute");
         const code = try runNativeExecutable(io, environ_map, exe_path, cli_options.program_args);
-        profiler.stopPhase();
+        profiler.end();
 
         if (cli_options.reporter_options.debug_memory) {
             memoryManager.dumpState(reporter);
         }
-        try profiler.dump();
+        try finishProfile(profiler, cli_options.profile_out);
         if (code != 0) std.process.exit(code);
         return;
     }
 
+    try finishProfile(profiler, cli_options.profile_out);
+}
+
+// Emit the human-readable profile to stderr and, when requested, the JSON
+// report to disk. Called on every successful compile (and before a run's
+// non-zero exit is propagated).
+fn finishProfile(profiler: *Profiler, profile_out: ?[]const u8) !void {
     try profiler.dump();
+    if (profile_out) |path| try profiler.writeJsonReport(path);
 }

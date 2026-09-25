@@ -10,6 +10,22 @@ const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const import_parser = @import("../../../parser/import_parser.zig");
 
+/// A3: a struct may be constructed directly in the caller's arena only when every
+/// field is a value the structural clone can reproduce with a per-field clone into
+/// that arena — scalars pass through, strings are copied. Fields that are
+/// themselves arrays, structs, maps, unions, or functions are excluded so the
+/// placement never stores a reference into the callee arena.
+fn fieldsAllowCallerPlacement(field_types: []const HIRType) bool {
+    for (field_types) |t| {
+        switch (t) {
+            .Int, .Byte, .Float, .Tetra, .Enum, .Nothing, .String => {},
+            else => return false,
+        }
+    }
+    return true;
+}
+
+
 /// Handle struct operations, field access, and type declarations
 pub const StructsHandler = struct {
     generator: *HIRGenerator,
@@ -33,6 +49,12 @@ pub const StructsHandler = struct {
     /// Generate HIR for struct literal expressions
     pub fn generateStructLiteral(self: *StructsHandler, struct_lit: ast.Expr.Data) !void {
         const struct_data = struct_lit.StructLiteral;
+
+        // A3: consume a pending return-placement intent. Clearing it before the
+        // fields are lowered keeps nested literals in the callee arena (where the
+        // caller-side clone can fold them into the placed object's arena).
+        const place_intent = self.generator.place_return_value;
+        self.generator.place_return_value = false;
 
         // Track field types for type checking
         const field_types = try self.generator.allocator.alloc(HIRType, struct_data.fields.len);
@@ -98,6 +120,7 @@ pub const StructsHandler = struct {
                 .field_count = @intCast(struct_data.fields.len),
                 .field_names = try self.generator.allocator.dupe([]const u8, field_names),
                 .field_types = try self.generator.allocator.dupe(HIRType, field_types),
+                .place_in_caller = place_intent and fieldsAllowCallerPlacement(field_types),
             },
         });
 

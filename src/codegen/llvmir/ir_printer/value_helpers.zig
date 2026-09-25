@@ -76,7 +76,12 @@ pub fn Methods(comptime Ctx: type) type {
         defer self.allocator.free(ins1);
         try w.writeAll(ins1);
 
-        try stack.append(.{ .name = result_name, .ty = .STRING });
+        // The runtime string helpers allocate their result into the scope active
+        // at this call (concat, conversions, substring, ...), so the result is a
+        // fresh value of the current region. Callers that instead read an existing
+        // string (e.g. `doxa_array_get_str`) override the region with the
+        // container's region immediately after.
+        try stack.append(.{ .name = result_name, .ty = .STRING, .region = self.currentRegionTag() });
     }
 
     pub fn createEnumTypeNameGlobal(self: *IRPrinter, type_name: []const u8, _: *usize) ![]const u8 {

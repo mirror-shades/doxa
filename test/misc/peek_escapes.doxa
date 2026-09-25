@@ -1,0 +1,8 @@
+var newline is "Hello, World!\n"
+newline?
+
+var tabbed is "a\tb"
+tabbed?
+
+var quoted is "quote \" and slash \\"
+quoted?

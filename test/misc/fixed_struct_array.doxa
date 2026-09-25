@@ -1,0 +1,27 @@
+# B1 regression: a fixed-size array of scalar-only structs is laid out as
+# contiguous by-value slots, so `arr[i].field` is a direct GEP and `arr[i] is
+# $S{...}` copies words into the slot. Element identity is preserved: an `each`
+# binding still aliases the slot, so `n.field is ...` writes through the array.
+
+struct Pt {
+    public x :: int,
+    public y :: int,
+    public f :: float,
+}
+
+public entry function main() {
+    var arr :: Pt[3]
+
+    arr[0] is $Pt { x is 1, y is 2, f is 0.5 }
+    arr[1] is $Pt { x is 3, y is 4, f is 1.5 }
+    arr[2] is $Pt { x is 5, y is 6, f is 2.5 }
+
+    arr[1].x is 30
+    @print("{arr[0].x} {arr[0].y} {arr[1].x} {arr[1].y} {arr[2].x} {arr[2].y}\n")
+
+    each n in arr { n.x += 1 }
+    @print("{arr[0].x} {arr[1].x} {arr[2].x}\n")
+
+    arr[0].f is 7.25
+    @print("{arr[0].f} {arr[1].f} {arr[2].f}\n")
+}

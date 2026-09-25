@@ -38,6 +38,22 @@ zig Build {
         return errorState(2, 0);
     }
 
+    // `std.process.spawn` allocates the child's environment block and command
+    // line through the `Io`'s allocator. `std.Io.Threaded.global_single_threaded`
+    // is deliberately built with a failing allocator, so spawning through it
+    // fails with `error.OutOfMemory`. The build layer therefore owns a
+    // single-threaded `Io` backed by the page allocator.
+    fn buildIo() std.Io {
+        const State = struct {
+            var threaded: std.Io.Threaded = init: {
+                var t = std.Io.Threaded.init_single_threaded;
+                t.allocator = std.heap.page_allocator;
+                break :init t;
+            };
+        };
+        return State.threaded.io();
+    }
+
     // Append `--<prefix>=<value>` for every newline-separated entry in `joined`.
     // Empty entries are skipped. Returns false on allocation failure.
     fn appendListFlags(a: std.mem.Allocator, args: *std.array_list.Managed([]const u8), prefix: []const u8, joined: []const u8) bool {
@@ -76,7 +92,7 @@ zig Build {
         var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
         defer arena.deinit();
         const a = arena.allocator();
-        const io = std.Io.Threaded.global_single_threaded.io();
+        const io = buildIo();
 
         const doxa_path = blk: {
             var env_len: u64 = 0;
@@ -200,7 +216,7 @@ zig Build {
     // stat'd (missing, permission denied, ...). Used by the artifact-level
     // up-to-date check in `run`.
     pub fn fileMtime(path: []const u8) i64 {
-        const io = std.Io.Threaded.global_single_threaded.io();
+        const io = buildIo();
         const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return -1;
         defer file.close(io);
         const stat = file.stat(io) catch return -1;

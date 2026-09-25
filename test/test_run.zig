@@ -79,13 +79,15 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
 
     platform.enableUtf8Console();
 
+    const verbose = harness.verboseFromEnv(allocator);
+
     var passed: usize = 0;
     var failed: usize = 0;
     var untested: usize = 0;
     for (cases.cases) |tc| {
         if (!tc.runsOn(.run)) continue;
         const result = try runTestCase(allocator, tc);
-        harness.printCase(tc.name, result);
+        harness.printCase(tc.name, result, verbose);
         if (!harness.isClean(result)) {
             std.debug.print("  path: {s}\n", .{tc.path});
         }
@@ -95,6 +97,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     }
 
     const summary = test_results{ .passed = passed, .failed = failed, .untested = untested };
-    harness.printSuiteSummary("RUN", summary);
+    harness.printSuiteSummary("RUN", summary, verbose);
     return summary;
 }

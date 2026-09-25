@@ -204,6 +204,16 @@ pub const ControlFlowHandler = struct {
                     try self.generator.instructions.append(.{ .Label = .{ .name = else_label } });
                     if (preserve_result) {
                         try self.generator.generateExpression(if_expr.else_branch.?, true, should_pop_after_use);
+                        // Terminate the value-bearing else arm with an explicit
+                        // jump, mirroring the then arm. Without it the else path
+                        // falls through into `end_label` and the emitter never
+                        // records the else value for the merge, so the phi ends up
+                        // with only the then arm (invalid IR: the then value does
+                        // not dominate the merge). A branch that already diverged
+                        // is skipped by the emitter's terminator guard. Statement
+                        // contexts carry no value to merge and keep falling
+                        // through, exactly as before.
+                        try self.generator.instructions.append(.{ .Jump = .{ .label = end_label } });
                     } else {
                         try self.generator.generateExpression(if_expr.else_branch.?, false, should_pop_after_use);
                     }
@@ -674,7 +684,7 @@ pub const ControlFlowHandler = struct {
                 }
             }
             // Regular return with value
-            try self.generator.generateExpression(value, true, false);
+            try self.generator.generateReturnValue(value);
         } else {
             // No value - push nothing
             const nothing_idx = try self.generator.addConstant(HIRValue.nothing);

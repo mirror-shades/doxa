@@ -27,6 +27,20 @@ pub fn Methods(comptime Ctx: type) type {
             };
         }
 
+        /// B1: a fixed array of structs may use contiguous by-value slots only
+        /// when every field is scalar. A heap field (string/array/struct/…) would
+        /// need its own clone into the array's arena on element store, which this
+        /// flat path does not do, so such arrays stay on the box-pointer path.
+        fn structFieldsAreFlatScalars(field_types: []const HIR.HIRType) bool {
+            for (field_types) |t| {
+                switch (t) {
+                    .Int, .Byte, .Float, .Tetra, .Enum, .Nothing => {},
+                    else => return false,
+                }
+            }
+            return true;
+        }
+
         /// Address of element `idx` in a dynamic array's packed backing buffer.
         /// Field 0 of `%ArrayHeader` is the data pointer.
         ///
@@ -145,6 +159,63 @@ pub fn Methods(comptime Ctx: type) type {
                     inst.element_type != .Union;
             };
 
+            if ((inst.storage_kind == .fixed or inst.storage_kind == .const_literal) and
+                inst.element_type == .Struct and inst.nested_depth == 0)
+            {
+                // B1: a fixed array of scalar-only structs is laid out as
+                // contiguous by-value slots (`[{N} x { i64, … }]`), so element
+                // access is a single GEP and field access is one more GEP — no
+                // box pointer, no opaque accessor, no clone. Structs with heap
+                // fields stay on the boxed path below.
+                if (inst.element_struct_field_types) |field_types| {
+                    if (field_types.len > 0 and structFieldsAreFlatScalars(field_types)) {
+                        const words = field_types.len;
+                        const elem_ty = try self.buildI64StructType(words);
+                        defer self.allocator.free(elem_ty);
+                        const elem_bytes: u64 = @intCast(words * @sizeOf(i64));
+                        const total_bytes: u64 = @as(u64, inst.size) * elem_bytes;
+
+                        const reg = try self.nextTemp(id);
+                        const arr_llvm = try std.fmt.allocPrint(self.allocator, "[{d} x {s}]", .{ inst.size, elem_ty });
+                        defer self.allocator.free(arr_llvm);
+
+                        const FLAT_STACK_BYTE_LIMIT: u64 = 64 * 1024;
+                        if (total_bytes >= FLAT_STACK_BYTE_LIMIT) {
+                            const align_bytes: u64 = if (elem_bytes == 0) 1 else elem_bytes;
+                            const alloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {d}, i64 {d})\n", .{ reg, total_bytes, align_bytes });
+                            defer self.allocator.free(alloc_line);
+                            try w.writeAll(alloc_line);
+
+                            const memset_line = try std.fmt.allocPrint(self.allocator, "  call void @llvm.memset.p0.i64(ptr align {d} {s}, i8 0, i64 {d}, i1 false)\n", .{ align_bytes, reg, total_bytes });
+                            defer self.allocator.free(memset_line);
+                            try w.writeAll(memset_line);
+                        } else {
+                            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ reg, arr_llvm });
+                            defer self.allocator.free(alloca_line);
+                            try w.writeAll(alloca_line);
+
+                            const zero_line = try std.fmt.allocPrint(self.allocator, "  store {s} zeroinitializer, ptr {s}\n", .{ arr_llvm, reg });
+                            defer self.allocator.free(zero_line);
+                            try w.writeAll(zero_line);
+                        }
+
+                        var fixed_sizes: [4]u32 = [_]u32{0} ** 4;
+                        fixed_sizes[0] = inst.size;
+                        try stack.append(.{
+                            .name = reg,
+                            .ty = .PTR,
+                            .region = self.currentRegionTag(),
+                            .array_type = inst.element_type,
+                            .fixed_array_depth = 1,
+                            .fixed_array_sizes = fixed_sizes,
+                            .struct_field_types = field_types,
+                            .struct_type_name = inst.element_struct_type_name,
+                        });
+                        return;
+                    }
+                }
+            }
+
             if ((inst.storage_kind == .fixed or inst.storage_kind == .const_literal) and can_flat_alloc) {
                 const total_depth: u3 = if (inst.nested_depth > 0) inst.nested_depth + 1 else 1;
 
@@ -255,10 +326,19 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(line);
             } else {
                 reg = try self.nextTemp(id);
-                const line = try std.fmt.allocPrint(self.allocator,
-                    "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n",
-                    .{ reg, elem_size, elem_tag, inst.size },
-                );
+                // A3 copy-free return: an array constructed directly in a `return`
+                // is born in the caller's arena, with `header.scope` set to that
+                // arena so element stores re-home there during construction.
+                const line = if (inst.place_in_caller)
+                    try std.fmt.allocPrint(self.allocator,
+                        "  {s} = call ptr @doxa_array_new_at(i64 {d}, i64 {d}, i64 {d}, i64 {d})\n",
+                        .{ reg, self.callerLevels(), elem_size, elem_tag, inst.size },
+                    )
+                else
+                    try std.fmt.allocPrint(self.allocator,
+                        "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 {d})\n",
+                        .{ reg, elem_size, elem_tag, inst.size },
+                    );
                 defer self.allocator.free(line);
                 try w.writeAll(line);
             }
@@ -266,7 +346,7 @@ pub fn Methods(comptime Ctx: type) type {
             const arr_val = StackVal{
                 .name = reg,
                 .ty = .PTR,
-                .region = self.currentRegionTag(),
+                .region = if (inst.place_in_caller) .Caller else self.currentRegionTag(),
                 .array_type = inst.element_type,
             };
             try stack.append(arr_val);
@@ -378,6 +458,9 @@ pub fn Methods(comptime Ctx: type) type {
             const key_val = stack.items[stack.items.len - 1];
             var map_val = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
+            // A map value lives in the map's own arena, so a read carries the
+            // container's region (A2 container-read widening).
+            const map_region = map_val.region;
 
             if (map_val.ty != .PTR) {
                 map_val = try self.ensurePointer(w, map_val, id);
@@ -563,11 +646,20 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(dv3_line);
                 try w.writeAll(dv3_line);
 
-                try stack.append(.{ .name = dv3, .ty = .Value });
+                try stack.append(.{ .name = dv3, .ty = .Value, .region = map_region });
             } else {
                 const value_type = map_val.array_type orelse concrete_value_type;
                 const actual_val = try self.convertArrayStorageToValue(w, storage_val, value_type, id);
-                try stack.append(actual_val);
+                var actual = actual_val;
+                if (value_type == .Array or value_type == .Struct) {
+                    // The map stores a pointer into its own arena.
+                    actual.region = map_region;
+                } else if (value_type == .String) {
+                    // A map string value is rehydrated from a C-string by
+                    // `doxa_str_from_cstr`, which *copies* into the current arena.
+                    actual.region = self.currentRegionTag();
+                }
+                try stack.append(actual);
             }
         }
 
@@ -583,6 +675,7 @@ pub fn Methods(comptime Ctx: type) type {
             const key_val = stack.items[stack.items.len - 2];
             var map_val = stack.items[stack.items.len - 3];
             stack.items.len -= 3;
+            const map_region = map_val.region;
 
             if (map_val.ty != .PTR) {
                 map_val = try self.ensurePointer(w, map_val, id);
@@ -605,7 +698,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll(set_line);
 
             // Leave the (updated) map on the stack for further use.
-            try stack.append(.{ .name = map_val.name, .ty = .PTR, .array_type = map_val.array_type });
+            try stack.append(.{ .name = map_val.name, .ty = .PTR, .array_type = map_val.array_type, .region = map_region });
         }
 
         pub fn emitArraySet(
@@ -619,13 +712,24 @@ pub fn Methods(comptime Ctx: type) type {
             const idx_val = stack.items[stack.items.len - 2];
             const hdr_val = stack.items[stack.items.len - 3];
             stack.items.len -= 3;
+            // An element store writes into the array's own arena and re-pushes
+            // the same array, so the container keeps its region (A2).
+            const arr_region = hdr_val.region;
 
             if (hdr_val.fixed_array_depth > 0) {
                 const element_type = hdr_val.array_type orelse HIR.HIRType.Int;
                 const idx_i64 = try self.ensureI64(w, idx_val, id);
                 const depth = hdr_val.fixed_array_depth;
-                const base_type = self.fixedArrayInnermostLLVMType(element_type);
-                const level_type = try self.fixedArrayLevelLLVMType(base_type, hdr_val.fixed_array_sizes, depth);
+                const struct_elem = depth == 1 and element_type == .Struct and hdr_val.struct_field_types != null;
+                var struct_elem_ty: []const u8 = "";
+                var level_type: []const u8 = undefined;
+                if (struct_elem) {
+                    struct_elem_ty = try self.buildI64StructType(hdr_val.struct_field_types.?.len);
+                    level_type = try std.fmt.allocPrint(self.allocator, "[{d} x {s}]", .{ hdr_val.fixed_array_sizes[0], struct_elem_ty });
+                } else {
+                    const base_type = self.fixedArrayInnermostLLVMType(element_type);
+                    level_type = try self.fixedArrayLevelLLVMType(base_type, hdr_val.fixed_array_sizes, depth);
+                }
 
                 const gep_reg = try self.nextTemp(id);
                 const gep_line = try std.fmt.allocPrint(self.allocator,
@@ -636,6 +740,46 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(gep_line);
 
                 if (depth == 1) {
+                    if (struct_elem) {
+                        // B1: copy the constructed struct's words into the flat
+                        // slot. Scalar-only fields, so no heap value needs
+                        // re-homing into the array's arena.
+                        var src_ptr = value;
+                        if (src_ptr.ty != .PTR) src_ptr = try self.ensurePointer(w, src_ptr, id);
+                        const words = hdr_val.struct_field_types.?.len;
+                        var wi: usize = 0;
+                        while (wi < words) : (wi += 1) {
+                            const src_gep = try self.nextTemp(id);
+                            const src_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr {s}, ptr {s}, i32 0, i32 {d}\n", .{ src_gep, struct_elem_ty, src_ptr.name, wi });
+                            defer self.allocator.free(src_line);
+                            try w.writeAll(src_line);
+
+                            const loaded = try self.nextTemp(id);
+                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ loaded, src_gep });
+                            defer self.allocator.free(load_line);
+                            try w.writeAll(load_line);
+
+                            const dst_gep = try self.nextTemp(id);
+                            const dst_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr {s}, ptr {s}, i32 0, i32 {d}\n", .{ dst_gep, struct_elem_ty, gep_reg, wi });
+                            defer self.allocator.free(dst_line);
+                            try w.writeAll(dst_line);
+
+                            const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ loaded, dst_gep });
+                            defer self.allocator.free(store_line);
+                            try w.writeAll(store_line);
+                        }
+                        try stack.append(.{
+                            .name = hdr_val.name,
+                            .ty = .PTR,
+                            .array_type = hdr_val.array_type,
+                            .fixed_array_depth = hdr_val.fixed_array_depth,
+                            .fixed_array_sizes = hdr_val.fixed_array_sizes,
+                            .struct_field_types = hdr_val.struct_field_types,
+                            .struct_type_name = hdr_val.struct_type_name,
+                            .region = arr_region,
+                        });
+                        return;
+                    }
                     const innermost = self.fixedArrayInnermostLLVMType(element_type);
                     var store_val = value;
                     if (!std.mem.eql(u8, innermost, "i64") and store_val.ty == .I64) {
@@ -673,6 +817,7 @@ pub fn Methods(comptime Ctx: type) type {
                     .array_type = hdr_val.array_type,
                     .fixed_array_depth = hdr_val.fixed_array_depth,
                     .fixed_array_sizes = hdr_val.fixed_array_sizes,
+                    .region = arr_region,
                 });
                 return;
             }
@@ -710,7 +855,7 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(call_line);
             }
 
-            try stack.append(.{ .name = arr_ptr.name, .ty = .PTR, .array_type = arr_ptr.array_type });
+            try stack.append(.{ .name = arr_ptr.name, .ty = .PTR, .array_type = arr_ptr.array_type, .region = arr_region });
         }
 
         pub fn emitArrayGet(
@@ -727,8 +872,17 @@ pub fn Methods(comptime Ctx: type) type {
             if (hdr_val.fixed_array_depth > 0) {
                 const idx_i64 = try self.ensureI64(w, idx_val, id);
                 const depth = hdr_val.fixed_array_depth;
-                const base_type = if (hdr_val.array_type) |at| self.fixedArrayInnermostLLVMType(at) else "i64";
-                const level_type = try self.fixedArrayLevelLLVMType(base_type, hdr_val.fixed_array_sizes, depth);
+                const struct_elem = depth == 1 and hdr_val.array_type != null and
+                    hdr_val.array_type.? == .Struct and hdr_val.struct_field_types != null;
+                var level_type: []const u8 = undefined;
+                if (struct_elem) {
+                    const elem_ty = try self.buildI64StructType(hdr_val.struct_field_types.?.len);
+                    defer self.allocator.free(elem_ty);
+                    level_type = try std.fmt.allocPrint(self.allocator, "[{d} x {s}]", .{ hdr_val.fixed_array_sizes[0], elem_ty });
+                } else {
+                    const base_type = if (hdr_val.array_type) |at| self.fixedArrayInnermostLLVMType(at) else "i64";
+                    level_type = try self.fixedArrayLevelLLVMType(base_type, hdr_val.fixed_array_sizes, depth);
+                }
 
                 const gep_reg = try self.nextTemp(id);
                 const gep_line = try std.fmt.allocPrint(self.allocator,
@@ -739,6 +893,20 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(gep_line);
 
                 if (depth == 1) {
+                    if (struct_elem) {
+                        // B1: the element address is the struct slot inside the
+                        // flat buffer; hand it back as a struct pointer so field
+                        // reads/writes are plain GEP loads/stores (identity keeps
+                        // `each n in arr { n.field is … }` writing through).
+                        try stack.append(.{
+                            .name = gep_reg,
+                            .ty = .PTR,
+                            .region = hdr_val.region,
+                            .struct_field_types = hdr_val.struct_field_types,
+                            .struct_type_name = hdr_val.struct_type_name,
+                        });
+                        return;
+                    }
                     const element_type = hdr_val.array_type orelse HIR.HIRType.Int;
                     const innermost = self.fixedArrayInnermostLLVMType(element_type);
                     const load_reg = try self.nextTemp(id);
@@ -1148,6 +1316,8 @@ pub fn Methods(comptime Ctx: type) type {
             const value = stack.items[stack.items.len - 1];
             const hdr_val = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
+            // `@push` mutates and returns the same array (its own arena).
+            const array_region = hdr_val.region;
 
             // TODO: @push on a fixed-size array should be a compile-time error
             // at the HIR level.  Until then, the VM backend already errors;
@@ -1169,14 +1339,15 @@ pub fn Methods(comptime Ctx: type) type {
                 };
             }
             if (element_type == .String) {
+                // `doxa_array_set_str` clones the element into the array's own
+                // arena, so no pre-clone is needed here.
                 const str_val = try self.ensureString(w, value, id);
-                const cloned = try self.cloneHeapForStore(w, id, str_val, .String);
                 const str_ptr_ext = try self.nextTemp(id);
-                const str_ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ str_ptr_ext, cloned.name });
+                const str_ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ str_ptr_ext, str_val.name });
                 defer self.allocator.free(str_ext0);
                 try w.writeAll(str_ext0);
                 const str_len_ext = try self.nextTemp(id);
-                const str_ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ str_len_ext, cloned.name });
+                const str_ext1 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ str_len_ext, str_val.name });
                 defer self.allocator.free(str_ext1);
                 try w.writeAll(str_ext1);
 
@@ -1184,12 +1355,14 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(set_line);
                 try w.writeAll(set_line);
 
-                try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = element_type });
+                try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = element_type, .region = array_region });
                 return;
             }
 
-            const cloned_value = try self.cloneHeapForStore(w, id, value, element_type);
-            const stored_val = try self.convertValueToArrayStorage(w, cloned_value, element_type, id);
+            // `doxa_array_set_i64` clones/re-homes the element into the array's
+            // own arena (tag 6 array / tag 7 struct), so the value is passed
+            // through unconverted except for the storage encoding.
+            const stored_val = try self.convertValueToArrayStorage(w, value, element_type, id);
 
             const set_line = try std.fmt.allocPrint(
                 self.allocator,
@@ -1199,7 +1372,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.allocator.free(set_line);
             try w.writeAll(set_line);
 
-            try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = element_type });
+            try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = element_type, .region = array_region });
         }
 
         pub fn emitArrayLen(
@@ -1316,6 +1489,8 @@ pub fn Methods(comptime Ctx: type) type {
             const idx_val = stack.items[stack.items.len - 2];
             const target = stack.items[stack.items.len - 3];
             stack.items.len -= 3;
+            // `@insert` mutates and returns the same container.
+            const arr_region = target.region;
 
             const idx_i64 = if (idx_val.ty == .I64) idx_val else try self.ensureI64(w, idx_val, id);
             if (target.array_type) |elem_type_in| {
@@ -1344,7 +1519,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_insert_str(ptr {s}, i64 {s}, ptr {s}, i64 {s})\n", .{ out, hdr.name, idx_i64.name, str_ptr_ext, str_len_ext });
                     defer self.allocator.free(line);
                     try w.writeAll(line);
-                    try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type });
+                    try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = arr_region });
                     return;
                 }
                 const stored_val = try self.convertValueToArrayStorage(w, value, elem_type, id);
@@ -1352,7 +1527,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_insert(ptr {s}, i64 {s}, i64 {s})\n", .{ out, hdr.name, idx_i64.name, stored_val.name });
                 defer self.allocator.free(line);
                 try w.writeAll(line);
-                try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type });
+                try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = arr_region });
                 return;
             }
 
@@ -1389,6 +1564,8 @@ pub fn Methods(comptime Ctx: type) type {
             const idx_val = stack.items[stack.items.len - 1];
             const target = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
+            // `@remove` mutates and returns the same container.
+            const arr_region = target.region;
 
             const idx_i64 = if (idx_val.ty == .I64) idx_val else try self.ensureI64(w, idx_val, id);
             if (target.array_type) |elem_type| {
@@ -1429,8 +1606,8 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(ins1);
                     try w.writeAll(ins1);
                     // Contract: [updated, removed]
-                    try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type });
-                    try stack.append(.{ .name = removed_name, .ty = .STRING });
+                    try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = arr_region });
+                    try stack.append(.{ .name = removed_name, .ty = .STRING, .region = arr_region });
                     return;
                 }
                 const removed_slot = try self.nextTemp(id);
@@ -1450,8 +1627,10 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(load_line);
                 const removed_val = try self.convertArrayStorageToValue(w, .{ .name = removed, .ty = .I64 }, elem_type, id);
                 // Contract: [updated, removed]
-                try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type });
-                try stack.append(removed_val);
+                try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = arr_region });
+                var removed_out = removed_val;
+                if (elem_type == .Array or elem_type == .Struct) removed_out.region = arr_region;
+                try stack.append(removed_out);
                 return;
             }
 
@@ -1490,8 +1669,8 @@ pub fn Methods(comptime Ctx: type) type {
             const pop_load = try std.fmt.allocPrint(self.allocator, "  {s} = load %DoxaString, ptr {s}\n", .{ pop_name, popped_slot });
             defer self.allocator.free(pop_load);
             try w.writeAll(pop_load);
-            try stack.append(.{ .name = rem_name, .ty = .STRING });
-            try stack.append(.{ .name = pop_name, .ty = .STRING });
+            try stack.append(.{ .name = rem_name, .ty = .STRING, .region = self.currentRegionTag() });
+            try stack.append(.{ .name = pop_name, .ty = .STRING, .region = self.currentRegionTag() });
         }
 
         pub fn emitArraySlice(
@@ -1515,7 +1694,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_slice(ptr {s}, i64 {s}, i64 {s})\n", .{ out, hdr.name, start_i64.name, len_i64.name });
                 defer self.allocator.free(line);
                 try w.writeAll(line);
-                try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type });
+                try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = self.currentRegionTag() });
                 return;
             }
 
@@ -1555,7 +1734,7 @@ pub fn Methods(comptime Ctx: type) type {
                 );
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
-                try stack.append(.{ .name = dummy_reg, .ty = .PTR });
+                try stack.append(.{ .name = dummy_reg, .ty = .PTR, .region = self.currentRegionTag() });
                 return;
             }
             var rhs = stack.items[stack.items.len - 1];
@@ -1582,7 +1761,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.allocator.free(call_line);
             try w.writeAll(call_line);
 
-            try stack.append(.{ .name = concat_reg, .ty = .PTR, .array_type = elem_type });
+            try stack.append(.{ .name = concat_reg, .ty = .PTR, .array_type = elem_type, .region = self.currentRegionTag() });
         }
 
         pub fn emitRange(
@@ -1721,7 +1900,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.allocator.free(after_label_line);
             try w.writeAll(after_label_line);
 
-            try stack.append(.{ .name = ah, .ty = .PTR, .array_type = .Int });
+            try stack.append(.{ .name = ah, .ty = .PTR, .array_type = .Int, .region = self.currentRegionTag() });
         }
 
         pub fn ensureBool(
@@ -2247,10 +2426,7 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(close_str);
             }
 
-            const nl_line = try std.fmt.allocPrint(self.allocator,
-                "  call void @doxa_write_cstr(ptr getelementptr inbounds ([2 x i8], ptr @.doxa.nl, i64 0, i64 0), i64 1)\n", .{});
-            defer self.allocator.free(nl_line);
-            try w.writeAll(nl_line);
+            try w.writeAll("  call void @doxa_peek_end()\n");
         }
 
         /// Synthesizes a temporary on-stack ArrayHeader that wraps a flat

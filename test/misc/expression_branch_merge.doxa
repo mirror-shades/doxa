@@ -1,0 +1,49 @@
+# Regression for expression-form branch merging and array-typed results.
+#
+# Bug 1: an if-expression only jumped to the merge label after the then arm; the
+# else arm fell through without recording its value, so the merge used the then
+# value unconditionally (invalid IR: "does not dominate all uses"). Both scalar
+# and heap arms are covered.
+#
+# Bug 2: a match expression whose arm is a block `{ arr }` was inferred as
+# `string` by the type system's default, so `@push` concatenated instead of
+# appending. The result must be an array.
+#
+# Mixed phi: a phi merging a Root (global) and a Deep (loop-arena) array must
+# keep the runtime rehome decision, so the global-path value preserves identity
+# while the loop-fresh path is cloned.
+
+var g is [1, 2, 3]
+
+public entry function main() {
+    # Bug 1, scalar arms: both branches must be observed at runtime. If the
+    # else value were dropped, `neg` would print 111.
+    @print("{if @length(g) == 3 then 111 else 222} {if @length(g) == 99 then 111 else 222}\n")
+
+    # Bug 2: a match over array arms must be typed array, so @push appends.
+    var flag is 1
+    var m is match flag {
+        1 then { [10, 20] }
+        else { [99] }
+    }
+    @push(m, 30)
+    @print("{m[0]} {m[1]} {m[2]}\n")
+
+    # Mixed phi, then arm is a global (Root): identity is preserved, so @push
+    # writes through to `g`.
+    for i while i < 1 do i++ {
+        const fresh is [7, 7]
+        var chosen is if flag == 1 then g else fresh
+        @push(chosen, 4)
+    }
+    @print("{g[0]} {g[1]} {g[2]} {g[3]}\n")
+
+    # Mixed phi, else arm is loop-fresh (Deep): it is cloned, so `g` is intact.
+    var flag2 is 0
+    for i while i < 1 do i++ {
+        const fresh2 is [7, 7]
+        var chosen2 is if flag2 == 1 then g else fresh2
+        @push(chosen2, 5)
+    }
+    @print("{g[0]} {g[1]} {g[2]} {g[3]}\n")
+}

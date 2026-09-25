@@ -185,6 +185,20 @@ pub const HIRGenerator = struct {
     // enclosing declaration has an explicit array annotation (e.g. byte[4]). Drives
     // comptime coercion + bounds-checking of literal elements. Null otherwise.
     array_element_type_override: ?SoxaTypes.HIRType = null,
+    /// A3: set while lowering the value expression of a `return` whose top-level
+    /// expression constructs a struct or array. The construction emitter consumes
+    /// it (clearing it for nested sub-expressions) and tags the produced object so
+    /// the backend allocates it directly in the caller's arena — copy-free return.
+    place_return_value: bool = false,
+    /// B2: struct type names that reach a reflection site — `"{x}"` interpolation
+    /// of a struct, `@string(struct)`, or `peek` — anywhere in the program. A
+    /// reflected struct must keep its runtime descriptor registry entry; a
+    /// scalar-only struct never reflected and never crossing a signature/container
+    /// boundary may skip it. Populated during generation.
+    reflected_structs: std.StringHashMap(void),
+    /// B2: a group/unknown reflection target was seen; the reflection predicate
+    /// cannot enumerate its members, so no struct may skip the descriptor.
+    force_struct_descriptors: bool = false,
 
     symbol_table: SymbolTable,
     constant_manager: ConstantManager,
@@ -324,6 +338,7 @@ pub const HIRGenerator = struct {
             .current_function_return_type = .Nothing,
             .is_global_init_phase = false,
             .function_calls = std.array_list.Managed(FunctionCallSite).init(allocator),
+            .reflected_structs = std.StringHashMap(void).init(allocator),
             .module_namespaces = module_namespaces,
             .imported_symbols = imported_symbols,
             .module_field_slots = std.StringHashMap(u32).init(allocator),
@@ -455,6 +470,8 @@ pub const HIRGenerator = struct {
             .function_table = function_table,
             .module_map = try self.buildModuleMap(),
             .allocator = self.allocator,
+            .reflected_structs = &self.reflected_structs,
+            .force_struct_descriptors = self.force_struct_descriptors,
         };
     }
 
@@ -1787,6 +1804,80 @@ pub const HIRGenerator = struct {
             .FunctionCall => ModuleCall.tryEmitTailCall(self, expr),
             else => false,
         };
+    }
+
+    /// B1: the field types (declaration order) of a struct-typed array element,
+    /// resolved from the whole-program struct table by id. Null when the element
+    /// is not a struct, or the table has no entry, so callers fall back to the
+    /// box-pointer representation.
+    pub fn elementStructFieldTypes(self: *HIRGenerator, element_type: HIRType) ?[]HIRType {
+        if (element_type != .Struct or element_type.Struct == 0) return null;
+        const stable = self.type_system.struct_table orelse return null;
+        const fields = stable.fields(element_type.Struct) orelse return null;
+        const out = self.allocator.alloc(HIRType, fields.len) catch return null;
+        for (fields, 0..) |f, i| out[i] = f.hir_type;
+        return out;
+    }
+
+    /// B1: the declaration name of a struct-typed array element (for backend
+    /// field/metadata resolution). Null when the element is not a struct.
+    pub fn elementStructTypeName(self: *HIRGenerator, element_type: HIRType) ?[]const u8 {
+        if (element_type != .Struct or element_type.Struct == 0) return null;
+        const stable = self.type_system.struct_table orelse return null;
+        return stable.getName(element_type.Struct);
+    }
+
+    /// B2: record that a value of this type reaches a reflection site
+    /// (`"{x}"` interpolation, `@string(x)`, or `peek`), transitively through the
+    /// containers it can be printed as part of. A reflected struct must keep its
+    /// descriptor registry entry. A group (whose members are not enumerated here)
+    /// or unresolved type forces every struct to keep its descriptor.
+    pub fn markReflectedType(self: *HIRGenerator, t: HIRType) void {
+        switch (t) {
+            .Struct => |sid| {
+                if (sid == 0) {
+                    self.force_struct_descriptors = true;
+                    return;
+                }
+                const stable = self.type_system.struct_table orelse {
+                    self.force_struct_descriptors = true;
+                    return;
+                };
+                if (stable.getName(sid)) |name| {
+                    self.reflected_structs.put(name, {}) catch {};
+                } else {
+                    self.force_struct_descriptors = true;
+                }
+            },
+            .Array => |inner| self.markReflectedType(inner.*),
+            .Map => |kv| {
+                self.markReflectedType(kv.key.*);
+                self.markReflectedType(kv.value.*);
+            },
+            .Union => |u| for (u.members) |m| self.markReflectedType(m.*),
+            .Group, .Unknown, .Poison => self.force_struct_descriptors = true,
+            else => {},
+        }
+    }
+
+    /// A3: lower the value expression of a `return`. When the top-level
+    /// expression is a struct or array literal — a construction that can be born
+    /// where the result must live — mark it so the backend allocates it directly
+    /// in the caller's arena, turning clone-on-return into placement. Every other
+    /// return value keeps the conservative clone path.
+    pub fn generateReturnValue(self: *HIRGenerator, value: *ast.Expr) !void {
+        const constructs = switch (value.data) {
+            .StructLiteral, .Array => true,
+            else => false,
+        };
+        if (!constructs) {
+            try self.generateExpression(value, true, false);
+            return;
+        }
+        const saved = self.place_return_value;
+        self.place_return_value = true;
+        defer self.place_return_value = saved;
+        try self.generateExpression(value, true, false);
     }
 
     pub fn inferTypeFromLiteral(self: *HIRGenerator, literal: TokenLiteral) HIRType {

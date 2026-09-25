@@ -139,6 +139,11 @@ pub const HIRProgram = struct {
     function_table: []HIRProgram.HIRFunction,
     module_map: std.StringHashMap(ModuleInfo),
     allocator: std.mem.Allocator,
+    /// B2: struct type names reaching a reflection site (borrowed from the
+    /// generator; owned by the analysis arena, not freed here).
+    reflected_structs: ?*const std.StringHashMap(void) = null,
+    /// B2: a group/unknown reflection target disables per-type descriptor skips.
+    force_struct_descriptors: bool = false,
 
     pub fn deinit(self: *HIRProgram) void {
         self.allocator.free(self.instructions);

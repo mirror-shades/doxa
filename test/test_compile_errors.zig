@@ -85,6 +85,8 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
 
     platform.enableUtf8Console();
 
+    const verbose = harness.verboseFromEnv(allocator);
+
     const error_cases = [_]ErrorCase{
         .{
             .name = "syntax error",
@@ -148,7 +150,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     var untested: usize = 0;
     for (error_cases) |tc| {
         const result = try runErrorCase(allocator, tc);
-        harness.printCase(tc.name, result);
+        harness.printCase(tc.name, result, verbose);
         if (!harness.isClean(result)) {
             std.debug.print("  path: {s}\n", .{tc.path});
         }
@@ -158,6 +160,6 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     }
 
     const summary = test_results{ .passed = passed, .failed = failed, .untested = untested };
-    harness.printSuiteSummary("ERROR", summary);
+    harness.printSuiteSummary("ERROR", summary, verbose);
     return summary;
 }

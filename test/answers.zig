@@ -58,6 +58,33 @@ pub const expected_global_array_push_results = [_]print_result{
     .{ .value = "2 10 20" },
 };
 
+pub const expected_expression_branch_merge_results = [_]print_result{
+    .{ .value = "111 222" },
+    .{ .value = "10 20 30" },
+    .{ .value = "1 2 3 4" },
+    .{ .value = "1 2 3 4" },
+};
+
+pub const expected_copy_free_return_results = [_]print_result{
+    .{ .value = "1 x" },
+    .{ .value = "5 6 7 8" },
+    .{ .value = "3 4 9" },
+    .{ .value = "4 5" },
+    .{ .value = "2 y" },
+};
+
+pub const expected_fixed_struct_array_results = [_]print_result{
+    .{ .value = "1 2 30 4 5 6" },
+    .{ .value = "2 31 6" },
+    .{ .value = "7.25 1.5 2.5" },
+};
+
+pub const expected_descriptor_skip_results = [_]print_result{
+    .{ .value = "2 3" },
+    .{ .value = "{ y: 8, x: 7 }" },
+    .{ .value = "1 4" },
+};
+
 pub const expected_module_string_interp_results = [_]print_result{
     .{ .value = "frames=1" },
     .{ .value = "frames=2" },
@@ -126,6 +153,12 @@ pub const expected_list_results = [_]peek_result{
     .{ .type = "int | >nothing", .value = "nothing" },
     .{ .type = ">int | nothing", .value = "1000000000" },
     .{ .type = ">int | nothing", .value = "-100" },
+};
+
+pub const expected_peek_escapes_results = [_]peek_result{
+    .{ .type = "string", .value = "\"Hello, World!\\n\"" },
+    .{ .type = "string", .value = "\"a\\tb\"" },
+    .{ .type = "string", .value = "\"quote \\\" and slash \\\\\"" },
 };
 
 pub const expected_expressions_results = [_]peek_result{
@@ -343,7 +376,7 @@ pub const expected_methods_results = [_]peek_result{
     .{ .type = "string", .value = "\"true\"" },
     .{ .type = "string", .value = "\"both\"" },
     .{ .type = "string", .value = "\"nothing\"" },
-    .{ .type = "string", .value = "\"{ species: .DOG, name: \"Spot\" }\"" },
+    .{ .type = "string", .value = "\"{ species: .DOG, name: \\\"Spot\\\" }\"" },
     .{ .type = "string", .value = "\"Spot\"" },
     .{ .type = "string", .value = "\".DOG\"" },
     .{ .type = "string", .value = "\"int\"" },
