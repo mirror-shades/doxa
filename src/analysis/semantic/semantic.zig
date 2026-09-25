@@ -914,7 +914,7 @@ pub const SemanticAnalyzer = struct {
                             .String => TokenLiteral{ .string = "" },
                             .Tetra => TokenLiteral{ .tetra = .false },
                             .Byte => TokenLiteral{ .byte = 0 },
-                            .Array => try eval.defaultTypeLiteral(self.allocator, type_info),
+                            .Array => TokenLiteral{ .array = &.{} },
                             .Union => if (type_info.union_type) |ut| union_handling.getUnionDefaultValue(ut) else TokenLiteral{ .nothing = {} },
                             else => TokenLiteral{ .nothing = {} },
                         };
@@ -1186,8 +1186,10 @@ pub const SemanticAnalyzer = struct {
                     defer self.block_value_expected = prev_bve;
 
                     if (self.current_scope) |scope| {
-                        // Check if this variable is already in the scope (from collectDeclarations)
-                        if (scope.lookupVariable(decl.name.lexeme) == null) {
+                        // Check if this variable is already declared in this scope
+                        // (e.g. by collectDeclarations). Only consider the current
+                        // scope so a local declaration may shadow an outer one.
+                        if (scope.lookupLocalVariable(decl.name.lexeme) == null) {
                             // This is a local variable in a function body that wasn't added during collection
                             // Create TypeInfo for the variable
                             const type_info = try ast.TypeInfo.createDefault(self.allocator);
@@ -1269,9 +1271,7 @@ pub const SemanticAnalyzer = struct {
                                     .String => TokenLiteral{ .string = "" },
                                     .Tetra => TokenLiteral{ .tetra = .false },
                                     .Byte => TokenLiteral{ .byte = 0 },
-                                    .Array => blk: {
-                                        break :blk try eval.defaultTypeLiteral(self.allocator, type_info);
-                                    },
+                                    .Array => TokenLiteral{ .array = &.{} },
                                     .Union => if (type_info.union_type) |ut|
                                         union_handling.getUnionDefaultValue(ut)
                                     else

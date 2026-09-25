@@ -8,18 +8,36 @@ zig Process {
     extern fn doxa_argv(index: i32) callconv(.c) ?[*:0]const u8;
     extern fn doxa_getenv(name_ptr: ?[*]const u8, name_len: u64, out_len: *u64) callconv(.c) ?[*]const u8;
 
+    // `std.process.spawn` allocates the child's environment block and command
+    // line through the `Io`'s allocator. `std.Io.Threaded.global_single_threaded`
+    // is deliberately built with a failing allocator, so spawning through it
+    // fails with `error.OutOfMemory`. The process layer therefore owns a
+    // single-threaded `Io` backed by the page allocator.
+    fn processIo() std.Io {
+        const State = struct {
+            var threaded: std.Io.Threaded = init: {
+                var t = std.Io.Threaded.init_single_threaded;
+                t.allocator = std.heap.page_allocator;
+                break :init t;
+            };
+        };
+        return State.threaded.io();
+    }
+
     pub fn errorState(mode: i64, value: i64) i64 {
-        var last_error_code: i64 = 0;
+        const State = struct {
+            var last_error_code: i64 = 0;
+        };
         if (mode == 0) {
-            last_error_code = value;
+            State.last_error_code = value;
             return 0;
         }
         if (mode == 1) {
-            return last_error_code;
+            return State.last_error_code;
         }
         if (mode == 2) {
-            const code = last_error_code;
-            last_error_code = 0;
+            const code = State.last_error_code;
+            State.last_error_code = 0;
             return code;
         }
         return 0;
@@ -68,7 +86,7 @@ zig Process {
             return 0;
         }
 
-        const io = std.Io.Threaded.global_single_threaded.io();
+        const io = processIo();
 
         const cmd_argv = if (builtin.os.tag == .windows)
             [_][]const u8{ "cmd", "/C", input }
@@ -112,7 +130,7 @@ zig Process {
             return "";
         }
 
-        const io = std.Io.Threaded.global_single_threaded.io();
+        const io = processIo();
         const alloc = std.heap.page_allocator;
 
         const cmd_argv = if (builtin.os.tag == .windows)
@@ -235,7 +253,7 @@ zig Process {
 
     pub fn cwd() []const u8 {
         clearLastError();
-        const io = std.Io.Threaded.global_single_threaded.io();
+        const io = processIo();
         const content = std.process.currentPathAlloc(io, std.heap.page_allocator) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {

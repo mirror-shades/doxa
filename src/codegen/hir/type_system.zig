@@ -883,6 +883,16 @@ pub const TypeSystem = struct {
                     return .Nothing;
                 }
             },
+            .Block => |block| {
+                // A block expression's value is its final (or lifted) expression;
+                // a block with no value yields `nothing`. Without this case a
+                // block-valued expression (e.g. a match arm `{ arr }`) fell
+                // through to the `else => .String` default and was mis-typed.
+                if (block.value) |value_expr| {
+                    return self.inferTypeFromExpression(value_expr, symbol_table);
+                }
+                return .Nothing;
+            },
             .Range => {
                 const element_type = self.allocator.create(HIRType) catch return .Unknown;
                 element_type.* = .Int;

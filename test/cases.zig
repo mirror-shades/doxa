@@ -103,6 +103,16 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_union_narrow_results[0..],
     },
     .{
+        .name = "loop shadow and diverging cast fallback",
+        .path = "./test/misc/loop_shadow.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "found" },
+            .{ .value = "missing" },
+            .{ .value = "hey" },
+            .{ .value = "outer" },
+        },
+    },
+    .{
         .name = "nested struct return",
         .path = "./test/misc/nested_struct_return.doxa",
         .expected_print = answers.expected_nested_struct_return_results[0..],
@@ -142,6 +152,26 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_global_array_push_results[0..],
     },
     .{
+        .name = "expression branch merge",
+        .path = "./test/misc/expression_branch_merge.doxa",
+        .expected_print = answers.expected_expression_branch_merge_results[0..],
+    },
+    .{
+        .name = "copy free return",
+        .path = "./test/misc/copy_free_return.doxa",
+        .expected_print = answers.expected_copy_free_return_results[0..],
+    },
+    .{
+        .name = "fixed struct array",
+        .path = "./test/misc/fixed_struct_array.doxa",
+        .expected_print = answers.expected_fixed_struct_array_results[0..],
+    },
+    .{
+        .name = "descriptor skip",
+        .path = "./test/misc/descriptor_skip.doxa",
+        .expected_print = answers.expected_descriptor_skip_results[0..],
+    },
+    .{
         .name = "module string interp",
         .path = "./test/misc/module_string_interp.doxa",
         .expected_print = answers.expected_module_string_interp_results[0..],
@@ -163,6 +193,12 @@ const shared_cases = [_]Case{
         .name = "zig import test",
         .path = "./test/misc/zig_import_test.doxa",
         .expected_print = answers.expected_zig_import_test_results[0..],
+    },
+    .{
+        .name = "peek escapes",
+        .path = "./test/misc/peek_escapes.doxa",
+        .mode = .peek,
+        .expected_peek = answers.expected_peek_escapes_results[0..],
     },
     .{
         .name = "expressions",

@@ -123,6 +123,7 @@ Doxa is based upon a very small number of types with enums, structs, and type un
 - improve error logging with better messages
 - improve effiency literally everywhere
 - improve semantic analysis around negative cases (return statements in void return functions/methods, improper use of symbols (functions used as values), etc.)
+- make escape/rehome fully compile-time (decide every .rehome statically (definite region analysis/clone-on-edge))
 
 
 ## Example

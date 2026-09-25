@@ -7,6 +7,7 @@ const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
+const Profiler = @import("../utils/profiler.zig").Profiler;
 const hashing = @import("../utils/hashing.zig");
 const abi_source = @embedFile("abi.zig");
 const generator_source = @embedFile("compiler.zig");
@@ -622,6 +623,8 @@ pub fn compileInlineZigObjects(
     target_triple: []const u8,
     target_os: []const u8,
     include_dirs: []const []const u8,
+    toolchain: []const u8,
+    profiler: *Profiler,
 ) ![]const []const u8 {
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
     defer memoryManager.getAllocator().free(zig_decls);
@@ -637,7 +640,9 @@ pub fn compileInlineZigObjects(
     }
 
     for (zig_decls) |decl| {
+        profiler.begin("wrapper-gen");
         var gen = try generateWrapperZigFile(io, memoryManager.getAllocator(), reporter, zig_cache_path, decl);
+        profiler.end();
         defer gen.deinit(memoryManager.getAllocator());
 
         // The object extension follows the target, not the host.
@@ -646,10 +651,11 @@ pub fn compileInlineZigObjects(
         const zig_stem = std.fs.path.stem(gen.zig_path);
 
         // Content-addressed cache key: wrapper source (already hashed into the
-        // wrapper path) + target triple + opt mode. Distinct targets or opt
-        // modes therefore produce distinct objects, and unchanged source+target
-        // skips the `build-obj` spawn.
+        // wrapper path) + toolchain + target triple + opt mode. Distinct
+        // targets, opt modes, or compilers therefore produce distinct objects,
+        // and unchanged source+target skips the `build-obj` spawn.
         var kb = hashing.KeyBuilder.init(cacheSeed());
+        kb.addBytes(toolchain);
         kb.addBytes(gen.zig_path);
         kb.addBytes(target_triple);
         kb.addBytes(zig_opt_flag);
@@ -663,11 +669,14 @@ pub fn compileInlineZigObjects(
 
         const obj_already_compiled = blk: {
             const f = std.Io.Dir.cwd().openFile(io, obj_path, .{}) catch break :blk false;
-            f.close(io);
-            break :blk true;
+            defer f.close(io);
+            const stat = f.stat(io) catch break :blk false;
+            break :blk stat.kind == .file and stat.size > 0;
         };
 
         if (!obj_already_compiled) {
+            profiler.begin("build-obj");
+            defer profiler.end();
             const emit_flag = try std.fmt.allocPrint(std.heap.page_allocator, "-femit-bin={s}", .{obj_path});
             defer std.heap.page_allocator.free(emit_flag);
             var args_list = std.array_list.Managed([]const u8).init(std.heap.page_allocator);

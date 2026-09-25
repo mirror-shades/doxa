@@ -334,7 +334,12 @@ pub fn Methods(comptime Ctx: type) type {
                             if (v.ty != target_return_stack_type) {
                                 v = try self.coerceForStore(v, target_return_stack_type, &id, w);
                             }
-                            v = try self.cloneHeapForReturn(w, &id, v, func.return_type);
+                            // A3: a value constructed directly in this return was
+                            // already allocated in the caller's arena, so it
+                            // outlives the callee body and needs no clone.
+                            if (v.region != .Caller) {
+                                v = try self.cloneHeapForReturn(w, &id, v, func.return_type);
+                            }
                             try emitReturnScopeExits(self, w, ret.loop_scope_count);
                             const ret_line = try std.fmt.allocPrint(self.allocator, "  ret {s} {s}\n", .{ return_type_str, v.name });
                             defer self.allocator.free(ret_line);
@@ -649,6 +654,9 @@ pub fn Methods(comptime Ctx: type) type {
                                     .struct_field_names = info.struct_field_names,
                                     .struct_type_name = info.struct_type_name,
                                     .enum_type_name = info.enum_type_name,
+                                    // An alias points into the caller's arena, which
+                                    // outlives this callee's function body (`Func`).
+                                    .region = .Func,
                                 });
                             } else {
                                 const result = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -838,10 +846,11 @@ pub fn Methods(comptime Ctx: type) type {
                                 value = try self.rehomeForLocalStore(w, &id, value, sd.declared_type);
                             }
                             if (sd.is_const) {
-                                // A const keeps its initializer's own arena, which the
-                                // analysis does not classify; never plain-store a load
-                                // of it (A1).
-                                try self.var_regions.put(sd.var_name, .Unknown);
+                                // A const keeps its initializer's own arena. Its value
+                                // is single-assignment, so that region is a definite
+                                // fact, not a may-class — record it exactly so later
+                                // loads can be decided statically (A2).
+                                try self.var_regions.put(sd.var_name, value.region);
                             } else {
                                 try self.recordVarRegion(sd.var_name, .Func);
                             }

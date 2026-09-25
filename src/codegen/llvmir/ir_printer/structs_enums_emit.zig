@@ -591,6 +591,13 @@ pub fn Methods(comptime Ctx: type) type {
             id.* += 1;
             defer self.allocator.free(size_temp);
 
+            // A3 copy-free return: when the struct is constructed directly in a
+            // `return`, its storage is born in the caller's arena. Nested heap
+            // fields are constrained to scalars/strings by the generator, so only
+            // the string-field clone below needs the same destination.
+            const place_in_caller = sn.place_in_caller;
+            const caller_levels = self.callerLevels();
+
             const struct_size: u64 = @intCast(total_words * @sizeOf(i64));
             const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_temp, struct_size });
             defer self.allocator.free(size_line);
@@ -601,7 +608,10 @@ pub fn Methods(comptime Ctx: type) type {
             id.* += 1;
             defer self.allocator.free(malloc_temp);
 
-            const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {s}, i64 8)\n", .{ malloc_temp, size_temp });
+            const malloc_line = if (place_in_caller)
+                try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc_at(i64 {d}, i64 {s}, i64 8)\n", .{ malloc_temp, caller_levels, size_temp })
+            else
+                try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {s}, i64 8)\n", .{ malloc_temp, size_temp });
             defer self.allocator.free(malloc_line);
             try w.writeAll(malloc_line);
 
@@ -672,7 +682,10 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(init_zero);
                     try w.writeAll(init_null);
                     try w.writeAll(init_zero);
-                    const clone_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_at(i64 0, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ s_ptr, s_len, out_ptr_slot, out_len_slot });
+                    const clone_line = if (place_in_caller)
+                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_at(i64 {d}, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ caller_levels, s_ptr, s_len, out_ptr_slot, out_len_slot })
+                    else
+                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_at(i64 0, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ s_ptr, s_len, out_ptr_slot, out_len_slot });
                     defer self.allocator.free(clone_line);
                     try w.writeAll(clone_line);
                     const cloned_ptr = try self.nextTemp(id);
@@ -714,14 +727,26 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
-            const desc_global = try self.getOrCreateStructDescGlobal(peek_state, sn.type_name, sn.field_names, sn.field_types, pending_enum_type_names);
-            const reg_line = try std.fmt.allocPrint(
-                self.allocator,
-                "  call void @doxa_struct_register(ptr {s}, ptr {s})\n",
-                .{ struct_ptr, desc_global },
-            );
-            defer self.allocator.free(reg_line);
-            try w.writeAll(reg_line);
+            // B2: a scalar-only struct that is never reflected and never crosses
+            // a signature/container boundary needs no runtime descriptor; its
+            // clones use the typed scalar path instead of the registry walk.
+            if (!self.skip_descriptor_structs.contains(sn.type_name)) {
+                const desc_global = try self.getOrCreateStructDescGlobal(peek_state, sn.type_name, sn.field_names, sn.field_types, pending_enum_type_names);
+                const reg_line = if (place_in_caller)
+                    try std.fmt.allocPrint(
+                        self.allocator,
+                        "  call void @doxa_struct_register_at(i64 {d}, ptr {s}, ptr {s})\n",
+                        .{ caller_levels, struct_ptr, desc_global },
+                    )
+                else
+                    try std.fmt.allocPrint(
+                        self.allocator,
+                        "  call void @doxa_struct_register(ptr {s}, ptr {s})\n",
+                        .{ struct_ptr, desc_global },
+                    );
+                defer self.allocator.free(reg_line);
+                try w.writeAll(reg_line);
+            }
 
             // Cache type-level field names only once (first observed StructNew).
             // Other code may retain references to the stored slice, so replacing it
@@ -739,7 +764,7 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(.{
                 .name = struct_ptr,
                 .ty = .PTR,
-                .region = self.currentRegionTag(),
+                .region = if (place_in_caller) .Caller else self.currentRegionTag(),
                 .struct_field_types = field_type_copy,
                 .struct_field_names = struct_field_names,
                 .struct_type_name = sn.type_name,
@@ -856,6 +881,10 @@ pub fn Methods(comptime Ctx: type) type {
                     else => {},
                 }
             }
+            // A struct field is stored inline in the struct's box (or, for a
+            // nested heap field, cloned into the struct's arena), so the field's
+            // region is the struct operand's region (A2 container-read widening).
+            pushed.region = struct_val.region;
             try stack.append(pushed);
         }
 

@@ -18,7 +18,7 @@ const n is Math.double(21)
 - The import alias (`Math`) names the module; calls use `Alias.func(...)`.
 - The path resolves relative to the importing `.doxa` file, like any other `module ... from` import.
 - The imported file must obey the restricted subset below; violations are reported as a compile error (`E7010`).
-- Edits to the imported `.zig` are picked up automatically on the next build — the generated module is content-hashed and rebuilt whenever its source changes, so no manual cache clearing is needed.
+- Edits to the imported `.zig` are picked up automatically on the next build — the generated module is content-hashed (together with the toolchain, target, and optimization level) and rebuilt whenever any of those changes, so no manual cache clearing is needed.
 
 ## Current source-level rules
 

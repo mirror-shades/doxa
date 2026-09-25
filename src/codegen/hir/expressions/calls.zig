@@ -527,6 +527,8 @@ pub const CallsHandler = struct {
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToFloat } });
         } else if (std.mem.eql(u8, name, "string")) {
             try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
+            // B2: @string(x) of a struct prints it, so its descriptor must stay.
+            self.generator.markReflectedType(self.generator.inferTypeFromExpression(builtin_data.arguments[0]));
             try self.generator.generateExpression(builtin_data.arguments[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString } });
         } else if (std.mem.eql(u8, name, "pack")) {

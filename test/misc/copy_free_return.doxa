@@ -1,0 +1,52 @@
+# A3 regression: a struct/array literal constructed directly in a `return` is
+# allocated in the caller's arena at construction (copy-free return), so it
+# survives the callee scope's teardown and stays mutable by the caller. Returns
+# that are not direct constructions (variables, calls) keep clone-on-return, and
+# a struct with a nested heap field is not placed, so its nested storage is
+# cloned as before.
+
+struct Pair {
+    public a :: int,
+    public b :: string,
+}
+
+struct Bag {
+    public items :: int[],
+}
+
+function makePair(a :: int, b :: string) returns Pair {
+    return $Pair { a is a, b is b }
+}
+
+function makeArr(n :: int) returns int[] {
+    return [n, n + 1, n + 2]
+}
+
+function buildArr(n :: int) returns int[] {
+    var out is [n]
+    @push(out, n + 1)
+    return out
+}
+
+function makeBag(n :: int) returns Bag {
+    return $Bag { items is [n, n + 1] }
+}
+
+public entry function main() {
+    const p is makePair(1, "x")
+    @print("{p.a} {p.b}\n")
+
+    var a is makeArr(5)
+    @push(a, 8)
+    @print("{a[0]} {a[1]} {a[2]} {a[3]}\n")
+
+    var b is buildArr(3)
+    @push(b, 9)
+    @print("{b[0]} {b[1]} {b[2]}\n")
+
+    const bag is makeBag(4)
+    @print("{bag.items[0]} {bag.items[1]}\n")
+
+    const p2 is makePair(2, "y")
+    @print("{p2.a} {p2.b}\n")
+}

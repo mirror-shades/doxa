@@ -1,0 +1,25 @@
+var c is "outer"
+
+function classify(value :: int | string) returns string {
+    const text is value as string else {
+        @panic("not a string")
+    }
+    return text
+}
+
+function findColon(s :: string) returns string {
+    each c at i in s {
+        if c == ":" then {
+            return "found"
+        }
+    }
+    return "missing"
+}
+
+const with_colon is findColon("a:b")
+const without_colon is findColon("abc")
+const classified is classify("hey")
+@print("{with_colon}\n")
+@print("{without_colon}\n")
+@print("{classified}\n")
+@print("{c}\n")

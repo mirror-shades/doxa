@@ -230,29 +230,6 @@ pub fn convertValueToTypeInfo(allocator: std.mem.Allocator, value: TokenLiteral,
     return convertValueToType(value, type_info.base);
 }
 
-pub fn defaultTypeLiteral(allocator: std.mem.Allocator, type_info: *const TypeInfo) !TokenLiteral {
-    return switch (type_info.base) {
-        .Int => TokenLiteral{ .int = 0 },
-        .Float => TokenLiteral{ .float = 0.0 },
-        .String => TokenLiteral{ .string = "" },
-        .Tetra => TokenLiteral{ .tetra = .false },
-        .Byte => TokenLiteral{ .byte = 0 },
-        .Array => blk: {
-            if (type_info.array_type) |element_type| {
-                if (type_info.array_size) |size| {
-                    const elements = try allocator.alloc(TokenLiteral, size);
-                    for (0..size) |i| {
-                        elements[i] = try defaultTypeLiteral(allocator, element_type);
-                    }
-                    break :blk TokenLiteral{ .array = elements };
-                }
-            }
-            break :blk TokenLiteral{ .array = &.{} };
-        },
-        else => TokenLiteral{ .nothing = {} },
-    };
-}
-
 fn nameDistanceScore(a: []const u8, b: []const u8) usize {
     const min_len = @min(a.len, b.len);
     var mismatches: usize = 0;

@@ -130,12 +130,18 @@ runtime-generic representation even though the static type is sitting right ther
   … }` index type and registered into a runtime descriptor registry so the *generic* runtime clone
   and print functions can walk its fields. A struct value is never loaded as an aggregate, so it
   cannot be promoted into registers. Consequences: a `byte` field burns a full word, and every struct
-  construction pays a registry write.
+  construction pays a registry write. B2/B3-lite has landed a first cut for scalar-only structs: a
+  struct whose fields are all scalar and that the whole-program predicate proves never needs the
+  descriptor (not reflected, not in a container/union/signature) skips the registry write and is
+  cloned with a typed word copy. Reflected and heap-field structs still box and register.
 
 - **Arrays of structs are arrays of box pointers.** Each element slot is an 8-byte reference to a
   separately arena-allocated, registered box, and each element *store* deep-clones the struct into
   the array's arena. Field access is therefore pointer-then-field — two dependent loads where C has
-  one — and LLVM can never see a contiguous object graph to vectorize.
+  one — and LLVM can never see a contiguous object graph to vectorize. B1 has landed the fix for
+  *fixed-size* arrays of *scalar-only* structs: they are now a flat `[{N} x { i64, … }]` buffer with
+  single-GEP element/field access and a word-copy element store. Dynamic arrays, and structs with
+  heap fields, still use boxes.
 
 - **Element access still round-trips through tag dispatch.** Dynamic-array element *stores* (and
   compound assigns) and every non-scalar element *read* (string, array, struct) call opaque runtime
@@ -144,12 +150,17 @@ runtime-generic representation even though the static type is sitting right ther
   call sites; the tag exists for the generic runtime, not for the language. Because the calls are
   external, LLVM can neither inline, CSE, nor hoist them.
 
-- **Escape and rehoming are computed at runtime.** To answer "does this value already live in a scope
-  that outlives the destination?" the emitted code walks the live scope stack (`isEqualOrDescendant`)
-  and consults per-object scope registries (`string_scopes`, `struct_scopes`, `ArrayHeader.scope`).
-  But the allocating scope of every value is a *compile-time* fact — its defining block — and
-  lifetimes are lexical and nested. The runtime walk is a dynamic emulation of a static region
-  calculation.
+- **Escape and rehoming are computed at runtime.** To answer "does this value already live in a
+  scope that outlives the destination?" the emitted code walks the live scope stack (`isEqualOrDescendant`)
+  and consults the per-object `struct_scopes` / `ArrayHeader.scope` registries. But the allocating
+  scope of every value is a *compile-time* fact — its defining block — and lifetimes are lexical and
+  nested. The runtime walk is a dynamic emulation of a static region calculation. A2 has already
+  retired strings from this path: immutable, their store is decided entirely at compile time (an
+  unknown string is simply cloned, which is observably identical to preserving its identity), so
+  `string_scopes` and the string rehome exports are gone. A3 has started retiring the clone-on-return:
+  a struct or array literal that is the top-level value of a `return` is born in the caller's arena at
+  construction (`doxa_scope_alloc_at` / `doxa_array_new_at`) instead of being deep-copied there, with
+  only the non-direct returns still cloning.
 
 - **Allocation and clone boundaries are opaque.** Heap allocation is an external `doxa_scope_alloc`;
   clones are external recursive calls; structs are written into process-global registries. None of
@@ -189,7 +200,10 @@ Read against sections 3 and 4, this table is exactly the model's story:
 - **`struct`** (~2x C) is section 4 verbatim: `var arr :: Vec4[N]` lowers to an array of box
   pointers, each field access is pointer-then-field through an opaque, tag-switching runtime call,
   and every element store deep-clones a registered struct. The C twin is a flat by-value
-  `Vec4[250000]`. The model has nothing to do with this gap; the representation does.
+  `Vec4[250000]`. The model has nothing to do with this gap; the representation does. B1 has since
+  made a fixed `Vec4[N]` a flat buffer with direct GEP field access (see section 4); the remaining
+  delta in this snapshot is the floored-`%` sign correction on the serial carry chain, an
+  arithmetic-lowering detail tracked with `call` (Phase D), not the object graph.
 - **`call`** (~15%) is the floored-`%` sign correction on a serial carry chain plus a less favorable
   unroll shape after LLVM inlines the leaf. Residual arithmetic-lowering detail, not a model cost.
 
@@ -211,9 +225,11 @@ its defining scope; compute, per value, the region it can reach (does it return,
 variable, enter a container that escapes, cross an alias call?) and then:
 
 - decide clone-vs-move at compile time, deleting `isEqualOrDescendant`, `scopeAt` level arithmetic,
-  and the `string_scopes` / `struct_scopes` / `ArrayHeader.scope` registries;
+  and the `struct_scopes` / `ArrayHeader.scope` registries (A2 already deleted `string_scopes` for
+  strings, which are clone-decided statically);
 - place function results into the caller's region instead of clone-on-return (the destination is one
-  region up the nest — a fact, not a runtime query), turning deep copies into placement;
+  region up the nest — a fact, not a runtime query), turning deep copies into placement — partially
+  landed (A3): direct-return struct/array literals are now constructed in the caller's arena;
 - demote non-escaping values out of arenas entirely.
 
 **Invariants to preserve** (the escape rules already documented in `memory.md`): a global store
@@ -229,11 +245,15 @@ Spend the static element and field types that the HIR already carries:
 
 - arrays of structs become contiguous by-value element storage when elements do not need independent
   rehoming — the box-pointer representation is retained only where element identity genuinely
-  escapes;
+  escapes. Partially landed (B1): fixed arrays of scalar-only structs are flat; dynamic arrays and
+  heap-field structs are still boxed;
 - structs whose type is never reflected (never `@string`ed, peeked, or generically cloned) get real
-  typed layouts — packed bytes, true aggregates — instead of `[N x i64]` word boxes;
+  typed layouts — packed bytes, true aggregates — instead of `[N x i64]` word boxes. Partially landed
+  (B2/B3-lite): a scalar-only struct proven never to need the descriptor skips its registry write and
+  clones with a typed word copy (the word-box layout itself is unchanged);
 - emit *specialized per-type* deep copies (compile-time recursive: string fields clone, nested
   structs clone, raw fields memcpy) so cloning never needs the runtime descriptor registry.
+  Partially landed (B3-lite) for scalar-only structs.
 
 Partitioning reflection out per type, rather than globally, is what makes the boxed word-array layout
 a special case instead of the default.
@@ -281,3 +301,9 @@ Each benchmark is compiled with `doxa compile … --opt=2` and its C twin with `
 links an unchecked (`ReleaseFast`) runtime. `doxa compile … --emit-opt-ir` writes the
 post-LLVM-optimization IR (`<stem>.opt.ll`) to the cache directory, which is the artifact the
 `struct` and `call` analyses in section 5 are based on.
+
+To see where compile time goes, `doxa compile … --profile` prints a per-phase span tree
+(`--profile-out=<path>` also writes it as JSON). The runtime object and the user `.ll` object are
+content-cached per (toolchain, target, optimizer level, source closure), so warm recompiles skip
+`zig cc` / `zig build-obj`; see `plan/artifact-cache.md`. When measuring compile time, note whether
+the cache is warm or cold.

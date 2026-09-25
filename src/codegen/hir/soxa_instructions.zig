@@ -326,6 +326,15 @@ pub const HIRInstruction = union(enum) {
         storage_kind: ArrayStorageKind = .dynamic,
         nested_sizes: [4]u32 = [_]u32{0} ** 4,
         nested_depth: u3 = 0,
+        /// A3: this array is constructed directly in a `return`, escapes only by
+        /// return, and is therefore allocated in the caller's arena at
+        /// construction instead of being cloned there on return.
+        place_in_caller: bool = false,
+        /// B1: when the element is a struct, its field types (declaration order),
+        /// letting a fixed array lay out contiguous by-value struct slots. Null
+        /// for non-struct elements.
+        element_struct_field_types: ?[]HIRType = null,
+        element_struct_type_name: ?[]const u8 = null,
     },
 
     /// Get array element by index
@@ -395,6 +404,10 @@ pub const HIRInstruction = union(enum) {
         /// Used by the native backend for debug printing.
         field_names: [][]const u8,
         field_types: []HIRType,
+        /// A3: this struct is constructed directly in a `return`, escapes only
+        /// by return, and is therefore allocated in the caller's arena at
+        /// construction instead of being cloned there on return.
+        place_in_caller: bool = false,
     },
 
     //==================================================================

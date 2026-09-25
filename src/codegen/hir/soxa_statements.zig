@@ -239,6 +239,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 .size = 0,
                                 .nested_element_type = resolved.nested_element_type,
                                 .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
+                                .element_struct_field_types = self.elementStructFieldTypes(resolved.element_type),
+                                .element_struct_type_name = self.elementStructTypeName(resolved.element_type),
                             } });
                             try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
                             // Preserve the declared array type for typed empty literals (e.g. int[] is []).
@@ -432,6 +434,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
                         .nested_sizes = nested.sizes,
                         .nested_depth = nested.depth,
+                        .element_struct_field_types = self.elementStructFieldTypes(resolved.element_type),
+                        .element_struct_type_name = self.elementStructTypeName(resolved.element_type),
                     } });
 
                     try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
@@ -489,6 +493,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                 .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
                                 .nested_sizes = nested.sizes,
                                 .nested_depth = nested.depth,
+                                .element_struct_field_types = self.elementStructFieldTypes(element_type),
+                                .element_struct_type_name = self.elementStructTypeName(element_type),
                             } });
 
                             try self.trackArrayElementType(decl.name.lexeme, element_type);
@@ -589,7 +595,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
         .FunctionDecl => {},
         .Return => |ret| {
             if (ret.value) |value| {
-                try self.generateExpression(value, true, false);
+                try self.generateReturnValue(value);
             } else {
                 const nothing_idx = try self.addConstant(HIRValue.nothing);
                 try self.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });

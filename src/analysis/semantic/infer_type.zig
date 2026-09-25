@@ -2443,20 +2443,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (cast_decl_name) |name| try bindNarrowedName(else_scope, name, remainder_type);
 
                 else_type = try inferTypeFromExpr(self, else_expr);
-                if (else_expr.data == .ReturnExpr) {
+                if (expressionDiverges(else_expr)) {
                     else_diverges = true;
                     const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
                     nothing_type.* = .{ .base = .Nothing };
                     else_type = nothing_type;
-                }
-                if (else_expr.data == .Block) {
-                    const stmts = else_expr.data.Block.statements;
-                    if (stmts.len > 0) {
-                        const last = stmts[stmts.len - 1].data;
-                        if (last == .Return or last == .Break or last == .Continue) {
-                            else_diverges = true;
-                        }
-                    }
                 }
 
                 if (cast_decl_name) |name| else_scope.propagateUsedToParent(name);
@@ -2819,6 +2810,34 @@ fn assignValueOrNothingUnion(self: *SemanticAnalyzer, dest: *ast.TypeInfo, value
         .base = .Union,
         .union_type = union_info,
         .is_mutable = value_type.is_mutable,
+    };
+}
+
+/// Whether an expression unconditionally transfers control away and therefore
+/// never produces a value (an explicit return, `@panic`, `@exit`, or
+/// unreachable). Used to accept diverging `as`/`if` fallback branches.
+fn expressionDiverges(expr: *ast.Expr) bool {
+    return switch (expr.data) {
+        .ReturnExpr, .Unreachable => true,
+        .BuiltinCall => |bc| std.mem.eql(u8, bc.function.lexeme, "panic") or
+            std.mem.eql(u8, bc.function.lexeme, "exit"),
+        .InternalCall => |ic| ic.method.type == .PANIC or ic.method.type == .EXIT,
+        .Block => |block| blockDiverges(block.statements),
+        else => false,
+    };
+}
+
+fn blockDiverges(statements: []ast.Stmt) bool {
+    if (statements.len == 0) return false;
+    return statementDiverges(statements[statements.len - 1]);
+}
+
+fn statementDiverges(stmt: ast.Stmt) bool {
+    return switch (stmt.data) {
+        .Return, .Break, .Continue => true,
+        .Expression => |maybe_expr| if (maybe_expr) |e| expressionDiverges(e) else false,
+        .Block => |stmts| blockDiverges(stmts),
+        else => false,
     };
 }
 

@@ -512,14 +512,31 @@ pub fn Methods(comptime Ctx: type) type {
                         continue;
                     }
 
-                    // Skip Nothing values - they are zero-sized and cannot participate in phi nodes
-                    if (slot.items[0].value.ty == .Nothing) {
+                    // A `Nothing` arm is zero-sized and cannot participate in a
+                    // phi node. If every arm is Nothing the merge is Nothing too.
+                    // Otherwise (e.g. a diverging `@panic` fallback arm that never
+                    // actually reaches this merge) keep the real value and feed
+                    // `undef` for the Nothing arms so the phi still carries an
+                    // entry for each predecessor.
+                    var all_nothing = true;
+                    for (slot.items) |incoming_val| {
+                        if (incoming_val.value.ty != .Nothing) {
+                            all_nothing = false;
+                            break;
+                        }
+                    }
+                    if (all_nothing) {
                         try stack.append(slot.items[0].value);
                         continue;
                     }
 
                     var needs_i2_conversion = false;
-                    var target_type = slot.items[0].value.ty;
+                    var target_type: StackType = .Nothing;
+                    for (slot.items) |incoming_val| {
+                        if (incoming_val.value.ty == .Nothing) continue;
+                        target_type = incoming_val.value.ty;
+                        break;
+                    }
                     for (slot.items) |incoming_val| {
                         if (incoming_val.value.ty == .I2) {
                             needs_i2_conversion = true;
@@ -538,11 +555,16 @@ pub fn Methods(comptime Ctx: type) type {
                     }
 
                     for (slot.items) |incoming_val| {
+                        const blk_name: []const u8 = if (std.mem.startsWith(u8, incoming_val.block, "func_")) "entry" else incoming_val.block;
+                        if (incoming_val.value.ty == .Nothing) {
+                            const pair = try std.fmt.allocPrint(self.allocator, "[ undef, %{s} ]", .{blk_name});
+                            try incoming.append(pair);
+                            continue;
+                        }
                         var adjusted = incoming_val.value;
                         if (adjusted.ty != target_type) {
                             adjusted = try self.coerceForMerge(adjusted, target_type, id, w);
                         }
-                        const blk_name: []const u8 = if (std.mem.startsWith(u8, incoming_val.block, "func_")) "entry" else incoming_val.block;
                         const value_name = adjusted.name;
                         const pair = try std.fmt.allocPrint(self.allocator, "[ {s}, %{s} ]", .{ value_name, blk_name });
                         try incoming.append(pair);
@@ -580,9 +602,28 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                     }
 
+                    // A phi's provenance is definite only when every incoming arm
+                    // agrees. All-outliving arms (`Root`/`Func`) collapse to `Func`
+                    // (outlives the function body but is not provably root); any
+                    // `Deep`/`Unknown` arm makes the merge conservative.
+                    var merged_region: Region = slot.items[0].value.region;
+                    for (slot.items) |incoming_val| {
+                        const r = incoming_val.value.region;
+                        if (r != merged_region) {
+                            merged_region = switch (merged_region) {
+                                .Root, .Func => switch (r) {
+                                    .Root, .Func => .Func,
+                                    else => .Unknown,
+                                },
+                                else => .Unknown,
+                            };
+                        }
+                    }
+
                     try stack.append(.{
                         .name = phi_name,
                         .ty = target_type,
+                        .region = merged_region,
                         .array_type = merged_array_type,
                         .enum_type_name = merged_enum_type_name,
                         .struct_field_types = merged_struct_field_types,
@@ -593,7 +634,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn init(io: std.Io, allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType)) IRPrinter {
+        pub fn init(io: std.Io, allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType), reflected_structs: ?*const std.StringHashMap(void), force_struct_descriptors: bool) IRPrinter {
             return .{
                 .allocator = allocator,
                 .io = io,
@@ -625,6 +666,9 @@ pub fn Methods(comptime Ctx: type) type {
                 .exited_scopes = std.AutoHashMap(u32, void).init(allocator),
                 .narrowed_vars = std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)).init(allocator),
                 .var_regions = std.StringHashMap(Region).init(allocator),
+                .reflected_structs = reflected_structs,
+                .force_struct_descriptors = force_struct_descriptors,
+                .skip_descriptor_structs = std.StringHashMap(void).init(allocator),
             };
         }
 
@@ -648,6 +692,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
             self.narrowed_vars.deinit();
             self.var_regions.deinit();
+            self.skip_descriptor_structs.deinit();
             for (self.entry_allocas.items) |line| self.allocator.free(line);
             self.entry_allocas.deinit();
             var ret_it = self.function_struct_return_fields.iterator();
@@ -691,8 +736,22 @@ pub fn Methods(comptime Ctx: type) type {
         /// current point of the function. The function-body scope (and any scope
         /// outside it) is the only arena that outlives every local store; values
         /// produced inside a reusable loop scope die on the next iteration reset.
+        ///
+        /// The top-level program pass (module global initialization and
+        /// `doxa_program_main`) runs with no function frame, entirely inside the
+        /// never-exited root arena, so everything it allocates is `Root`.
         pub fn currentRegionTag(self: *IRPrinter) Region {
+            if (!self.in_function_context) return .Root;
             return if (self.scope_depth <= 1) .Func else .Deep;
+        }
+
+        /// A3: the runtime scope stack levels from the current arena up to the
+        /// caller's arena (the arena active at the call site). A returned value
+        /// placed here outlives the callee body; `cloneHeapValue` derives the same
+        /// number for its `.caller` destination, and this is that arithmetic
+        /// hoisted out so a construction site can allocate straight into it.
+        pub fn callerLevels(self: *IRPrinter) usize {
+            return (self.scope_depth -| @as(usize, @intFromBool(self.in_function_context))) + 1;
         }
 
         /// Heap types whose store path is a runtime *rehome* (identity preserved
@@ -706,6 +765,17 @@ pub fn Methods(comptime Ctx: type) type {
             };
         }
 
+        /// Heap types whose `.rehome` store is decided statically *even when the
+        /// region analysis is inconclusive*. Strings are immutable, so cloning an
+        /// unknown string is observably identical to preserving its identity; the
+        /// runtime registry walk buys nothing and the whole string rehome path
+        /// can be deleted. Arrays and structs keep the runtime rehome for
+        /// `Unknown` — cloning there would disconnect in-place element/field
+        /// mutation from the owning object, so it must be decided per site.
+        pub fn rehomeUnknownToClone(t: HIR.HIRType) bool {
+            return t == .String;
+        }
+
         /// A1 static rehome decision: when the value's arena provably outlives
         /// the store destination (the function-body scope), the runtime rehome
         /// call would keep identity and copy nothing, so it can be skipped. This
@@ -716,7 +786,7 @@ pub fn Methods(comptime Ctx: type) type {
             if (!rehomeTypeEligible(declared_type)) return false;
             return switch (value.region) {
                 .Root, .Func => true,
-                .Deep, .Unknown => false,
+                .Deep, .Caller, .Unknown => false,
             };
         }
 
@@ -751,16 +821,34 @@ pub fn Methods(comptime Ctx: type) type {
         /// "does the source already outlive it?" walk is replaced by the region
         /// class:
         ///   - `Root`/`Func` → plain store (identity preserved, no copy);
-        ///   - `Deep` → explicit unconditional clone. A `Deep` source is born in
-        ///     a reusable loop arena that dies at the next iteration reset, so it
-        ///     never outlives the function body; the runtime rehome would clone
-        ///     it — emit that clone directly and skip the registry walk.
-        ///   - `Unknown` → the runtime rehome call, unchanged. The analysis could
-        ///     not prove the source arena, so the registry still decides.
+        ///   - `Deep`/`Unknown` → explicit unconditional clone for types whose
+        ///     unknown case is safe to clone (`rehomeUnknownToClone`, i.e.
+        ///     strings). A `Deep` source is born in a reusable loop arena that
+        ///     dies at the next iteration reset, so it never outlives the
+        ///     function body — the runtime rehome would clone it, so emit that
+        ///     clone directly and skip the registry walk.
+        ///   - otherwise `Unknown` → the runtime rehome call, unchanged. Arrays
+        ///     and structs must preserve identity here, so the registry decides.
         pub fn rehomeForLocalStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
             if (self.plainStoreProven(value, declared_type)) return value;
-            if (value.region == .Deep) return self.cloneHeapValue(w, id, value, declared_type, .persistent, true);
+            if (value.region == .Deep or rehomeUnknownToClone(declared_type))
+                return self.cloneHeapValue(w, id, value, declared_type, .persistent, true);
             return self.cloneHeapForStore(w, id, value, declared_type);
+        }
+
+        /// A2: the global `.rehome` store decision, made statically. The root
+        /// arena is the outermost, so nothing but a root object outlives it:
+        ///   - `Root` → plain store (identity preserved);
+        ///   - `Func`/`Deep`, or `Unknown` of a clone-safe type → unconditional
+        ///     clone into the root arena. The runtime rehome would clone too
+        ///     (none of these outlives root), so emit the clone directly and skip
+        ///     the registry walk;
+        ///   - otherwise `Unknown` → the runtime rehome call, unchanged.
+        pub fn rehomeForGlobalStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
+            if (self.plainGlobalStoreProven(value, declared_type)) return value;
+            if (value.region == .Func or value.region == .Deep or rehomeUnknownToClone(declared_type))
+                return self.cloneHeapValue(w, id, value, declared_type, .program_root, true);
+            return self.cloneHeapForGlobalStore(w, id, value, declared_type);
         }
 
         /// Where a heap clone is allocated.
@@ -837,10 +925,14 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(il);
                     try w.writeAll(il);
 
+                    // Strings are always cloned here, never rehomed: they are
+                    // immutable, so identity is unobservable and A2 decides every
+                    // string store statically (`rehomeUnknownToClone`). The only
+                    // remaining `snapshot=false` callers are array/struct.
                     const call_line = if (dest == .program_root)
-                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_{s}_root(ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ if (snapshot) "clone" else "rehome", s_ptr, s_len, out_ptr_slot, out_len_slot })
+                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_root(ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ s_ptr, s_len, out_ptr_slot, out_len_slot })
                     else
-                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_{s}_at(i64 {d}, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ if (snapshot) "clone" else "rehome", levels_up, s_ptr, s_len, out_ptr_slot, out_len_slot });
+                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_at(i64 {d}, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ levels_up, s_ptr, s_len, out_ptr_slot, out_len_slot });
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
 
@@ -879,6 +971,26 @@ pub fn Methods(comptime Ctx: type) type {
                 .Struct => {
                     const src_ptr = if (value.ty == .PTR) value else try self.ensurePointer(w, value, id);
                     const clone_reg = try self.nextTemp(id);
+
+                    // B2/B3: a scalar-only struct that never needs the descriptor
+                    // is cloned with a typed word copy — no registry lookup, so it
+                    // is consistent with skipping its registration at construction.
+                    if (value.struct_type_name) |name| {
+                        if (self.skip_descriptor_structs.contains(name)) {
+                            const field_types = value.struct_field_types orelse self.global_struct_field_types.get(name);
+                            const words: usize = if (field_types) |fts| fts.len else 0;
+                            if (words > 0) {
+                                const scalar_line = if (dest == .program_root)
+                                    try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_clone_scalar_root(i64 {d}, ptr {s})\n", .{ clone_reg, words, src_ptr.name })
+                                else
+                                    try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_clone_scalar_at(i64 {d}, i64 {d}, ptr {s})\n", .{ clone_reg, levels_up, words, src_ptr.name });
+                                defer self.allocator.free(scalar_line);
+                                try w.writeAll(scalar_line);
+                                return .{ .name = clone_reg, .ty = .PTR, .struct_type_name = value.struct_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names };
+                            }
+                        }
+                    }
+
                     const clone_line = if (dest == .program_root)
                         try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @{s}(ptr {s})\n", .{ clone_reg, if (snapshot) "doxa_struct_clone_root" else "doxa_struct_rehome_root", src_ptr.name })
                     else

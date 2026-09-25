@@ -23,9 +23,9 @@ pub fn isClean(result: Counts) bool {
     return result.failed == 0 and result.untested == 0;
 }
 
-pub fn printCase(name: []const u8, result: Counts) void {
+pub fn printCase(name: []const u8, result: Counts, verbose: bool) void {
     if (isClean(result)) {
-        // TODO: add a verbose test mode that prints "- name: ok (N)".
+        if (verbose) std.debug.print("- {s}: ok ({d})\n", .{ name, result.passed });
         return;
     }
     if (result.failed == 0 and result.passed == 0 and result.untested > 0) {
@@ -42,11 +42,29 @@ pub fn printCase(name: []const u8, result: Counts) void {
     );
 }
 
-pub fn printSuiteSummary(name: []const u8, result: Counts) void {
+pub fn printSuiteSummary(name: []const u8, result: Counts, verbose: bool) void {
+    if (isClean(result) and !verbose) {
+        // Under `zig build test` (Zig 0.16 `--listen=-` server mode) any
+        // stderr output on success makes the build runner print a misleading
+        // "failed command: ... --listen=-" line even though the step exits 0
+        // (see ziglang/zig#31077). Unit tests must stay silent on success;
+        // the build summary already reports pass counts. Opt back in with
+        // `DOXA_TEST_VERBOSE=1` (see `verboseFromEnv`).
+        return;
+    }
     std.debug.print(
         "{s}: {d} ok, {d} fail, {d} untested\n",
         .{ name, result.passed, result.failed, result.untested },
     );
+}
+
+/// Opt-in verbose test logging via `DOXA_TEST_VERBOSE=1` (any non-empty value
+/// other than "0"). Note: under `zig build test` verbose success output still
+/// triggers Zig's cosmetic "failed command" notice; the step itself exits 0.
+pub fn verboseFromEnv(allocator: std.mem.Allocator) bool {
+    const raw = process.Environ.getAlloc(std.testing.environ, allocator, "DOXA_TEST_VERBOSE") catch return false;
+    defer allocator.free(raw);
+    return raw.len > 0 and !std.mem.eql(u8, raw, "0");
 }
 
 pub fn repoRootFromEnv(allocator: std.mem.Allocator) !?[]const u8 {
