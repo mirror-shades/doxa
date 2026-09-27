@@ -64,6 +64,10 @@ function runSuite(runs :: int, ^results :: Result[]) {
         exe_suffix is ".exe"
     }
 
+    const warmup is tests[0]
+    std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{warmup}.doxa -o test/benchmark/d-bin/{warmup} --opt=2")
+    std.process.exec("zig cc test/benchmark/c-src/{warmup}.c -o test/benchmark/c-bin/{warmup}{exe_suffix} -O2 -ffp-contract=off")
+
     each test in tests {
         const d_compile_start_time is std.time.monotonic()
         std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test} --opt=2")

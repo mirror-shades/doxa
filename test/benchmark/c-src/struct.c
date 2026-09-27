@@ -37,10 +37,10 @@ int main(void) {
     long long i, s;
 
     for (i = 0; i < N; i++) {
-        arr[i].x = (i * 1) % MOD;
-        arr[i].y = (i * 3 + 1) % MOD;
-        arr[i].z = (i * 5 + 2) % MOD;
-        arr[i].w = (i * 7 + 3) % MOD;
+        arr[i].x = (i * 1) & (MOD - 1);
+        arr[i].y = (i * 3 + 1) & (MOD - 1);
+        arr[i].z = (i * 5 + 2) & (MOD - 1);
+        arr[i].w = (i * 7 + 3) & (MOD - 1);
     }
 
     long long sink = 0;
@@ -51,15 +51,15 @@ int main(void) {
     long long carry = 1;
     for (s = 0; s < STEPS; s++) {
         for (i = 0; i < N; i++) {
-            long long nx = (arr[i].x + carry) % MOD;
-            long long ny = (arr[i].y + nx) % MOD;
-            long long nz = (arr[i].z + ny) % MOD;
-            long long nw = (arr[i].w + nz) % MOD;
+            long long nx = (arr[i].x + carry) & (MOD - 1);
+            long long ny = (arr[i].y + nx) & (MOD - 1);
+            long long nz = (arr[i].z + ny) & (MOD - 1);
+            long long nw = (arr[i].w + nz) & (MOD - 1);
             arr[i].x = nx;
             arr[i].y = ny;
             arr[i].z = nz;
             arr[i].w = nw;
-            carry = (nw + 1) % MOD;
+            carry = (nw + 1) & (MOD - 1);
         }
     }
     long long t1 = monotonic_ns();
