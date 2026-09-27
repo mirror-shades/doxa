@@ -1,0 +1,26 @@
+# A pattern the subject answers statically as never-matching is dead: its body
+# is not emitted at all, so it cannot run field bindings off an empty stack or
+# record an empty merge state for the label every arm joins at.
+struct FileError {
+    public path :: string,
+}
+
+struct OtherError {
+    public code :: int,
+}
+
+public entry function main() {
+    var e :: FileError is $FileError { path is "a.txt" }
+
+    match e {
+        OtherError { code } then @print("bad" + "\n"),
+        else @print("else" + "\n"),
+    }
+
+    # The dead arm must not clobber the value the live arm produced.
+    var s is match e {
+        OtherError { code } then "bad",
+        else "else-value",
+    }
+    @print(s + "\n")
+}

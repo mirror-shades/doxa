@@ -447,16 +447,57 @@ pub fn Methods(comptime Ctx: type) type {
         return 0;
     }
 
+    fn asGroupTable(group_table: ?*anyopaque) ?*GroupTable {
+        const gt_opaque = group_table orelse return null;
+        return @constCast(@ptrCast(@alignCast(gt_opaque)));
+    }
+
     fn groupHasEnumMember(group_table: ?*anyopaque, group_id: HIR.GroupId) bool {
-        if (group_table) |gt_opaque| {
-            const gt: *GroupTable = @constCast(@ptrCast(@alignCast(gt_opaque)));
-            if (gt.getEntryById(group_id)) |entry| {
-                for (entry.members) |member| {
-                    if (member.kind == .Enum) return true;
-                }
-            }
+        const gt = asGroupTable(group_table) orelse return false;
+        const entry = gt.getEntryById(group_id) orelse return false;
+        for (entry.members) |member| {
+            if (member.kind == .Enum) return true;
         }
         return false;
+    }
+
+    /// Index of `value`'s source type within group `group_id`'s flattened member
+    /// list. A group value's identity is the member type it came from (`Color`,
+    /// `FileError`, ...), which is exactly the name the stack value carries, so
+    /// the name is the whole discriminator (docs/groups.md §6).
+    fn findGroupMemberIndex(group_table: ?*anyopaque, group_id: HIR.GroupId, value: StackVal) u32 {
+        const member_type_name = value.enum_type_name orelse value.struct_type_name orelse return 0;
+        const gt = asGroupTable(group_table) orelse return 0;
+        const members = gt.members(group_id) orelse return 0;
+        for (members, 0..) |member, idx| {
+            if (std.mem.eql(u8, member.qualifier, member_type_name)) return @intCast(idx);
+        }
+        return 0;
+    }
+
+    /// Active member index for a boxed tagged-union value: unions pick the arm
+    /// by stack shape, groups pick the member type by name.
+    pub fn findMemberIndex(self: *IRPrinter, target: HIR.HIRType, value: StackVal) u32 {
+        return switch (target) {
+            .Union => self.findUnionMemberIndex(target, value),
+            .Group => findGroupMemberIndex(self.group_table, target.Group, value),
+            else => 0,
+        };
+    }
+
+    /// Whether `t` stores as a boxed `%DoxaValue`: unions and groups are the
+    /// same runtime shape, differing only in how `reserved` names the member.
+    pub fn isBoxedMemberType(t: HIR.HIRType) bool {
+        return t == .Union or t == .Group;
+    }
+
+    /// The type id packed beside the member index: a union's id or a group's id.
+    fn boxedTypeId(t: HIR.HIRType) ?u32 {
+        return switch (t) {
+            .Union => t.Union.id,
+            .Group => t.Group,
+            else => null,
+        };
     }
 
     pub fn buildDoxaValue(
@@ -494,12 +535,14 @@ pub fn Methods(comptime Ctx: type) type {
             .Value => tag_const = @intFromEnum(tag.Nothing),
         }
 
-        // Compute reserved bits if targeting a union
+        // Compute reserved bits when the destination is a boxed member type.
+        // Unions and groups pack `reserved` identically; only the id that sits
+        // beside the member index differs.
         var reserved_const: u32 = 0;
         if (target_union) |ut| {
-            if (ut == .Union) {
-                const idx = self.findUnionMemberIndex(ut, value);
-                const uid = ut.Union.id & (DoxaUnionMeta.union_id_mask >> DoxaUnionMeta.union_id_shift);
+            if (boxedTypeId(ut)) |type_id| {
+                const idx = self.findMemberIndex(ut, value);
+                const uid = type_id & (DoxaUnionMeta.union_id_mask >> DoxaUnionMeta.union_id_shift);
                 reserved_const = DoxaUnionMeta.is_union_bit | (uid << DoxaUnionMeta.union_id_shift) | (idx & DoxaUnionMeta.member_index_mask);
             }
         }

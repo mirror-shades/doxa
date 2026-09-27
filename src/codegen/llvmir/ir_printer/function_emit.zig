@@ -60,6 +60,9 @@ pub fn Methods(comptime Ctx: type) type {
 
             self.clearNarrowedVars();
             self.var_regions.clearRetainingCapacity();
+            self.var_ranges.clearRetainingCapacity();
+            self.var_range_blocks.clearRetainingCapacity();
+            self.current_block = "entry";
 
             const range = self.getFunctionRange(hir, func, func_start_labels) orelse return;
             const start_idx = range.start;
@@ -101,6 +104,13 @@ pub fn Methods(comptime Ctx: type) type {
                             self.hirTypeToStackType(sv.expected_type)
                         else
                             .I64;
+                        // A store carries the type of the *value*, so only a value
+                        // that is itself a group or union says anything about the
+                        // slot. The declaration below is what a box is keyed on.
+                        const boxed_declared_type: ?HIR.HIRType = if (IRPrinter.isBoxedMemberType(sv.expected_type))
+                            sv.expected_type
+                        else
+                            null;
                         if (variables_to_allocate.getPtr(sv.var_name)) |existing| {
                             // Upgrade a placeholder i64 slot to a concrete, possibly
                             // wider type (e.g. a string bound first as a raw value and
@@ -109,14 +119,22 @@ pub fn Methods(comptime Ctx: type) type {
                             if (existing.stack_type == .I64 and declared_stack_type != .I64) {
                                 existing.stack_type = declared_stack_type;
                             }
+                            if (existing.boxed_declared_type == null) existing.boxed_declared_type = boxed_declared_type;
                         } else {
                             const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sv.var_name});
-                            const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = declared_stack_type, .array_type = null };
+                            const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = declared_stack_type, .boxed_declared_type = boxed_declared_type, .array_type = null };
                             try variables_to_allocate.put(sv.var_name, info);
                         }
                     },
                     .StoreDecl => |sd| {
                         const declared_stack_type = self.hirTypeToStackType(sd.declared_type);
+                        // The declaration is the slot's identity: a group or union
+                        // declared type is the only thing a store into the slot can
+                        // key a `%DoxaValue` box on.
+                        const boxed_declared_type: ?HIR.HIRType = if (IRPrinter.isBoxedMemberType(sd.declared_type))
+                            sd.declared_type
+                        else
+                            null;
                         const array_hint: ?HIR.HIRType = switch (sd.declared_type) {
                             .Array => |inner| inner.*,
                             else => null,
@@ -136,6 +154,7 @@ pub fn Methods(comptime Ctx: type) type {
                             // A declaration carries the authoritative type; upgrade a
                             // placeholder i64 slot so the alloca is sized for the real
                             // (possibly wider) value.
+                            existing.boxed_declared_type = boxed_declared_type;
                             if (existing.stack_type == .I64 and declared_stack_type != .I64) {
                                 existing.stack_type = declared_stack_type;
                                 if (existing.array_type == null) existing.array_type = array_hint;
@@ -148,6 +167,7 @@ pub fn Methods(comptime Ctx: type) type {
                             const info = VariableInfo{
                                 .ptr_name = ptr_name,
                                 .stack_type = declared_stack_type,
+                                .boxed_declared_type = boxed_declared_type,
                                 .array_type = array_hint,
                                 .struct_field_types = struct_field_types,
                                 .struct_field_names = struct_field_names,
@@ -289,6 +309,7 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(line);
                     try w.writeAll(line);
                     current_block = dead_label;
+                    self.current_block = dead_label;
                     stack.items.len = 0;
                     last_instruction_was_terminator = false;
                 }
@@ -309,6 +330,7 @@ pub fn Methods(comptime Ctx: type) type {
                             last_instruction_was_terminator = false;
                         }
                         current_block = lbl.name;
+                        self.current_block = lbl.name;
                         try self.restoreStackForLabel(&merge_map, lbl.name, &stack, &id, w);
                     },
                     .Const => |c| {
@@ -328,7 +350,7 @@ pub fn Methods(comptime Ctx: type) type {
                         if (ret.has_value and stack.items.len > 0) {
                             var v = stack.items[stack.items.len - 1];
                             stack.items.len -= 1;
-                            if (func.return_type == .Union and v.ty != .Value) {
+                            if (IRPrinter.isBoxedMemberType(func.return_type) and v.ty != .Value) {
                                 v = try self.buildDoxaValue(w, v, func.return_type, &id);
                             }
                             if (v.ty != target_return_stack_type) {
@@ -551,6 +573,10 @@ pub fn Methods(comptime Ctx: type) type {
                                     .Deep => .Unknown,
                                     else => |r| r,
                                 },
+                                // Phase D: a variable's recorded range is a
+                                // must-join over its reaching stores, so a load
+                                // may present it as a fact.
+                                .int_range = self.varRange(lv.var_name),
                                 .array_type = entry.array_type,
                                 .enum_type_name = entry.enum_type_name,
                                 .struct_field_types = entry.struct_field_types,
@@ -833,7 +859,7 @@ pub fn Methods(comptime Ctx: type) type {
                             if (sd.declared_type == .Array and value.array_type == null) {
                                 value.array_type = sd.declared_type.Array.*;
                             }
-                            if (sd.declared_type == .Union) {
+                            if (IRPrinter.isBoxedMemberType(sd.declared_type)) {
                                 value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
                             }
                             // A1: a mutable declaration re-homes (or plain-stores)
@@ -853,6 +879,14 @@ pub fn Methods(comptime Ctx: type) type {
                                 try self.var_regions.put(sd.var_name, value.region);
                             } else {
                                 try self.recordVarRegion(sd.var_name, .Func);
+                            }
+                            // Phase D: a declaration is single-assignment, so
+                            // its initializer's range is installed outright. A
+                            // non-const `var` is assigned in its initializer
+                            // too — there is no separate definition to merge
+                            // with — and every later `StoreVar` hulls into it.
+                            if (value.ty == .I64 or value.ty == .I8) {
+                                try self.recordVarRange(sd.var_name, value.int_range);
                             }
                             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
                                 value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
@@ -917,7 +951,7 @@ pub fn Methods(comptime Ctx: type) type {
                             if (value.array_type == null and expected_array_type != null) {
                                 value.array_type = expected_array_type.?;
                             }
-                            if (sv.expected_type == .Union) {
+                            if (IRPrinter.isBoxedMemberType(sv.expected_type)) {
                                 value = try self.buildDoxaValue(w, value, sv.expected_type, &id);
                             }
                             value = switch (sv.heap_copy) {
@@ -934,6 +968,14 @@ pub fn Methods(comptime Ctx: type) type {
                             // recorded.
                             if (sv.heap_copy != .keep or !self.var_regions.contains(sv.var_name)) {
                                 try self.recordVarRegion(sv.var_name, .Func);
+                            }
+                            // Phase D: hull the stored value's range into the
+                            // variable's, so the recorded fact covers every
+                            // path that reaches a later load. A `.keep`
+                            // store-back carries the *post-mutation* value, so
+                            // it widens the range just as a plain store does.
+                            if (value.ty == .I64 or value.ty == .I8) {
+                                try self.recordVarRange(sv.var_name, value.int_range);
                             }
                             var info_ptr = variables.getPtr(sv.var_name);
                             if (info_ptr == null) {
@@ -959,6 +1001,17 @@ pub fn Methods(comptime Ctx: type) type {
                             const target_ty = info_ptr.?.stack_type;
                             // `nothing` is zero-sized; skip the store (no data to write).
                             if (target_ty != .Nothing) {
+                                // A slot declared as a group or union always holds a
+                                // %DoxaValue, and only the declaration says which member
+                                // the value belongs to: the value carried here is the
+                                // member itself (a load inside a `NarrowVar` branch
+                                // unwraps the box), so a box keyed on its own type would
+                                // pack no index for the next `MemberCheck` to read.
+                                if (target_ty == .Value and value.ty != .Value) {
+                                    if (info_ptr.?.boxed_declared_type) |box_type| {
+                                        value = try self.buildDoxaValue(w, value, box_type, &id);
+                                    }
+                                }
                                 value = try self.coerceForStore(value, target_ty, &id, w);
                                 const target_llvm_ty = self.stackTypeToLLVMType(target_ty);
                                 const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ target_llvm_ty, value.name, info_ptr.?.ptr_name });
@@ -996,12 +1049,12 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.handleTypeCheck(w, &stack, &id, tc, peek_state);
                         last_instruction_was_terminator = false;
                     },
-                    .GroupCheck => |gc| {
-                        try self.handleGroupCheck(w, &stack, &id, gc);
+                    .MemberCheck => |mc| {
+                        try self.handleMemberCheck(w, &stack, &id, mc);
                         last_instruction_was_terminator = false;
                     },
-                    .GroupExtractPayload => {
-                        try self.handleGroupExtractPayload(w, &stack, &id);
+                    .UnboxPayload => {
+                        try self.handleUnboxPayload(w, &stack, &id);
                         last_instruction_was_terminator = false;
                     },
                     .UnionConstruct => |uc| {

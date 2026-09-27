@@ -237,12 +237,15 @@ pub const BasicExpressionHandler = struct {
                     .end_col = member.column + member.lexeme.len,
                 },
             };
-            const variant_index = try self.resolveEnumVariantIndex(enum_type_name, member.lexeme, location);
+            // A group-typed context (`var c :: Palette is .Red`) has no variants
+            // of its own: the shorthand names the member enum that declares it.
+            const variant_type = self.resolveGroupVariantType(enum_type_name, member.lexeme) orelse enum_type_name;
+            const variant_index = try self.resolveEnumVariantIndex(variant_type, member.lexeme, location);
 
             // Generate proper enum variant with correct index
             const enum_value = HIRValue{
                 .enum_variant = HIREnum{
-                    .type_name = enum_type_name,
+                    .type_name = variant_type,
                     .variant_name = member.lexeme,
                     .variant_index = variant_index,
                     .path = null,
@@ -264,6 +267,8 @@ pub const BasicExpressionHandler = struct {
                     if (self.generator.type_system.custom_types.get(custom_type)) |type_info| {
                         if (type_info.kind == .Enum) {
                             inferred_enum_type = custom_type;
+                        } else if (type_info.kind == .Group) {
+                            inferred_enum_type = self.resolveGroupVariantType(custom_type, member.lexeme);
                         }
                     }
                 }
@@ -336,6 +341,29 @@ pub const BasicExpressionHandler = struct {
                 }
             }
         }
+    }
+
+    /// The enum member of `group_name` that declares `variant_name`, when there
+    /// is exactly one. A group has no variants of its own, so a `.Variant`
+    /// shorthand written under a group annotation has to be attributed to the
+    /// member enum that owns it.
+    fn resolveGroupVariantType(self: *BasicExpressionHandler, group_name: []const u8, variant_name: []const u8) ?[]const u8 {
+        const group_table = self.generator.type_system.group_table orelse return null;
+        const group_id = group_table.getIdByName(group_name) orelse return null;
+        const members = group_table.members(group_id) orelse return null;
+
+        var matched: ?[]const u8 = null;
+        var matches: u32 = 0;
+        for (members) |member| {
+            if (member.kind != .Enum) continue;
+            const member_type = self.generator.type_system.custom_types.get(member.qualifier) orelse continue;
+            if (member_type.kind != .Enum) continue;
+            if (member_type.getEnumVariantIndex(variant_name) == null) continue;
+            matched = member.qualifier;
+            matches += 1;
+        }
+        if (matches != 1) return null;
+        return matched;
     }
 
     fn resolveEnumVariantIndex(self: *BasicExpressionHandler, enum_type_name: []const u8, variant_name: []const u8, location: Location) ErrorList!u32 {

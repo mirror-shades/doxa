@@ -10,9 +10,9 @@ Examples:
 
 ```doxa
 if x > 10 then {
-    @print("x is greater than 10/n")
+    @print("x is greater than 10\n")
 } else {
-    @print("x is 10 or less/n")
+    @print("x is 10 or less\n")
 }
 
 var condition is if true then "true" else "false"
@@ -21,9 +21,9 @@ var condition is if true then "true" else "false"
 Chaining and statement-style:
 
 ```doxa
-if current % 3 equals 0 and current % 5 equals 0 then @print("fizzbuzz/n")
-else if current % 3 equals 0 then @print("fizz/n")
-else if current % 5 equals 0 then @print("buzz/n")
+if current % 3 equals 0 and current % 5 equals 0 then @print("fizzbuzz\n")
+else if current % 3 equals 0 then @print("fizz\n")
+else if current % 5 equals 0 then @print("buzz\n")
 else @print(current)
 ```
 
@@ -41,13 +41,13 @@ const n_or_zero is value as int else 0
 
 # Block with explicit return (guard pattern)
 const n is value as int else {
-    @print("value is not an int/n")
+    @print("value is not an int\n")
     return -1
 }
 
 # Block with lift (provides fallback value, continues)
 const n is value as int else {
-    @print("value is not an int, using default/n")
+    @print("value is not an int, using default\n")
     lift 0
 }
 
@@ -85,12 +85,12 @@ var x is if cond then compute() else 0
 
 ```doxa
 var x is foo() as int else {
-    @print("error/n")
+    @print("error\n")
     lift 0               # x gets 0, execution continues after the as expression
 }
 
 var x is foo() as int else {
-    @print("fatal/n")
+    @print("fatal\n")
     return -1            # function exits, x is never assigned
 }
 ```
@@ -114,7 +114,7 @@ Examples
 
 ```
 # IF: Truth-driven
-if x > 10 then @print("big/n") else @print("small/n")
+if x > 10 then @print("big\n") else @print("small\n")
 
 # AS: Fallback-driven
 value as int else 0         # If not int, use 0
@@ -122,7 +122,7 @@ value as int then 20 else 0  # If int, use 20  else 0
 
 # Both in action
 if isReady then start() else wait()
-data as string then parse(data) else log("Bad data/n")
+data as string then parse(data) else log("Bad data\n")
 ```
 
 ### match (values and union types)
@@ -131,6 +131,7 @@ Use match to branch on:
 
 - **Concrete values**: numbers, strings, enum variants (`.Red`, `.Green`, ...)
 - **Union type arms**: `int`, `float`, `string`, `byte`, `tetra`, `nothing`, or custom types
+- **Struct subjects**: the struct's name as a type test, optionally with `{ field, ... }` to bind its fields
 
 Arm syntax and delimiters:
 
@@ -143,8 +144,8 @@ Match on union types:
 ```doxa
 fn kind(value :: int | float) returns(string) {
     return match value {
-        int then @print("integer/n")
-        float then @print("float/n")
+        int then @print("integer\n")
+        float then @print("float\n")
     }
 }
 ```
@@ -175,19 +176,42 @@ var msg3 is match s {
 }
 ```
 
+Match on structs:
+
+```doxa
+struct FileError { public path :: string }
+
+var e :: FileError is $FileError { path is "a.txt" }
+
+match e {
+    FileError then @print("it failed\n"),          # type test: the subject is that struct
+}
+
+match e {
+    FileError { path } then @print(path + "\n"),   # binds each named field for the body
+    else @print("unreachable\n"),
+}
+```
+
+The test is decided at compile time: a pattern naming a *different* struct never
+matches, so that arm is skipped and control falls to the next arm (or `else`).
+A subject that is not a struct cannot be tested this way — narrow it with `as`
+first.
+
 Block arms in match:
 
 ```doxa
 var msg is match color {
     # semicolons can be used to represent line breaks
-    .Red then { @print("stop/n"); "red"}
-    .Green then { @print("go/n"); "green"
-    else { @print("caution/n"); "yellowish"}
+    .Red then { @print("stop\n"); "red"}
+    .Green then { @print("go\n"); "green"
+    else { @print("caution\n"); "yellowish"}
 }
 ```
 
 Notes:
 
+- **Narrowing**: a single-pattern arm narrows the subject to the member that arm selected, so its fields, arithmetic and later casts read as that member — the same contract `as` gives its branches. An `else` arm narrows nothing (any member may have arrived) and an arm listing several patterns is not narrowed (any of them could have selected it).
 - **Exhaustiveness**: For enums, prefer covering all variants or add an `else` arm. For unions, cover the needed type arms `else` is optional.
 - **Result type**: All arms must produce a compatible result type. For block arms, the last expression is the arm's value.
 

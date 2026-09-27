@@ -8,6 +8,7 @@ pub fn Methods(comptime Ctx: type) type {
     const StackMergeState = Ctx.StackMergeState;
     const EnumVariantMeta = Ctx.EnumVariantMeta;
     const Region = Ctx.Region;
+    const IntRange = Ctx.IntRange;
 
     return struct {
         pub fn formatFloatLiteral(self: *IRPrinter, value: f64) ![]u8 {
@@ -620,10 +621,18 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                     }
 
+                    // A phi's value is one of its incoming values, so its range
+                    // is their hull (Phase D).
+                    var merged_range: IntRange = slot.items[0].value.int_range;
+                    for (slot.items) |incoming_val| {
+                        merged_range = IntRange.hull(merged_range, incoming_val.value.int_range);
+                    }
+
                     try stack.append(.{
                         .name = phi_name,
                         .ty = target_type,
                         .region = merged_region,
+                        .int_range = merged_range,
                         .array_type = merged_array_type,
                         .enum_type_name = merged_enum_type_name,
                         .struct_field_types = merged_struct_field_types,
@@ -634,7 +643,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn init(io: std.Io, allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType), reflected_structs: ?*const std.StringHashMap(void), force_struct_descriptors: bool) IRPrinter {
+        pub fn init(io: std.Io, allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, struct_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType), reflected_structs: ?*const std.StringHashMap(void), force_struct_descriptors: bool) IRPrinter {
             return .{
                 .allocator = allocator,
                 .io = io,
@@ -647,6 +656,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .global_struct_field_names = std.StringHashMap([]const []const u8).init(allocator),
                 .global_struct_type_names = std.StringHashMap([]const u8).init(allocator),
                 .global_fixed_array_info = std.StringHashMap(IRPrinter.GlobalFixedArrayInfo).init(allocator),
+                .global_boxed_types = std.StringHashMap(HIR.HIRType).init(allocator),
                 .struct_fields_by_id = std.AutoHashMap(HIR.StructId, []HIR.HIRType).init(allocator),
                 .struct_type_names_by_id = std.AutoHashMap(HIR.StructId, []const u8).init(allocator),
                 .defined_globals = std.StringHashMap(bool).init(allocator),
@@ -660,12 +670,15 @@ pub fn Methods(comptime Ctx: type) type {
                 .enum_print_map = std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)).init(allocator),
                 .group_table = group_table,
                 .enum_table = enum_table,
+                .struct_table = struct_table,
                 .entry_str_out_ptr = null,
                 .entry_str_out_len = null,
                 .entry_allocas = std.array_list.Managed([]const u8).init(allocator),
                 .exited_scopes = std.AutoHashMap(u32, void).init(allocator),
                 .narrowed_vars = std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)).init(allocator),
                 .var_regions = std.StringHashMap(Region).init(allocator),
+                .var_ranges = std.StringHashMap(IntRange).init(allocator),
+                .var_range_blocks = std.StringHashMap([]const u8).init(allocator),
                 .reflected_structs = reflected_structs,
                 .force_struct_descriptors = force_struct_descriptors,
                 .skip_descriptor_structs = std.StringHashMap(void).init(allocator),
@@ -682,6 +695,7 @@ pub fn Methods(comptime Ctx: type) type {
             self.global_struct_field_names.deinit();
             self.global_struct_type_names.deinit();
             self.global_fixed_array_info.deinit();
+            self.global_boxed_types.deinit();
             self.struct_fields_by_id.deinit();
             self.struct_type_names_by_id.deinit();
             self.defined_globals.deinit();
@@ -692,6 +706,8 @@ pub fn Methods(comptime Ctx: type) type {
             }
             self.narrowed_vars.deinit();
             self.var_regions.deinit();
+            self.var_ranges.deinit();
+            self.var_range_blocks.deinit();
             self.skip_descriptor_structs.deinit();
             for (self.entry_allocas.items) |line| self.allocator.free(line);
             self.entry_allocas.deinit();
@@ -803,6 +819,61 @@ pub fn Methods(comptime Ctx: type) type {
             else
                 region;
             try self.var_regions.put(var_name, merged);
+        }
+
+        /// Record the value range of a local variable after a store (Phase D).
+        ///
+        /// The emitter walks the instruction stream once, linearly, so it sees
+        /// each store exactly once no matter how many times it will execute.
+        /// Inside a single basic block that is sound: the walk sees the stores
+        /// in program order and hulls them, and the hull covers every execution.
+        ///
+        /// Across blocks it is not. A store in a *different* block than the one
+        /// that recorded the variable may be a loop body, where the walk's
+        /// single visit computed the value from the pre-loop state — so
+        /// `for i while i < 10 do i++` would leave `i` recorded as `[0, 1]`
+        /// when it is really `[0, 9]`. It may equally be one arm of a branch,
+        /// where the walk cannot see the other arm's value. Either way the
+        /// honest answer is the whole of `i64`, so that is what is recorded.
+        ///
+        /// The cost is precision in code that branches or loops around an
+        /// assignment; the benefit is that no consumer can ever be handed a
+        /// bound this walk has not actually established. A flow-sensitive pass
+        /// would recover the precision, and an induction-variable analysis
+        /// would recover the loop case, but both are strictly more analysis
+        /// than this one walk can support.
+        pub fn recordVarRange(self: *IRPrinter, var_name: []const u8, range: IntRange) !void {
+            const recorded_block = self.var_range_blocks.get(var_name);
+            const merged: IntRange = if (recorded_block) |block|
+                if (!std.mem.eql(u8, block, self.current_block))
+                    .unknown()
+                else if (self.var_ranges.get(var_name)) |cur|
+                    IntRange.hull(cur, range)
+                else
+                    range
+            else
+                range;
+            try self.var_ranges.put(var_name, merged);
+            if (recorded_block == null) {
+                try self.var_range_blocks.put(var_name, self.current_block);
+            }
+        }
+
+        /// What is statically known about a local variable's value, or the
+        /// whole of `i64` when nothing usable has been recorded.
+        ///
+        /// A recorded range is only good *inside the block that established
+        /// it*. The walk emits a loop body before it emits the body's back edge,
+        /// so at a use in the body the loop-carried store has not been seen yet
+        /// and the variable still looks like its pre-loop initializer. Handing
+        /// that out would be unsound — `for i while i > -10 do i--` would look
+        /// like a non-negative `i` because the declaration said `0`. Requiring
+        /// the same block makes the rule and the walk agree: a range travels
+        /// exactly as far as this single pass can justify.
+        pub fn varRange(self: *IRPrinter, var_name: []const u8) IntRange {
+            const block = self.var_range_blocks.get(var_name) orelse return .unknown();
+            if (!std.mem.eql(u8, block, self.current_block)) return .unknown();
+            return self.var_ranges.get(var_name) orelse .unknown();
         }
 
         /// A1 static decision for a store into a *global* (destination is the
@@ -999,7 +1070,7 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(clone_line);
                     return .{ .name = clone_reg, .ty = .PTR, .struct_type_name = value.struct_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names };
                 },
-                .Union => {
+                .Union, .Group => {
                     if (value.ty != .Value) return value;
                     const slot = try self.nextTemp(id);
                     const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{slot});

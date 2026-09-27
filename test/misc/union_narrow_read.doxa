@@ -1,0 +1,17 @@
+# Regression test: reading a union binding inside an `as` branch must see the
+# member type, not the single-member union view the backend uses to unwrap the
+# box. Previously `u + 1` and `"str=" + v` were rejected as `Union + Int` and
+# `String + Union`.
+function tag(n :: int) returns string {
+    return if n == 14 then "fourteen" else "not-fourteen"
+}
+
+public entry function main() {
+    var u :: string | int is 7
+    u as int then @print("int=" + tag(u + 1) + "\n") else @print("no-int" + "\n")
+
+    var v :: string | int is "hi"
+    v as string then @print("str=" + v + "\n") else @print("no-str" + "\n")
+
+    u as string then @print("nope" + "\n") else @print("else=" + tag(u) + "\n")
+}

@@ -1,0 +1,40 @@
+# A match arm narrows the union subject to the member it selected: the body
+# reads it as that member (a struct field, arithmetic) instead of the union,
+# and storing a new member re-packs the box so the next match still sees what
+# was stored.
+enum Color { Red, Green, Blue }
+struct FileError { public path :: string }
+
+function tag(n :: int) returns string {
+    return if n == 14 then "fourteen" else "not-fourteen"
+}
+
+public entry function main() {
+    var e :: FileError | Color is $FileError { path is "x.txt", }
+    match e {
+        Color then @print("color\n"),
+        FileError then @print("path=" + e.path + "\n"),
+        else @print("other\n"),
+    }
+
+    e is Color.Green
+    match e {
+        Color then @print("recolored\n"),
+        FileError then @print("still-file\n"),
+        else @print("other2\n"),
+    }
+
+    var u :: string | int is 7
+    match u {
+        int then @print("int=" + tag(u + 1) + "\n"),
+        string then @print("string\n"),
+        else @print("u-other\n"),
+    }
+
+    u is "hi"
+    match u {
+        int then @print("u-int\n"),
+        string then @print("string=" + u + "\n"),
+        else @print("u-other2\n"),
+    }
+}

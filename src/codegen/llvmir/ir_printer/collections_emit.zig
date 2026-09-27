@@ -7,6 +7,7 @@ pub fn Methods(comptime Ctx: type) type {
     const HIRInstruction = Ctx.HIRInstruction;
     const CompareInstruction = Ctx.CompareInstruction;
     const StackVal = Ctx.StackVal;
+    const FlooredArith = @import("./int_range.zig").Methods(Ctx);
 
     return struct {
         /// LLVM type of one element in a dynamic array's packed backing buffer,
@@ -1171,6 +1172,11 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(mask_line);
                 },
                 else => {
+                    // The floored shapes below write their own lines through
+                    // the shared emitter, so they contribute this empty string
+                    // to the line-building switch below.
+                    const no_line = try self.allocator.dupe(u8, "");
+                    defer self.allocator.free(no_line);
                     const arith_line = switch (op) {
                         .Add => blk: {
                             result_bits_reg = try self.nextTemp(id);
@@ -1184,65 +1190,37 @@ pub fn Methods(comptime Ctx: type) type {
                             result_bits_reg = try self.nextTemp(id);
                             break :blk try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ result_bits_reg, current_bits.name, value_bits.name });
                         },
-                        .Div, .IntDiv => blk: {
-                            const q = try self.nextTemp(id);
-                            const r = try self.nextTemp(id);
-                            const r_nz = try self.nextTemp(id);
-                            const xor_v = try self.nextTemp(id);
-                            const sign_diff = try self.nextTemp(id);
-                            const adj_i1 = try self.nextTemp(id);
-                            const adj = try self.nextTemp(id);
-                            const l0 = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ q, current_bits.name, value_bits.name });
-                            const l1 = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ r, current_bits.name, value_bits.name });
-                            const l2 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ r_nz, r });
-                            const l3 = try std.fmt.allocPrint(self.allocator, "  {s} = xor i64 {s}, {s}\n", .{ xor_v, current_bits.name, value_bits.name });
-                            const l4 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, 0\n", .{ sign_diff, xor_v });
-                            const l5 = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ adj_i1, r_nz, sign_diff });
-                            const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i64\n", .{ adj, adj_i1 });
-                            defer self.allocator.free(l6);
-                            defer self.allocator.free(l5);
-                            defer self.allocator.free(l4);
-                            defer self.allocator.free(l3);
-                            defer self.allocator.free(l2);
-                            defer self.allocator.free(l1);
-                            defer self.allocator.free(l0);
-                            try w.writeAll(l0);
-                            try w.writeAll(l1);
-                            try w.writeAll(l2);
-                            try w.writeAll(l3);
-                            try w.writeAll(l4);
-                            try w.writeAll(l5);
-                            try w.writeAll(l6);
+                        .Div => blk: {
                             result_bits_reg = try self.nextTemp(id);
-                            break :blk try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ result_bits_reg, q, adj });
+                            break :blk try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ result_bits_reg, current_bits.name, value_bits.name });
+                        },
+                        .IntDiv => blk: {
+                            // The element's own range is not tracked through the
+                            // backing store yet, so the compound form passes no
+                            // facts and keeps the general shape. The floored
+                            // lowering is shared with the scalar path rather
+                            // than duplicated here, so there is one
+                            // implementation to keep correct.
+                            result_bits_reg = try FlooredArith.emitFlooredDiv(
+                                self,
+                                w,
+                                id,
+                                current_bits.name,
+                                value_bits.name,
+                                .{},
+                            );
+                            break :blk no_line;
                         },
                         .Mod => blk: {
-                            const r = try self.nextTemp(id);
-                            const r_nz = try self.nextTemp(id);
-                            const xor_v = try self.nextTemp(id);
-                            const sign_diff = try self.nextTemp(id);
-                            const adj_i1 = try self.nextTemp(id);
-                            const corr = try self.nextTemp(id);
-                            const l0 = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ r, current_bits.name, value_bits.name });
-                            const l1 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ r_nz, r });
-                            const l2 = try std.fmt.allocPrint(self.allocator, "  {s} = xor i64 {s}, {s}\n", .{ xor_v, current_bits.name, value_bits.name });
-                            const l3 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, 0\n", .{ sign_diff, xor_v });
-                            const l4 = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ adj_i1, r_nz, sign_diff });
-                            const l5 = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 0\n", .{ corr, adj_i1, value_bits.name });
-                            defer self.allocator.free(l5);
-                            defer self.allocator.free(l4);
-                            defer self.allocator.free(l3);
-                            defer self.allocator.free(l2);
-                            defer self.allocator.free(l1);
-                            defer self.allocator.free(l0);
-                            try w.writeAll(l0);
-                            try w.writeAll(l1);
-                            try w.writeAll(l2);
-                            try w.writeAll(l3);
-                            try w.writeAll(l4);
-                            try w.writeAll(l5);
-                            result_bits_reg = try self.nextTemp(id);
-                            break :blk try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ result_bits_reg, r, corr });
+                            result_bits_reg = try FlooredArith.emitFlooredMod(
+                                self,
+                                w,
+                                id,
+                                current_bits.name,
+                                value_bits.name,
+                                .{},
+                            );
+                            break :blk no_line;
                         },
                         .Pow => blk: {
                             const lhs_double = try self.nextTemp(id);

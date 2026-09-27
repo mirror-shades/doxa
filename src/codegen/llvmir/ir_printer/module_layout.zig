@@ -1,4 +1,5 @@
 const std = @import("std");
+const StructTable = @import("../../../common/struct_table.zig").StructTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -189,6 +190,46 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 .Compare => |c| self.markTypeNeeds(needs, c.operand_type),
                 else => {},
+            }
+        }
+
+        fn asStructTable(struct_table: ?*anyopaque) ?*StructTable {
+            const st_opaque = struct_table orelse return null;
+            return @constCast(@ptrCast(@alignCast(st_opaque)));
+        }
+
+        /// Backfill layout metadata for every struct the program did not
+        /// construct. An entry whose field HIR types are not fully resolved is
+        /// skipped: a half-known layout would silently mis-size a GEP, and the
+        /// single-word fallback stays in effect instead.
+        pub fn registerStructTableLayouts(self: *IRPrinter) !void {
+            const table = asStructTable(self.struct_table) orelse return;
+            for (table.entries.items) |entry| {
+                const field_types = try self.allocator.alloc(HIR.HIRType, entry.fields.len);
+                defer self.allocator.free(field_types);
+                const field_names = try self.allocator.alloc([]const u8, entry.fields.len);
+                defer self.allocator.free(field_names);
+
+                var resolved = true;
+                for (entry.fields, 0..) |field, i| {
+                    field_types[i] = field.hir_type;
+                    field_names[i] = field.name;
+                    if (field.hir_type == .Unknown) resolved = false;
+                }
+                if (!resolved) continue;
+
+                if (!self.global_struct_field_types.contains(entry.qualified_name)) {
+                    _ = try self.global_struct_field_types.put(entry.qualified_name, try self.allocator.dupe(HIR.HIRType, field_types));
+                }
+                if (!self.struct_field_names_by_type.contains(entry.qualified_name)) {
+                    _ = try self.struct_field_names_by_type.put(entry.qualified_name, try self.allocator.dupe([]const u8, field_names));
+                }
+                if (!self.struct_fields_by_id.contains(entry.id)) {
+                    _ = try self.struct_fields_by_id.put(entry.id, try self.allocator.dupe(HIR.HIRType, field_types));
+                }
+                if (!self.struct_type_names_by_id.contains(entry.id)) {
+                    _ = try self.struct_type_names_by_id.put(entry.id, entry.qualified_name);
+                }
             }
         }
 
@@ -461,6 +502,14 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
+            // `StructNew` is the usual source of struct layout, but a struct can
+            // be read without ever being constructed in this program: a match arm
+            // deconstructs a group payload it never receives, or an `as` narrowing
+            // types a binding the program never builds. The semantic struct table
+            // owns layout for every struct, so backfill what `StructNew` did not
+            // declare — construction sites must not decide what a GEP may index.
+            try self.registerStructTableLayouts();
+
             for (hir.function_table) |func| {
                 try self.collectFunctionStructReturnInfo(hir, func, &func_start_labels);
             }
@@ -644,6 +693,9 @@ pub fn Methods(comptime Ctx: type) type {
 
             self.clearNarrowedVars();
             self.var_regions.clearRetainingCapacity();
+            self.var_ranges.clearRetainingCapacity();
+            self.var_range_blocks.clearRetainingCapacity();
+            self.current_block = "entry";
             self.scope_depth = 0;
             for (hir.instructions[0..top_level_end_idx]) |inst| {
                 const tag = std.meta.activeTag(inst);
@@ -659,6 +711,7 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(line);
                     try w.writeAll(line);
                     current_block = dead_label;
+                    self.current_block = dead_label;
                     stack.items.len = 0;
                     last_instruction_was_terminator = false;
                 }
@@ -734,6 +787,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(line);
                         try w.writeAll(line);
                         current_block = lbl.name;
+                        self.current_block = lbl.name;
                         last_instruction_was_terminator = false;
                         try self.restoreStackForLabel(&merge_map, lbl.name, &stack, &id, w);
                     },
@@ -978,12 +1032,12 @@ pub fn Methods(comptime Ctx: type) type {
                         // is already a global that can be accessed directly.
                         last_instruction_was_terminator = false;
                     },
-                    .GroupCheck => |gc| {
-                        try self.handleGroupCheck(w, &stack, &id, gc);
+                    .MemberCheck => |mc| {
+                        try self.handleMemberCheck(w, &stack, &id, mc);
                         last_instruction_was_terminator = false;
                     },
-                    .GroupExtractPayload => {
-                        try self.handleGroupExtractPayload(w, &stack, &id);
+                    .UnboxPayload => {
+                        try self.handleUnboxPayload(w, &stack, &id);
                         last_instruction_was_terminator = false;
                     },
                     .UnionConstruct => |uc| {

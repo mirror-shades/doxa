@@ -510,6 +510,32 @@ pub const MatchCase = struct {
         tokens: []const Token,
         is_wildcard: bool = false,
         field_names: []const Token = &[_]Token{},
+
+        pub const Split = struct {
+            member: Token,
+            variant: ?Token,
+        };
+
+        /// Split a dotted match path into the member it names and, unless it is
+        /// a domain wildcard or a destructuring pattern, the variant inside that
+        /// member. The leading token is the group itself when the path is written
+        /// through it (`Error.IOError.NotFound`); otherwise the path starts at the
+        /// member (`IOError.NotFound`). A destructuring path ends at its member
+        /// (`AppError.FileError { path }`), which leaves no variant behind.
+        pub fn split(self: PathPattern, group_name: []const u8) Split {
+            const tokens = self.tokens;
+            if (self.field_names.len > 0) return .{ .member = tokens[tokens.len - 1], .variant = null };
+            if (tokens.len == 1) return .{ .member = tokens[0], .variant = null };
+            const through_group = std.mem.eql(u8, tokens[0].lexeme, group_name);
+            if (through_group) return .{
+                .member = tokens[1],
+                .variant = if (tokens.len >= 3) tokens[2] else null,
+            };
+            return .{
+                .member = tokens[tokens.len - 2],
+                .variant = tokens[tokens.len - 1],
+            };
+        }
     };
 };
 
@@ -1262,7 +1288,7 @@ pub const ModuleInfo = struct {
 
 fn dumpIndent(writer: *std.Io.Writer, depth: u32) std.Io.Writer.Error!void {
     var i = depth;
-    while (i >= 0) {
+    while (i > 0) {
         try writer.writeAll("  ");
         i -= 1;
     }

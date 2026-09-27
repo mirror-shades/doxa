@@ -62,6 +62,16 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
             }
         }
 
+        // Without a name the backend falls back to raw integers, which prints
+        // `enum = <enum>`. A variable narrowed by `as` tracks the member type
+        // itself, so the name comes from the enum table rather than from a
+        // field-access path.
+        if (enum_type_name == null and inferred_type == .Enum) {
+            if (self.generator.type_system.enum_table) |table| {
+                enum_type_name = table.getName(inferred_type.Enum);
+            }
+        }
+
         // New: include union member list for variables declared as unions or expressions that return unions
         var union_members: ?[][]const u8 = null;
         // Attach inline union info for selected builtins/internal calls

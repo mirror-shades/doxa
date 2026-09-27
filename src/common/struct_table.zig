@@ -49,7 +49,7 @@ pub const StructTable = struct {
 
     pub fn registerStruct(self: *StructTable, qualified_name: []const u8, field_inputs: []const FieldInput) !StructId {
         if (self.name_to_id.get(qualified_name)) |existing| {
-            return existing;
+            return try self.refreshStruct(existing, field_inputs);
         }
 
         const owned_name = try self.allocator.dupe(u8, qualified_name);
@@ -74,6 +74,37 @@ pub const StructTable = struct {
         });
 
         try self.name_to_id.put(self.allocator, owned_name, id);
+        return id;
+    }
+
+    /// A struct is first registered while its field types are still
+    /// placeholders and again once they resolve. Replacing the fields in place
+    /// keeps the id — and every HIR detail already recorded against it — while
+    /// letting the resolved AST types land, so a reader of `fields` never sees
+    /// the placeholder the semantic analyzer has since moved past.
+    fn refreshStruct(self: *StructTable, id: StructId, field_inputs: []const FieldInput) !StructId {
+        const entry = self.getEntryById(id) orelse return id;
+
+        var new_fields = try self.allocator.alloc(Field, field_inputs.len);
+        for (field_inputs, 0..) |input, field_index| {
+            var hir_type: HIRType = .Unknown;
+            var nested_struct_id: ?StructId = null;
+            if (field_index < entry.fields.len and std.mem.eql(u8, entry.fields[field_index].name, input.name)) {
+                hir_type = entry.fields[field_index].hir_type;
+                nested_struct_id = entry.fields[field_index].nested_struct_id;
+            }
+            new_fields[field_index] = .{
+                .name = try self.allocator.dupe(u8, input.name),
+                .type_info = input.type_info,
+                .hir_type = hir_type,
+                .index = @intCast(field_index),
+                .nested_struct_id = nested_struct_id,
+            };
+        }
+
+        for (entry.fields) |field| self.allocator.free(field.name);
+        self.allocator.free(entry.fields);
+        entry.fields = new_fields;
         return id;
     }
 

@@ -180,32 +180,44 @@ C twin; lower is better. All outputs are bit-identical to C (`match: true`).
 
 | test   | doxa  | c      | % vs C  |
 | ------ | ----- | ------ | ------- |
-| fib    | 1.61s | 1.64s  | −1.73%  |
-| sieve  | 0.92s | 0.91s  | +0.17%  |
-| matrix | 1.18s | 1.15s  | +2.38%  |
-| mb     | 0.93s | 0.93s  | −0.33%  |
-| arr    | 1.02s | 1.03s  | −0.59%  |
-| call   | 1.20s | 1.04s  | +15.37% |
-| struct | 1.93s | 0.99s  | +95.38% |
-| vec    | 0.90s | 0.93s  | −4.02%  |
+| fib    | 1.37s | 1.61s  | −14.53% |
+| sieve  | 0.96s | 0.94s  | +2.06%  |
+| matrix | 1.13s | 1.10s  | +2.78%  |
+| mb     | 0.92s | 0.92s  | +0.80%  |
+| arr    | 1.11s | 0.97s  | +15.20% |
+| call   | 1.20s | 1.04s  | +15.01% |
+| struct | 0.18s | 0.99s  | −81.39% |
+| vec    | 1.04s | 1.07s  | −2.98%  |
 
 Read against sections 3 and 4, this table is exactly the model's story:
 
 - **`fib`, `sieve`, `matrix`, `mb`, `arr`, `vec`** are scalar and flat-array workloads. They live on
-  the realized floor (section 3): typed SSA, flat fixed arrays, elided leaf scopes. They are within
-  ~4% of C because at that point Doxa *is* emitting C-shaped IR.
-- **`arr`** is the largest recovery on record: from +660% in the VM era to −0.59% today. Removing the
-  VM replaced a boxed, tag-dispatching value pipeline with typed SSA — the same change section 3
-  describes, applied program-wide.
-- **`struct`** (~2x C) is section 4 verbatim: `var arr :: Vec4[N]` lowers to an array of box
-  pointers, each field access is pointer-then-field through an opaque, tag-switching runtime call,
-  and every element store deep-clones a registered struct. The C twin is a flat by-value
-  `Vec4[250000]`. The model has nothing to do with this gap; the representation does. B1 has since
-  made a fixed `Vec4[N]` a flat buffer with direct GEP field access (see section 4); the remaining
-  delta in this snapshot is the floored-`%` sign correction on the serial carry chain, an
-  arithmetic-lowering detail tracked with `call` (Phase D), not the object graph.
-- **`call`** (~15%) is the floored-`%` sign correction on a serial carry chain plus a less favorable
-  unroll shape after LLVM inlines the leaf. Residual arithmetic-lowering detail, not a model cost.
+  the realized floor (section 3): typed SSA, flat fixed arrays, elided leaf scopes. Their placement
+  near C is what the floor looks like.
+- **`arr`** is the largest recovery on record: from +660% in the VM era to parity with C today.
+  Removing the VM replaced a boxed, tag-dispatching value pipeline with typed SSA — the same change
+  section 3 describes, applied program-wide.
+- **`struct`** was the last workload still paying a section-4 cost, and no longer does. Its object
+  graph was already contiguous (section 4, first two bullets), so what remained was arithmetic: Doxa's
+  `%` is *floored* (section 1) where C's truncates, and the sign correction that difference requires
+  was five extra instructions per operation on a five-link serial carry chain. A constant divisor
+  whose magnitude divides 2^64 — 65536 is a power of two — needs no correction at all, because an
+  unsigned remainder already yields the residue. Each `%` is now a single `and`, and the workload runs
+  at **−81% of C**, faster than its C twin. The dividend is a load out of the array, so no amount of
+  range analysis on the source values would have reached it; the identity came from the divisor alone.
+- **`call`** (~15%) is the same floored-`%` correction on a serial carry chain, and is *not* fixed.
+  Its modulus is 997, which does not divide 2^64, so an unsigned remainder is not the floored residue
+  for a negative dividend — and its dividend is a loop-carried accumulator whose sign the compiler does
+  not establish. It collects the smaller win (the constant settles the divisor's sign, dropping one
+  instruction) which does not move a latency-bound loop. Closing it needs an induction-variable range
+  fact, not a cheaper instruction sequence.
+
+**On reading this table.** The six non-canary rows move by several percent run to run, and on the
+machine these were last taken by as much as nine. That is measurement noise, not lowering: none of
+`fib`, `sieve`, `matrix`, `mb`, `arr`, `vec` contains a floored division or modulo *in its timed
+region* — `arr` times a plain `sum += arr[i]` reduction and `vec` a float `y[i] += 1.5 * x[i]`, with
+their only `%` in untimed setup. Treat movement in those rows as noise until a noise floor is
+measured, and do not gate a change on a delta smaller than it.
 
 These numbers are a snapshot of the *lowering*, not the language. The workloads that exercise
 section 3's floor match C; the workloads that exercise section 4's conservatism are the ones that do
@@ -276,6 +288,20 @@ policies that cost nothing when the compiler can prove them away, real tail call
 with copy-free returns from step A, need no post-call clone), and bounds removal where the index is
 statically safe.
 
+**Landed: the arithmetic lowerings these switches ride on.** Doxa's `//` and `%` are floored, so they
+cannot lower to LLVM's truncating `sdiv`/`srem` without a sign correction, and that correction was
+five extra instructions per operation sitting on the critical path of any serial carry chain — the
+last remaining reason `struct` ran at twice C. Two static facts now remove it, and a value-range
+lattice (`int_range.zig`, threaded like the region analysis in step A) supplies them: a constant
+divisor whose magnitude divides 2^64 needs no correction at all, and a provably non-negative dividend
+makes truncation equal flooring. `struct`'s `% 65536` is now one `and` and the workload is *faster*
+than C. `call`, whose modulus is 997 and whose dividend is a loop-carried accumulator, is not fixed —
+it needs an induction-variable range fact rather than a cheaper instruction sequence.
+
+The same range lattice is the missing prerequisite for the switches above: D-1 wants an upper bound
+to prove an `add` cannot wrap before attaching `nsw`/`nuw`, and D-3 wants one to prove an index is in
+range before dropping a check. Both are now a matter of consuming a fact that exists.
+
 ### E. Whole-program ABI polish
 
 Every function and type is known before codegen; nothing prevents interprocedural use of that
@@ -293,8 +319,11 @@ gaps are the canaries for B/C and D respectively.
 ## Reproducing the measurements
 
 ```
-doxa run test/benchmark/suite.doxa -- --runs 10
+doxa run test/benchmark/suite.doxa -- --runs 10 --write
 ```
+
+`--write` appends the run to `test/benchmark/stats.csv`, the log every table here is drawn from;
+without it the suite only prints.
 
 Each benchmark is compiled with `doxa compile … --opt=2` and its C twin with `zig cc -O2`.
 `--opt=N` mirrors clang: `--opt=2` compiles the program's `.ll` to an object with `zig cc -O2` and

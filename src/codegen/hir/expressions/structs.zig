@@ -454,7 +454,14 @@ pub const StructsHandler = struct {
             }
 
             // Now, the original logic for FieldAccess (non-enum)
-            const struct_id = self.resolveStructIdFromType(obj_type, resolved.struct_name);
+            var struct_id = self.resolveStructIdFromType(obj_type, resolved.struct_name);
+            // A group value reads through the member that owns the field; hand the
+            // member's struct id to the backend so it has that member's layout.
+            if (obj_type == .Group) {
+                if (self.generator.type_system.groupMemberStructForField(obj_type.Group, field.field.lexeme)) |member_id| {
+                    struct_id = member_id;
+                }
+            }
             try self.generator.instructions.append(.{
                 .GetField = .{
                     .field_name = field.field.lexeme,

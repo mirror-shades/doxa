@@ -38,6 +38,70 @@ pub const expected_union_narrow_results = [_]print_result{
     .{ .value = "c" },
 };
 
+pub const expected_group_test_results = [_]print_result{
+    .{ .value = "green" },
+    .{ .value = "io" },
+    .{ .value = "file:x.txt" },
+    .{ .value = "outer-color" },
+    .{ .value = "path=x.txt" },
+    .{ .value = "color" },
+};
+
+pub const expected_union_narrow_read_results = [_]print_result{
+    .{ .value = "int=not-fourteen" },
+    .{ .value = "str=hi" },
+    .{ .value = "else=not-fourteen" },
+};
+
+pub const expected_match_struct_results = [_]print_result{
+    .{ .value = "type-test=a.txt" },
+    .{ .value = "bind=a.txt" },
+    .{ .value = "other=second" },
+};
+
+pub const expected_match_union_struct_results = [_]print_result{
+    .{ .value = "a.txt" },
+    .{ .value = "type-test" },
+    .{ .value = "int-member" },
+    .{ .value = "int" },
+    .{ .value = "enum-arm" },
+};
+
+pub const expected_match_dead_arm_results = [_]print_result{
+    .{ .value = "else" },
+    .{ .value = "else-value" },
+};
+
+pub const expected_match_union_narrow_results = [_]print_result{
+    .{ .value = "path=x.txt" },
+    .{ .value = "recolored" },
+    .{ .value = "int=not-fourteen" },
+    .{ .value = "string=hi" },
+};
+
+pub const expected_group_narrow_store_results = [_]print_result{
+    .{ .value = "in=y.txt" },
+    .{ .value = "after=y.txt" },
+    .{ .value = "else-branch" },
+};
+
+pub const expected_group_global_copy_results = [_]print_result{
+    .{ .value = "assigned=a.txt" },
+    .{ .value = "global-store=h.txt" },
+    .{ .value = "returned=in.txt" },
+};
+
+pub const expected_match_union_global_results = [_]print_result{
+    .{ .value = "bare=g.txt" },
+    .{ .value = "bound=g.txt" },
+    .{ .value = "restored=h.txt" },
+};
+
+pub const expected_match_union_multi_results = [_]print_result{
+    .{ .value = "number" },
+    .{ .value = "bound=g.txt" },
+};
+
 pub const expected_nested_struct_return_results = [_]print_result{
     .{ .value = "win" },
     .{ .value = "b1" },
@@ -77,6 +141,35 @@ pub const expected_fixed_struct_array_results = [_]print_result{
     .{ .value = "1 2 30 4 5 6" },
     .{ .value = "2 31 6" },
     .{ .value = "7.25 1.5 2.5" },
+};
+
+pub const expected_floored_arith_results = [_]print_result{
+    .{ .value = "c_pow2_mod=1" },
+    .{ .value = "c_pow2_idiv=1543" },
+    .{ .value = "c_pow2_neg=7" },
+    .{ .value = "c_pow2_nidiv=-1544" },
+    .{ .value = "c_mod=381" },
+    .{ .value = "c_idiv=12" },
+    .{ .value = "c_neg=616" },
+    .{ .value = "c_nidiv=-13" },
+    .{ .value = "exact=0" },
+    .{ .value = "exact_idiv=10" },
+    .{ .value = "neg_c=0" },
+    .{ .value = "neg_c2=-3" },
+    .{ .value = "neg_c_idiv=-10" },
+    .{ .value = "neg_c2_idiv=10" },
+    .{ .value = "minus_one=0" },
+    .{ .value = "minus_one_zero=0" },
+    .{ .value = "v_mod=5" },
+    .{ .value = "v_idiv=-15" },
+    .{ .value = "v_mod_neg=-5" },
+    .{ .value = "v_idiv_neg=-15" },
+    .{ .value = "trunc_idiv=-15" },
+    .{ .value = "trunc_imod=5" },
+    .{ .value = "cell_idiv=-15" },
+    .{ .value = "cell_idiv_neg=-15" },
+    .{ .value = "cell_mod=5" },
+    .{ .value = "cell_mod_neg=-5" },
 };
 
 pub const expected_descriptor_skip_results = [_]print_result{

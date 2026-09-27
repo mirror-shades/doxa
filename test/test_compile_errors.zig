@@ -143,6 +143,21 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .path = "./test/misc/unreachable.doxa",
             .expected = .{ .exit_code = 2, .contains_message = "Reached unreachable code", .error_code = null },
         },
+        .{
+            .name = "group match not exhaustive",
+            .path = "./test/syntax/group_non_exhaustive.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Match on group 'Palette' is not exhaustive: 'FileError' not covered", .error_code = "E1033" },
+        },
+        .{
+            .name = "group cycle",
+            .path = "./test/syntax/group_cycle.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Cycle detected in group: 'A' includes itself transitively", .error_code = "E1003" },
+        },
+        .{
+            .name = "union arithmetic must be narrowed first",
+            .path = "./test/misc/union_arith_error.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Cannot use + operator on union type; narrow it with 'as' or match first", .error_code = "E1003" },
+        },
     };
 
     var passed: usize = 0;

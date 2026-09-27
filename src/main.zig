@@ -788,7 +788,7 @@ fn compileToNative(
                 }
             }
         }
-        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), zig_fn_param_types, hir_program.reflected_structs, hir_program.force_struct_descriptors);
+        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getStructTable())), zig_fn_param_types, hir_program.reflected_structs, hir_program.force_struct_descriptors);
         try printer.emitToFile(hir_program, ir_path);
     }
 
@@ -1540,7 +1540,10 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     profiler.begin("compile");
 
     profiler.begin("lex");
-    const lexedTokens = try lexicAnalysis(io, memoryManager, source, script_path, reporter);
+    const lexedTokens = lexicAnalysis(io, memoryManager, source, script_path, reporter) catch |err| {
+        exitIfCompileErrors(reporter);
+        return err;
+    };
     defer lexedTokens.deinit();
     if (cli_options.reporter_options.debug_lexer) {
         for (lexedTokens.items) |token| {
@@ -1552,7 +1555,10 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     profiler.begin("parse");
     var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter);
     defer parser.deinit();
-    const parsedStatements = try parser.execute();
+    const parsedStatements = parser.execute() catch |err| {
+        exitIfCompileErrors(reporter);
+        return err;
+    };
     profiler.end();
     exitIfCompileErrors(reporter);
 
@@ -1564,16 +1570,21 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     }
 
     profiler.begin("resolve");
-    var resolver = Resolver.init(memoryManager.getAnalysisAllocator(), &parser);
-    defer resolver.deinit();
-    try resolver.resolve(parsedStatements);
+    var resolver = Resolver.init(&parser);
+    resolver.resolve() catch |err| {
+        exitIfCompileErrors(reporter);
+        return err;
+    };
     profiler.end();
     exitIfCompileErrors(reporter);
 
     profiler.begin("semantic");
     var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), reporter, memoryManager, &parser);
     defer semantic_analyzer.deinit();
-    try semantic_analyzer.analyze(parsedStatements);
+    semantic_analyzer.analyze(parsedStatements) catch |err| {
+        exitIfCompileErrors(reporter);
+        return err;
+    };
     profiler.end();
     exitIfCompileErrors(reporter);
 
@@ -1585,7 +1596,10 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
 
     var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
     defer reachable_modules.deinit();
-    const hir_program = try generateHIRProgram(io, memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, reporter, profiler);
+    const hir_program = generateHIRProgram(io, memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, reporter, profiler) catch |err| {
+        exitIfCompileErrors(reporter);
+        return err;
+    };
     exitIfCompileErrors(reporter);
     profiler.end();
 

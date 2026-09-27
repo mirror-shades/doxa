@@ -103,6 +103,56 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_union_narrow_results[0..],
     },
     .{
+        .name = "groups end to end",
+        .path = "./test/misc/group_test.doxa",
+        .expected_print = answers.expected_group_test_results[0..],
+    },
+    .{
+        .name = "union narrowing reads as the member",
+        .path = "./test/misc/union_narrow_read.doxa",
+        .expected_print = answers.expected_union_narrow_read_results[0..],
+    },
+    .{
+        .name = "match on a struct subject",
+        .path = "./test/misc/match_struct.doxa",
+        .expected_print = answers.expected_match_struct_results[0..],
+    },
+    .{
+        .name = "match on a union subject",
+        .path = "./test/misc/match_union_struct.doxa",
+        .expected_print = answers.expected_match_union_struct_results[0..],
+    },
+    .{
+        .name = "match arm ruled out statically",
+        .path = "./test/misc/match_dead_arm.doxa",
+        .expected_print = answers.expected_match_dead_arm_results[0..],
+    },
+    .{
+        .name = "match arm narrows a union subject",
+        .path = "./test/misc/match_union_narrow.doxa",
+        .expected_print = answers.expected_match_union_narrow_results[0..],
+    },
+    .{
+        .name = "group re-assigned inside a narrowed branch",
+        .path = "./test/misc/group_narrow_store.doxa",
+        .expected_print = answers.expected_group_narrow_store_results[0..],
+    },
+    .{
+        .name = "group copied across return and globals",
+        .path = "./test/misc/group_global_copy.doxa",
+        .expected_print = answers.expected_group_global_copy_results[0..],
+    },
+    .{
+        .name = "match on a union global subject",
+        .path = "./test/misc/match_union_global.doxa",
+        .expected_print = answers.expected_match_union_global_results[0..],
+    },
+    .{
+        .name = "multi-pattern arm binds without narrowing",
+        .path = "./test/misc/match_union_multi.doxa",
+        .expected_print = answers.expected_match_union_multi_results[0..],
+    },
+    .{
         .name = "loop shadow and diverging cast fallback",
         .path = "./test/misc/loop_shadow.doxa",
         .expected_print = &[_]print_result{
@@ -165,6 +215,11 @@ const shared_cases = [_]Case{
         .name = "fixed struct array",
         .path = "./test/misc/fixed_struct_array.doxa",
         .expected_print = answers.expected_fixed_struct_array_results[0..],
+    },
+    .{
+        .name = "floored arithmetic",
+        .path = "./test/misc/floored_arith.doxa",
+        .expected_print = answers.expected_floored_arith_results[0..],
     },
     .{
         .name = "descriptor skip",

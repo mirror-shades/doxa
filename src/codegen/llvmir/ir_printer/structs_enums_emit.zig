@@ -1,5 +1,6 @@
 const std = @import("std");
 const DoxaUnionMeta = @import("../../../runtime/doxa_rt.zig").DoxaUnionMeta;
+const GroupTable = @import("../../../common/group_table.zig").GroupTable;
 
 fn resolveStructFieldIndex(field_name: []const u8, field_names: ?[]const []const u8, hir_index: u32) u32 {
     if (field_names) |names| {
@@ -1433,6 +1434,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .Enum => .I64,
                 .Function => .PTR,
                 .Union => .Value,
+                .Group => .Value,
                 .Nothing => .Nothing,
                 else => .I64,
             };
@@ -1460,6 +1462,13 @@ pub fn Methods(comptime Ctx: type) type {
                 .Enum => try allocator.dupe(u8, "enum"),
                 .Function => try allocator.dupe(u8, "function"),
                 .Union => try allocator.dupe(u8, "union"),
+                .Group => |gid| try allocator.dupe(u8, blk: {
+                    if (self.group_table) |gt_opaque| {
+                        const gt: *GroupTable = @constCast(@ptrCast(@alignCast(gt_opaque)));
+                        if (gt.getName(gid)) |gname| break :blk gname;
+                    }
+                    break :blk "group";
+                }),
                 .Nothing => try allocator.dupe(u8, "nothing"),
                 .Unknown => try allocator.dupe(u8, "nothing"),
                 else => try allocator.dupe(u8, "value"),
@@ -1496,6 +1505,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .Enum => "i64",
                 .Function => "ptr",
                 .Union => "%DoxaValue",
+                .Group => "%DoxaValue",
                 .Nothing => "void",
                 else => "i64",
             };

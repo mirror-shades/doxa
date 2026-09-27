@@ -1619,6 +1619,11 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
             }
 
             // Check for struct destructuring: { field1, field2 }
+            // The identifier is consumed here unless a dotted path already
+            // moved past it, so the brace check sees the token that follows.
+            const ident_tok = current;
+            if (!is_path) self.advance();
+
             if (self.peek().type == .LEFT_BRACE) {
                 self.advance();
                 var fields = std.ArrayListUnmanaged(token.Token).empty;
@@ -1657,8 +1662,6 @@ fn parseMatchPattern(self: *Parser) ErrorList!?token.Token {
                 }
             }
 
-            const ident_tok = self.peek();
-            self.advance();
             return try parseArraySuffixForMatchPattern(self, ident_tok);
         },
         else => {

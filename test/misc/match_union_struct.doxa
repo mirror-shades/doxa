@@ -1,0 +1,50 @@
+# A union subject discriminates an arm by the member index it boxed: the same
+# `reserved` bits a group carries. Struct and enum members are both reachable,
+# a member the union never boxes is dead code, and the int member never takes
+# the struct arm.
+struct FileError {
+    public path :: string,
+}
+
+enum Color { Red, Green }
+
+public entry function main() {
+    var e :: FileError is $FileError { path is "a.txt" }
+
+    # Destructuring binds the field out of the boxed payload.
+    var u :: int | FileError is e
+    match u {
+        int then @print("int" + "\n"),
+        FileError { path } then @print(path + "\n"),
+    }
+
+    # The same box with the struct declared first.
+    var v :: FileError | int is e
+    match v {
+        FileError then @print("type-test" + "\n"),
+        else @print("missed" + "\n"),
+    }
+
+    # An int member must not take the struct arm.
+    var n :: int | FileError is 7
+    match n {
+        FileError then @print("bad" + "\n"),
+        int then @print("int-member" + "\n"),
+        else @print("missed" + "\n"),
+    }
+
+    # A type the union never boxes decides the arm statically.
+    var s :: int | string is 5
+    match s {
+        FileError then @print("bad" + "\n"),
+        int then @print("int" + "\n"),
+    }
+
+    # Enum members box exactly like struct members.
+    var c :: Color is Color.Green
+    var w :: int | Color is c
+    match w {
+        Color then @print("enum-arm" + "\n"),
+        else @print("missed" + "\n"),
+    }
+}

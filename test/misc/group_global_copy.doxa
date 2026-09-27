@@ -1,0 +1,31 @@
+enum Color { Red, Green, Blue }
+struct FileError { public path :: string }
+
+group AppError { Color, FileError }
+
+var g1 :: AppError is $FileError { path is "a.txt", }
+var g2 :: AppError is g1
+
+function make() returns AppError {
+    var local :: AppError is $FileError { path is "in.txt", }
+    return local
+}
+
+public entry function main() {
+    match g2 {
+        AppError.FileError { path } then @print("assigned=" + path + "\n"),
+        else @print("assigned-other\n"),
+    }
+
+    g1 is $FileError { path is "h.txt", }
+    match g1 {
+        AppError.FileError { path } then @print("global-store=" + path + "\n"),
+        else @print("global-store-other\n"),
+    }
+
+    var g :: AppError is make()
+    match g {
+        AppError.FileError { path } then @print("returned=" + path + "\n"),
+        else @print("returned-other\n"),
+    }
+}
