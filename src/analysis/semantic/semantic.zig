@@ -1477,7 +1477,7 @@ pub const SemanticAnalyzer = struct {
     }
 
     // Narrow the matched variable type within a single match case, then infer the body type.
-    pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase, matched_var_name: ?[]const u8) ErrorList!*ast.TypeInfo {
+    pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase, matched_var_name: ?[]const u8, group_name: ?[]const u8) ErrorList!*ast.TypeInfo {
         // Create a per-case scope so narrowing does not leak out of the case
         const case_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
         defer case_scope.deinit();
@@ -1487,30 +1487,44 @@ pub const SemanticAnalyzer = struct {
         defer self.current_scope = prev_scope;
 
         if (matched_var_name) |name| {
-            // Build a narrowed TypeInfo from the patterns (use first pattern for type narrowing)
+            // An arm narrows the subject only when it lists a single pattern: with
+            // several, any of them could have selected it, so the body sees the
+            // subject as declared. `armNarrowingView` (control_flow.zig) applies the
+            // same rule in codegen; the two passes must agree, or a body reads a type
+            // the other pass never narrowed to.
+            const narrows = case.patterns.len == 1;
+
             // Check path patterns first (group-qualified patterns)
             if (case.path_patterns.len > 0) {
                 const path = case.path_patterns[0];
                 if (path.tokens.len >= 1) {
-                    const narrow_info = try ast.TypeInfo.createDefault(self.allocator);
-                    // Member type is second-to-last token (before variant or wildcard)
-                    const member_idx: usize = if (path.tokens.len >= 2) path.tokens.len - 2 else 0;
-                    const member_token = path.tokens[member_idx];
-                    narrow_info.* = .{
-                        .base = .Custom,
-                        .custom_type = member_token.lexeme,
-                        .is_mutable = false,
-                    };
-                    const token_type: TokenType = eval.convertTypeToTokenType(narrow_info.base);
-                    _ = try case_scope.createValueBinding(
-                        name,
-                        TokenLiteral{ .nothing = {} },
-                        token_type,
-                        narrow_info,
-                        false,
-                    );
+                    const split = path.split(group_name orelse "");
+                    const member_token = split.member;
 
-                    // Struct destructuring: bind each field name as a local variable
+                    if (narrows) {
+                        const narrow_info = try ast.TypeInfo.createDefault(self.allocator);
+                        // The member a path names is decided exactly the way codegen
+                        // splits it: through the group qualifier when the path is
+                        // written through it (`Group.Member.Variant`), otherwise the
+                        // token ahead of the variant (`Member.Variant`).
+                        narrow_info.* = .{
+                            .base = .Custom,
+                            .custom_type = member_token.lexeme,
+                            .is_mutable = false,
+                        };
+                        const token_type: TokenType = eval.convertTypeToTokenType(narrow_info.base);
+                        _ = try case_scope.createValueBinding(
+                            name,
+                            TokenLiteral{ .nothing = {} },
+                            token_type,
+                            narrow_info,
+                            false,
+                        );
+                    }
+
+                    // Struct destructuring: bind each field name as a local variable.
+                    // These are the arm's own names, not the subject, so they bind
+                    // whether or not the arm narrows.
                     if (path.field_names.len > 0) {
                         const resolved_name = self.resolveTypeAlias(member_token.lexeme);
                         if (self.struct_table.getIdByName(resolved_name)) |sid| {
@@ -1535,9 +1549,14 @@ pub const SemanticAnalyzer = struct {
                         }
                     }
                 }
-            } else if (case.patterns.len > 0) {
+            } else if (narrows) {
                 const narrow_info = try ast.TypeInfo.createDefault(self.allocator);
-                const first_pattern = case.patterns[0]; // Use first pattern for type narrowing
+                const first_pattern = case.patterns[0];
+
+                // A pattern we cannot map to a type leaves the subject as it is:
+                // binding it to `nothing` would make every use of the variable in the
+                // arm a type error.
+                var skip_narrowing = false;
 
                 // Check for array suffix in pattern lexeme (e.g., "int[]", "string[][]")
                 const i = std.mem.indexOf(u8, first_pattern.lexeme, "[]");
@@ -1556,22 +1575,24 @@ pub const SemanticAnalyzer = struct {
                             if (first_pattern.type == .IDENTIFIER and !std.mem.eql(u8, first_pattern.lexeme, "else")) {
                                 break :blk .{ .base = .Custom, .custom_type = first_pattern.lexeme, .is_mutable = false };
                             }
-                            // For else or unknown, skip narrowing
+                            skip_narrowing = true;
                             break :blk .{ .base = .Nothing, .is_mutable = false };
                         },
                     };
                 }
 
-                const token_type: TokenType = eval.convertTypeToTokenType(narrow_info.base);
+                if (!skip_narrowing) {
+                    const token_type: TokenType = eval.convertTypeToTokenType(narrow_info.base);
 
-                // Shadow the variable in this case scope with the narrowed type
-                _ = try case_scope.createValueBinding(
-                    name,
-                    TokenLiteral{ .nothing = {} },
-                    token_type,
-                    narrow_info,
-                    false,
-                );
+                    // Shadow the variable in this case scope with the narrowed type
+                    _ = try case_scope.createValueBinding(
+                        name,
+                        TokenLiteral{ .nothing = {} },
+                        token_type,
+                        narrow_info,
+                        false,
+                    );
+                }
             }
         }
 

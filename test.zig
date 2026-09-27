@@ -27,6 +27,7 @@ test {
     _ = @import("test/test_lexer.zig");
     _ = @import("test/test_profiler.zig");
     _ = @import("test/test_artifact_cache.zig");
+    _ = @import("test/test_floored_arith.zig");
 }
 
 // `zig build test` only runs tests reachable from this root, so a
@@ -43,6 +44,7 @@ test "suite wiring: every test file is reachable" {
         "test_lexer.zig",
         "test_profiler.zig",
         "test_artifact_cache.zig",
+        "test_floored_arith.zig",
     };
     // Intentionally outside this root: shared helpers, and the LSP suite, which
     // is built as its own test executable (see build.zig).

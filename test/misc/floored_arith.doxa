@@ -1,0 +1,81 @@
+# Phase D regression: floored `//` and `%` are documented as flooring toward
+# negative infinity (`docs/syntax.md`), while `/` truncates toward zero. The
+# lowerings that realize this differ by shape — a constant divisor takes a
+# single `urem` where the divisor's magnitude divides 2^64, a power-of-two
+# constant divisor takes a shift for `//`, and everything else keeps a signed
+# remainder plus a one-step correction. This pins the *answers* across every
+# sign combination and both constant and variable divisors, so a cheaper shape
+# that computes the wrong thing cannot land.
+
+module std from @std()
+
+function show(label :: string, value :: int) {
+    @print("{label}={value}\n")
+}
+
+public entry function main() {
+    # Constant divisor, power of two: `urem` shape, no dividend fact needed.
+    show("c_pow2_mod", 12345 % 8)
+    show("c_pow2_idiv", 12345 // 8)
+    show("c_pow2_neg", -12345 % 8)
+    show("c_pow2_nidiv", -12345 // 8)
+
+    # Constant divisor, not a power of two: the signed remainder stays and the
+    # sign difference is what the correction tests.
+    show("c_mod", 12345 % 997)
+    show("c_idiv", 12345 // 997)
+    show("c_neg", -12345 % 997)
+    show("c_nidiv", -12345 // 997)
+
+    # Exact division: the remainder is zero, so the correction must not fire.
+    show("exact", 100 % 10)
+    show("exact_idiv", 100 // 10)
+
+    # Negative constant divisor: the residue is non-positive, and an exact
+    # division has to come out as zero rather than `-m`.
+    show("neg_c", 100 % -10)
+    show("neg_c2", 97 % -10)
+    show("neg_c_idiv", 100 // -10)
+    show("neg_c2_idiv", -100 // -10)
+
+    # The extreme corner the old signed lowering could not express: `urem` on
+    # bit patterns has no `minInt / -1` overflow, so `x % -1` is zero.
+    var wide is 9223372036854775807
+    show("minus_one", wide % -1)
+    show("minus_one_zero", 0 % -1)
+
+    # Variable divisor: nothing is known about either operand, so the general
+    # shape with the sign-difference correction must survive.
+    var d is 7
+    show("v_mod", -100 % d)
+    show("v_idiv", -100 // d)
+    d is -7
+    show("v_mod_neg", 100 % d)
+    show("v_idiv_neg", 100 // d)
+
+    # `/` is float division in Doxa, so the only integer operators here are
+    # the floored `//` and `%`. Both must be pinned through the *array* path
+    # too: compound element arithmetic is emitted by a separate code path, and
+    # that one used to lower `//` with the truncated quotient's correction
+    # applied to the wrong sign.
+    var neg is -100
+    var pos is 100
+    var seven is 7
+    var neg_seven is -7
+    show("trunc_idiv", neg // seven)
+    show("trunc_imod", neg % seven)
+
+    var cells :: int[4]
+    cells[0] is neg
+    cells[0] is cells[0] // seven
+    cells[1] is pos
+    cells[1] is cells[1] // neg_seven
+    cells[2] is neg
+    cells[2] is cells[2] % seven
+    cells[3] is pos
+    cells[3] is cells[3] % neg_seven
+    show("cell_idiv", cells[0])
+    show("cell_idiv_neg", cells[1])
+    show("cell_mod", cells[2])
+    show("cell_mod_neg", cells[3])
+}

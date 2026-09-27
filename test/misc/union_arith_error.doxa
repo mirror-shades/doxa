@@ -1,0 +1,12 @@
+function tag(n :: int) returns string {
+    return if n == 14 then "fourteen" else "not-fourteen"
+}
+
+var u :: string | int is 7
+
+public entry function main() {
+    match u {
+        int, string then @print("n=" + tag(u + 1) + "\n"),
+        else @print("other\n"),
+    }
+}

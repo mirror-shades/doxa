@@ -82,7 +82,7 @@ pub const TypeSystem = struct {
         return HIRType{ .Enum = 0 };
     }
 
-    fn customTypeForName(self: *TypeSystem, name: []const u8) HIRType {
+    pub fn customTypeForName(self: *TypeSystem, name: []const u8) HIRType {
         if (self.custom_types.get(name)) |custom_type| {
             return switch (custom_type.kind) {
                 .Struct => self.structTypeForName(name),
@@ -208,7 +208,7 @@ pub const TypeSystem = struct {
         };
         try self.custom_types.put(group_name, custom_type);
 
-        // Also populate the GroupTable so GroupCheck instructions can resolve members
+        // Also populate the GroupTable so MemberCheck instructions can resolve members
         if (self.group_table) |gtable| {
             if (gtable.getIdByName(group_name) != null) return;
             var flat_members: std.ArrayListUnmanaged(GroupTable.Member) = .empty;
@@ -485,6 +485,37 @@ pub const TypeSystem = struct {
         };
     }
 
+    /// A binding narrowed by `as` is tracked as a single-member union view so
+    /// the backend can unwrap its box on load; structurally it *is* that
+    /// member, so field resolution must see the member and not the view.
+    pub fn memberView(t: HIRType) HIRType {
+        if (t == .Union and t.Union.members.len == 1) return t.Union.members[0].*;
+        return t;
+    }
+
+    /// The struct a group contributes for a field read. A field can only be read
+    /// through a group once the value has been narrowed to the member that owns
+    /// it, so exactly one member may declare `field_name`; two members that
+    /// disagree mean we cannot answer and the read stays unresolved.
+    pub fn groupMemberStructForField(self: *TypeSystem, group_id: u32, field_name: []const u8) ?u32 {
+        const const_table = self.struct_table orelse return null;
+        const members = (self.group_table orelse return null).members(group_id) orelse return null;
+        var found: ?u32 = null;
+        for (members) |member| {
+            if (member.kind != .Struct) continue;
+            const fields = const_table.fields(member.id) orelse continue;
+            for (fields) |f| {
+                if (!std.mem.eql(u8, f.name, field_name)) continue;
+                if (found) |prev| {
+                    if (prev != member.id) return null;
+                }
+                found = member.id;
+                break;
+            }
+        }
+        return found;
+    }
+
     pub fn resolveFieldAccessType(self: *TypeSystem, e: *ast.Expr, symbol_table: *SymbolTable) ?FieldResolveResult {
         return switch (e.data) {
             .Variable => |var_token| blk: {
@@ -587,11 +618,15 @@ pub const TypeSystem = struct {
                     }
                 }
 
+                // The object's own type decides which struct's fields to read. A
+                // group value is narrowed to one of its members before a field can
+                // be read through it, so unwrap a single-member union view first.
+                const obj_type = memberView(self.inferTypeFromExpression(fa.object, symbol_table));
+
                 // Fallback: if we know the object's HIR type is a struct via the
                 // semantic struct table (e.g., for array-of-struct indexing like
                 // zoo[0].name), use the struct_id and field metadata from there.
                 if (self.struct_table) |const_table| {
-                    const obj_type = self.inferTypeFromExpression(fa.object, symbol_table);
                     switch (obj_type) {
                         .Struct => |sid| {
                             if (const_table.fields(sid)) |fields| {
@@ -622,6 +657,23 @@ pub const TypeSystem = struct {
                                             .t = f.hir_type,
                                             .custom_type_name = result_name,
                                         };
+                                    }
+                                }
+                            }
+                        },
+                        .Group => |gid| {
+                            // Semantic narrows the binding to the matched member, so
+                            // exactly one member declares the field. Report ambiguity
+                            // by not resolving rather than guessing which member.
+                            if (self.groupMemberStructForField(gid, fa.field.lexeme)) |sid| {
+                                if (const_table.fields(sid)) |fields| {
+                                    for (fields) |f| {
+                                        if (std.mem.eql(u8, f.name, fa.field.lexeme)) {
+                                            break :blk FieldResolveResult{
+                                                .t = f.hir_type,
+                                                .custom_type_name = const_table.getName(sid),
+                                            };
+                                        }
                                     }
                                 }
                             }

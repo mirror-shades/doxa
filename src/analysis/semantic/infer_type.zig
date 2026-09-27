@@ -72,6 +72,27 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
             const op = bin.operator.lexeme;
 
+            // Arithmetic on a union is never well typed: the operand has to be
+            // narrowed first. Checked ahead of the per-operator rules, which would
+            // otherwise let a union sit beside a numeric operand, infer a result, and
+            // defer the failure to codegen — where the union has already vanished from
+            // the diagnostic.
+            const is_arithmetic = std.mem.eql(u8, op, "+") or std.mem.eql(u8, op, "-") or
+                std.mem.eql(u8, op, "*") or std.mem.eql(u8, op, "/") or
+                std.mem.eql(u8, op, "//") or std.mem.eql(u8, op, "%") or
+                std.mem.eql(u8, op, "**");
+            if (is_arithmetic and (left_type.base == .Union or right_type.base == .Union)) {
+                self.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.TYPE_MISMATCH,
+                    "Cannot use {s} operator on union type; narrow it with 'as' or match first",
+                    .{op},
+                );
+                self.fatal_error = true;
+                type_info.base = .Nothing;
+                return type_info;
+            }
+
             if (std.mem.eql(u8, op, "/")) {
                 if (left_type.base != .Int and left_type.base != .Float and left_type.base != .Byte) {
                     self.reporter.reportCompileError(
@@ -1053,19 +1074,21 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Tetra };
         },
         .Match => |match_expr| {
-            _ = try inferTypeFromExpr(self, match_expr.value);
+            const subject_type = try inferTypeFromExpr(self, match_expr.value);
+            try helpers.checkGroupMatchExhaustive(self, match_expr, subject_type, getLocationFromBase(expr.base));
 
             if (match_expr.cases.len > 0) {
                 var matched_var_name: ?[]const u8 = null;
                 if (match_expr.value.data == .Variable) {
                     matched_var_name = match_expr.value.data.Variable.lexeme;
                 }
+                const group_name = helpers.matchSubjectGroupName(self, subject_type);
 
                 var union_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
                 defer union_types.deinit();
 
                 for (match_expr.cases) |case| {
-                    const case_type = try self.inferMatchCaseTypeWithNarrow(case, matched_var_name);
+                    const case_type = try self.inferMatchCaseTypeWithNarrow(case, matched_var_name, group_name);
                     try union_types.append(case_type);
                 }
 
@@ -2379,13 +2402,26 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = target_type_info.*;
 
             const value_type = try inferTypeFromExpr(self, cast.value);
-            if (value_type.base != .Union) {
-                self.reporter.reportCompileError(
-                    getLocationFromBase(expr.base),
-                    ErrorCode.INVALID_OPERAND_TYPE,
-                    "Type casting 'as' can only be used with union types, got {s}",
-                    .{@tagName(value_type.base)},
-                );
+            const group_cast = classifyGroupCast(self, value_type, target_type_info);
+            if (value_type.base != .Union and group_cast != .valid) {
+                if (group_cast == .not_a_member) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
+                        "'{s}' is not a member of group '{s}'",
+                        .{
+                            if (target_type_info.custom_type) |name| name else @tagName(target_type_info.base),
+                            value_type.custom_type orelse @tagName(value_type.base),
+                        },
+                    );
+                } else {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.INVALID_OPERAND_TYPE,
+                        "Type casting 'as' can only be used with union types, got {s}",
+                        .{@tagName(value_type.base)},
+                    );
+                }
                 self.fatal_error = true;
                 type_info.base = .Nothing;
                 return type_info;
@@ -2839,6 +2875,31 @@ fn statementDiverges(stmt: ast.Stmt) bool {
         .Block => |stmts| blockDiverges(stmts),
         else => false,
     };
+}
+
+/// How `as T` relates to a group-typed subject. `valid` means `T` names one of
+/// the group's members and the cast narrows; `not_a_member` means the subject is
+/// a group but `T` is outside it, which is the case a plain "not a union" message
+/// would misreport.
+const GroupCast = enum { not_a_group, valid, not_a_member };
+
+fn classifyGroupCast(self: *SemanticAnalyzer, value_type: *ast.TypeInfo, target_type: *ast.TypeInfo) GroupCast {
+    if (value_type.base != .Custom) return .not_a_group;
+    const group_name = value_type.custom_type orelse return .not_a_group;
+    const group = self.custom_types.get(group_name) orelse return .not_a_group;
+    if (group.kind != .Group) return .not_a_group;
+
+    const member_name = if (target_type.base == .Custom) target_type.custom_type else null;
+    if (member_name == null) return .not_a_member;
+    const members = group.group_members orelse return .not_a_member;
+    for (members) |member| {
+        if (std.mem.eql(u8, member.qualifier, member_name.?) or
+            std.mem.eql(u8, member.source_name, member_name.?))
+        {
+            return .valid;
+        }
+    }
+    return .not_a_member;
 }
 
 /// Returns the variable name that `bindNarrowedCastType` would shadow for the

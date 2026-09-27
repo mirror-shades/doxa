@@ -278,10 +278,14 @@ TypePath        := IDENT ( '.' IDENT )*
 - [ ] Implement ambiguous-name detection by collecting all variant/field names across expanded members and flagging duplicates.
 - [x] Add `group_instance: HIRGroup { member_index, payload }` to `HIRValue` for runtime group representation.
 - [x] Implement implicit widening from member types to their enclosing group in the type checker (`typeIsGroupMember`, `typeMatchesUnionMember` in `unifyTypes`).
-- [x] Implement `match` exhaustiveness checking across the flat expanded member list for both enum variants and struct members.
+- [x] Emit the group tag at every construction site so a member value widens to its group on assignment, return, and call argument (`buildDoxaValue`, `isBoxedMemberType`).
+- [x] Implement `match` on a group subject: `GroupCheck` decides an arm by boxed member index, and an arm naming a variant (`Group.Member.Variant`) additionally compares the extracted payload.
 - [x] Implement domain wildcard patterns (`Group.Member.*`) that narrow the matched value to the member type.
-- [x] Implement struct destructuring patterns (`Group.Member { field }`) inside `match` arms.
+- [x] Implement struct destructuring patterns (`Group.Member { field }`) inside `match` arms, including binding the fields as arm locals.
+- [x] Implement `match` exhaustiveness checking across the flat expanded member list per §4.1: an arm list that leaves a member uncovered is a compile error (`E1033`) unless it ends in `else`.
+- [ ] Implement `as` narrowing from a group type to a member type as a value transform. The cast decides correctly and the semantic side narrows the bound name, but reading the narrowed binding inside the branch is broken — and so is reading a narrowed union binding on `master`, so the defect sits in the shared narrowing path rather than in groups.
 - [ ] Implement cross-member equality as a compile error.
-- [x] Add group type handling to bytecode (`module.zig`) and the VM interpreter.
+- [x] Add group type handling to the native LLVM backend: `GroupCheck` and `GroupExtractPayload` lower against `%DoxaValue`, and group members are wrapped like union arms.
 - [x] Validate that `registerSpecificSymbol` uses the correct `.Group` kind instead of `.Enum` for imported group symbols.
-- [x] Fix the fixed-2 allocation in `getSetSourceMemberNames` (or its replacement) to iterate actual expanded members.
+- [x] Fix the fixed-2 allocation in `getGroupMemberNames` (was `getSetSourceMemberNames`) to iterate actual expanded members.
+- [ ] Give the group-cycle error (`E1003`) a real source location; it currently reports `:0:0`.

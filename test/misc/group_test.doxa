@@ -1,2 +1,47 @@
-enum E { Red, Green, Blue }
-group G { E }
+# Groups end to end: a member value widens to its group at construction, and
+# `match` on a group decides on the boxed member index: qualified variant
+# paths, domain wildcards, and struct destructuring — with no `else` arm when
+# the arms cover the flattened member list (groups.md §4.1).
+enum Color { Red, Green, Blue }
+enum IOError { NotFound, PermissionDenied }
+struct FileError { public path :: string }
+
+group AppError { Color, IOError, FileError }
+group Error { AppError }
+
+function label(e :: AppError) returns string {
+    var out is "unknown"
+    match e {
+        AppError.Color.Red then out is "red",
+        AppError.Color.Green then out is "green",
+        AppError.Color.Blue then out is "blue",
+        AppError.IOError.* then out is "io",
+        AppError.FileError { path } then out is "file:" + path,
+    }
+    return out
+}
+
+public entry function main() {
+    var widened :: AppError is Color.Green
+    @print(label(widened) + "\n")
+
+    var through :: AppError is IOError.PermissionDenied
+    @print(label(through) + "\n")
+
+    var file :: AppError is $FileError { path is "x.txt", }
+    @print(label(file) + "\n")
+
+    # A nested group flattens into its members, so the same arms decide.
+    var outer :: Error is Color.Blue
+    var tag is "unknown"
+    match outer {
+        Error.Color.* then tag is "outer-color",
+        Error.IOError.* then tag is "outer-io",
+        Error.FileError { path } then tag is "outer-file",
+    }
+    @print(tag + "\n")
+
+    # `as` narrows the binding to the member type, so its fields resolve.
+    file as FileError then @print("path=" + file.path + "\n") else @print("not file")
+    widened as Color then @print("color\n") else @print("not color")
+}

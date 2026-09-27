@@ -1,0 +1,17 @@
+enum Color { Red, Green, Blue }
+struct FileError { public path :: string }
+
+var u :: string | int is 7
+var gerr :: FileError | Color is $FileError { path is "g.txt", }
+
+public entry function main() {
+    match u {
+        int, string then @print("number\n"),
+        else @print("other\n"),
+    }
+
+    match gerr {
+        FileError { path }, Color then @print("bound=" + path + "\n"),
+        else @print("g-other\n"),
+    }
+}

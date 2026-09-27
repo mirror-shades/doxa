@@ -19,6 +19,8 @@ pub const IRPrinter = struct {
         pub const StackType = Self.StackType;
         pub const StackVal = Self.StackVal;
         pub const Region = Self.Region;
+        pub const IntRange = @import("./ir_printer/int_range.zig").IntRange;
+        pub const SignFacts = @import("./ir_printer/int_range.zig").SignFacts;
         pub const VariableInfo = Self.VariableInfo;
         pub const StackIncoming = Self.StackIncoming;
         pub const StackSlot = Self.StackSlot;
@@ -53,6 +55,8 @@ pub const IRPrinter = struct {
     pub const plainStoreProven = CoreMethods.plainStoreProven;
     pub const plainGlobalStoreProven = CoreMethods.plainGlobalStoreProven;
     pub const recordVarRegion = CoreMethods.recordVarRegion;
+    pub const recordVarRange = CoreMethods.recordVarRange;
+    pub const varRange = CoreMethods.varRange;
     pub const rehomeForLocalStore = CoreMethods.rehomeForLocalStore;
     pub const rehomeForGlobalStore = CoreMethods.rehomeForGlobalStore;
 
@@ -61,6 +65,7 @@ pub const IRPrinter = struct {
     pub const writeModule = ModuleLayoutMethods.writeModule;
     pub const writeMainProgram = ModuleLayoutMethods.writeMainProgram;
     pub const computeDescriptorSkips = ModuleLayoutMethods.computeDescriptorSkips;
+    pub const registerStructTableLayouts = ModuleLayoutMethods.registerStructTableLayouts;
     pub const structFieldsAllScalar = ModuleLayoutMethods.structFieldsAllScalar;
     pub const reflectedContains = ModuleLayoutMethods.reflectedContains;
     pub const markTypeNeeds = ModuleLayoutMethods.markTypeNeeds;
@@ -91,6 +96,8 @@ pub const IRPrinter = struct {
     pub const ensureI64 = ValueHelperMethods.ensureI64;
     pub const unwrapDoxaValueToType = ValueHelperMethods.unwrapDoxaValueToType;
     pub const findUnionMemberIndex = ValueHelperMethods.findUnionMemberIndex;
+    pub const findMemberIndex = ValueHelperMethods.findMemberIndex;
+    pub const isBoxedMemberType = ValueHelperMethods.isBoxedMemberType;
     pub const buildDoxaValue = ValueHelperMethods.buildDoxaValue;
     pub const arrayElementSize = ValueHelperMethods.arrayElementSize;
     pub const arrayElementTag = ValueHelperMethods.arrayElementTag;
@@ -134,8 +141,8 @@ pub const IRPrinter = struct {
     pub const handleStringOp = SharedHandlers.handleStringOp;
     pub const handlePeek = SharedHandlers.handlePeek;
     pub const handlePeekStruct = SharedHandlers.handlePeekStruct;
-    pub const handleGroupCheck = SharedHandlers.handleGroupCheck;
-    pub const handleGroupExtractPayload = SharedHandlers.handleGroupExtractPayload;
+    pub const handleMemberCheck = SharedHandlers.handleMemberCheck;
+    pub const handleUnboxPayload = SharedHandlers.handleUnboxPayload;
     pub const handleUnionConstruct = SharedHandlers.handleUnionConstruct;
     pub const handleAssertFail = SharedHandlers.handleAssertFail;
     pub const handleArrayConcat = SharedHandlers.handleArrayConcat;
@@ -178,6 +185,11 @@ pub const IRPrinter = struct {
     global_struct_field_names: std.StringHashMap([]const []const u8),
     global_struct_type_names: std.StringHashMap([]const u8),
     global_fixed_array_info: std.StringHashMap(GlobalFixedArrayInfo),
+    /// The group or union a global was declared as, when it holds a
+    /// `%DoxaValue` box. A later store into it carries the *member* being
+    /// stored, so only the declaration can say which member index to re-pack.
+    /// Written only by `handleStoreDeclGlobal`.
+    global_boxed_types: std.StringHashMap(HIR.HIRType),
     defined_globals: std.StringHashMap(bool),
     struct_fields_by_id: std.AutoHashMap(HIR.StructId, []HIR.HIRType),
     struct_type_names_by_id: std.AutoHashMap(HIR.StructId, []const u8),
@@ -191,6 +203,7 @@ pub const IRPrinter = struct {
     enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
     group_table: ?*anyopaque = null,
     enum_table: ?*anyopaque = null,
+    struct_table: ?*anyopaque = null,
     entry_str_out_ptr: ?[]const u8 = null,
     entry_str_out_len: ?[]const u8 = null,
     /// Alloca lines discovered while emitting the current function/program body
@@ -217,6 +230,20 @@ pub const IRPrinter = struct {
     /// loads provably outlives a later rehome store's destination. Global scope
     /// kinds never appear here; globals are always `Root`.
     var_regions: std.StringHashMap(Region),
+    /// Phase D: value range of each local variable's integer payload. Same
+    /// shape and lifetime as `var_regions` — a per-function map consulted by
+    /// `LoadVar` so an arithmetic lowering can trust a bound across a variable
+    /// reference. The recorded range is the hull of every store seen in the
+    /// variable's own basic block; a store from any other block widens it to
+    /// the whole of `i64` (see `recordVarRange`).
+    var_ranges: std.StringHashMap(IntRange),
+    /// Phase D: the basic block each entry of `var_ranges` was recorded in, so
+    /// a store from a different block can be recognised as one this linear walk
+    /// cannot reason about.
+    var_range_blocks: std.StringHashMap([]const u8),
+    /// Phase D: the basic block currently being emitted. Mirrors the
+    /// `current_block` the emitter threads through its own helpers.
+    current_block: []const u8 = "entry",
     /// B2: struct type names that reach a reflection site anywhere in the program
     /// (borrowed from the generator). Such a type must keep its descriptor.
     reflected_structs: ?*const std.StringHashMap(void) = null,
@@ -241,6 +268,10 @@ pub const IRPrinter = struct {
 
     pub const StackType = enum { I64, F64, I8, I1, I2, PTR, STRING, Value, Nothing };
 
+    /// Phase D value-range lattice, re-exported from the emitter module that
+    /// owns it so `StackVal` and the per-function map can name it.
+    pub const IntRange = Ctx.IntRange;
+
     /// Static region class of a heap value's allocating arena, relative to the
     /// function being emitted (A1 region analysis). A value outlives any store
     /// destination inside the function exactly when its arena is the function's
@@ -264,6 +295,10 @@ pub const IRPrinter = struct {
         name: []const u8,
         ty: StackType,
         region: Region = .Unknown,
+        /// Phase D: what is statically known about this value's magnitude.
+        /// The default is the whole of `i64`, so a producer that does not opt
+        /// in simply forgoes the cheaper arithmetic lowerings.
+        int_range: IntRange = .unknown(),
         array_type: ?HIR.HIRType = null,
         enum_type_name: ?[]const u8 = null,
         struct_field_types: ?[]HIR.HIRType = null,
@@ -277,6 +312,13 @@ pub const IRPrinter = struct {
     pub const VariableInfo = struct {
         ptr_name: []const u8,
         stack_type: StackType,
+        /// The group or union the slot was declared as, when it holds a
+        /// `%DoxaValue` box. A store has to re-pack the member index from this
+        /// declaration: `StoreVar.expected_type` describes the value being
+        /// stored, which inside a `NarrowVar` branch is the member itself, and
+        /// boxing from it would leave no index for a later `MemberCheck` to
+        /// read.
+        boxed_declared_type: ?HIR.HIRType = null,
         array_type: ?HIR.HIRType = null,
         enum_type_name: ?[]const u8 = null,
         struct_field_types: ?[]HIR.HIRType = null,

@@ -148,6 +148,141 @@ fn typeIsGroupMember(self: *const SemanticAnalyzer, group_name: []const u8, actu
     return false;
 }
 
+/// §4.1: a `match` on a group must cover every flattened member. An arm covers
+/// a whole member when it names the member without reaching inside it — a bare
+/// member pattern, a destructuring pattern, or a domain wildcard. An arm that
+/// names a variant covers only that variant, so an enum member is covered once
+/// every one of its variants appears. An `else` arm covers everything.
+pub fn checkGroupMatchExhaustive(
+    self: *SemanticAnalyzer,
+    match_expr: ast.MatchExpr,
+    subject_type: *const ast.TypeInfo,
+    location: Reporting.Location,
+) !void {
+    const group_name = matchSubjectGroupName(self, subject_type) orelse return;
+    const group_id = self.group_table.getIdByName(group_name) orelse return;
+    const members = self.group_table.members(group_id) orelse return;
+    if (members.len == 0) return;
+    if (matchHasElseArm(match_expr)) return;
+
+    const allocator = self.allocator;
+    var coverage = try allocator.alloc(MemberCoverage, members.len);
+    defer {
+        for (coverage) |member_coverage| {
+            if (member_coverage.enum_coverage) |enum_coverage| allocator.free(enum_coverage.covered);
+        }
+        allocator.free(coverage);
+    }
+    @memset(coverage, .{});
+
+    for (members, 0..) |member, index| {
+        if (member.kind != .Enum) continue;
+        const enum_type = self.custom_types.get(member.qualifier) orelse continue;
+        if (enum_type.kind != .Enum) continue;
+        const variants = enum_type.enum_variants orelse continue;
+        const covered = try allocator.alloc(bool, variants.len);
+        @memset(covered, false);
+        coverage[index].enum_coverage = .{ .variants = variants, .covered = covered };
+    }
+
+    for (match_expr.cases) |case| {
+        // The path patterns decide an arm whenever the case has any; the bare
+        // pattern list repeats their last token for backward compatibility.
+        if (case.path_patterns.len > 0) {
+            for (case.path_patterns) |path_pattern| {
+                if (path_pattern.tokens.len == 0) continue;
+                const split = path_pattern.split(group_name);
+                const index = groupMemberIndexOf(members, split.member.lexeme) orelse continue;
+                const reaches_inside = !path_pattern.is_wildcard and
+                    path_pattern.field_names.len == 0 and
+                    split.variant != null;
+                if (!reaches_inside) {
+                    coverage[index].whole = true;
+                } else {
+                    markVariantCovered(&coverage[index], split.variant.?.lexeme);
+                }
+            }
+            continue;
+        }
+
+        for (case.patterns) |pattern| {
+            if (pattern.type == .ELSE or std.mem.eql(u8, pattern.lexeme, "else")) continue;
+            const index = groupMemberIndexOf(members, pattern.lexeme) orelse continue;
+            coverage[index].whole = true;
+        }
+    }
+
+    var uncovered = std.array_list.Managed([]const u8).init(allocator);
+    defer uncovered.deinit();
+    for (members, 0..) |member, index| {
+        if (isMemberCovered(coverage[index])) continue;
+        try uncovered.append(member.qualifier);
+    }
+    if (uncovered.items.len == 0) return;
+
+    const listed = try std.mem.join(allocator, "', '", uncovered.items);
+    defer allocator.free(listed);
+    self.reporter.reportCompileError(
+        location,
+        ErrorCode.NON_EXHAUSTIVE_MATCH,
+        "Match on group '{s}' is not exhaustive: '{s}' not covered. Cover every member or add an 'else' arm",
+        .{ group_name, listed },
+    );
+    self.fatal_error = true;
+}
+
+const EnumCoverage = struct {
+    variants: []const Types.EnumVariant,
+    covered: []bool,
+};
+
+const MemberCoverage = struct {
+    whole: bool = false,
+    /// Present only for an enum member whose declared variants were readable;
+    /// a member in this state can also be covered variant by variant.
+    enum_coverage: ?EnumCoverage = null,
+};
+
+pub fn matchSubjectGroupName(self: *const SemanticAnalyzer, subject_type: *const ast.TypeInfo) ?[]const u8 {
+    if (subject_type.base != .Custom) return null;
+    const name = self.resolveTypeAlias(subject_type.custom_type orelse return null);
+    const custom_type = self.custom_types.get(name) orelse return null;
+    if (custom_type.kind != .Group) return null;
+    return name;
+}
+
+fn matchHasElseArm(match_expr: ast.MatchExpr) bool {
+    for (match_expr.cases) |case| {
+        for (case.patterns) |pattern| {
+            if (pattern.type == .ELSE or std.mem.eql(u8, pattern.lexeme, "else")) return true;
+        }
+    }
+    return false;
+}
+
+fn groupMemberIndexOf(members: []const GroupTable.Member, name: []const u8) ?usize {
+    for (members, 0..) |member, index| {
+        if (std.mem.eql(u8, member.qualifier, name)) return index;
+    }
+    return null;
+}
+
+fn markVariantCovered(member_coverage: *MemberCoverage, variant_name: []const u8) void {
+    const enum_coverage = member_coverage.enum_coverage orelse return;
+    for (enum_coverage.variants, 0..) |variant, index| {
+        if (std.mem.eql(u8, variant.name, variant_name)) enum_coverage.covered[index] = true;
+    }
+}
+
+fn isMemberCovered(member_coverage: MemberCoverage) bool {
+    if (member_coverage.whole) return true;
+    const enum_coverage = member_coverage.enum_coverage orelse return false;
+    for (enum_coverage.covered) |covered| {
+        if (!covered) return false;
+    }
+    return true;
+}
+
 /// Helper: canonicalize a slice of *TypeInfo (dedup + stable order)
 fn canonicalizeUnion(
     self: *const SemanticAnalyzer,

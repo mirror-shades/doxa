@@ -80,6 +80,14 @@ Unions are particularly useful when:
 - You want to represent optional values (like `T | nothing`)
 - You're working with data that can have multiple valid representations
 
+## Using a union value
+
+A union value is usable only as the member it is holding: reading its fields, doing
+arithmetic on it, or passing it where a member type is expected all require it to be
+narrowed first — with `as`, or by matching it ([control.md](control.md)). Narrowing
+holds for the branch that selected the member and no further; which branches narrow
+is described under [match](control.md#match-values-and-union-types).
+
 ## Error Handling
 
 Here is a robust example of how error handling can be done using Doxa. Note that none of this handling is specific to _errors_, it is a general return pattern which relies on normal values making semanitcs extremely clear and flexible. This relies on the `as` keyword which attempts to narrow a value into another type.

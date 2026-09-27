@@ -359,6 +359,7 @@ pub const ErrorCode = struct {
     pub const ENUM_REQUIRES_INITIALIZER = "E1030";
     pub const BYTE_VALUE_OUT_OF_RANGE = "E1031";
     pub const INTEGER_VALUE_OUT_OF_RANGE = "E1032";
+    pub const NON_EXHAUSTIVE_MATCH = "E1033";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";

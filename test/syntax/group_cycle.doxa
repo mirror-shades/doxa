@@ -1,0 +1,7 @@
+# A group may not contain itself; the flattened member walk has to stop
+# somewhere (groups.md §9).
+group A { A }
+
+entry function main() {
+    @print("unreachable\n")
+}

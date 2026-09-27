@@ -1,0 +1,23 @@
+enum Color { Red, Green, Blue }
+struct FileError { public path :: string }
+
+var gerr :: FileError | Color is $FileError { path is "g.txt", }
+
+public entry function main() {
+    match gerr {
+        Color then @print("color\n"),
+        FileError then @print("bare=" + gerr.path + "\n"),
+        else @print("other\n"),
+    }
+
+    match gerr {
+        FileError { path } then @print("bound=" + path + "\n"),
+        else @print("bound-other\n"),
+    }
+
+    gerr is $FileError { path is "h.txt", }
+    match gerr {
+        FileError { path } then @print("restored=" + path + "\n"),
+        else @print("restored-other\n"),
+    }
+}

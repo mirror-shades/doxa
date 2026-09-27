@@ -119,6 +119,18 @@ fn exprHasBareReturn(expr: *ast.Expr) bool {
     }
 }
 
+/// A declared parameter type as the signature table records it: primitives
+/// plus the container and marker types the call lowering passes through
+/// directly. A type the frontend could not resolve collapses to `Int`.
+fn sanitizeParamType(t: HIRType) HIRType {
+    return switch (t) {
+        .Int, .Byte, .Float, .String, .Tetra, .Nothing,
+        .Struct, .Enum, .Array, .Map, .Function, .Union, .Group,
+        => t,
+        else => .Int,
+    };
+}
+
 /// Declared `returns A | B` with a bare `return` in the body is lowered as `nothing | A | B`.
 /// Handles both explicit `.Union` declared types and `.Custom` types that resolve to sets.
 fn effectiveReturnTypeForSignature(allocator: std.mem.Allocator, declared: ast.TypeInfo, body: []ast.Stmt, type_system: ?*TypeSystem) !ast.TypeInfo {
@@ -520,14 +532,10 @@ pub const HIRGenerator = struct {
                     for (func.params, 0..) |param, i| {
                         param_is_alias[i] = param.is_alias;
                         param_is_readonly[i] = !ParamMutation.bodyMutatesVariable(func.body, param.name.lexeme);
-                        param_types[i] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
-                        // Sanitize param types: keep only simple primitives/markers for signature
-                        param_types[i] = switch (param_types[i]) {
-                            .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[i],
-                            .Struct, .Enum => param_types[i],
-                            .Array, .Map, .Function, .Union => param_types[i],
-                            else => .Int,
-                        };
+                        param_types[i] = sanitizeParamType(if (param.type_expr) |type_expr|
+                            self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*)
+                        else
+                            .Int);
                     }
 
                     const function_info = FunctionInfo{
@@ -586,17 +594,10 @@ pub const HIRGenerator = struct {
                                 for (func.params, 0..) |param, i| {
                                     param_is_alias_imported[i] = param.is_alias;
                                     param_is_readonly_imported[i] = !ParamMutation.bodyMutatesVariable(func.body, param.name.lexeme);
-                                    var pt: HIRType = if (param.type_expr) |type_expr|
+                                    const pt: HIRType = sanitizeParamType(if (param.type_expr) |type_expr|
                                         self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*)
                                     else
-                                        .Int;
-                                    // Sanitize for signature table
-                                    pt = switch (pt) {
-                                        .Int, .Byte, .Float, .String, .Tetra, .Nothing => pt,
-                                        .Struct, .Enum => pt,
-                                        .Array, .Map, .Function, .Union => pt,
-                                        else => .Int,
-                                    };
+                                        .Int);
                                     param_types_imported[i] = pt;
                                 }
 
@@ -695,16 +696,10 @@ pub const HIRGenerator = struct {
                                 for (func_params, 0..) |p, i| {
                                     function_info2.param_is_alias[i] = p.is_alias;
                                     function_info2.param_is_readonly[i] = !ParamMutation.bodyMutatesVariable(func_body, p.name.lexeme);
-                                    var pt2: HIRType = if (p.type_expr) |te|
+                                    function_info2.param_types[i] = sanitizeParamType(if (p.type_expr) |te|
                                         self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, te)).*)
                                     else
-                                        .Int;
-                                    pt2 = switch (pt2) {
-                                        .Int, .Byte, .Float, .String, .Tetra, .Nothing => pt2,
-                                        .Struct, .Enum => pt2,
-                                        else => .Int,
-                                    };
-                                    function_info2.param_types[i] = pt2;
+                                        .Int);
                                 }
 
                                 try self.function_signatures.put(sym_name, function_info2);
@@ -1427,13 +1422,10 @@ pub const HIRGenerator = struct {
             for (method.params) |param| {
                 param_is_alias[param_idx] = param.is_alias;
                 param_is_readonly[param_idx] = !ParamMutation.bodyMutatesVariable(method.body, param.name.lexeme);
-                param_types[param_idx] = if (param.type_expr) |type_expr| self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*) else .Int;
-                param_types[param_idx] = switch (param_types[param_idx]) {
-                    .Int, .Byte, .Float, .String, .Tetra, .Nothing => param_types[param_idx],
-                    .Struct, .Enum => param_types[param_idx],
-                    .Array, .Map, .Function, .Union => param_types[param_idx],
-                    else => .Int,
-                };
+                param_types[param_idx] = sanitizeParamType(if (param.type_expr) |type_expr|
+                    self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*)
+                else
+                    .Int);
                 param_idx += 1;
             }
 

@@ -1,0 +1,23 @@
+# A group variable re-assigned inside its own `as` branch re-packs the box with
+# the member it stored, so the branch's own field read and every later check see
+# that member — not the member index a box with no declaration would carry.
+enum Color { Red, Green, Blue }
+struct FileError { public path :: string }
+
+group AppError { Color, FileError }
+
+public entry function main() {
+    var file :: AppError is $FileError { path is "x.txt", }
+
+    file as FileError then {
+        file is $FileError { path is "y.txt", }
+        @print("in=" + file.path + "\n")
+    } else @print("no-cast" + "\n")
+
+    match file {
+        AppError.FileError { path } then @print("after=" + path + "\n"),
+        else @print("after=wrong-member" + "\n"),
+    }
+
+    file as Color then @print("still-color? no" + "\n") else @print("else-branch" + "\n")
+}

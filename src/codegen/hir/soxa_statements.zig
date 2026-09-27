@@ -641,12 +641,14 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             const group_type_value = HIRValue{ .string = group_decl.name.lexeme };
             const const_idx = try self.addConstant(group_type_value);
             try self.instructions.append(.{ .Const = .{ .value = group_type_value, .constant_id = const_idx } });
+            // The name binding is a string, not a group *value*: a group value
+            // would need a member index, which a bare group name has none of.
             try self.instructions.append(.{ .StoreDecl = .{
                 .var_index = var_idx,
                 .var_name = group_decl.name.lexeme,
                 .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
                 .module_context = null,
-                .declared_type = HIRType{ .Group = gid },
+                .declared_type = HIRType{ .String = {} },
                 .is_const = true,
             } });
         },

@@ -1,6 +1,7 @@
 const std = @import("std");
 const ast = @import("../../../ast/ast.zig");
 const builtin_methods = @import("../../../runtime/builtin_methods.zig");
+const DoxaUnionMeta = @import("../../../runtime/doxa_rt.zig").DoxaUnionMeta;
 
 fn isQuantifierName(name: []const u8) bool {
     return std.mem.eql(u8, name, "exists_quantifier_gt") or
@@ -17,6 +18,9 @@ pub fn Methods(comptime Ctx: type) type {
     const PeekEmitState = Ctx.PeekEmitState;
     const StackType = Ctx.StackType;
     const StackVal = Ctx.StackVal;
+    const IntRange = Ctx.IntRange;
+    const signFacts = @import("./int_range.zig").signFacts;
+    const FlooredArith = @import("./int_range.zig").Methods(Ctx);
     const internPeekString = Ctx.internPeekString;
 
     return struct {
@@ -30,7 +34,9 @@ pub fn Methods(comptime Ctx: type) type {
                     const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ name, i });
                     defer self.allocator.free(line);
                     try w.writeAll(line);
-                    try stack.append(.{ .name = name, .ty = .I64 });
+                    // Phase D: the literal itself, which is what lets a
+                    // constant divisor collapse the floored lowerings.
+                    try stack.append(.{ .name = name, .ty = .I64, .int_range = .exact(i) });
                 },
                 .float => |f| {
                     const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
@@ -48,7 +54,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i8 0, {d}\n", .{ name, b });
                     defer self.allocator.free(line);
                     try w.writeAll(line);
-                    try stack.append(.{ .name = name, .ty = .I8 });
+                    try stack.append(.{ .name = name, .ty = .I8, .int_range = .below(256) });
                 },
                 .tetra => |t| {
                     const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
@@ -119,7 +125,14 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(line);
                     try w.writeAll(line);
                     const type_name_global = try self.createEnumTypeNameGlobal(ev.type_name, id);
-                    try stack.append(.{ .name = name, .ty = .I64, .enum_type_name = type_name_global });
+                    try stack.append(.{
+                        .name = name,
+                        .ty = .I64,
+                        .enum_type_name = type_name_global,
+                        // An enum's runtime value is its variant index, which is
+                        // a non-negative ordinal.
+                        .int_range = .{ .lo = 0, .lo_known = true },
+                    });
                     self.last_emitted_enum_value = ev.variant_index;
                 },
                 .nothing => {
@@ -138,6 +151,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .name = top.name,
                 .ty = top.ty,
                 .region = top.region,
+                .int_range = top.int_range,
                 .array_type = top.array_type,
                 .enum_type_name = top.enum_type_name,
                 .struct_field_types = top.struct_field_types,
@@ -195,118 +209,83 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(conv_back_line);
                         try stack.append(.{ .name = name, .ty = .I64 });
                     } else {
-                        const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                        id.* += 1;
-                        var pushed_name: ?[]const u8 = null;
-                        switch (a.op) {
-                            .Add => {
+                        // Phase D: what the result's magnitude is statically
+                        // known to be. Producers that cannot prove anything
+                        // leave it open, which only costs a cheaper lowering
+                        // downstream.
+                        var result_range: IntRange = .unknown();
+                        // Each shape draws its own SSA names, and only at the
+                        // point it emits the instruction that defines them:
+                        // LLVM requires unnamed values to be numbered in order
+                        // of appearance, so a name allocated up front for a
+                        // shape that then delegates elsewhere would leave a
+                        // hole in the sequence.
+                        const result_name: []const u8 = switch (a.op) {
+                            .Add => blk: {
+                                const name = try self.nextTemp(id);
                                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                                 defer self.allocator.free(line);
                                 try w.writeAll(line);
+                                result_range = IntRange.add(lhs.int_range, rhs.int_range);
+                                break :blk name;
                             },
-                            .Sub => {
+                            .Sub => blk: {
+                                const name = try self.nextTemp(id);
                                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                                 defer self.allocator.free(line);
                                 try w.writeAll(line);
+                                result_range = IntRange.sub(lhs.int_range, rhs.int_range);
+                                break :blk name;
                             },
-                            .Mul => {
+                            .Mul => blk: {
+                                const name = try self.nextTemp(id);
                                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                                 defer self.allocator.free(line);
                                 try w.writeAll(line);
+                                result_range = IntRange.mul(lhs.int_range, rhs.int_range);
+                                break :blk name;
                             },
-                            .Div => {
+                            .Div => blk: {
+                                // Doxa's `/` is float division, so the type
+                                // checker never produces an integer-typed one
+                                // and this arm is unreachable from source. It is
+                                // kept because `Arith` carries the opcode and a
+                                // future integer `/` would land here; a bare
+                                // `sdiv` is the correct lowering for a
+                                // truncating one either way.
+                                const name = try self.nextTemp(id);
                                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                                 defer self.allocator.free(line);
                                 try w.writeAll(line);
+                                if (rhs.int_range.konst) |c| {
+                                    if (c > 0) result_range = IntRange.flooredDivByConst(lhs.int_range, c);
+                                }
+                                break :blk name;
                             },
-                            .IntDiv => {
-                                const q = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const r = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const r_nz = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const xor_v = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const sign_diff = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const adj_i1 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const adj = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const result_reg = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const l0 = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ q, lhs.name, rhs.name });
-                                const l1 = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ r, lhs.name, rhs.name });
-                                const l2 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ r_nz, r });
-                                const l3 = try std.fmt.allocPrint(self.allocator, "  {s} = xor i64 {s}, {s}\n", .{ xor_v, lhs.name, rhs.name });
-                                const l4 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, 0\n", .{ sign_diff, xor_v });
-                                const l5 = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ adj_i1, r_nz, sign_diff });
-                                const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i64\n", .{ adj, adj_i1 });
-                                const l7 = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ result_reg, q, adj });
-                                defer self.allocator.free(l7);
-                                defer self.allocator.free(l6);
-                                defer self.allocator.free(l5);
-                                defer self.allocator.free(l4);
-                                defer self.allocator.free(l3);
-                                defer self.allocator.free(l2);
-                                defer self.allocator.free(l1);
-                                defer self.allocator.free(l0);
-                                try w.writeAll(l0);
-                                try w.writeAll(l1);
-                                try w.writeAll(l2);
-                                try w.writeAll(l3);
-                                try w.writeAll(l4);
-                                try w.writeAll(l5);
-                                try w.writeAll(l6);
-                                try w.writeAll(l7);
-                                pushed_name = result_reg;
+                            .IntDiv => blk: {
+                                const name = try FlooredArith.emitFlooredDiv(self, w, id, lhs.name, rhs.name, signFacts(lhs.int_range, rhs.int_range));
+                                if (rhs.int_range.konst) |c| {
+                                    if (c > 0) result_range = IntRange.flooredDivByConst(lhs.int_range, c);
+                                }
+                                break :blk name;
                             },
-                            .Mod => {
-                                const r = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const r_nz = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const xor_v = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const sign_diff = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const adj_i1 = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const corr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const result_reg = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const l0 = try std.fmt.allocPrint(self.allocator, "  {s} = srem i64 {s}, {s}\n", .{ r, lhs.name, rhs.name });
-                                const l1 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp ne i64 {s}, 0\n", .{ r_nz, r });
-                                const l2 = try std.fmt.allocPrint(self.allocator, "  {s} = xor i64 {s}, {s}\n", .{ xor_v, lhs.name, rhs.name });
-                                const l3 = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, 0\n", .{ sign_diff, xor_v });
-                                const l4 = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ adj_i1, r_nz, sign_diff });
-                                const l5 = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 0\n", .{ corr, adj_i1, rhs.name });
-                                const l6 = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ result_reg, r, corr });
-                                defer self.allocator.free(l6);
-                                defer self.allocator.free(l5);
-                                defer self.allocator.free(l4);
-                                defer self.allocator.free(l3);
-                                defer self.allocator.free(l2);
-                                defer self.allocator.free(l1);
-                                defer self.allocator.free(l0);
-                                try w.writeAll(l0);
-                                try w.writeAll(l1);
-                                try w.writeAll(l2);
-                                try w.writeAll(l3);
-                                try w.writeAll(l4);
-                                try w.writeAll(l5);
-                                try w.writeAll(l6);
-                                pushed_name = result_reg;
+                            .Mod => blk: {
+                                const name = try FlooredArith.emitFlooredMod(self, w, id, lhs.name, rhs.name, signFacts(lhs.int_range, rhs.int_range));
+                                // A positive constant modulus pins the residue
+                                // to `[0, c)`, which is what keeps a bounded
+                                // carry chain bounded.
+                                if (rhs.int_range.konst) |c| {
+                                    if (c > 0) result_range = IntRange.flooredModByConst(lhs.int_range, c);
+                                }
+                                break :blk name;
                             },
                             else => unreachable,
-                        }
-                        if (pushed_name) |pn| {
-                            try stack.append(.{ .name = pn, .ty = .I64 });
-                        } else {
-                            try stack.append(.{ .name = name, .ty = .I64 });
-                        }
+                        };
+                        try stack.append(.{
+                            .name = result_name,
+                            .ty = .I64,
+                            .int_range = result_range,
+                        });
                     }
                 },
                 .Float => {
@@ -374,21 +353,31 @@ pub fn Methods(comptime Ctx: type) type {
                 .Byte => {
                     const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
                     id.* += 1;
+                    // A Doxa `byte` is unsigned, so the `i8` arithmetic here is
+                    // really mod-256 arithmetic: `add`/`sub`/`mul` on operands in
+                    // `[0, 256)` stay in `[0, 256)` however they wrap. The
+                    // dividing shapes get no bound — a zero divisor makes the
+                    // result poison, and poison is not in `[0, 256)` — and `Pow`
+                    // goes through a runtime helper.
+                    var result_range: IntRange = .unknown();
                     switch (a.op) {
                         .Add => {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
+                            result_range = .below(256);
                         },
                         .Sub => {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
+                            result_range = .below(256);
                         },
                         .Mul => {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
+                            result_range = .below(256);
                         },
                         .Div => {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = udiv i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
@@ -411,7 +400,7 @@ pub fn Methods(comptime Ctx: type) type {
                             try w.writeAll(line);
                         },
                     }
-                    try stack.append(.{ .name = name, .ty = .I8 });
+                    try stack.append(.{ .name = name, .ty = .I8, .int_range = result_range });
                 },
                 // Only Int, Float, and Byte are valid arithmetic operand types.
                 else => {},
@@ -1145,12 +1134,16 @@ pub fn Methods(comptime Ctx: type) type {
             // Prefer enum-aware printing when we know the enum type,
             // falling back to raw integers only when we have no metadata.
             if (pk.value_type == .Enum) {
+                // An enum narrowed out of a union is still boxed here; its
+                // discriminant lives in the payload, and the print compares
+                // that discriminant against the variant indices.
+                const enum_val = try self.unwrapDoxaValueToType(w, val, pk.value_type, id);
                 if (pk.enum_type_name) |etype| {
-                    try self.emitEnumPrint(peek_state, w, id, etype, val.name);
+                    try self.emitEnumPrint(peek_state, w, id, etype, enum_val.name);
                     try w.writeAll("  call void @doxa_peek_end()\n");
                     return;
-                } else if (val.enum_type_name) |etype2| {
-                    try self.emitEnumPrint(peek_state, w, id, etype2, val.name);
+                } else if (enum_val.enum_type_name) |etype2| {
+                    try self.emitEnumPrint(peek_state, w, id, etype2, enum_val.name);
                     try w.writeAll("  call void @doxa_peek_end()\n");
                     return;
                 }
@@ -1606,7 +1599,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("  call void @doxa_peek_end()\n");
         }
 
-        pub fn handleGroupCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gc: std.meta.fieldInfo(HIRInstruction, .GroupCheck).type) !void {
+        pub fn handleMemberCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, mc: std.meta.fieldInfo(HIRInstruction, .MemberCheck).type) !void {
             if (stack.items.len < 1) return;
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -1618,12 +1611,12 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(extract_line);
 
                 const member_i32 = try self.nextTemp(id);
-                const shift_line = try std.fmt.allocPrint(self.allocator, "  {s} = lshr i32 {s}, 16\n", .{ member_i32, reserved_i32 });
-                defer self.allocator.free(shift_line);
-                try w.writeAll(shift_line);
+                const mask_line = try std.fmt.allocPrint(self.allocator, "  {s} = and i32 {s}, {d}\n", .{ member_i32, reserved_i32, DoxaUnionMeta.member_index_mask });
+                defer self.allocator.free(mask_line);
+                try w.writeAll(mask_line);
 
                 const expected = try self.nextTemp(id);
-                const expected_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ expected, gc.member_index });
+                const expected_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ expected, mc.member_index });
                 defer self.allocator.free(expected_line);
                 try w.writeAll(expected_line);
 
@@ -1647,7 +1640,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleGroupExtractPayload(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize) !void {
+        pub fn handleUnboxPayload(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize) !void {
             if (stack.items.len < 1) return;
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
@@ -2172,11 +2165,11 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                     }
                     if (declared_type) |decl| {
-                        if (arg.ty == .Value and decl != .Union) {
+                        if (arg.ty == .Value and !IRPrinter.isBoxedMemberType(decl)) {
                             arg = try self.unwrapDoxaValueToType(w, arg, decl, id);
                             arg_ptr.* = arg;
                         }
-                        if (arg.ty != .Value and decl == .Union) {
+                        if (arg.ty != .Value and IRPrinter.isBoxedMemberType(decl)) {
                             arg = try self.buildDoxaValue(w, arg, decl, id);
                             arg_ptr.* = arg;
                         }
@@ -2397,6 +2390,11 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn handleStoreDeclGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sd: std.meta.fieldInfo(HIRInstruction, .StoreDecl).type) !void {
+            // The declaration is the slot's identity: a group or union global is
+            // a %DoxaValue, and every later store re-packs its member from here.
+            if (IRPrinter.isBoxedMemberType(sd.declared_type)) {
+                _ = try self.global_boxed_types.put(sd.var_name, sd.declared_type);
+            }
             if (stack.items.len < 1) {
                 const stack_type = self.hirTypeToStackType(sd.declared_type);
                 _ = try self.global_types.put(sd.var_name, stack_type);
@@ -2410,7 +2408,7 @@ pub fn Methods(comptime Ctx: type) type {
             if (sd.declared_type == .Array and value.array_type == null) {
                 value.array_type = sd.declared_type.Array.*;
             }
-            if (sd.declared_type == .Union) {
+            if (IRPrinter.isBoxedMemberType(sd.declared_type)) {
                 value = try self.buildDoxaValue(w, value, sd.declared_type, id);
             }
             if (!sd.is_const) {
@@ -2476,7 +2474,7 @@ pub fn Methods(comptime Ctx: type) type {
             if (value.array_type == null and expected_array_type != null) {
                 value.array_type = expected_array_type.?;
             }
-            if (sv.expected_type == .Union) {
+            if (IRPrinter.isBoxedMemberType(sv.expected_type)) {
                 value = try self.buildDoxaValue(w, value, sv.expected_type, id);
             }
             value = switch (sv.heap_copy) {
@@ -2484,6 +2482,19 @@ pub fn Methods(comptime Ctx: type) type {
                 .snapshot => try self.cloneHeapValue(w, id, value, sv.expected_type, .program_root, true),
                 .rehome => try self.rehomeForGlobalStore(w, id, value, sv.expected_type),
             };
+            // The slot is a %DoxaValue but the value carried here is the member
+            // itself: re-pack its member index from the declaration, or the raw
+            // member is stored straight over the box's tag. `global_boxed_types` has
+            // exactly one writer — `handleStoreDeclGlobal`, the declaration — so a
+            // box with no recorded type means that declaration never ran: an emitter
+            // invariant broken, not a user error, and better failed than emitted.
+            if (value.ty != .Value) {
+                if (self.global_boxed_types.get(sv.var_name)) |box_type| {
+                    value = try self.buildDoxaValue(w, value, box_type, id);
+                } else if (self.global_types.get(sv.var_name)) |slot_type| {
+                    if (slot_type == .Value) return error.MissingGlobalBoxType;
+                }
+            }
             const llvm_ty = self.stackTypeToLLVMType(value.ty);
             _ = try self.global_types.put(sv.var_name, value.ty);
             if (value.array_type) |array_type| {
@@ -2528,6 +2539,11 @@ pub fn Methods(comptime Ctx: type) type {
                 try stack.append(.{ .name = result_name, .ty = .Nothing });
                 return;
             }
+            // A group or union global loads as its %DoxaValue box, even inside a
+            // narrowed branch: the local path unwraps the narrowed box at the load
+            // (`loadNarrowedUnion`), a global does not — its consumers (field access,
+            // arithmetic, argument coercion) read the payload out of the box — so
+            // nothing on this path may unwrap it.
             const llty = self.stackTypeToLLVMType(st);
             const gptr = try self.mangleGlobalName(gname);
             defer self.allocator.free(gptr);

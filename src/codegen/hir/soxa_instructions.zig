@@ -158,13 +158,14 @@ pub const HIRInstruction = union(enum) {
         target_type: []const u8, // The type name to check against
     },
 
-    /// Group member index check for group match patterns
-    GroupCheck: struct {
+    /// Boxed member index check: unions and groups pack the active member into
+    /// the same `reserved` bits, so one instruction discriminates either.
+    MemberCheck: struct {
         member_index: u32,
     },
 
-    /// Extract payload from a group_instance, replacing it with the member value.
-    GroupExtractPayload: struct {},
+    /// Unwrap a boxed %DoxaValue, replacing it with the member payload.
+    UnboxPayload: struct {},
 
     /// Construct a union value from the current top-of-stack value.
     /// LLVM: Build a canonical %DoxaValue with union_id + active member index

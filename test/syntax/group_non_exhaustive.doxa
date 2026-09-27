@@ -1,0 +1,13 @@
+# A group match must decide every flattened member: no `else` and no arm for
+# `FileError` (groups.md §9).
+enum Color { Red, Green, Blue }
+struct FileError { public path :: string }
+
+group Palette { Color, FileError }
+
+entry function main() {
+    var p :: Palette is Color.Red
+    match p {
+        Color.* then @print("color\n"),
+    }
+}

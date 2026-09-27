@@ -1,0 +1,34 @@
+# Regression test: `match` on a struct subject. An identifier pattern is a type
+# test decided at compile time, and a destructuring pattern binds the fields of
+# the matched struct. Both used to fall into the enum-variant path and report
+# `'FileError' is not an enum type`.
+struct FileError {
+    public path :: string,
+}
+
+struct OtherError {
+    public label :: string,
+}
+
+public entry function main() {
+    var e :: FileError is $FileError { path is "a.txt", }
+
+    # bare pattern: the arm runs because the subject is that struct
+    match e {
+        FileError then @print("type-test=" + e.path + "\n"),
+        else @print("no-type-test" + "\n"),
+    }
+
+    # destructuring: the fields bind for the body
+    match e {
+        FileError { path } then @print("bind=" + path + "\n"),
+        else @print("no-bind" + "\n"),
+    }
+
+    # a struct that is not the subject's type can never match
+    var o :: OtherError is $OtherError { label is "second", }
+    match o {
+        FileError then @print("wrong" + "\n"),
+        else @print("other=" + o.label + "\n"),
+    }
+}
