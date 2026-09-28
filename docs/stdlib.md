@@ -84,7 +84,55 @@ else {
 ## IO
 
 
+## JSON
+
+`std.json` parses a document into a handle-based tree and writes one back out.
+A `Node` is a small generation-checked handle into a single document slot, so
+retaining one past the next `parse` is safe: it reads as `Kind.Invalid` rather
+than a dangling value.
+
+```doxa
+module std from @std()
+
+const result is std.json.parse("{\"name\":\"doxa\",\"stars\":5}")
+match result {
+    std.json.Node then {
+        const name is result.field("name")
+        match name {
+            std.json.Node then @print("{name.text()}\n")
+            else @print("no name\n")
+        }
+    }
+    else {
+        @print("malformed\n")
+    }
+}
+```
+
+- `parse(text)` returns `Node | error.StdError`. Objects keep their key order.
+  Duplicate keys are rejected. A malformed document, invalid UTF-8, and a
+  `number_string` that is not finite all surface as `error.IO.InvalidData`;
+  the writer returns `error.Common.InvalidArgument` for misuse (a value where a
+  key was expected, an unbalanced end, a second root value, and so on).
+- `kind()` never fails and returns a `Kind`: `Invalid`, `Null`, `Boolean`,
+  `Integer`, `Number`, `Text`, `Array`, or `Object`. An integer that the runtime
+  could not fit in `i64` or an exponent beyond the float range arrives as
+  `Number` (`1e400` reads as infinity from `floatValue()`).
+- `count()`, `element(index)`, `field(name)`, `key()`, `text()`, `intValue()`,
+  `floatValue()`, and `booleanValue()` are strict: a wrong kind, a missing
+  field, or an out-of-range index yields `nothing`. `count` works on arrays and
+  objects; `field` only on objects; the value accessors only on the matching
+  scalar kind.
+- Writing mirrors the document shape: `beginObject()` / `beginArray()` open a
+  container, `writeKey(name)` precedes a member value, and `end()` closes it.
+  `finish()` returns the escaped text as `string | error.StdError` and releases
+  the writer; the next writer call starts a fresh document.
+- The writer emits `\b`, `\f`, `\n`, `\r`, `\t` as their two-character escapes
+  and any other control byte below `0x20` as a lowercase `\u00xx` sequence. It
+  validates UTF-8 before quoting and refuses NaN or infinity.
+
 ## Methods
+
 
 
 ## Process

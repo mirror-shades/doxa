@@ -45,8 +45,12 @@ representation are *user-observable*. Doxa makes all three *compiler-owned*. Con
   opaque to the compiler at link time.
 
 - **Safety is defined, not undefined.** Out-of-bounds access and integer overflow are *defined*
-  behavior (a runtime trap, by default). That means the checks are ordinary code the compiler can
-  reason about and remove — not a wall of UB that forbids every transformation.
+  behavior, never UB. Signed `int` `add` / `sub` / `mul` trap on overflow in the checked modes
+  (`debug`, `safe`) and wrap in the unchecked ones (`fast`, `small`) — the same `--opt-mode` axis
+  that governs the runtime's own checks, so `--opt=2` produces exactly the wrapping arithmetic its
+  C twin does. That means the checks are ordinary code the compiler can reason about and remove — a
+  trap is dropped wherever the value-range analysis proves the result fits — not a wall of UB that
+  forbids every transformation.
 
 ### What C cannot do with any of this
 
@@ -227,14 +231,19 @@ Read against sections 3 and 4, this table is exactly the model's story:
   comparable.
   Earlier readings of −81% measured floored-vs-truncating `%` semantics, not codegen; the two
   affected rows were removed from `stats.csv`.
-- **`call`** (+14.10% mean in this campaign, +12.16 … +15.44; +15% when first measured) is the
-  same floored-`%` correction on
-  a serial carry chain, and is *not* fixed.
-  Its modulus is 997, which does not divide 2^64, so an unsigned remainder is not the floored residue
-  for a negative dividend — and its dividend is a loop-carried accumulator whose sign the compiler does
-  not establish. It collects the smaller win (the constant settles the divisor's sign, dropping one
-  instruction) which does not move a latency-bound loop. Closing it needs an induction-variable range
-  fact, not a cheaper instruction sequence.
+- **`call`** was the last workload on the floored-`%` correction — the same serial carry chain as
+  `struct`, with a modulus (997) that does not divide 2^64 and a dividend (`sum`) that is a
+  loop-carried accumulator. In this 2026-09-27 campaign it sat at +14.10% mean (+12.16 … +15.44).
+  The loop-carried / interprocedural range analysis (§6-D) now discharges the correction: it proves
+  `sum >= 0` across the loop *and* the opaque `leaf_add(i, …)` call, and the emitted IR shows a single
+  `urem` with no sign fixup. **Caveat on the numbers.** A first 2026-09-28 reading put `call` at
+  −18.76%, but that campaign (like every row above) compiled C for the native CPU (AVX2) and Doxa for
+  baseline x86-64 (SSE2) — a benchmark bug, corrected the same day by compiling both for the host CPU
+  (§6). Re-baselined native-vs-native, `call` is **+7.06%** (Doxa 1.2190s, C 1.1387s): the correction
+  is gone, but at AVX2 clang generates a ~1.8× larger inner loop for Doxa's IR, which costs more than
+  it saves. The same correction changes every other row too — most dramatically `arr`, which was
+  +13.55% under the confound and is **−1.29%** at target parity. The table above is left as the
+  2026-09-27 snapshot; §6 records both the fix and the corrected figures.
 
 **On reading this table.** The percentages are means over six same-build runs, and the range column
 *is* the measurement's noise floor: same binary, same source, nothing recompiled between runs — yet
@@ -312,13 +321,14 @@ in IR is an optimization opportunity.
 
 ### D. Wire the dormant static switches
 
-Several static decisions already exist in the HIR but are not yet honored by the backend:
-`OverflowBehavior` (Trap/Saturate/Wrap) is defined but never selected; `Call.tail` is set but no
+Several static decisions already exist in the HIR; some are honored, some not. Integer-overflow
+behavior is now selected from the safety axis — D-1 landed: the checked modes trap with
+`llvm.s*add.with.overflow` plus a real `llvm.trap`, the unchecked modes wrap, and a trap is skipped
+whenever the value-range lattice proves the result fits. Still dormant: `Call.tail` is set but no
 `tail`/`musttail` is ever emitted; `bounds_check` is carried but discarded; `@push` resize is
-hardcoded to `Double`. Wiring these turns the model's "defined, cheap safety" into reality: trap
-policies that cost nothing when the compiler can prove them away, real tail calls (which, combined
-with copy-free returns from step A, need no post-call clone), and bounds removal where the index is
-statically safe.
+hardcoded to `Double`. Wiring the rest turns the model's "defined, cheap safety" into reality: real
+tail calls (which, combined with copy-free returns from step A, need no post-call clone) and bounds
+removal where the index is statically safe.
 
 **Landed: the arithmetic lowerings these switches ride on.** Doxa's `//` and `%` are floored, so they
 cannot lower to LLVM's truncating `sdiv`/`srem` without a sign correction, and that correction was
@@ -327,13 +337,23 @@ last remaining reason `struct` ran at twice C. Two static facts now remove it, a
 lattice (`int_range.zig`, threaded like the region analysis in step A) supplies them: a constant
 divisor whose magnitude divides 2^64 needs no correction at all, and a provably non-negative dividend
 makes truncation equal flooring. `struct`'s `% 65536` is now one `and`, and with the C twin stating
-the same mod-2^16 fact (`& (MOD - 1)`) the workload measures at parity with C. `call`, whose modulus
-is 997 and whose dividend is a loop-carried accumulator, is not fixed —
-it needs an induction-variable range fact rather than a cheaper instruction sequence.
+the same mod-2^16 fact (`& (MOD - 1)`) the workload measures at parity with C.
 
-The same range lattice is the missing prerequisite for the switches above: D-1 wants an upper bound
-to prove an `add` cannot wrap before attaching `nsw`/`nuw`, and D-3 wants one to prove an index is in
-range before dropping a check. Both are now a matter of consuming a fact that exists.
+**Landed: the lattice now crosses a loop and a call.** `call`'s dividend is a loop-carried
+accumulator updated by an opaque `leaf_add(i, …)` call, so its sign needed two facts the original
+single linear walk could not produce. `range_flow.zig` adds an abstract stack-machine interpreter
+with a widened fixpoint over each loop body and return-range summaries for straight-line callees; it
+proves `sum >= 0` and the `% 997` collapses to a single `urem`. The optimization is real (the C twin's
+truncating `%` keeps the correction clang cannot discharge), but its measured payoff depends on the
+target: under the pre-fix confounded builds it read −18.76%, and at target parity (`-mcpu=native`,
+§6) it is **+7.06%**, because AVX2 codegen roughly doubles the inner loop's size for Doxa's IR. The
+analysis itself is partial and falls back to the old behavior for anything it does not model, so it
+can only ever be additive.
+
+The same range lattice is what the remaining arithmetic switches consume: D-1 skips an overflow trap
+whenever the operand bounds prove the result fits, and D-3 wants the same upper bound to prove an
+index is in range before dropping a check. D-3 is the one that still needs the lattice to reach
+*memory* (an index is a value that has usually been stored and reloaded).
 
 ### E. Whole-program ABI polish
 
@@ -370,11 +390,14 @@ Section 5's table is the campaign at `--since 1790530050`. A delta below a workl
 noise; when a gate decision is close, take a fresh pair across sessions as well — this floor is
 within-session.
 
-Each benchmark is compiled with `doxa compile … --opt=2` and its C twin with `zig cc -O2`.
-`--opt=N` mirrors clang: `--opt=2` compiles the program's `.ll` to an object with `zig cc -O2` and
-links an unchecked (`ReleaseFast`) runtime. `doxa compile … --emit-opt-ir` writes the
-post-LLVM-optimization IR (`<stem>.opt.ll`) to the cache directory, which is the artifact the
-`struct` and `call` analyses in section 5 are based on.
+Each benchmark is compiled with `doxa compile … --opt=2` and its C twin with `zig cc -O2
+-mcpu=native -ffp-contract=off`. `--opt=N` mirrors clang: `--opt=2` compiles the program's `.ll` to
+an object with `zig cc -O2` and links an unchecked (`ReleaseFast`) runtime. Both sides target the
+host CPU: a native `doxa compile` adds `-mcpu=native` itself, because its required explicit `-target`
+otherwise makes `zig cc` fall back to baseline x86-64 (SSE2). Without that, Doxa would be built for
+SSE2 while its C twin gets AVX2 — the confound that, until 2026-09-28, biased every ratio in this
+document. `doxa compile … --emit-opt-ir` writes the post-LLVM-optimization IR (`<stem>.opt.ll`) to the
+cache directory, which is the artifact the `struct` and `call` analyses in section 5 are based on.
 
 To see where compile time goes, `doxa compile … --profile` prints a per-phase span tree
 (`--profile-out=<path>` also writes it as JSON). The runtime object and the user `.ll` object are
