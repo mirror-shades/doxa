@@ -2,17 +2,45 @@
 module std from @std()
 
 enum Error {
-    TOO_FEW_ARGS
+    TOO_FEW_ARGS,
+    NOT_A_FILE,
+    BAD_ARG,
+    NOT_A_DOXA_FILE,
 }
 
-public entry function main() {
+# todo: compiler fix, this return statement was run without error 
+# while missing the 'returns' decl
+public entry function main() returns Error {
     const argc is std.process.argc() as int else 0
-    for i while i < argc do i += 1 {
-        std.process.argv(i)?
+    if argc < 2 then {
+        @print("{Error.TOO_FEW_ARGS}\n")
+        return Error.TOO_FEW_ARGS
     }
-    if argc? < 2 then return Error.TOO_FEW_ARGS
+    const src_path is std.process.argv(1) as string else {
+        @print("{Error.BAD_ARG}\n")
+        return Error.BAD_ARG
+    }
+    const is_file is std.file.isFile(src_path)
+    # todo: compiler fix, inspect inside statement shoudl still run eg `if value? then ...`
+    if not is_file then {
+        @print("{Error.NOT_A_FILE}")
+        return Error.NOT_A_FILE
+    }
 
-    var program_src is "
-    ...var"
+    const last_index is @length(src_path) - 1
+    # todo: compiler fix, += 1 creates segfault, panic gracefully instead
+    for i is last_index while i > 0 do i -= 1 {
+        if src_path[i] == "." then {
+            const postfix is std.methods.sliceString(src_path, i, @length(src_path) - i) 
+                ...as string else ""
+            if postfix != ".doxa" then {
+                @print("{Error.NOT_A_DOXA_FILE}")
+                return Error.NOT_A_DOXA_FILE
+            }
+        }
+    }
 
+    var program_src is std.file.read(src_path)
+    program_src?
+    @print("{program_src}\n")
 }
