@@ -884,6 +884,12 @@ pub fn Methods(comptime Ctx: type) type {
                     }
                 },
                 .ToString => {
+                    // A bare discriminant is storage, not the value: when the
+                    // declared type names an enum, render the variant by name.
+                    // Only a still-boxed operand may borrow its union's arm
+                    // list — a narrowed member is that member, and the union
+                    // no longer describes it.
+                    const enum_type_name = arg.enum_type_name orelse self.enumTypeNameFor(sop.value_type, arg.ty == .Value);
                     switch (arg.ty) {
                         .STRING => {
                             try stack.append(arg);
@@ -914,26 +920,8 @@ pub fn Methods(comptime Ctx: type) type {
                             }
                         },
                         .I64 => {
-                            if (arg.enum_type_name) |enum_name| {
-                                const info = try internPeekString(
-                                    self.allocator,
-                                    &peek_state.*.string_map,
-                                    &peek_state.*.strings,
-                                    peek_state.*.next_id_ptr,
-                                    &peek_state.*.globals,
-                                    enum_name,
-                                );
-                                const enum_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-                                id.* += 1;
-                                const gep = try std.fmt.allocPrint(
-                                    self.allocator,
-                                    "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
-                                    .{ enum_ptr, info.length, info.name },
-                                );
-                                defer self.allocator.free(gep);
-                                try w.writeAll(gep);
-
-                                const args_line = try std.fmt.allocPrint(self.allocator, "ptr {s}, i64 {d}, i64 {s}", .{ enum_ptr, enum_name.len, arg.name });
+                            if (enum_type_name) |enum_name| {
+                                const args_line = try self.enumToStringArgs(w, id, peek_state, enum_name, arg.name);
                                 defer self.allocator.free(args_line);
                                 try self.emitRTCallReturningString(w, stack, id, "doxa_enum_to_string", args_line);
                             } else {
@@ -969,13 +957,7 @@ pub fn Methods(comptime Ctx: type) type {
                             try self.emitRTCallReturningString(w, stack, id, "doxa_tetra_to_string", args_line);
                         },
                         .Value => {
-                            const payload = try self.nextTemp(id);
-                            const extract_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload, arg.name });
-                            defer self.allocator.free(extract_line);
-                            try w.writeAll(extract_line);
-                            const args_line = try std.fmt.allocPrint(self.allocator, "i64 {s}", .{payload});
-                            defer self.allocator.free(args_line);
-                            try self.emitRTCallReturningString(w, stack, id, "doxa_int_to_string", args_line);
+                            try self.emitBoxedToString(w, stack, id, arg, enum_type_name, peek_state);
                         },
                         .Nothing => {
                             const args_line = try std.fmt.allocPrint(self.allocator, "", .{});
@@ -1079,6 +1061,125 @@ pub fn Methods(comptime Ctx: type) type {
                     try stack.append(.{ .name = fallback, .ty = .I64 });
                 },
             }
+        }
+
+        /// `ptr <type name>, i64 <len>, i64 <bits>` — the arguments of a
+        /// `doxa_enum_to_string` call, with the GEP naming the interned type
+        /// emitted as its side effect. Every rendering path starts an enum here,
+        /// so a bare discriminant and a boxed one are named identically. The
+        /// caller owns the returned line.
+        pub fn enumToStringArgs(
+            self: *IRPrinter,
+            w: anytype,
+            id: *usize,
+            peek_state: *PeekEmitState,
+            enum_name: []const u8,
+            bits: []const u8,
+        ) ![]const u8 {
+            const info = try internPeekString(
+                self.allocator,
+                &peek_state.*.string_map,
+                &peek_state.*.strings,
+                peek_state.*.next_id_ptr,
+                &peek_state.*.globals,
+                enum_name,
+            );
+            const enum_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
+            id.* += 1;
+            const gep = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = getelementptr inbounds [{d} x i8], ptr {s}, i64 0, i64 0\n",
+                .{ enum_ptr, info.length, info.name },
+            );
+            defer self.allocator.free(gep);
+            try w.writeAll(gep);
+
+            return std.fmt.allocPrint(self.allocator, "ptr {s}, i64 {d}, i64 {s}", .{ enum_ptr, enum_name.len, bits });
+        }
+
+        /// Render a boxed `%DoxaValue` into a `%DoxaString`. Only the `Int` tag
+        /// puts an integer in `payload_bits`, so the tag is what says how to
+        /// read it. When the declared type names a single enum arm, that arm is
+        /// matched against the runtime tag and rendered by name — the one thing
+        /// a box cannot carry, and the difference between printing a variant and
+        /// printing whatever address its payload happens to hold. The box alone
+        /// is deliberately never enough: narrowing may have re-ordered the union
+        /// members, so the tag, not a member index, decides.
+        pub fn emitBoxedToString(
+            self: *IRPrinter,
+            w: anytype,
+            stack: *std.array_list.Managed(StackVal),
+            id: *usize,
+            val: StackVal,
+            enum_type_name: ?[]const u8,
+            peek_state: *PeekEmitState,
+        ) !void {
+            // Taken before the branch so the slots dominate every arm.
+                const slots = self.strOutSlots();
+
+            const enum_name = enum_type_name orelse {
+                const box = try self.boxDoxaValue(w, val);
+                const args_line = try std.fmt.allocPrint(self.allocator, "ptr {s}", .{box});
+                defer self.allocator.free(args_line);
+                try self.callReturningString(w, "doxa_value_to_string", args_line, slots);
+                try self.pushStringResult(w, stack, id, slots);
+                return;
+            };
+
+            // 6 == DoxaTag.Enum (see runtime/doxa_rt.zig).
+            const value_tag = try self.nextTemp(id);
+            const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 0\n", .{ value_tag, val.name });
+            defer self.allocator.free(tag_line);
+            try w.writeAll(tag_line);
+            const is_enum = try self.nextTemp(id);
+            const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, 6\n", .{ is_enum, value_tag });
+            defer self.allocator.free(cmp_line);
+            try w.writeAll(cmp_line);
+
+            const enum_label = try std.fmt.allocPrint(self.allocator, "tostr_enum_{d}", .{id.*});
+            id.* += 1;
+            defer self.allocator.free(enum_label);
+            const other_label = try std.fmt.allocPrint(self.allocator, "tostr_other_{d}", .{id.*});
+            id.* += 1;
+            defer self.allocator.free(other_label);
+            const merge_label = try std.fmt.allocPrint(self.allocator, "tostr_merge_{d}", .{id.*});
+            id.* += 1;
+            defer self.allocator.free(merge_label);
+
+            const br_line = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ is_enum, enum_label, other_label });
+            defer self.allocator.free(br_line);
+            try w.writeAll(br_line);
+
+            const enum_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{enum_label});
+            defer self.allocator.free(enum_label_line);
+            try w.writeAll(enum_label_line);
+            const payload = try self.nextTemp(id);
+            const payload_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload, val.name });
+            defer self.allocator.free(payload_line);
+            try w.writeAll(payload_line);
+            const enum_args = try self.enumToStringArgs(w, id, peek_state, enum_name, payload);
+            defer self.allocator.free(enum_args);
+            try self.callReturningString(w, "doxa_enum_to_string", enum_args, slots);
+            const enum_br = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{merge_label});
+            defer self.allocator.free(enum_br);
+            try w.writeAll(enum_br);
+
+            const other_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{other_label});
+            defer self.allocator.free(other_label_line);
+            try w.writeAll(other_label_line);
+            const other_box = try self.boxDoxaValue(w, val);
+            const other_args = try std.fmt.allocPrint(self.allocator, "ptr {s}", .{other_box});
+            defer self.allocator.free(other_args);
+            try self.callReturningString(w, "doxa_value_to_string", other_args, slots);
+            const other_br = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{merge_label});
+            defer self.allocator.free(other_br);
+            try w.writeAll(other_br);
+
+            const merge_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{merge_label});
+            defer self.allocator.free(merge_label_line);
+            try w.writeAll(merge_label_line);
+
+            try self.pushStringResult(w, stack, id, slots);
         }
 
         pub fn handlePeek(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, pk: std.meta.fieldInfo(HIRInstruction, .Peek).type, peek_state: *PeekEmitState) !void {
@@ -1251,13 +1352,7 @@ pub fn Methods(comptime Ctx: type) type {
                         defer self.allocator.free(fallback_label_line);
                         try w.writeAll(fallback_label_line);
 
-                        const tmp_ptr = try self.nextTemp(id);
-                        const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{tmp_ptr});
-                        defer self.allocator.free(alloca_line);
-                        try w.writeAll(alloca_line);
-                        const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ val.name, tmp_ptr });
-                        defer self.allocator.free(store_line);
-                        try w.writeAll(store_line);
+                        const tmp_ptr = try self.boxDoxaValue(w, val);
                         const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
                         defer self.allocator.free(call_line);
                         try w.writeAll(call_line);
@@ -1276,13 +1371,7 @@ pub fn Methods(comptime Ctx: type) type {
 
                 if (!printed_union_enum) {
                     // Store to stack and pass pointer to avoid ABI quirks
-                    const tmp_ptr = try self.nextTemp(id);
-                    const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{tmp_ptr});
-                    defer self.allocator.free(alloca_line);
-                    try w.writeAll(alloca_line);
-                    const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ val.name, tmp_ptr });
-                    defer self.allocator.free(store_line);
-                    try w.writeAll(store_line);
+                    const tmp_ptr = try self.boxDoxaValue(w, val);
                     const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_value(ptr {s})\n", .{tmp_ptr});
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
@@ -1784,6 +1873,12 @@ pub fn Methods(comptime Ctx: type) type {
         fn resolveBuiltinInputType(self: *IRPrinter, spec: builtin_methods.InputTypeSpec, arg: StackVal) ?HIR.HIRType {
             return switch (spec) {
                 .Single => |t| astTypeToHirType(self, t),
+                .TypedArray => |t| blk: {
+                    const elem = astTypeToHirType(self, t) orelse break :blk null;
+                    const elem_ptr = self.allocator.create(HIR.HIRType) catch break :blk null;
+                    elem_ptr.* = elem;
+                    break :blk HIR.HIRType{ .Array = elem_ptr };
+                },
                 .Union => |types| blk: {
                     var integer_union = true;
                     for (types) |t| {
@@ -1810,8 +1905,22 @@ pub fn Methods(comptime Ctx: type) type {
             };
         }
 
-        pub fn handleCall(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, c: std.meta.fieldInfo(HIRInstruction, .Call).type, peek_state: *PeekEmitState, hir: *const HIR.HIRProgram) !void {
-            _ = peek_state;
+        /// Write a `%DoxaString` stack value to stdout, bytes and all.
+        pub fn writeStringValue(self: *IRPrinter, w: anytype, id: *usize, str: StackVal) !void {
+            const ptr_ext = try self.nextTemp(id);
+            const ext_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ ptr_ext, str.name });
+            defer self.allocator.free(ext_line);
+            try w.writeAll(ext_line);
+            const len_ext = try self.nextTemp(id);
+            const len_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ len_ext, str.name });
+            defer self.allocator.free(len_line);
+            try w.writeAll(len_line);
+            const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ ptr_ext, len_ext });
+            defer self.allocator.free(line);
+            try w.writeAll(line);
+        }
+
+        pub fn handleCall(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, c: std.meta.fieldInfo(HIRInstruction, .Call).type, hir: *const HIR.HIRProgram) !void {
             const argc: usize = @intCast(c.arg_count);
             if (stack.items.len < argc) return;
 
@@ -1921,104 +2030,15 @@ pub fn Methods(comptime Ctx: type) type {
                 return;
             }
 
-            if (c.call_kind == .BuiltinFunction and std.mem.eql(u8, c.qualified_name, "string") and raw_args.items.len == 1) {
-                const arg = raw_args.items[0];
-
-                switch (arg.ty) {
-                    .STRING => {
-                        try stack.append(arg);
-                    },
-                    .I64 => {
-                        const args_line = try std.fmt.allocPrint(self.allocator, "i64 {s}", .{arg.name});
-                        defer self.allocator.free(args_line);
-                        try self.emitRTCallReturningString(w, stack, id, "doxa_int_to_string", args_line);
-                    },
-                    .F64 => {
-                        const args_line = try std.fmt.allocPrint(self.allocator, "double {s}", .{arg.name});
-                        defer self.allocator.free(args_line);
-                        try self.emitRTCallReturningString(w, stack, id, "doxa_float_to_string", args_line);
-                    },
-                    .I8 => {
-                        const widened = try self.nextTemp(id);
-                        const line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i8 {s} to i64\n", .{ widened, arg.name });
-                        defer self.allocator.free(line);
-                        try w.writeAll(line);
-                        const args_line = try std.fmt.allocPrint(self.allocator, "i64 {s}", .{widened});
-                        defer self.allocator.free(args_line);
-                        try self.emitRTCallReturningString(w, stack, id, "doxa_byte_to_string", args_line);
-                    },
-                    .PTR => {
-                        if (arg.array_type != null) {
-                            const args_line = try std.fmt.allocPrint(self.allocator, "ptr {s}", .{arg.name});
-                            defer self.allocator.free(args_line);
-                            try self.emitRTCallReturningString(w, stack, id, "doxa_array_to_string", args_line);
-                        } else if (arg.struct_field_types != null or arg.struct_type_name != null) {
-                            const args_line = try std.fmt.allocPrint(self.allocator, "ptr {s}", .{arg.name});
-                            defer self.allocator.free(args_line);
-                            try self.emitRTCallReturningString(w, stack, id, "doxa_struct_to_string", args_line);
-                        } else {
-                            const tmp_name = try self.nextTemp(id);
-                            const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_name, arg.name });
-                            defer self.allocator.free(ins0);
-                            try w.writeAll(ins0);
-                            const str_name = try self.nextTemp(id);
-                            const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 0, 1\n", .{ str_name, tmp_name });
-                            defer self.allocator.free(ins1);
-                            try w.writeAll(ins1);
-                            try stack.append(.{ .name = str_name, .ty = .STRING });
-                        }
-                    },
-                    .I1, .I2 => {
-                        const src_ty = self.stackTypeToLLVMType(arg.ty);
-                        const widened = try self.nextTemp(id);
-                        const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext {s} {s} to i64\n", .{ widened, src_ty, arg.name });
-                        defer self.allocator.free(zext_line);
-                        try w.writeAll(zext_line);
-                        const args_line = try std.fmt.allocPrint(self.allocator, "i64 {s}", .{widened});
-                        defer self.allocator.free(args_line);
-                        try self.emitRTCallReturningString(w, stack, id, "doxa_tetra_to_string", args_line);
-                    },
-                    .Nothing => {
-                        const args_line = try std.fmt.allocPrint(self.allocator, "", .{});
-                        defer self.allocator.free(args_line);
-                        try self.emitRTCallReturningString(w, stack, id, "doxa_nothing_to_string", args_line);
-                    },
-                    else => {
-                        const arg_i64 = try self.ensureI64(w, arg, id);
-                        const args_line = try std.fmt.allocPrint(self.allocator, "i64 {s}", .{arg_i64.name});
-                        defer self.allocator.free(args_line);
-                        try self.emitRTCallReturningString(w, stack, id, "doxa_int_to_string", args_line);
-                    },
-                }
-                return;
-            }
-
             if (c.call_kind == .BuiltinFunction and std.mem.eql(u8, c.qualified_name, "print") and raw_args.items.len == 1) {
                 const arg = raw_args.items[0];
-                if (arg.ty == .STRING) {
-                    const ptr_ext = try self.nextTemp(id);
-                    const ext_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ ptr_ext, arg.name });
-                    defer self.allocator.free(ext_line);
-                    try w.writeAll(ext_line);
-                    const len_ext = try self.nextTemp(id);
-                    const len_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 1\n", .{ len_ext, arg.name });
-                    defer self.allocator.free(len_line);
-                    try w.writeAll(len_line);
-                    const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ptr_ext, len_ext});
-                    defer self.allocator.free(line);
-                    try w.writeAll(line);
-                    return;
+                // Semantic analysis has already required a string argument
+                // (see infer_type.zig). `@string` and `"{}"` are what render
+                // anything else, and both go through `StringOp.ToString`.
+                switch (arg.ty) {
+                    .STRING => try self.writeStringValue(w, id, arg),
+                    else => unreachable,
                 }
-                if (arg.ty == .PTR) {
-                    const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{arg.name});
-                    defer self.allocator.free(line);
-                    try w.writeAll(line);
-                    return;
-                }
-                const ptr = try self.ensurePointer(w, arg, id);
-                const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_raw(ptr {s})\n", .{ptr.name});
-                defer self.allocator.free(line);
-                try w.writeAll(line);
                 return;
             }
 
@@ -2340,12 +2360,13 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(ins1);
                     try w.writeAll(ins0);
                     try w.writeAll(ins1);
-                    // The inline-Zig ABI returns heap strings by copying into a
-                    // `page_allocator` buffer (see `__doxa_export__…`), which the
-                    // Doxa scope arenas never free; it outlives every scope, so it
-                    // is `Root`. (The ABI rejects array/struct/map returns, so this
-                    // is the only foreign heap shape.)
-                    try stack.append(.{ .name = str_name, .ty = .STRING, .region = .Root });
+                    // The inline-Zig wrapper clones the string into the scope
+                    // arena active at the call site (`doxa_str_clone_current`),
+                    // so the value sits in the arena this region names — exactly
+                    // like a runtime string helper such as `doxa_str_concat`.
+                    // (The ABI rejects array/struct/map returns, so this is the
+                    // only foreign heap shape.)
+                    try stack.append(.{ .name = str_name, .ty = .STRING, .region = self.currentRegionTag() });
                     return;
                 }
 

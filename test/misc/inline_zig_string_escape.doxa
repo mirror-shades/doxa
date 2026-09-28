@@ -1,0 +1,48 @@
+zig ZigStr {
+    pub fn greet(who: []const u8) []const u8 {
+        return who;
+    }
+
+    pub fn tag() []const u8 {
+        return "z";
+    }
+}
+
+# Top-level store: the value must land in the root arena.
+const a is ZigStr.greet("root")
+
+# Block-local call stored into a global: Deep -> Root crossing.
+var b is ""
+const z is ZigStr.tag()
+if z == "z" then {
+    b is ZigStr.greet("block")
+}
+
+# Body-arena result returned to the caller: clone-on-return.
+function wrap() returns string {
+    const s is ZigStr.greet("returned")
+    return s
+}
+const c is wrap()
+
+# Result consumed across loop iterations, where the body arena resets.
+function repeated() returns string {
+    var acc is ""
+    var i is 0
+    while i < 3 {
+        const s is ZigStr.tag()
+        acc is acc + s
+        i += 1
+    }
+    return acc
+}
+const d is repeated()
+
+# Empty strings cross as the (null, 0) sentinel and allocate nothing.
+const empty is ZigStr.greet("")
+
+@print("{a}\n")
+@print("{b}\n")
+@print("{c}\n")
+@print("{d}\n")
+@print("[{empty}]\n")

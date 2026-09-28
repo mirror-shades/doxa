@@ -452,25 +452,19 @@ pub const TypeSystem = struct {
         };
     }
 
+    /// The HIR view of the type the analyzer inferred for `expr`, or `null` when
+    /// the analyzer never visited it. Codegen asks for a builtin's type this way,
+    /// so the semantic layer (`inferBuiltinCall`) owns the rules and HIR only
+    /// lowers the answer.
+    fn hirTypeFromSemanticCache(self: *TypeSystem, expr: *ast.Expr) ?HIRType {
+        const semantic = self.semantic_analyzer orelse return null;
+        const type_info = semantic.getCachedExprType(expr) orelse return null;
+        return self.convertTypeInfo(type_info.*);
+    }
+
     /// Return type for internal / receiver method calls not handled by `module_call`.
     pub fn inferInternalMethodCallReturnType(self: *TypeSystem, expr: *ast.Expr) HIRType {
-        const call = expr.data.FunctionCall;
-        return switch (call.callee.data) {
-            .InternalCall => |method| {
-                const method_name = method.method.lexeme;
-                if (std.mem.eql(u8, method_name, "substring")) return .String;
-                if (std.mem.eql(u8, method_name, "length")) return .Int;
-                if (std.mem.eql(u8, method_name, "bytes")) return .Unknown;
-                if (std.mem.eql(u8, method_name, "int")) return .Int;
-                if (std.mem.eql(u8, method_name, "float")) return .Float;
-                if (std.mem.eql(u8, method_name, "byte")) return .Byte;
-                if (self.function_signatures) |sigs| {
-                    if (sigs.get(method_name)) |info| return info.return_type;
-                }
-                return .Unknown;
-            },
-            else => .Unknown,
-        };
+        return self.hirTypeFromSemanticCache(expr) orelse .Unknown;
     }
 
     pub fn inferTypeFromLiteral(_: *TypeSystem, literal: TokenLiteral) HIRType {
@@ -867,56 +861,10 @@ pub const TypeSystem = struct {
                     else => .String,
                 };
             },
-            .InternalCall => |internal| {
-                const method_name = std.mem.trimStart(u8, internal.method.lexeme, "@");
-                if (std.mem.eql(u8, method_name, "pop")) {
-                    const receiver_type = self.inferTypeFromExpression(internal.receiver, symbol_table);
-                    switch (receiver_type) {
-                        .Array => |elem_ptr| return elem_ptr.*,
-                        .String => return .String,
-                        else => return .Unknown,
-                    }
-                }
-                if (std.mem.eql(u8, method_name, "substring")) return .String;
-                if (std.mem.eql(u8, method_name, "length")) return .Int;
-                if (std.mem.eql(u8, method_name, "int")) return .Int;
-                if (std.mem.eql(u8, method_name, "float")) return .Float;
-                if (std.mem.eql(u8, method_name, "string")) return .String;
-                if (std.mem.eql(u8, method_name, "byte")) return .Byte;
-                if (std.mem.eql(u8, method_name, "type")) return .String;
-                return .Unknown;
-            },
-            .BuiltinCall => |bc| {
-                const name = bc.function.lexeme;
-                if (std.mem.eql(u8, name, "length")) return .Int;
-                if (std.mem.eql(u8, name, "int")) return .Int;
-                if (std.mem.eql(u8, name, "float")) return .Float;
-                if (std.mem.eql(u8, name, "string")) return .String;
-                if (std.mem.eql(u8, name, "byte")) {
-                    return .Byte;
-                }
-                if (std.mem.eql(u8, name, "type")) return .String;
-                if (std.mem.eql(u8, name, "push")) return .Nothing;
-                if (std.mem.eql(u8, name, "pop")) {
-                    if (bc.arguments.len > 0) {
-                        const arg_expr = bc.arguments[0];
-                        const container_type = self.inferTypeFromExpression(arg_expr, symbol_table);
-                        if (container_type == .String) return .String;
-                        if (container_type == .Array) {
-                            if (arg_expr.data == .Variable) {
-                                const var_name = arg_expr.data.Variable.lexeme;
-                                if (symbol_table.getTrackedArrayElementType(var_name)) |elem_t| {
-                                    return elem_t;
-                                }
-                            }
-                            return .Int;
-                        }
-                    }
-                    return .Unknown;
-                }
-
-                return .Unknown;
-            },
+            // Single authority: the semantic layer types every `@`-call
+            // (`inferBuiltinCall`, driven by `builtin_methods`) during analysis;
+            // codegen reads that answer instead of re-deriving the rules.
+            .InternalCall => self.hirTypeFromSemanticCache(expr) orelse .Unknown,
             .Logical => .Tetra,
             .Unary => |unary| {
                 if (unary.operator.type == .MINUS) {

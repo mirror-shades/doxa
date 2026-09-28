@@ -1320,6 +1320,16 @@ pub const ControlFlowHandler = struct {
         try self.generator.instructions.append(.{ .RestoreVar = .{ .var_name = nw.var_name } });
     }
 
+    /// A `.Custom` type name may be written through its module
+    /// (`std.json.Node`); the type tables register the bare name, so resolve
+    /// back to it before any lookup or runtime type-string comparison.
+    fn resolveCustomTypeName(self: *ControlFlowHandler, lexeme: []const u8) []const u8 {
+        if (self.generator.isCustomType(lexeme) != null) return lexeme;
+        const dot = std.mem.lastIndexOfScalar(u8, lexeme, '.') orelse return lexeme;
+        const bare = lexeme[dot + 1 ..];
+        return if (self.generator.isCustomType(bare) != null) bare else lexeme;
+    }
+
     /// Per-branch narrowing for an `as` cast whose subject is a group-typed
     /// variable. The then view is the same single-member union view unions use,
     /// so backend loads unwrap the box identically; the else view keeps the
@@ -1335,7 +1345,7 @@ pub const ControlFlowHandler = struct {
         saved_type: HIRType,
     ) !?CastNarrowing {
         const target_name: []const u8 = switch (cast_data.target_type.data) {
-            .Custom => |tok| tok.lexeme,
+            .Custom => |tok| self.resolveCustomTypeName(tok.lexeme),
             else => return null,
         };
 
@@ -1400,7 +1410,7 @@ pub const ControlFlowHandler = struct {
                 .Tetra => "tetra",
                 .Nothing => "nothing",
             },
-            .Custom => |tok| tok.lexeme,
+            .Custom => |tok| self.resolveCustomTypeName(tok.lexeme),
             else => return null,
         };
 
@@ -1518,14 +1528,15 @@ pub const ControlFlowHandler = struct {
                     // The runtime type checker currently distinguishes only broad categories
                     // like "struct" and "enum". For custom types, map to the appropriate
                     // runtime category so `as Employee` works for compiled code.
-                    if (self.generator.isCustomType(tok.lexeme)) |ct| {
+                    const name = self.resolveCustomTypeName(tok.lexeme);
+                    if (self.generator.isCustomType(name)) |ct| {
                         break :blk switch (ct.kind) {
                             .Struct => "struct",
                             .Enum => "enum",
                             .Group => "group",
                         };
                     }
-                    break :blk tok.lexeme;
+                    break :blk name;
                 },
                 .Array => |arr_type| {
                     // Map array element types to the strings produced by VM.getTypeString
@@ -1561,7 +1572,7 @@ pub const ControlFlowHandler = struct {
         // members of the same runtime category (`enum`, `struct`) would otherwise
         // be conflated by the broad categories `target_name` maps to.
         const group_member_index: ?u32 = switch (cast_data.target_type.data) {
-            .Custom => |tok| self.resolveCastGroupMember(cast_data.value, tok.lexeme),
+            .Custom => |tok| self.resolveCastGroupMember(cast_data.value, self.resolveCustomTypeName(tok.lexeme)),
             else => null,
         };
         if (group_member_index) |member_index| {

@@ -2,9 +2,9 @@
 
 Doxa strings are UTF-8 encoded and backed by a contiguous `u8` buffer. The **byte length**
 is explicit: it is not inferred from a terminating NUL, and embedded `U+0000` bytes are
-valid. In the interpreter, values are Zig `[]const u8` slices; at the inline Zig module
-boundary, strings use the tagged `DoxaAbiValue` encoding (`payload0` = pointer,
-`payload1` = length) documented in [zig.md](zig.md).
+valid. Inside Zig, values are `[]const u8` slices; at the inline Zig module boundary they
+cross as pointer + byte length (a `(ptr, u64 len)` parameter pair, or `out_ptr`/`out_len`
+out-params for returns), as documented in [zig.md](zig.md).
 
 The LLVM backend still declares many string builtins (`@doxa_str_*`, etc.) as `ptr` into
 NUL-terminated allocations for C-style helpers—so compiled programs may still touch
@@ -50,17 +50,18 @@ strings and byte data with `pack` and `unpack`:
 
 | Builtin                | Signature                | Description                          |
 |------------------------|--------------------------|--------------------------------------|
-| `@pack(array)`         | `int[]` → `string`       | Interpret each int as a u8 codepoint |
-| `@unpack(string)`      | `string` → `int[]`       | Decompose a string into byte values  |
+| `@pack(bytes)`         | `byte[]` → `string`      | Interpret each byte as a u8 codepoint |
+| `@unpack(string)`      | `string` → `byte[]`      | Decompose a string into byte values  |
 
 ```doxa
-const bytes is [0x48, 0x69, 0x21]       # [72, 105, 33]
-const word is @pack(bytes)               # "Hi!"
-const back is @unpack(word)              # [72, 105, 33]
+const bytes :: byte[] is [0x48, 0x69, 0x21]   # [72, 105, 33]
+const word is @pack(bytes)                     # "Hi!"
+const back is @unpack(word)                    # byte[] is [72, 105, 33]
 ```
 
-`@pack` / `@unpack` use the same byte-width guarantee as the underlying `u8` storage —
-values outside 0–255 are truncated to fit.
+`@pack` requires a `byte[]`; an array of integer literals narrows to `byte` in the
+same way as any other `byte` context. `@unpack` decomposes a string byte-for-byte, so
+`@pack` / `@unpack` round-trip the underlying `u8` storage.
 
 ## Common operations
 
@@ -68,21 +69,27 @@ values outside 0–255 are truncated to fit.
 |-------------------------------|---------------------|
 | `"abc" + "def"`               | `"abcdef"`          |
 | `length("hello")`             | `5`                 |
-| `"こんにちは"[0]`             | (byte at index 0)   |
+| `"hello"[0]`                  | `"h"` (a 1-byte string) |
+| `"こんにちは"[0]`             | the leading byte of the first character, as a string |
 | `string(42)`                  | `"42"`              |
 | `string(3.14)`                | `"3.14"`            |
 | `type("hello")`               | `"string"`          |
-| `"hello"[0]`                  | `104` (byte value)  |
 
-String indexing returns the raw `u8` byte at that position. For multi-byte UTF-8 characters
-iterate with `unpack` and reconstruct manually, or use a Zig block for Unicode-aware
-processing.
+A `string` and a `byte[]` do not share elements. Indexing, `@pop`, `@remove`, and
+`@slice` on a `string` produce `string`s; the same operations on a `byte[]` produce
+`byte`s. `@pack` and `@unpack` are the only bridge between the two.
+
+Indexing, slicing, `@find`, `@pop`, `@remove`, and `for`/`each` iteration all address
+**bytes**, not UTF-8 codepoints — `@length` is the byte length — so `"こんにちは"[0]` is
+the leading byte of a three-byte character, not the whole character, and
+`each c in "日本語"` yields nine one-byte strings. To walk codepoints, `@unpack` the
+string and reconstruct with `@pack`, or use a Zig block for Unicode-aware processing.
 
 ## Interop with Zig
 
-For **inline Zig modules** (`zig { … }` compiled as a shared library), the VM and
-generated wrappers use `DoxaAbiValue`: strings are **pointer + byte length**, not C
-strings. See [zig.md](zig.md) for the full ABI.
+For **inline Zig modules** (`zig { … }` blocks compiled into the program), the generated
+wrappers pass strings as **pointer + byte length**, not C strings. See
+[zig.md](zig.md) for the full ABI.
 
 The **LLVM runtime** (`doxa_rt`) still exposes several helpers that take or return
 `?[*:0]const u8` so those entry points stay C-compatible; that is an implementation detail

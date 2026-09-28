@@ -22,6 +22,18 @@ const StructId = HIRTypeModule.StructId;
 const HIREnum = @import("../../codegen/hir/soxa_values.zig").HIREnum;
 const eval = @import("eval_utils.zig");
 
+/// A custom type is identified by its bare name: `std.json.Node` and `Node`
+/// name the same type, matching the struct/enum/group tables, which are keyed
+/// by the name a declaration writes.
+fn bareTypeName(name: []const u8) []const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return name;
+    return name[dot + 1 ..];
+}
+
+fn resolvedTypeName(self: *const SemanticAnalyzer, name: []const u8) []const u8 {
+    return bareTypeName(self.resolveTypeAlias(name));
+}
+
 /// Helper: structural equality for TypeInfo (avoid collapsing by .base only)
 pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
     if (a.base != b.base) return false;
@@ -32,25 +44,19 @@ pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *con
         .Enum => {
             // TODO: implement full enum type comparison beyond name matching
             if (a.custom_type == null or b.custom_type == null) return false;
-            const a_name = self.resolveTypeAlias(a.custom_type.?);
-            const b_name = self.resolveTypeAlias(b.custom_type.?);
-            return std.mem.eql(u8, a_name, b_name);
+            return std.mem.eql(u8, resolvedTypeName(self, a.custom_type.?), resolvedTypeName(self, b.custom_type.?));
         },
 
         .Struct => {
             // TODO: implement full struct type comparison beyond name matching
             if (a.custom_type == null or b.custom_type == null) return false;
-            const a_name = self.resolveTypeAlias(a.custom_type.?);
-            const b_name = self.resolveTypeAlias(b.custom_type.?);
-            return std.mem.eql(u8, a_name, b_name);
+            return std.mem.eql(u8, resolvedTypeName(self, a.custom_type.?), resolvedTypeName(self, b.custom_type.?));
         },
 
         .Custom => {
             // If both have custom_type, they must match
             if (a.custom_type != null and b.custom_type != null) {
-                const a_name = self.resolveTypeAlias(a.custom_type.?);
-                const b_name = self.resolveTypeAlias(b.custom_type.?);
-                return std.mem.eql(u8, a_name, b_name);
+                return std.mem.eql(u8, resolvedTypeName(self, a.custom_type.?), resolvedTypeName(self, b.custom_type.?));
             }
             // If one has custom_type and the other doesn't, allow it for enum literals
             // This handles cases like Color (enum type) vs .Blue (enum literal)

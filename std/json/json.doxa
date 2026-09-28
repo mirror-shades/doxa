@@ -1,0 +1,708 @@
+module error from "../error.doxa"
+
+zig JSON {
+    const std = @import("std");
+
+    pub fn errorState(mode: i64, value: i64) i64 {
+        const State = struct {
+            var last_error_code: i64 = 0;
+        };
+        if (mode == 0) {
+            State.last_error_code = value;
+            return 0;
+        }
+        if (mode == 1) {
+            return State.last_error_code;
+        }
+        if (mode == 2) {
+            const code = State.last_error_code;
+            State.last_error_code = 0;
+            return code;
+        }
+        return 0;
+    }
+
+    pub fn clearLastError() void {
+        _ = errorState(0, 0);
+    }
+
+    pub fn setLastError(code: i64) void {
+        _ = errorState(0, code);
+    }
+
+    pub fn takeLastErrorCode() i64 {
+        return errorState(2, 0);
+    }
+
+    fn frameRecord() type {
+        return struct {
+            in_object: bool = false,
+            expect_value: bool = false,
+            items: i64 = 0,
+        };
+    }
+
+    fn nodeRecord() type {
+        return struct {
+            kind: u8 = 0,
+            int_value: i64 = 0,
+            float_value: f64 = 0,
+            bool_value: bool = false,
+            text_value: []const u8 = "",
+            key: []const u8 = "",
+            has_key: bool = false,
+            child_start: i64 = -1,
+            child_count: i64 = 0,
+        };
+    }
+
+    fn writerStateType() type {
+        return struct {
+            var buffer: std.ArrayList(u8) = .empty;
+            var stack: std.ArrayList(frameRecord()) = .empty;
+            var root_written = false;
+            var failed = false;
+            var failure_code: i64 = 0;
+            var finished = false;
+        };
+    }
+
+    fn domStateType() type {
+        return struct {
+            var generation: u32 = 1;
+            var nodes: std.ArrayList(nodeRecord()) = .empty;
+            var parsed: ?std.json.Parsed(std.json.Value) = null;
+        };
+    }
+
+    fn fail(code: i64) void {
+        const w = writerStateType();
+        if (w.failed) return;
+        w.failed = true;
+        w.failure_code = code;
+        setLastError(code);
+    }
+
+    fn resetWriter() void {
+        const w = writerStateType();
+        w.buffer.clearRetainingCapacity();
+        w.stack.clearRetainingCapacity();
+        w.root_written = false;
+        w.failed = false;
+        w.failure_code = 0;
+        w.finished = false;
+    }
+
+    fn ensureFresh() void {
+        const w = writerStateType();
+        if (w.finished or (w.failed and w.stack.items.len == 0)) resetWriter();
+    }
+
+    fn guard() bool {
+        const w = writerStateType();
+        if (w.failed) {
+            setLastError(w.failure_code);
+            return false;
+        }
+        clearLastError();
+        return true;
+    }
+
+    fn appendByte(b: u8) void {
+        const w = writerStateType();
+        if (w.failed) return;
+        w.buffer.append(std.heap.page_allocator, b) catch fail(2);
+    }
+
+    fn appendSlice(s: []const u8) void {
+        const w = writerStateType();
+        if (w.failed) return;
+        w.buffer.appendSlice(std.heap.page_allocator, s) catch fail(2);
+    }
+
+    fn appendNumber(comptime fmt: []const u8, args: anytype) void {
+        const w = writerStateType();
+        if (w.failed) return;
+        w.buffer.print(std.heap.page_allocator, fmt, args) catch fail(2);
+    }
+
+    // String escaping derived from Para (MIT), Copyright 2025 mirror-shades
+    fn appendQuoted(bytes: []const u8) bool {
+        const w = writerStateType();
+        if (w.failed) return false;
+        if (!std.unicode.utf8ValidateSlice(bytes)) {
+            fail(113);
+            return false;
+        }
+        appendByte('"');
+        for (bytes) |c| {
+            if (w.failed) return false;
+            switch (c) {
+                '"' => appendSlice("\\\""),
+                '\\' => appendSlice("\\\\"),
+                0x08 => appendSlice("\\b"),
+                0x0C => appendSlice("\\f"),
+                '\n' => appendSlice("\\n"),
+                '\r' => appendSlice("\\r"),
+                '\t' => appendSlice("\\t"),
+                else => {
+                    if (c < 0x20) {
+                        appendSlice("\\u00");
+                        const hex = "0123456789abcdef";
+                        appendByte(hex[c >> 4]);
+                        appendByte(hex[c & 0x0F]);
+                    } else {
+                        appendByte(c);
+                    }
+                },
+            }
+        }
+        appendByte('"');
+        return !w.failed;
+    }
+
+    fn beforeValue() bool {
+        const w = writerStateType();
+        if (w.stack.items.len > 0) {
+            const top = &w.stack.items[w.stack.items.len - 1];
+            if (top.in_object) {
+                if (!top.expect_value) {
+                    fail(1);
+                    return false;
+                }
+                top.expect_value = false;
+            } else if (top.items > 0) {
+                appendByte(',');
+            }
+            top.items += 1;
+        } else {
+            if (w.root_written) {
+                fail(1);
+                return false;
+            }
+            w.root_written = true;
+        }
+        return true;
+    }
+
+    pub fn writerBeginObject() void {
+        ensureFresh();
+        if (!guard()) return;
+        if (!beforeValue()) return;
+        appendByte('{');
+        const w = writerStateType();
+        w.stack.append(std.heap.page_allocator, .{ .in_object = true }) catch fail(2);
+    }
+
+    pub fn writerBeginArray() void {
+        ensureFresh();
+        if (!guard()) return;
+        if (!beforeValue()) return;
+        appendByte('[');
+        const w = writerStateType();
+        w.stack.append(std.heap.page_allocator, .{ .in_object = false }) catch fail(2);
+    }
+
+    pub fn writerKey(name: []const u8) void {
+        ensureFresh();
+        if (!guard()) return;
+        const w = writerStateType();
+        if (w.stack.items.len == 0) {
+            fail(1);
+            return;
+        }
+        const top = &w.stack.items[w.stack.items.len - 1];
+        if (!top.in_object or top.expect_value) {
+            fail(1);
+            return;
+        }
+        if (top.items > 0) appendSlice(",");
+        if (!appendQuoted(name)) return;
+        appendByte(':');
+        top.expect_value = true;
+    }
+
+    pub fn writerText(text: []const u8) void {
+        ensureFresh();
+        if (!guard()) return;
+        if (!beforeValue()) return;
+        _ = appendQuoted(text);
+    }
+
+    pub fn writerInt(value: i64) void {
+        ensureFresh();
+        if (!guard()) return;
+        if (!beforeValue()) return;
+        appendNumber("{d}", .{value});
+    }
+
+    pub fn writerFloat(value: f64) void {
+        ensureFresh();
+        if (!guard()) return;
+        if (std.math.isNan(value) or std.math.isInf(value)) {
+            fail(113);
+            return;
+        }
+        if (!beforeValue()) return;
+        appendNumber("{d}", .{value});
+    }
+
+    pub fn writerBoolean(value: bool) void {
+        ensureFresh();
+        if (!guard()) return;
+        if (!beforeValue()) return;
+        appendSlice(if (value) "true" else "false");
+    }
+
+    pub fn writerNull() void {
+        ensureFresh();
+        if (!guard()) return;
+        if (!beforeValue()) return;
+        appendSlice("null");
+    }
+
+    pub fn writerEnd() void {
+        ensureFresh();
+        if (!guard()) return;
+        const w = writerStateType();
+        if (w.stack.items.len == 0) {
+            fail(1);
+            return;
+        }
+        const top = w.stack.items[w.stack.items.len - 1];
+        if (top.in_object and top.expect_value) {
+            fail(1);
+            return;
+        }
+        _ = w.stack.pop();
+        appendSlice(if (top.in_object) "}" else "]");
+    }
+
+    pub fn writerReject(code: i64) void {
+        ensureFresh();
+        fail(code);
+    }
+
+    pub fn writerFinish() []const u8 {
+        if (!guard()) return "";
+        const w = writerStateType();
+        defer w.finished = true;
+        if (w.stack.items.len != 0) {
+            fail(1);
+            return "";
+        }
+        if (!w.root_written) {
+            fail(1);
+            return "";
+        }
+        return w.buffer.items;
+    }
+
+    fn packHandle(index: usize) i64 {
+        const gen: u64 = domStateType().generation;
+        return @bitCast((gen << 32) | @as(u64, index));
+    }
+
+    fn resolveNode(handle: i64) ?usize {
+        if (handle == 0) return null;
+        const state = domStateType();
+        const raw: u64 = @bitCast(handle);
+        const gen: u32 = @truncate(raw >> 32);
+        if (gen != state.generation) return null;
+        const low: u32 = @truncate(raw);
+        const idx: usize = low;
+        if (idx >= state.nodes.items.len) return null;
+        return idx;
+    }
+
+    fn requireKind(handle: i64, kind: u8) ?usize {
+        clearLastError();
+        const idx = resolveNode(handle) orelse {
+            setLastError(1);
+            return null;
+        };
+        if (domStateType().nodes.items[idx].kind != kind) {
+            setLastError(1);
+            return null;
+        }
+        return idx;
+    }
+
+    fn requireContainer(handle: i64) ?usize {
+        clearLastError();
+        const idx = resolveNode(handle) orelse {
+            setLastError(1);
+            return null;
+        };
+        const kind = domStateType().nodes.items[idx].kind;
+        if (kind != 6 and kind != 7) {
+            setLastError(1);
+            return null;
+        }
+        return idx;
+    }
+
+    fn makeNode(value: std.json.Value, key: []const u8, has_key: bool) !nodeRecord() {
+        var node = nodeRecord(){
+            .key = key,
+            .has_key = has_key,
+            .child_start = -1,
+            .child_count = 0,
+        };
+        switch (value) {
+            .null => node.kind = 1,
+            .bool => |b| {
+                node.kind = 2;
+                node.bool_value = b;
+            },
+            .integer => |i| {
+                node.kind = 3;
+                node.int_value = i;
+            },
+            .float => |f| {
+                node.kind = 4;
+                node.float_value = f;
+            },
+            .number_string => |s| {
+                node.kind = 4;
+                node.float_value = std.fmt.parseFloat(f64, s) catch std.math.inf(f64);
+            },
+            .string => |s| {
+                node.kind = 5;
+                node.text_value = s;
+            },
+            .array, .object => node.kind = if (value == .array) 6 else 7,
+        }
+        return node;
+    }
+
+    fn buildDocument(root: std.json.Value) !void {
+        const Work = struct {
+            node_index: usize,
+            value: std.json.Value,
+        };
+
+        const state = domStateType();
+        const allocator = std.heap.page_allocator;
+
+        var work: std.ArrayList(Work) = .empty;
+        defer work.deinit(allocator);
+
+        if (state.nodes.items.len > std.math.maxInt(u32)) return error.TooManyNodes;
+        try state.nodes.append(allocator, try makeNode(root, "", false));
+        try work.append(allocator, .{ .node_index = 0, .value = root });
+
+        while (work.pop()) |item| {
+            const value = item.value;
+            if (value != .array and value != .object) continue;
+
+            const first: i64 = @intCast(state.nodes.items.len);
+            var count: i64 = 0;
+
+            if (value == .array) {
+                for (value.array.items) |child_value| {
+                    if (state.nodes.items.len > std.math.maxInt(u32)) return error.TooManyNodes;
+                    const idx = state.nodes.items.len;
+                    try state.nodes.append(allocator, try makeNode(child_value, "", false));
+                    try work.append(allocator, .{ .node_index = idx, .value = child_value });
+                    count += 1;
+                }
+            } else {
+                for (value.object.keys(), 0..) |key, position| {
+                    const child_value = value.object.values()[position];
+                    if (state.nodes.items.len > std.math.maxInt(u32)) return error.TooManyNodes;
+                    const idx = state.nodes.items.len;
+                    try state.nodes.append(allocator, try makeNode(child_value, key, true));
+                    try work.append(allocator, .{ .node_index = idx, .value = child_value });
+                    count += 1;
+                }
+            }
+
+            const parent = &state.nodes.items[item.node_index];
+            parent.child_start = first;
+            parent.child_count = count;
+        }
+    }
+
+    pub fn parseDocument(text: []const u8) i64 {
+        clearLastError();
+        const allocator = std.heap.page_allocator;
+
+        const parsed = std.json.parseFromSlice(std.json.Value, allocator, text, .{
+            .allocate = .alloc_always,
+        }) catch |err| {
+            setLastError(if (err == error.OutOfMemory) 2 else 113);
+            return 0;
+        };
+
+        const state = domStateType();
+        state.generation +%= 1;
+        if (state.generation == 0) state.generation = 1;
+        if (state.parsed) |*old| old.deinit();
+        state.parsed = parsed;
+        state.nodes.clearRetainingCapacity();
+
+        buildDocument(state.parsed.?.value) catch |err| {
+            setLastError(switch (err) {
+                error.OutOfMemory => 2,
+                else => 113,
+            });
+            return 0;
+        };
+
+        return packHandle(0);
+    }
+
+    pub fn nodeKind(handle: i64) i64 {
+        clearLastError();
+        const idx = resolveNode(handle) orelse return 0;
+        return domStateType().nodes.items[idx].kind;
+    }
+
+    pub fn nodeCount(handle: i64) i64 {
+        const idx = requireContainer(handle) orelse return 0;
+        return domStateType().nodes.items[idx].child_count;
+    }
+
+    pub fn nodeChild(handle: i64, index: i64) i64 {
+        const idx = requireContainer(handle) orelse return 0;
+        const node = domStateType().nodes.items[idx];
+        if (index < 0 or index >= node.child_count) {
+            setLastError(1);
+            return 0;
+        }
+        return packHandle(@intCast(node.child_start + index));
+    }
+
+    pub fn nodeField(handle: i64, name: []const u8) i64 {
+        const idx = requireContainer(handle) orelse return 0;
+        const state = domStateType();
+        const node = state.nodes.items[idx];
+        if (node.kind != 7) {
+            setLastError(1);
+            return 0;
+        }
+        var i: i64 = 0;
+        while (i < node.child_count) : (i += 1) {
+            const child = state.nodes.items[@intCast(node.child_start + i)];
+            if (std.mem.eql(u8, child.key, name)) return packHandle(@intCast(node.child_start + i));
+        }
+        setLastError(1);
+        return 0;
+    }
+
+    pub fn nodeKey(handle: i64) []const u8 {
+        clearLastError();
+        const idx = resolveNode(handle) orelse {
+            setLastError(1);
+            return "";
+        };
+        const node = domStateType().nodes.items[idx];
+        if (!node.has_key) {
+            setLastError(1);
+            return "";
+        }
+        return node.key;
+    }
+
+    pub fn nodeText(handle: i64) []const u8 {
+        const idx = requireKind(handle, 5) orelse return "";
+        return domStateType().nodes.items[idx].text_value;
+    }
+
+    pub fn nodeIntValue(handle: i64) i64 {
+        const idx = requireKind(handle, 3) orelse return 0;
+        return domStateType().nodes.items[idx].int_value;
+    }
+
+    pub fn nodeFloatValue(handle: i64) f64 {
+        const idx = requireKind(handle, 4) orelse return 0;
+        return domStateType().nodes.items[idx].float_value;
+    }
+
+    pub fn nodeBooleanValue(handle: i64) bool {
+        const idx = requireKind(handle, 2) orelse return false;
+        return domStateType().nodes.items[idx].bool_value;
+    }
+}
+
+function mapJSONError(code :: int) returns error.StdError {
+    return match code {
+        1 then error.Common.InvalidArgument,
+        2 then error.Common.OutOfMemory,
+        113 then error.IO.InvalidData,
+        else error.Common.Unexpected,
+    }
+}
+
+public function debugHandle(text :: string) returns int {
+    return JSON.parseDocument(text)
+}
+
+public function debugError() returns int {
+    return JSON.takeLastErrorCode()
+}
+
+public enum Kind {
+    Invalid,
+    Null,
+    Boolean,
+    Integer,
+    Number,
+    Text,
+    Array,
+    Object,
+}
+
+public struct Node {
+    handle :: int,
+
+    function new(h :: int) returns Node {
+        return $Node {
+            handle is h
+        }
+    }
+
+    public method kind() returns Kind {
+        const code is JSON.nodeKind(this.handle)
+        return match code {
+            1 then Kind.Null,
+            2 then Kind.Boolean,
+            3 then Kind.Integer,
+            4 then Kind.Number,
+            5 then Kind.Text,
+            6 then Kind.Array,
+            7 then Kind.Object,
+            else Kind.Invalid,
+        }
+    }
+
+    public method count() returns int | nothing {
+        const value is JSON.nodeCount(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method element(index :: int) returns Node | nothing {
+        const child is JSON.nodeChild(this.handle, index)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return Node.new(child)
+    }
+
+    public method field(name :: string) returns Node | nothing {
+        const child is JSON.nodeField(this.handle, name)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return Node.new(child)
+    }
+
+    public method key() returns string | nothing {
+        const value is JSON.nodeKey(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method text() returns string | nothing {
+        const value is JSON.nodeText(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method intValue() returns int | nothing {
+        const value is JSON.nodeIntValue(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method floatValue() returns float | nothing {
+        const value is JSON.nodeFloatValue(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method booleanValue() returns tetra | nothing {
+        const value is JSON.nodeBooleanValue(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+}
+
+public function parse(text :: string) returns Node | error.StdError {
+    const root is JSON.parseDocument(text)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return Node.new(root)
+    return mapJSONError(code)
+}
+
+public function beginObject() returns error.StdError {
+    JSON.writerBeginObject()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+
+public function beginArray() returns error.StdError {
+    JSON.writerBeginArray()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+
+public function end() returns error.StdError {
+    JSON.writerEnd()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+
+public function writeKey(name :: string) returns error.StdError {
+    JSON.writerKey(name)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+
+public function writeText(text :: string) returns error.StdError {
+    JSON.writerText(text)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+
+public function writeInt(value :: int) returns error.StdError {
+    JSON.writerInt(value)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+
+public function writeFloat(value :: float) returns error.StdError {
+    JSON.writerFloat(value)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+
+public function writeBoolean(value :: tetra) returns error.StdError {
+    if value == both or value == neither then {
+        JSON.writerReject(1)
+        return error.Common.InvalidArgument
+    }
+    JSON.writerBoolean(value == true)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+
+public function writeNull() returns error.StdError {
+    JSON.writerNull()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+
+public function finish() returns string | error.StdError {
+    const value is JSON.writerFinish()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return value
+    return mapJSONError(code)
+}

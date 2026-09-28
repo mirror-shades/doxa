@@ -195,6 +195,7 @@ for i while i < @length(collection) do i++ {
 
 - The `at` variable provides an immutable copy of the current index
 - Nested loops create independent index copies
+- Over a `string`, iteration is byte-by-byte — `@length` and indexing are byte-based (see [strings.md](strings.md)) — so each item is a one-byte `string`
 - Struct (and other heap) items alias the collection element: `each n in neutrons { n.x_pos += 1 }` mutates `neutrons`. Scalar items (`int`, `float`, …) and whole arrays are copies; write `arr[i]` to persist those.
 - Modifying the collection's length during iteration may cause undefined behavior
 

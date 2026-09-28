@@ -2,6 +2,7 @@ module error from "../error.doxa"
 
 zig HTTP {
     const std = @import("std");
+    const builtin = @import("builtin");
 
     pub fn errorState(mode: i64, value: i64) i64 {
         const State = struct {
@@ -34,6 +35,695 @@ zig HTTP {
         return errorState(2, 0);
     }
 
+    fn httpIoStateType() type {
+        return struct {
+            var threaded: std.Io.Threaded = init: {
+                var t = std.Io.Threaded.init_single_threaded;
+                t.allocator = std.heap.page_allocator;
+                break :init t;
+            };
+            var base_io: std.Io = undefined;
+            var vtable: std.Io.VTable = undefined;
+            var io: std.Io = undefined;
+            var timeout: std.Io.Timeout = .none;
+            var initialized = false;
+        };
+    }
+
+    fn waitForReadable(socket_handle: std.Io.net.Socket.Handle) std.Io.net.Stream.Reader.Error!void {
+        const timeout = httpIoStateType().timeout;
+        const io = httpIoStateType().base_io;
+        const duration = timeout.toDurationFromNow(io) orelse return;
+        const ns = duration.raw.nanoseconds;
+        if (ns <= 0) return error.Timeout;
+
+        if (comptime builtin.os.tag == .windows) {
+            // Threaded.netReadWindows uses raw AFD handles, not Winsock SOCKETs,
+            // so WSAPoll cannot wait on them. Match the AFD_POLL_INFO ABI and
+            // use the kernel's AFD.POLL timeout before the normal AFD receive.
+            const PollHandle = extern struct {
+                handle: std.os.windows.HANDLE,
+                events: u32,
+                status: std.os.windows.NTSTATUS,
+            };
+            const PollInfo = extern struct {
+                timeout: i64,
+                count: u32,
+                exclusive: std.os.windows.BOOLEAN,
+                padding: [3]u8,
+                handles: [1]PollHandle,
+            };
+            const timeout_100ns: i64 = @intCast(@min(
+                @max(1, @divTrunc(ns + 99, 100)),
+                std.math.maxInt(i64),
+            ));
+            var poll_info: PollInfo = .{
+                .timeout = -timeout_100ns,
+                .count = 1,
+                .exclusive = .FALSE,
+                .padding = .{ 0, 0, 0 },
+                .handles = .{.{
+                    .handle = socket_handle,
+                    .events = 0x0001 | 0x0008 | 0x0010 | 0x0020,
+                    .status = .SUCCESS,
+                }},
+            };
+            const poll_bytes = std.mem.asBytes(&poll_info);
+            const result = io.operate(.{ .device_io_control = .{
+                .file = .{ .handle = socket_handle, .flags = .{ .nonblocking = true } },
+                .code = std.os.windows.IOCTL.AFD.POLL,
+                .in = poll_bytes,
+                .out = poll_bytes,
+            } }) catch |err| return switch (err) {
+                error.Canceled => error.Canceled,
+            };
+            if (result.device_io_control.u.Status == .TIMEOUT or poll_info.handles[0].events == 0) {
+                return error.Timeout;
+            }
+            if (poll_info.handles[0].status == .CONNECTION_RESET) return error.ConnectionResetByPeer;
+            if (result.device_io_control.u.Status != .SUCCESS) return error.Unexpected;
+            return;
+        }
+
+        if (comptime builtin.os.tag == .wasi or builtin.os.tag == .uefi or builtin.os.tag == .freestanding) {
+            return error.NetworkDown;
+        }
+
+        const timeout_ms: i32 = @intCast(@min(
+            @divTrunc(ns + std.time.ns_per_ms - 1, std.time.ns_per_ms),
+            std.math.maxInt(i32),
+        ));
+        var poll_fds = [_]std.posix.pollfd{.{
+            .fd = socket_handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const ready = std.posix.poll(&poll_fds, timeout_ms) catch |err| return switch (err) {
+            error.SystemResources => error.SystemResources,
+            else => error.Unexpected,
+        };
+        if (ready == 0) return error.Timeout;
+    }
+
+    fn timeoutNetRead(
+        userdata: ?*anyopaque,
+        socket_handle: std.Io.net.Socket.Handle,
+        buffers: [][]u8,
+    ) std.Io.net.Stream.Reader.Error!usize {
+        if (httpIoStateType().timeout != .none) try waitForReadable(socket_handle);
+        return httpIoStateType().base_io.vtable.netRead(userdata, socket_handle, buffers);
+    }
+
+    fn httpIo() std.Io {
+        if (!httpIoStateType().initialized) {
+            httpIoStateType().base_io = httpIoStateType().threaded.io();
+            httpIoStateType().vtable = httpIoStateType().base_io.vtable.*;
+            httpIoStateType().vtable.netRead = timeoutNetRead;
+            httpIoStateType().io = .{
+                .userdata = httpIoStateType().base_io.userdata,
+                .vtable = &httpIoStateType().vtable,
+            };
+            httpIoStateType().initialized = true;
+        }
+        return httpIoStateType().io;
+    }
+
+    fn setReadTimeout(timeout_ms: i64) void {
+        _ = httpIo();
+        httpIoStateType().timeout = if (timeout_ms <= 0)
+            .none
+        else
+            .{ .deadline = .fromNow(
+                httpIoStateType().base_io,
+                .{
+                    .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
+                    .clock = .awake,
+                },
+            ) };
+    }
+
+    fn validHeaderName(name: []const u8) bool {
+        if (name.len == 0) return false;
+        for (name) |c| {
+            if (std.ascii.isAlphanumeric(c)) continue;
+            if (std.mem.indexOfScalar(u8, "!#$%&'*+-.^_`|~", c) == null) return false;
+        }
+        return true;
+    }
+
+    fn parseRequestHeaders(allocator: std.mem.Allocator, blob: []const u8) !std.array_list.Managed(std.http.Header) {
+        var headers = std.array_list.Managed(std.http.Header).init(allocator);
+        errdefer headers.deinit();
+        var lines = std.mem.splitSequence(u8, blob, "\r\n");
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse return error.InvalidArgument;
+            const name = line[0..colon];
+            const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
+            if (!validHeaderName(name) or std.mem.indexOfAny(u8, value, "\r\n") != null) return error.InvalidArgument;
+            for (value) |c| {
+                if ((c < 32 and c != '\t') or c == 127) return error.InvalidArgument;
+            }
+            if (
+                std.ascii.eqlIgnoreCase(name, "host") or
+                std.ascii.eqlIgnoreCase(name, "content-length") or
+                std.ascii.eqlIgnoreCase(name, "transfer-encoding") or
+                std.ascii.eqlIgnoreCase(name, "connection")) return error.InvalidArgument;
+            try headers.append(.{ .name = name, .value = value });
+        }
+        return headers;
+    }
+
+    fn isCredentialHeader(name: []const u8) bool {
+        return std.ascii.eqlIgnoreCase(name, "authorization") or
+            std.ascii.eqlIgnoreCase(name, "proxy-authorization") or
+            std.ascii.eqlIgnoreCase(name, "cookie") or
+            std.ascii.eqlIgnoreCase(name, "cookie2");
+    }
+
+    fn sameOrigin(a: std.Uri, b: std.Uri) bool {
+        if (!std.ascii.eqlIgnoreCase(a.scheme, b.scheme)) return false;
+        const protocol_a = std.http.Client.Protocol.fromUri(a) orelse return false;
+        const protocol_b = std.http.Client.Protocol.fromUri(b) orelse return false;
+        if (protocol_a != protocol_b) return false;
+        var host_a_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
+        var host_b_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
+        const host_a = a.getHost(&host_a_buffer) catch return false;
+        const host_b = b.getHost(&host_b_buffer) catch return false;
+        const default_port_a: u16 = if (protocol_a == .tls) 443 else 80;
+        const default_port_b: u16 = if (protocol_b == .tls) 443 else 80;
+        return std.Io.net.HostName.eql(host_a, host_b) and
+            (a.port orelse default_port_a) == (b.port orelse default_port_b);
+    }
+
+    fn stripRedirectCredentials(headers: *std.array_list.Managed(std.http.Header)) void {
+        var kept: usize = 0;
+        for (headers.items) |header| {
+            if (isCredentialHeader(header.name)) continue;
+            headers.items[kept] = header;
+            kept += 1;
+        }
+        headers.items.len = kept;
+    }
+
+    fn parseMethod(method: []const u8) ?std.http.Method {
+        return std.meta.stringToEnum(std.http.Method, method);
+    }
+
+    fn listenerTableType() type {
+        return struct {
+            var addresses: std.AutoHashMapUnmanaged(i64, std.Io.net.IpAddress) = .{};
+        };
+    }
+
+    fn socketHandle(handle: i64) ?std.Io.net.Socket.Handle {
+        if (handle <= 0) return null;
+        if (comptime @typeInfo(std.Io.net.Socket.Handle) == .pointer) {
+            return @ptrFromInt(@as(usize, @intCast(handle)));
+        }
+        return @intCast(handle);
+    }
+
+    fn handleValue(handle: std.Io.net.Socket.Handle) i64 {
+        if (comptime @typeInfo(std.Io.net.Socket.Handle) == .pointer) {
+            return @intCast(@intFromPtr(handle));
+        }
+        return @intCast(handle);
+    }
+
+    fn mapNetworkError(err_name: []const u8) i64 {
+        const common = mapCommon(err_name);
+        if (common >= 0) return common;
+        if (std.mem.eql(u8, err_name, "Timeout")) return 115;
+        if (std.mem.eql(u8, err_name, "InvalidAddress") or
+            std.mem.eql(u8, err_name, "InvalidPort") or
+            std.mem.eql(u8, err_name, "AddressFamilyUnsupported")) return 1;
+        if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
+        return 114;
+    }
+
+    fn acceptOptions() std.Io.net.Server.AcceptOptions {
+        if (comptime std.Io.net.Server.AcceptOptions == void) return;
+        return .{ .mode = .stream, .protocol = .tcp };
+    }
+
+    pub fn listen(port: i64) i64 {
+        clearLastError();
+        if (port < 0 or port > 65535) {
+            setLastError(1);
+            return 0;
+        }
+        const io = httpIo();
+        const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(@intCast(port)) };
+        var server = address.listen(io, .{ .reuse_address = true }) catch |err| {
+            setLastError(mapNetworkError(@errorName(err)));
+            return 0;
+        };
+        const handle = handleValue(server.socket.handle);
+        listenerTableType().addresses.put(std.heap.page_allocator, handle, server.socket.address) catch {
+            server.deinit(io);
+            setLastError(2);
+            return 0;
+        };
+        return handle;
+    }
+
+    pub fn localAddr(handle: i64) i64 {
+        clearLastError();
+        if (listenerTableType().addresses.get(handle)) |address| return address.getPort();
+        setLastError(1);
+        return 0;
+    }
+
+    pub fn accept(handle: i64) i64 {
+        clearLastError();
+        const native_handle = socketHandle(handle) orelse {
+            setLastError(1);
+            return 0;
+        };
+        const address = listenerTableType().addresses.get(handle) orelse {
+            setLastError(1);
+            return 0;
+        };
+        var server: std.Io.net.Server = .{
+            .socket = .{ .handle = native_handle, .address = address },
+            .options = acceptOptions(),
+        };
+        const stream = server.accept(httpIo()) catch |err| {
+            setLastError(mapNetworkError(@errorName(err)));
+            return 0;
+        };
+        return handleValue(stream.socket.handle);
+    }
+
+    fn validHeaderBlob(headers: []const u8) bool {
+        if (std.mem.indexOf(u8, headers, "\r\n\r\n") != null) return false;
+        var lines = std.mem.splitSequence(u8, headers, "\r\n");
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse return false;
+            if (colon == 0) return false;
+            const name = line[0..colon];
+            if (std.ascii.eqlIgnoreCase(name, "content-length") or
+                std.ascii.eqlIgnoreCase(name, "transfer-encoding") or
+                std.ascii.eqlIgnoreCase(name, "connection")) return false;
+            for (name) |c| {
+                if (c <= 32 or c >= 127 or c == ':') return false;
+            }
+        }
+        for (headers, 0..) |c, i| {
+            if (c == '\n' and (i == 0 or headers[i - 1] != '\r')) return false;
+            if (c == '\r' and (i + 1 == headers.len or headers[i + 1] != '\n')) return false;
+        }
+        return true;
+    }
+
+    fn reasonPhrase(status: i64) []const u8 {
+        return switch (status) {
+            200 => "OK",
+            201 => "Created",
+            202 => "Accepted",
+            204 => "No Content",
+            301 => "Moved Permanently",
+            302 => "Found",
+            303 => "See Other",
+            304 => "Not Modified",
+            307 => "Temporary Redirect",
+            308 => "Permanent Redirect",
+            400 => "Bad Request",
+            401 => "Unauthorized",
+            403 => "Forbidden",
+            404 => "Not Found",
+            405 => "Method Not Allowed",
+            408 => "Request Timeout",
+            410 => "Gone",
+            418 => "I'm a teapot",
+            429 => "Too Many Requests",
+            500 => "Internal Server Error",
+            501 => "Not Implemented",
+            502 => "Bad Gateway",
+            503 => "Service Unavailable",
+            504 => "Gateway Timeout",
+            else => "Status",
+        };
+    }
+
+    pub fn respond(handle: i64, status: i64, headers: []const u8, body: []const u8) void {
+        clearLastError();
+        const native_handle = socketHandle(handle) orelse {
+            setLastError(1);
+            return;
+        };
+        if (status < 100 or status > 999 or !validHeaderBlob(headers)) {
+            setLastError(1);
+            return;
+        }
+
+        const allocator = std.heap.page_allocator;
+        var output: std.Io.Writer.Allocating = .init(allocator);
+        defer output.deinit();
+        output.writer.print("HTTP/1.1 {d} {s}\r\n", .{ status, reasonPhrase(status) }) catch {
+            setLastError(2);
+            return;
+        };
+        output.writer.writeAll(headers) catch {
+            setLastError(2);
+            return;
+        };
+        if (headers.len != 0 and !std.mem.endsWith(u8, headers, "\r\n")) {
+            output.writer.writeAll("\r\n") catch {
+                setLastError(2);
+                return;
+            };
+        }
+        output.writer.print("Content-Length: {d}\r\nConnection: close\r\n\r\n", .{body.len}) catch {
+            setLastError(2);
+            return;
+        };
+        output.writer.writeAll(body) catch {
+            setLastError(2);
+            return;
+        };
+
+        const stream: std.Io.net.Stream = .{ .socket = .{
+            .handle = native_handle,
+            .address = undefined,
+        } };
+        var buffer: [1024]u8 = undefined;
+        var writer = stream.writer(httpIo(), &buffer);
+        writer.interface.writeAll(output.written()) catch {
+            setLastError(107);
+            return;
+        };
+        writer.interface.flush() catch {
+            setLastError(107);
+        };
+    }
+
+    pub fn close(handle: i64) void {
+        clearLastError();
+        const native_handle = socketHandle(handle) orelse {
+            setLastError(1);
+            return;
+        };
+        if (listenerTableType().addresses.fetchRemove(handle)) |entry| {
+            const socket: std.Io.net.Socket = .{
+                .handle = native_handle,
+                .address = entry.value,
+            };
+            socket.close(httpIo());
+            return;
+        }
+        const stream: std.Io.net.Stream = .{ .socket = .{
+            .handle = native_handle,
+            .address = undefined,
+        } };
+        stream.close(httpIo());
+    }
+
+    fn clientStateType() type {
+        return struct {
+            var client: ?std.http.Client = null;
+            var status_code: i64 = 0;
+            var raw_headers: []const u8 = "";
+            var owned_raw_headers: []const u8 = "";
+        };
+    }
+
+    fn httpClient() *std.http.Client {
+        if (clientStateType().client == null) {
+            clientStateType().client = .{
+                .allocator = std.heap.page_allocator,
+                .io = httpIo(),
+            };
+        }
+        return &clientStateType().client.?;
+    }
+
+    fn copyToPage(bytes: []const u8) ?[]const u8 {
+        if (bytes.len == 0) return "";
+        return std.heap.page_allocator.dupe(u8, bytes) catch null;
+    }
+
+    pub fn takeStatusCode() i64 {
+        const status = clientStateType().status_code;
+        clientStateType().status_code = 0;
+        return status;
+    }
+
+    pub fn takeResponseHeaders() []const u8 {
+        const headers = clientStateType().raw_headers;
+        clientStateType().raw_headers = "";
+        return headers;
+    }
+
+    fn requestResultType() type {
+        return struct {
+            var body: []const u8 = "";
+        };
+    }
+
+    fn requestCore(
+        method_name: []const u8,
+        url: []const u8,
+        header_blob: []const u8,
+        body_bytes: []const u8,
+        timeout_ms: i64,
+        max_redirects: i64,
+        response_writer: ?*std.Io.Writer,
+    ) bool {
+        clearLastError();
+        if (clientStateType().owned_raw_headers.len != 0) {
+            std.heap.page_allocator.free(@constCast(clientStateType().owned_raw_headers));
+        }
+        if (requestResultType().body.len != 0) std.heap.page_allocator.free(@constCast(requestResultType().body));
+        clientStateType().owned_raw_headers = "";
+        requestResultType().body = "";
+        clientStateType().status_code = 0;
+        clientStateType().raw_headers = "";
+        if (url.len == 0 or timeout_ms < 0 or max_redirects < 0 or max_redirects >= std.math.maxInt(u16)) {
+            setLastError(1);
+            return false;
+        }
+        var method = parseMethod(method_name) orelse {
+            setLastError(1);
+            return false;
+        };
+        if (body_bytes.len != 0 and !method.requestHasBody()) {
+            setLastError(1);
+            return false;
+        }
+
+        const allocator = std.heap.page_allocator;
+        var headers = parseRequestHeaders(allocator, header_blob) catch |err| {
+            setLastError(mapNetworkError(@errorName(err)));
+            return false;
+        };
+        defer headers.deinit();
+        var uri = std.Uri.parse(url) catch {
+            setLastError(1);
+            return false;
+        };
+        setReadTimeout(timeout_ms);
+        defer setReadTimeout(0);
+
+        var redirects_left: u16 = @intCast(max_redirects);
+        var redirect_buffers: [2][8 * 1024]u8 = undefined;
+        var redirect_buffer_index: usize = 0;
+        while (true) {
+            var client_request = httpClient().request(method, uri, .{
+                .redirect_behavior = .unhandled,
+                .headers = .{ .accept_encoding = .omit },
+                .extra_headers = headers.items,
+            }) catch |err| {
+                setLastError(mapNetworkError(@errorName(err)));
+                return false;
+            };
+            defer client_request.deinit();
+
+            if (method.requestHasBody()) {
+                const mutable_body = allocator.dupe(u8, body_bytes) catch {
+                    setLastError(2);
+                    return false;
+                };
+                defer allocator.free(mutable_body);
+                client_request.sendBodyComplete(mutable_body) catch |err| {
+                    if (client_request.connection) |connection| {
+                        if (connection.stream_writer.err) |write_err| {
+                            setLastError(mapNetworkError(@errorName(write_err)));
+                            return false;
+                        }
+                    }
+                    setLastError(mapNetworkError(@errorName(err)));
+                    return false;
+                };
+            } else {
+                client_request.sendBodiless() catch |err| {
+                    setLastError(mapNetworkError(@errorName(err)));
+                    return false;
+                };
+            }
+
+            var response = client_request.receiveHead(&.{}) catch |err| {
+                if (client_request.connection) |connection| {
+                    if (connection.stream_reader.err) |read_err| {
+                        setLastError(mapNetworkError(@errorName(read_err)));
+                        return false;
+                    }
+                }
+                setLastError(mapNetworkError(@errorName(err)));
+                return false;
+            };
+
+            if (response.head.status.class() == .redirect and redirects_left > 0) {
+                const location = response.head.location orelse {
+                    setLastError(114);
+                    return false;
+                };
+                redirect_buffer_index = 1 - redirect_buffer_index;
+                const redirect_buffer = &redirect_buffers[redirect_buffer_index];
+                if (location.len > redirect_buffer.len) {
+                    setLastError(114);
+                    return false;
+                }
+                @memcpy(redirect_buffer[0..location.len], location);
+                const old_uri = uri;
+                var aux: []u8 = redirect_buffer[0..];
+                uri = uri.resolveInPlace(location.len, &aux) catch {
+                    setLastError(114);
+                    return false;
+                };
+                var discard_buffer: [1024]u8 = undefined;
+                const redirect_reader = response.reader(&discard_buffer);
+                _ = redirect_reader.discardRemaining() catch |err| {
+                    setLastError(mapNetworkError(@errorName(err)));
+                    return false;
+                };
+                if (!sameOrigin(old_uri, uri)) stripRedirectCredentials(&headers);
+                redirects_left -= 1;
+                if (response.head.status == .see_other or
+                    ((response.head.status == .moved_permanently or response.head.status == .found) and method == .POST))
+                {
+                    method = .GET;
+                }
+                continue;
+            }
+            if (response.head.status.class() == .redirect and redirects_left == 0 and response.head.location != null) {
+                setLastError(114);
+                return false;
+            }
+
+            clientStateType().status_code = @intFromEnum(response.head.status);
+            clientStateType().owned_raw_headers = copyToPage(response.head.bytes) orelse {
+                setLastError(2);
+                return false;
+            };
+            clientStateType().raw_headers = clientStateType().owned_raw_headers;
+            var transfer_buffer: [16 * 1024]u8 = undefined;
+            const reader = response.reader(&transfer_buffer);
+            if (response_writer) |writer| {
+                _ = reader.streamRemaining(writer) catch |err| {
+                    if (response.bodyErr()) |read_err| {
+                        setLastError(mapNetworkError(@errorName(read_err)));
+                    } else {
+                        const common = mapCommon(@errorName(err));
+                        setLastError(if (common >= 0) common else if (response_writer != null) 107 else mapNetworkError(@errorName(err)));
+                    }
+                    clientStateType().status_code = 0;
+                    clientStateType().raw_headers = "";
+                    return false;
+                };
+                return true;
+            }
+
+            var buffered_body: std.array_list.Aligned(u8, .of(u8)) = .empty;
+            defer buffered_body.deinit(allocator);
+            reader.appendRemaining(allocator, &buffered_body, .unlimited) catch |err| {
+                if (response.bodyErr()) |read_err| {
+                    setLastError(mapNetworkError(@errorName(read_err)));
+                } else {
+                    setLastError(mapNetworkError(@errorName(err)));
+                }
+                clientStateType().status_code = 0;
+                clientStateType().raw_headers = "";
+                return false;
+            };
+            requestResultType().body = copyToPage(buffered_body.items) orelse {
+                setLastError(2);
+                return false;
+            };
+            return true;
+        }
+    }
+
+    pub fn performRequest(method: []const u8, url: []const u8, headers: []const u8, body: []const u8, timeout_ms: i64, max_redirects: i64) []const u8 {
+        if (requestCore(method, url, headers, body, timeout_ms, max_redirects, null)) return requestResultType().body;
+        return "";
+    }
+
+    pub fn requestToFile(method: []const u8, url: []const u8, headers: []const u8, body: []const u8, timeout_ms: i64, max_redirects: i64, destination: []const u8) void {
+        clearLastError();
+        const io = httpIo();
+        var file = std.Io.Dir.cwd().createFile(io, destination, .{}) catch |err| {
+            const common = mapCommon(@errorName(err));
+            setLastError(if (common >= 0) common else 108);
+            return;
+        };
+        defer file.close(io);
+        var file_buffer: [16 * 1024]u8 = undefined;
+        var file_writer = file.writer(io, &file_buffer);
+        if (!requestCore(method, url, headers, body, timeout_ms, max_redirects, &file_writer.interface)) return;
+        file_writer.interface.flush() catch |err| {
+            const common = mapCommon(@errorName(err));
+            setLastError(if (common >= 0) common else 107);
+            return;
+        };
+        const status = clientStateType().status_code;
+        if (status < 200 or status >= 300) setLastError(116);
+    }
+
+    pub fn getText(url: []const u8, timeout_ms: i64) []const u8 {
+        return performRequest("GET", url, "", "", timeout_ms, 3);
+    }
+
+    fn headerAt(raw_headers: []const u8, wanted: usize) ?struct { name: []const u8, value: []const u8 } {
+        var lines = std.mem.splitSequence(u8, raw_headers, "\r\n");
+        _ = lines.next(); // status line
+        var index: usize = 0;
+        while (lines.next()) |line| {
+            if (line.len == 0) break;
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+            if (index == wanted) return .{
+                .name = line[0..colon],
+                .value = std.mem.trim(u8, line[colon + 1 ..], " \t"),
+            };
+            index += 1;
+        }
+        return null;
+    }
+
+    pub fn headerCount(raw_headers: []const u8) i64 {
+        var count: usize = 0;
+        while (headerAt(raw_headers, count) != null) : (count += 1) {}
+        return @intCast(count);
+    }
+
+    pub fn headerNameAt(raw_headers: []const u8, index: i64) []const u8 {
+        if (index < 0) return "";
+        return if (headerAt(raw_headers, @intCast(index))) |header| header.name else "";
+    }
+
+    pub fn headerValueAt(raw_headers: []const u8, index: i64) []const u8 {
+        if (index < 0) return "";
+        return if (headerAt(raw_headers, @intCast(index))) |header| header.value else "";
+    }
+
+    pub fn headerNameMatches(raw_headers: []const u8, index: i64, name: []const u8) bool {
+        if (index < 0) return false;
+        const header = headerAt(raw_headers, @intCast(index)) orelse return false;
+        return std.ascii.eqlIgnoreCase(header.name, name);
+    }
+
     pub fn mapCommon(err_name: []const u8) i64 {
         if (std.mem.eql(u8, err_name, "InvalidArgument")) return 1;
         if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
@@ -56,60 +746,12 @@ zig HTTP {
     }
 
     public fn downloadUrl(url: []const u8, destination: []const u8) void {
-        clearLastError();
         if (url.len == 0 or destination.len == 0) {
+            clearLastError();
             setLastError(1);
             return;
         }
-
-        const io = std.Io.Threaded.global_single_threaded.io();
-
-        var gpa = std.heap.DebugAllocator(.{}){};
-        defer _ = gpa.deinit();
-        const allocator = gpa.allocator();
-
-        var client: std.http.Client = .{ .allocator = allocator, .io = io };
-        defer client.deinit();
-
-        var file = std.Io.Dir.cwd().createFile(io, destination, .{}) catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return;
-            }
-            setLastError(108);
-            return;
-        };
-        defer file.close(io);
-
-        var buf: [16 * 1024]u8 = undefined;
-        var file_writer = file.writer(io, &buf);
-        const writer = &file_writer.interface;
-
-        const res = client.fetch(.{
-            .location = .{ .url = url },
-            .method = .GET,
-            .response_writer = writer,
-        }) catch {
-            setLastError(114);
-            return;
-        };
-
-        writer.flush() catch |err| {
-            const mc = mapCommon(@errorName(err));
-            if (mc >= 0) {
-                setLastError(mc);
-                return;
-            }
-            setLastError(107);
-            return;
-        };
-
-        const status_code = @intFromEnum(res.status);
-        if (status_code < 200 or status_code >= 300) {
-            setLastError(116);
-            return;
-        }
+        requestToFile("GET", url, "", "", 30000, 3, destination);
     }
 
     pub fn download(url: []const u8) void {
@@ -118,11 +760,6 @@ zig HTTP {
         downloadUrl(url, name);
     }
 
-    pub fn getText(_: []const u8) []const u8 {
-        clearLastError();
-        setLastError(4);
-        return "";
-    }
 }
 
 function mapIOError(code :: int) returns error.StdError {
@@ -168,9 +805,155 @@ public function download(url :: string) returns error.StdError {
     return mapIOError(err)
 }
 
+public struct Response {
+    status_code :: int,
+    raw_headers :: string,
+    body_text :: string,
+
+    public method statusCode() returns int {
+        return this.status_code
+    }
+
+    public method body() returns string {
+        return this.body_text
+    }
+
+    public method header(name :: string) returns string[] {
+        var values :: string[]
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i < count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then {
+                @push(values, HTTP.headerValueAt(this.raw_headers, i))
+            }
+        }
+        return values
+    }
+
+    public method hasHeader(name :: string) returns tetra {
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i < count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then return true
+        }
+        return false
+    }
+}
+
+function performGet(url :: string, timeout_ms :: int) returns Response | error.StdError {
+    const value is HTTP.getText(url, timeout_ms)
+    const status is HTTP.takeStatusCode()
+    const headers is HTTP.takeResponseHeaders()
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return $Response {
+        status_code is status,
+        raw_headers is headers,
+        body_text is value,
+    }
+    return mapIOError(err)
+}
+
+public function listen(port :: int) returns int | error.StdError {
+    const handle is HTTP.listen(port)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return handle
+    return mapIOError(err)
+}
+
+public function localAddr(handle :: int) returns int | error.StdError {
+    const port is HTTP.localAddr(handle)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return port
+    return mapIOError(err)
+}
+
+public function accept(handle :: int) returns int | error.StdError {
+    const connection is HTTP.accept(handle)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return connection
+    return mapIOError(err)
+}
+
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns error.StdError {
+    HTTP.respond(connection, status, headers, body)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+
+public function close(handle :: int) returns error.StdError {
+    HTTP.close(handle)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+
+public function get(url :: string) returns Response | error.StdError {
+    return performGet(url, 30000)
+}
+
+public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
+    return performGet(url, timeout_ms)
+}
+
+public struct Request {
+    public headers :: string[],
+    public body :: string,
+    public timeout_ms :: int,
+    public max_redirects :: int,
+
+    public function new() returns Request {
+        return $Request {
+            headers is [],
+            body is "",
+            timeout_ms is 30000,
+            max_redirects is 3,
+        }
+    }
+}
+
+public function request(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+    var header_blob is ""
+    for i while i < @length(req.headers) do i += 1 {
+        header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
+    }
+    const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
+    const status is HTTP.takeStatusCode()
+    const headers is HTTP.takeResponseHeaders()
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return $Response {
+        status_code is status,
+        raw_headers is headers,
+        body_text is value,
+    }
+    return mapIOError(err)
+}
+
+public function post(url :: string, req :: Request) returns Response | error.StdError {
+    return request("POST", url, req)
+}
+
+public function put(url :: string, req :: Request) returns Response | error.StdError {
+    return request("PUT", url, req)
+}
+
+public function delete(url :: string, req :: Request) returns Response | error.StdError {
+    return request("DELETE", url, req)
+}
+
+public function head(url :: string, req :: Request) returns Response | error.StdError {
+    return request("HEAD", url, req)
+}
+
 public function getText(url :: string) returns string | error.StdError {
-    const value is HTTP.getText(url)
+    const value is HTTP.getText(url, 30000)
+    const _status is HTTP.takeStatusCode()
+    const _headers is HTTP.takeResponseHeaders()
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return value
     return mapIOError(err)
+}
+
+public function checkStatus(response :: Response) returns Response | error.StdError {
+    const status is response.statusCode()
+    if status < 200 or status >= 300 then return error.IO.HttpStatus
+    return response
 }

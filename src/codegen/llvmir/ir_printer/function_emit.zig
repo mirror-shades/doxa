@@ -612,6 +612,35 @@ pub fn Methods(comptime Ctx: type) type {
                         if (psid.scope_kind == .GlobalLocal or psid.scope_kind == .ModuleGlobal) {
                             try self.handlePushStorageIdGlobal(w, &stack, &id, psid.var_name);
                         } else if (variables.get(psid.var_name)) |entry| {
+                            // A narrowed union variable's slot holds a boxed
+                            // `%DoxaValue`, but the contract for a pushed storage
+                            // id is the address of a slot holding the value a
+                            // callee (a struct method's `this`) reads and writes.
+                            // The box's payload word is exactly that slot: pointing
+                            // `this` at it unwraps the member for the call and
+                            // writes any replaced receiver back into the box.
+                            if (self.narrowedMemberType(psid.var_name)) |member| {
+                                if (member == .Struct) {
+                                    const payload_addr = try self.nextTemp(&id);
+                                    const gep_line = try std.fmt.allocPrint(
+                                        self.allocator,
+                                        "  {s} = getelementptr inbounds %DoxaValue, ptr {s}, i32 0, i32 2\n",
+                                        .{ payload_addr, entry.ptr_name },
+                                    );
+                                    defer self.allocator.free(gep_line);
+                                    try w.writeAll(gep_line);
+                                    const type_name = self.struct_type_names_by_id.get(member.Struct);
+                                    try stack.append(.{
+                                        .name = payload_addr,
+                                        .ty = .PTR,
+                                        .struct_field_types = self.struct_fields_by_id.get(member.Struct),
+                                        .struct_field_names = if (type_name) |tn| self.struct_field_names_by_type.get(tn) else null,
+                                        .struct_type_name = type_name orelse "struct",
+                                    });
+                                    last_instruction_was_terminator = false;
+                                    continue;
+                                }
+                            }
                             if (entry.fixed_array_depth > 0) {
                                 // Fixed-size arrays live as raw stack buffers, so the
                                 // variable slot holds a pointer to the element storage
@@ -1022,7 +1051,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .Call => |c| {
-                        try self.handleCall(w, &stack, &id, c, peek_state, hir);
+                        try self.handleCall(w, &stack, &id, c, hir);
                         last_instruction_was_terminator = false;
                     },
                     .Halt => {

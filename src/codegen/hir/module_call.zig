@@ -280,19 +280,6 @@ pub fn inferFunctionCallReturnType(generator: *HIRGenerator, expr: *ast.Expr) HI
     return switch (target) {
         .function => |resolved| {
             defer if (resolved.name_allocated) generator.allocator.free(resolved.qualified_name);
-
-            if (resolved.call_kind == .BuiltinFunction and std.mem.eql(u8, resolved.qualified_name, "pop")) {
-                if (call.arguments.len == 1) {
-                    const arg_type = generator.inferTypeFromExpression(call.arguments[0].expr);
-                    return switch (arg_type) {
-                        .Array => |elem_ptr| elem_ptr.*,
-                        .String => .String,
-                        else => .Unknown,
-                    };
-                }
-                return .Unknown;
-            }
-
             return generator.inferCallReturnType(resolved.qualified_name, resolved.call_kind) catch .Unknown;
         },
         .struct_static => |ss| {

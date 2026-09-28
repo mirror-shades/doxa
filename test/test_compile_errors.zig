@@ -84,6 +84,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const allocator = arena.allocator();
 
     platform.enableUtf8Console();
+    platform.sealStdHandles();
 
     const verbose = harness.verboseFromEnv(allocator);
 
@@ -157,6 +158,21 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .name = "union arithmetic must be narrowed first",
             .path = "./test/misc/union_arith_error.doxa",
             .expected = .{ .exit_code = 1, .contains_message = "Cannot use + operator on union type; narrow it with 'as' or match first", .error_code = "E1003" },
+        },
+        .{
+            .name = "@pack requires byte[]",
+            .path = "./test/syntax/pack_requires_byte_error.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "is not implicitly assignable to byte", .error_code = "E1003" },
+        },
+        .{
+            .name = "@push on string requires string value",
+            .path = "./test/syntax/push_string_value_error.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "@push on string requires string value", .error_code = "E1003" },
+        },
+        .{
+            .name = "@insert on string requires string value",
+            .path = "./test/syntax/insert_string_value_error.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "@insert on string requires string value", .error_code = "E1003" },
         },
     };
 

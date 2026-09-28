@@ -268,6 +268,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_enum_to_string(ptr, i64, i64, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_struct_to_string(ptr, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_array_to_string(ptr, ptr, ptr)\n");
+            try w.writeAll("declare void @doxa_value_to_string(ptr, ptr, ptr)\n");
             try w.writeAll("declare void @doxa_pack_bytes(ptr, ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_unpack_bytes(ptr, i64)\n");
             try w.writeAll("declare void @doxa_debug_peek(ptr)\ndeclare void @doxa_peek_string(ptr, i64)\ndeclare void @doxa_peek_end()\n");
@@ -839,7 +840,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = true;
                     },
                     .Call => |c| {
-                        try self.handleCall(w, &stack, &id, c, peek_state, hir);
+                        try self.handleCall(w, &stack, &id, c, hir);
                         last_instruction_was_terminator = false;
                     },
                     .Convert => |conv| {

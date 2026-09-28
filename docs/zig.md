@@ -36,127 +36,66 @@ const n is Math.double(21)
 
 3. The compiler validates these rules before invoking Zig.
 
-## Inline Zig ABI (argv/argc model)
+## Inline Zig ABI
 
-The VM/runtime boundary for inline Zig must use a single argument vector ABI:
+Each module compiles to an object file exporting one symbol per signature,
+`<Module>.<fn>`, and the LLVM backend declares and calls those symbols directly
+(`declare i64 @Math.double(i64)` / `call … @Math.double(...)`). The wrapper
+object is linked into the program next to the runtime — nothing is loaded or
+looked up at run time (no `dlopen`, no `GetProcAddress`), and `doxa run` and
+`doxa compile` build the same objects and issue the same calls.
 
-- `argv`: pointer to an array of ABI values (`DoxaAbiValue`)
-- `argc`: number of entries in `argv`
-- one ABI entry per Doxa call argument, in source order
+### Generated wrapper
 
-Wrappers decode by tag, then call the real Zig function.
-
-### Canonical ABI value layout
-
-```zig
-public const DoxaAbiTag = enum(u32) {
-    Int = 0,
-    Float = 1,
-    Byte = 2,
-    String = 3,
-    Tetra = 4,
-    Nothing = 5,
-};
-
-public const DoxaAbiValue = extern struct {
-    tag: DoxaAbiTag,
-    flags: u32,    // reserved, currently 0
-    payload0: u64, // bits or pointer
-    payload1: u64, // extra payload (String length)
-};
-
-public const DoxaAbiStatus = enum(i32) {
-    ok = 0,
-    bad_arity = 1,
-    bad_tag = 2,
-    bad_value = 3,
-    internal = 255,
-};
-```
-
-Notes:
-- Layout is part of the ABI contract and must remain stable.
-- `extern struct` is required for a predictable C ABI layout.
-- `flags` is reserved for future use (ownership/nullability/union metadata).
-
-### Wrapper export signature
-
-Generated wrapper functions should use:
+For a Doxa-visible `fn f` in module `<Module>`, the generator emits:
 
 ```zig
-public export fn __doxa_export__Module_fn(
-    argv: [*]const DoxaAbiValue,
-    argc: usize,
-    out_ret: *DoxaAbiValue,
-) callconv(.c) DoxaAbiStatus
+pub fn __doxa_native__<Module>_f(a0: T0, …) callconv(.c) R { … }
+comptime { @export(&__doxa_native__<Module>_f, .{ .name = "<Module>.f" }); }
 ```
 
-Behavior:
-- validate `argc` first
-- decode each argument from `argv[i]` by tag
-- on mismatch, return `bad_tag` or `bad_value`
-- call user Zig function only after successful decode
-- encode return into `out_ret`, return `ok`
+The body is a thin adapter from the ABI types below to the user's Zig
+signature: it re-slices string parameters and, for string returns, performs the
+arena clone described under ownership. There is no argument vector, no tag
+decoding, and no status code.
 
-### Native bridge ABI (fixed 64-bit lengths)
+### Passing rules (fixed 64-bit lengths)
 
-The `argv/argc` wrapper above is the VM boundary. `doxa compile` calls the same Zig
-functions directly through generated native wrappers, whose ABI is deliberately
-target-independent:
-
-- Scalars (`int`/`float`/`byte`/`tetra`/`nothing`) pass as their Zig types.
+- Scalars pass as their Zig types: `int` → `i64`, `float` → `f64`,
+  `byte` → `u8`, `tetra` → `bool`, `nothing` → `void`.
 - A `string` parameter passes as `(ptr, u64 len)` — a pointer followed by a
-  **fixed 64-bit** byte length.
+  **fixed 64-bit** byte length — and the wrapper re-slices it to `[]const u8`.
 - A `string` return writes through `out_ptr: *?[*]u8, out_len: *u64` — two
-  pointers, not a `(ptr, len)` pair.
-- The runtime's exported string helpers (`doxa_str_*`, `doxa_*_to_string`, …) use a
-  fixed 64-bit `len: u64` / `*u64` for lengths and byte counts.
+  out-params, not a `(ptr, len)` return pair. The empty string crosses as
+  `(null, 0)` and allocates nothing.
+- The runtime's exported string helpers (`doxa_str_*`, `doxa_*_to_string`, …)
+  use the same fixed 64-bit `len: u64` / `*u64` for lengths and byte counts.
 
 Lengths are 64-bit on every target so the emitted LLVM IR — which declares
-`%DoxaString = { ptr, i64 }` and `i64` length parameters — needs no target-specific
-rewriting. Pointers themselves keep the target's pointer width (32-bit on
-`wasm32`); a pointer stored in a 64-bit `payload0`/`payload1` or runtime length slot
-is narrowed back with `@intCast`.
+`%DoxaString = { ptr, i64 }` and `i64` length parameters — needs no
+target-specific rewriting. Pointers keep the target's pointer width; a pointer
+that meets a 64-bit length slot is widened or narrowed with `@intCast` /
+`@intFromPtr`.
 
-### Encoding rules
+### String rule
 
-- `Int`: `payload0 = bitcast(i64 -> u64)`
-- `Float`: `payload0 = bitcast(f64 -> u64)`
-- `Byte`: `payload0 = u8`
-- `Tetra`: `payload0 = u2` (`0=false`, `1=true`, `2=both`, `3=neither`)
-- `String`: `payload0 = ptr`, `payload1 = len`
-- `Nothing`: payload ignored
-
-String rule:
-- Strings are `(ptr,len)`, not C-strings.
+- Strings cross as pointer + byte length, never as C-strings.
 - Embedded `\0` is valid and must be preserved.
 
-### Ownership and lifetime (v1)
+### Ownership and lifetime
 
-- `argv` values are borrowed for the duration of the call.
-- `out_ret.String` is owned by callee and must be freed by runtime/VM using the module free hook.
-- Non-string scalar returns are by value in `out_ret`.
+- String parameters are borrowed for the duration of the call.
+- A returned string lands in the scope arena active at the call site: the
+  wrapper clones the bytes with `doxa_str_clone_current`, so the value follows
+  the ordinary arena rules in [memory.md](memory.md) — bulk-freed with its
+  scope, and no free hook. Codegen tags the result with that call-site region
+  rather than `Root`.
+- Non-string returns cross by value.
 
 ### Error model
 
-Wrapper returns status; no trap/panic for user type mismatch:
-- `bad_arity`: `argc` does not match expected function arity
-- `bad_tag`: tag incompatible with expected parameter type
-- `bad_value`: malformed payload (e.g. null pointer with non-zero string length)
-- `internal`: unexpected wrapper/runtime failure
-
-The caller (VM/runtime) turns status into a Doxa runtime error.
-
-## Compile/run parity requirement
-
-Both modes must use the same logical ABI:
-- `doxa run`: dynamic library call path uses `argv/argc`
-- `doxa compile`: generated call path should align with the same value model
-
-No per-signature C ABI shims should be required at the VM boundary.
-
-## Migration notes
-
-- Old per-argument exports (`fn(x: i64)`, C-string-only string bridge, 0/1-arg VM specialization) are legacy.
-- New architecture is the `argv/argc` + tagged decode wrapper model.
-- Existing inline Zig source syntax does not need to change.
+There is no runtime ABI error channel to translate into a Doxa error — the
+shape of the call is settled at compile time. Parameter or return types that
+cannot cross the boundary (arrays, structs, maps, enums, functions, unions)
+fail the compile with `E8002` while the wrapper is generated, before Zig is
+invoked.

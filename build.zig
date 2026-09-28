@@ -247,15 +247,41 @@ pub fn build(b: *std.Build) void {
     run_test_lsp.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
     run_test_lsp.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
 
+    // The program suites drive the installed `doxa` binary through hundreds of
+    // subprocesses and run for about a minute. They are their own test
+    // executable, launched with `Step.Run` rather than `addRunArtifact` so that
+    // no `--listen` protocol is used: the runner's 60s response window between
+    // messages is a poor fit for a suite that spawns children for a minute, and
+    // a child that outlives the suite would hold the protocol pipes open.
+    const test_suites_exe = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("test/suites.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    test_suites_exe.root_module.addImport("answers", answers_module);
+    test_suites_exe.root_module.addImport("platform", platform_module);
+    const run_test_suites = std.Build.Step.Run.create(b, "run program suites");
+    run_test_suites.has_side_effects = true;
+    run_test_suites.addArtifactArg(test_suites_exe);
+    run_test_suites.skip_foreign_checks = true;
+    run_test_suites.step.dependOn(&test_install.step);
+    run_test_suites.step.dependOn(b.getInstallStep());
+    run_test_suites.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
+    run_test_suites.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
+
     const test_step = b.step("test", "Run all tests");
     if (can_run_target) {
         test_step.dependOn(&run_test_suite.step);
         test_step.dependOn(&run_test_lsp.step);
+        test_step.dependOn(&run_test_suites.step);
     } else {
         // Cross-target: compile tests + doxa, but don't execute anything.
         test_step.dependOn(&test_install.step);
         test_step.dependOn(&test_suite_exe.step);
         test_step.dependOn(&test_lsp_exe.step);
+        test_step.dependOn(&test_suites_exe.step);
     }
 
     const test_lsp_step = b.step("test-lsp", "Run LSP tests");

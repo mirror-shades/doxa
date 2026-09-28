@@ -24,7 +24,7 @@ Chaining and statement-style:
 if current % 3 equals 0 and current % 5 equals 0 then @print("fizzbuzz\n")
 else if current % 3 equals 0 then @print("fizz\n")
 else if current % 5 equals 0 then @print("buzz\n")
-else @print(current)
+else @print("{current}\n")
 ```
 
 ### as / then / else (type narrowing)

@@ -110,6 +110,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const allocator = arena.allocator();
 
     platform.enableUtf8Console();
+    platform.sealStdHandles();
 
     const verbose = harness.verboseFromEnv(allocator);
 

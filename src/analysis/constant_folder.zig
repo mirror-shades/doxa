@@ -365,14 +365,7 @@ pub const ConstantFolder = struct {
                 }
                 return expr;
             },
-            .BuiltinCall => |*call| {
-                for (call.arguments) |argument| {
-                    _ = try self.foldExpr(argument);
-                }
-                return expr;
-            },
-            .Map => |*map_expr| {
-                for (map_expr.entries) |entry| {
+            .Map => |*map_expr| {                for (map_expr.entries) |entry| {
                     entry.key = try self.foldExpr(entry.key);
                     entry.value = try self.foldExpr(entry.value);
                 }

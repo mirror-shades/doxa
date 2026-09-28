@@ -232,9 +232,10 @@ hello?
 # PACK / UNPACK
 ##
 
-var packArr is [104, 101, 108, 108, 111]
+var packArr :: byte[] is [104, 101, 108, 108, 111]
 @pack(packArr)?
 @pack([])?
+@pack([104, 105])?
 @unpack("hello")?
 @unpack("")?
 
@@ -243,6 +244,35 @@ var packArr is [104, 101, 108, 108, 111]
 ##
 
 (@length(@std()) > 0)?
+
+
+##
+# STRING / BYTE BARRIER
+##
+
+var barrierStr is "hello"
+var barrierBytes :: byte[] is [1, 2]
+var barrierBytes2 :: byte[] is [3]
+
+barrierStr[0]?
+@byte(barrierStr[0])?
+@unpack(barrierStr)[0]?
+(barrierBytes + barrierBytes2)[0]?
+
+
+##
+# UTF-8 IS BYTE-ADDRESSED
+##
+
+var utf8Str is "café"
+var utf8Chars :: string[]
+
+@length(utf8Str)?
+utf8Str[0]?
+@find(utf8Str, "é")?
+@unpack(utf8Str)?
+each c in utf8Str { @push(utf8Chars, c) }
+@length(utf8Chars)?
 
 
 "end"?

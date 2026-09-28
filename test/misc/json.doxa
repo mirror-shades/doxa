@@ -1,0 +1,431 @@
+module std from "std/std.doxa"
+
+function openBrace() returns string {
+    return @pack([123])
+}
+
+function closeBrace() returns string {
+    return @pack([125])
+}
+
+function objectOf(body :: string) returns string {
+    return openBrace() + body + closeBrace()
+}
+
+function arrayOf(body :: string) returns string {
+    return "[" + body + "]"
+}
+
+function noNode(value :: std.json.Node | nothing) returns tetra {
+    match value {
+        std.json.Node then {
+            return false
+        }
+        else {
+            return true
+        }
+    }
+    return false
+}
+
+function noInt(value :: int | nothing) returns tetra {
+    value as int then {
+        return false
+    } else {
+        return true
+    }
+    return false
+}
+
+function noText(value :: string | nothing) returns tetra {
+    value as string then {
+        return false
+    } else {
+        return true
+    }
+    return false
+}
+
+function intEquals(value :: int | nothing, expected :: int) returns tetra {
+    value as int then {
+        if value == expected then return true
+        return false
+    } else {
+        return false
+    }
+    return false
+}
+
+function floatEquals(value :: float | nothing, expected :: float) returns tetra {
+    value as float then {
+        if value == expected then return true
+        return false
+    } else {
+        return false
+    }
+    return false
+}
+
+function textEquals(value :: string | nothing, expected :: string) returns tetra {
+    value as string then {
+        if value == expected then return true
+        return false
+    } else {
+        return false
+    }
+    return false
+}
+
+function booleanIs(value :: tetra | nothing, expected :: tetra) returns tetra {
+    value as tetra then {
+        if value == expected then return true
+        return false
+    } else {
+        return false
+    }
+    return false
+}
+
+function nodeKindIs(value :: std.json.Node | nothing, expected :: std.json.Kind) returns tetra {
+    match value {
+        std.json.Node then {
+            if value.kind() == expected then return true
+            return false
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+function fieldNode(result :: std.json.Node | std.error.StdError, name :: string) returns std.json.Node | nothing {
+    match result {
+        std.json.Node then {
+            return result.field(name)
+        }
+        else {
+            return nothing
+        }
+    }
+    return nothing
+}
+
+function fieldInt(result :: std.json.Node | std.error.StdError, name :: string) returns int | nothing {
+    const node is fieldNode(result, name)
+    match node {
+        std.json.Node then {
+            return node.intValue()
+        }
+        else {
+            return nothing
+        }
+    }
+    return nothing
+}
+
+function fieldFloat(result :: std.json.Node | std.error.StdError, name :: string) returns float | nothing {
+    const node is fieldNode(result, name)
+    match node {
+        std.json.Node then {
+            return node.floatValue()
+        }
+        else {
+            return nothing
+        }
+    }
+    return nothing
+}
+
+function fieldText(result :: std.json.Node | std.error.StdError, name :: string) returns string | nothing {
+    const node is fieldNode(result, name)
+    match node {
+        std.json.Node then {
+            return node.text()
+        }
+        else {
+            return nothing
+        }
+    }
+    return nothing
+}
+
+function fieldBoolean(result :: std.json.Node | std.error.StdError, name :: string) returns tetra | nothing {
+    const node is fieldNode(result, name)
+    match node {
+        std.json.Node then {
+            return node.booleanValue()
+        }
+        else {
+            return nothing
+        }
+    }
+    return nothing
+}
+
+function elementInt(node :: std.json.Node, index :: int) returns int | nothing {
+    const item is node.element(index)
+    match item {
+        std.json.Node then {
+            return item.intValue()
+        }
+        else {
+            return nothing
+        }
+    }
+    return nothing
+}
+
+function elementText(node :: std.json.Node, index :: int) returns string | nothing {
+    const item is node.element(index)
+    match item {
+        std.json.Node then {
+            return item.text()
+        }
+        else {
+            return nothing
+        }
+    }
+    return nothing
+}
+
+function isInvalid(value :: std.json.Node | nothing) returns tetra {
+    match value {
+        std.json.Node then {
+            if value.kind() == std.json.Kind.Invalid then return true
+            return false
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+function invalidData(result :: std.json.Node | std.error.StdError) returns tetra {
+    match result {
+        std.error.StdError then {
+            if result == std.error.IO.InvalidData then return true
+            return false
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+function finishText() returns string | nothing {
+    const out is std.json.finish()
+    out as string then {
+        return out
+    } else {
+        return nothing
+    }
+    return nothing
+}
+
+function scalarsOk() returns tetra {
+    const result is std.json.parse(objectOf("\"n\":-3,\"f\":1.5,\"s\":\"hi\",\"b\":true,\"z\":null"))
+    match result {
+        std.json.Node then {
+            if result.kind() == std.json.Kind.Object then return intEquals(fieldInt(result, "n"), -3) and floatEquals(fieldFloat(result, "f"), 1.5) and textEquals(fieldText(result, "s"), "hi") and booleanIs(fieldBoolean(result, "b"), true) and nodeKindIs(fieldNode(result, "z"), std.json.Kind.Null)
+            return false
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+function objectReadOk() returns tetra {
+    const result is std.json.parse(objectOf("\"u\":" + objectOf("\"id\":7,\"name\":\"ada\"")))
+    match result {
+        std.json.Node then {
+            if result.kind() != std.json.Kind.Object then return false
+            const nested is fieldNode(result, "u")
+            match nested {
+                std.json.Node then {
+                    if nested.kind() != std.json.Kind.Object then return false
+                    return intEquals(fieldInt(nested, "id"), 7) and textEquals(fieldText(nested, "name"), "ada") and textEquals(nested.key(), "u")
+                }
+                else {
+                    return false
+                }
+            }
+            return false
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+function arrayIterateOk() returns tetra {
+    const result is std.json.parse(arrayOf("1,2,3"))
+    match result {
+        std.json.Node then {
+            if not intEquals(result.count(), 3) then return false
+            var total is 0
+            for i while i < 3 do i += 1 {
+                const value is elementInt(result, i) as int else { return false }
+                total += value
+            }
+            if total == 6 then return true
+            return false
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+function missesOk() returns tetra {
+    const result is std.json.parse(objectOf("\"s\":\"hi\",\"a\":" + arrayOf("1,2,3")))
+    match result {
+        std.json.Node then {
+            if result.kind() != std.json.Kind.Object then return false
+            return noNode(result.field("missing")) and noInt(fieldInt(result, "s")) and noNode(result.element(9)) and noText(result.key())
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+function parseErrorOk() returns tetra {
+    return invalidData(std.json.parse("not json"))
+}
+
+function staleNodesOk() returns tetra {
+    const first is std.json.parse(objectOf("\"a\":1"))
+    const stale is fieldNode(first, "a")
+    const second is std.json.parse(objectOf("\"b\":2"))
+    return isInvalid(stale) and intEquals(fieldInt(second, "b"), 2)
+}
+
+function writerExactOk() returns tetra {
+    std.json.beginObject()
+    std.json.writeKey("a")
+    std.json.writeInt(1)
+    std.json.writeKey("b")
+    std.json.beginArray()
+    std.json.writeInt(2)
+    std.json.writeText("x")
+    std.json.end()
+    std.json.end()
+    return textEquals(finishText(), objectOf("\"a\":1,\"b\":" + arrayOf("2,\"x\"")))
+}
+
+function writerEscapesOk() returns tetra {
+    std.json.beginObject()
+    std.json.writeKey("k")
+    std.json.writeText("a\"b\nc\td\\e\u{1}")
+    std.json.end()
+    return textEquals(finishText(), objectOf("\"k\":\"a\\\"b\\nc\\td\\\\e\\u0001\""))
+}
+
+function writerMisuseOk() returns tetra {
+    std.json.writeKey("a")
+    return noText(finishText())
+}
+
+function tetraRejectOk() returns tetra {
+    std.json.writeBoolean(both)
+    return noText(finishText())
+}
+
+function infRejectOk() returns tetra {
+    const source is std.json.parse("1e400")
+    match source {
+        std.json.Node then {
+            const infinity is source.floatValue() as float else { return false }
+            std.json.writeFloat(infinity)
+            if noText(finishText()) then return true
+            return false
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+function roundTripOk() returns tetra {
+    std.json.beginObject()
+    std.json.writeKey("name")
+    std.json.writeText("doxa")
+    std.json.writeKey("n")
+    std.json.writeInt(-7)
+    std.json.writeKey("ok")
+    std.json.writeBoolean(true)
+    std.json.writeKey("none")
+    std.json.writeNull()
+    std.json.writeKey("list")
+    std.json.beginArray()
+    std.json.writeInt(1)
+    std.json.writeText("three")
+    std.json.end()
+    std.json.end()
+    const text is finishText() as string else { return false }
+    const back is std.json.parse(text)
+    match back {
+        std.json.Node then {
+            if back.kind() != std.json.Kind.Object then return false
+            const list is fieldNode(back, "list")
+            match list {
+                std.json.Node then {
+                    return textEquals(fieldText(back, "name"), "doxa") and intEquals(fieldInt(back, "n"), -7) and booleanIs(fieldBoolean(back, "ok"), true) and nodeKindIs(fieldNode(back, "none"), std.json.Kind.Null) and textEquals(elementText(list, 1), "three")
+                }
+                else {
+                    return false
+                }
+            }
+            return false
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+function bulkArrayOk() returns tetra {
+    std.json.beginArray()
+    for i while i < 1000 do i += 1 {
+        std.json.writeInt(i)
+    }
+    std.json.end()
+    const text is finishText() as string else { return false }
+    const back is std.json.parse(text)
+    match back {
+        std.json.Node then {
+            if back.kind() != std.json.Kind.Array then return false
+            return intEquals(back.count(), 1000) and intEquals(elementInt(back, 999), 999)
+        }
+        else {
+            return false
+        }
+    }
+    return false
+}
+
+public entry function main() {
+    if scalarsOk() then @print("scalars ok\n") else @print("scalars failed\n")
+    if objectReadOk() then @print("object read ok\n") else @print("object read failed\n")
+    if arrayIterateOk() then @print("array iterate ok\n") else @print("array iterate failed\n")
+    if missesOk() then @print("misses ok\n") else @print("misses failed\n")
+    if parseErrorOk() then @print("parse error ok\n") else @print("parse error failed\n")
+    if staleNodesOk() then @print("stale nodes ok\n") else @print("stale nodes failed\n")
+    if writerExactOk() then @print("writer exact ok\n") else @print("writer exact failed\n")
+    if writerEscapesOk() then @print("writer escapes ok\n") else @print("writer escapes failed\n")
+    if writerMisuseOk() then @print("writer misuse ok\n") else @print("writer misuse failed\n")
+    if tetraRejectOk() then @print("tetra reject ok\n") else @print("tetra reject failed\n")
+    if infRejectOk() then @print("inf reject ok\n") else @print("inf reject failed\n")
+    if roundTripOk() then @print("round trip ok\n") else @print("round trip failed\n")
+    if bulkArrayOk() then @print("bulk array ok\n") else @print("bulk array failed\n")
+}

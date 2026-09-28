@@ -36,16 +36,21 @@ Here is a list of our intrinsic methods and an explaination of what they do.
 
 ### Collection
 
-- `@length(value :: string | array)` -> `int`
-- `@push(collection :: string | array, value :: any)` -> `nothing`
-- `@pop(collection :: string | array)` -> `any`
+A `string` and a `byte[]` do not share elements: the operations below return `string`s
+when the collection is a `string` and `byte`s when it is a `byte[]`. `@pack` / `@unpack`
+are the only bridge between the two. String positions (an index, `@slice`, `@find`,
+`@remove`) are byte offsets — see [strings.md](strings.md).
+
+- `@length(value :: string | array)` -> `int` (the byte length for a `string`)
+- `@push(collection :: string | array, value :: any)` -> `nothing` — appends; a `string` takes a `string` (concatenates it), an array takes its element type
+- `@pop(collection :: string | array)` -> `string` for a `string`, the element type for an array
 - `@insert(collection :: string | array, index :: int, value :: any)` -> `nothing`
-- `@remove(collection :: string | array, index :: int)` -> `any`
+- `@remove(collection :: string | array, index :: int)` -> `string` for a `string`, the element type for an array
 - `@clear(collection :: string | array)` -> `nothing`
 - `@find(collection :: string | array, value :: any)` -> `int`
-- `@slice(collection :: string | array, start :: int, length :: int)` -> `string | array`
-- `@pack(bytes :: array)` -> `string` — interprets each element as a u8 codepoint
-- `@unpack(word :: string)` -> `array` — decomposes a string into its byte values
+- `@slice(collection :: string | array, start :: int, length :: int)` -> the same collection type
+- `@pack(bytes :: byte[])` -> `string` — interprets each byte as a u8 codepoint
+- `@unpack(word :: string)` -> `byte[]` — decomposes a string into its byte values
 
 ### Type / Conversion
 
@@ -75,12 +80,13 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
   - Fails at compile time for statically-known non-collection values.
   - Can fail at runtime for invalid dynamic values.
 - `@push(collection, value)`
-  - Fails at compile time for some obvious type mismatches (for example, pushing non-string into string).
+  - Fails at compile time when the value type does not match: a non-string pushed into a `string`, or a non-element pushed into a typed array.
   - Can fail at runtime if target is not array/string in dynamic paths.
 - `@pop(collection)`
   - Fails at runtime on empty array/string.
   - Current implementation can cascade into a secondary `StackUnderflow` after the primary runtime error in some statement forms.
 - `@insert(collection, index, value)`
+  - Fails at compile time when the inserted value type does not match (a non-string into a `string`, or a non-element into a typed array).
   - Fails at runtime for negative index, out-of-bounds index, wrong index type, or wrong inserted type for string targets.
   - Current implementation can cascade into `StackUnderflow` after the primary runtime error in some variable-assignment forms.
 - `@remove(collection, index)`
@@ -96,6 +102,7 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
   - Fails at runtime for negative indices/length, out-of-bounds ranges, wrong index types, or non-collection targets.
   - Current implementation can cascade into `StackUnderflow` after the primary runtime error in some statement forms.
 - `@pack(bytes)`
+  - Fails at compile time unless the argument is a `byte[]` (an integer literal array narrows to `byte[]`).
   - Fails at runtime for arrays whose elements cannot be coerced to a u8 codepoint.
 - `@unpack(word)`
   - Does not currently fail for supported runtime values.

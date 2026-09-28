@@ -1,0 +1,61 @@
+# Regression test: formatting a value that is still boxed.
+#
+# `{v}` lowers to `StringOp.ToString`, whose operand on the stack is either a
+# bare enum discriminant or an opaque `%DoxaValue`. It used to read
+# `payload_bits` as an integer whatever the tag, so a string arm printed as the
+# address of its characters and an enum arm printed as its discriminant; the
+# same path serves `@string(v)`. The operand's declared type now drives the
+# rendering: a union with one enum arm switches on the runtime tag and names
+# the variant, everything else goes through the tag dispatcher.
+enum Error {
+    NOT_A_FILE,
+    BAD_ARG,
+}
+enum Alt {
+    FIRST,
+    SECOND,
+}
+
+public entry function main() {
+    var text :: string | int is "hello world"
+    @print("string arm: {text}\n")
+
+    var number :: string | int is 42
+    @print("int arm: {number}\n")
+
+    var boxed :: string | Error is Error.BAD_ARG
+    @print("enum arm: {boxed}\n")
+
+    var e :: Error is Error.BAD_ARG
+    @print("enum var: {e}\n")
+    @print("enum lit: {Error.BAD_ARG}\n")
+
+    # Narrowed, the operand is the member and the union's arm list no longer
+    # describes it: 7 must still print as 7, not as a variant of Error.
+    var mixed :: int | Error is 7
+    mixed as int then @print("narrowed: {mixed}\n") else @print("no-int\n")
+
+    # A union that names an enum while holding something that is not one: the
+    # branch must fall through to the tag dispatcher instead of trusting the
+    # arm list it was given.
+    var still_str :: string | Error is "still a string"
+    @print("other string tag: {still_str}\n")
+
+    var still_int :: int | Error is 99
+    @print("other int tag: {still_int}\n")
+
+    # Two enum arms name no single variant, so only the discriminant is left.
+    var two_arms :: Error | Alt is Error.BAD_ARG
+    @print("two enum arms: {two_arms}\n")
+
+    @print("at string: " + @string(text) + "\n")
+    @print("at string enum: " + @string(boxed) + "\n")
+
+    # The box's addressable copy is hoisted to the entry block, so a loop must
+    # neither grow the shadow stack nor carry last iteration's value over.
+    for i is 0 while i < 2 do i += 1 {
+        @print("loop {i}: ")
+        @print(@string(boxed))
+        @print("\n")
+    }
+}
