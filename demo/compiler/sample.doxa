@@ -1,5 +1,9 @@
+module std from @std()
+
 var hello is "hello... world"
 
 public entry function main() {
     hello?
+    @slice(hello, 4, 5)?
+    std.methods.sliceString(hello, 4, 5)?
  }
