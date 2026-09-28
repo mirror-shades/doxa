@@ -235,6 +235,9 @@ pub fn Methods(comptime Ctx: type) type {
 
         pub fn writeModule(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype) !void {
             try self.computeDescriptorSkips(hir);
+            // Phase D-1 follow-on: compute loop-head variable ranges before any
+            // body is emitted, so `varRange` can answer for loop-carried values.
+            try self.prepareLoopRanges(hir);
             try w.writeAll("declare void @doxa_write_cstr(ptr, i64)\n");
             try w.writeAll("declare void @doxa_write_raw(ptr)\n");
             try w.writeAll("declare void @doxa_write_stderr(ptr, i64)\n");
@@ -331,6 +334,15 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare ptr @doxa_array_range(i64, i64)\n");
             try w.writeAll("declare void @doxa_trap_unreachable()\n");
             try w.writeAll("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)\n");
+            // Phase D-1: the checked arithmetic lowering uses the overflow
+            // intrinsics and a real trap. Declared only when the policy is
+            // trapping, so a wrapping build carries no dead intrinsic.
+            if (self.arith_overflow == .Trap) {
+                try w.writeAll("declare void @llvm.trap()\n");
+                try w.writeAll("declare { i64, i1 } @llvm.sadd.with.overflow.i64(i64, i64)\n");
+                try w.writeAll("declare { i64, i1 } @llvm.ssub.with.overflow.i64(i64, i64)\n");
+                try w.writeAll("declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)\n");
+            }
 
             // Inline zig module functions (external): declare with typed parameters
             // for correct ABI on all architectures.
@@ -735,7 +747,7 @@ pub fn Methods(comptime Ctx: type) type {
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
                     .ArraySet => try self.emitArraySet(w, &stack, &id),
                     .ArrayGet => try self.emitArrayGet(w, &stack, &id),
-                    .ArrayCompoundAssign => |a| try self.emitArrayGetAndArith(w, &stack, &id, a.op),
+                    .ArrayCompoundAssign => |a| try self.emitArrayGetAndArith(w, &stack, &id, a.op, &current_block),
                     .ArrayLen => try self.emitArrayLen(w, &stack, &id),
                     .ArrayPush => try self.emitArrayPush(w, &stack, &id),
                     .ArrayPop => try self.emitArrayPop(w, &stack, &id),
@@ -761,7 +773,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .Arith => |a| {
-                        try self.handleArith(w, &stack, &id, a);
+                        try self.handleArith(w, &stack, &id, a, &current_block);
                         last_instruction_was_terminator = false;
                     },
                     .Compare => |cmp| {
@@ -789,6 +801,11 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(line);
                         current_block = lbl.name;
                         self.current_block = lbl.name;
+                        if (std.mem.startsWith(u8, lbl.name, "loop_start")) {
+                            if (self.loop_head_envs.getPtr(lbl.name)) |m| self.active_loop_range = m;
+                        } else if (std.mem.startsWith(u8, lbl.name, "loop_exit")) {
+                            self.active_loop_range = null;
+                        }
                         last_instruction_was_terminator = false;
                         try self.restoreStackForLabel(&merge_map, lbl.name, &stack, &id, w);
                     },
@@ -840,7 +857,14 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = true;
                     },
                     .Call => |c| {
+                        const call_range = self.computeCallResultRange(c, &stack);
                         try self.handleCall(w, &stack, &id, c, hir);
+                        if (call_range) |r| {
+                            if (stack.items.len > 0) {
+                                const top = &stack.items[stack.items.len - 1];
+                                if (top.ty == .I64 or top.ty == .I8) top.int_range = r;
+                            }
+                        }
                         last_instruction_was_terminator = false;
                     },
                     .Convert => |conv| {

@@ -188,6 +188,25 @@ const TargetTriple = struct {
         }));
     }
 
+    /// CPU features for a *native* build. `zig cc` / `zig build-obj` stop
+    /// auto-detecting the host CPU the moment an explicit `-target` is given
+    /// (which the native path must pass so the bundled Zig resolves its own C
+    /// runtime objects), so a native build has to ask for the host CPU
+    /// explicitly. Without this, native Doxa binaries are baseline x86-64
+    /// while a plain `zig cc` C twin gets the host's AVX2 — a target-feature
+    /// mismatch that biases the benchmark suite against Doxa. Cross builds
+    /// name their target's baseline; the CLI has no per-target CPU knob yet.
+    fn appendCpuArg(self: TargetTriple, args: *std.array_list.Managed([]const u8)) !void {
+        if (!self.isCross()) try args.append("-mcpu=native");
+    }
+
+    /// The CPU component of an artifact cache key: `native` for a host build,
+    /// empty for a cross build (whose baseline is already captured by the
+    /// toolchain/triple).
+    fn cpuKey(self: TargetTriple) []const u8 {
+        return if (self.isCross()) "" else "native";
+    }
+
     /// The string passed to `-target`, resolved the same way for native and
     /// cross builds. Used verbatim in cache keys so an artifact never outlives
     /// the target it was built for.
@@ -501,12 +520,14 @@ fn runtimeObjectKey(
     root_source: []const u8,
     toolchain: []const u8,
     target_arg: []const u8,
+    cpu_key: []const u8,
     opt_flag: []const u8,
     include_dirs: []const []const u8,
 ) hashing.Digest {
-    var kb = hashing.KeyBuilder.init("doxa-runtime-object-v1");
+    var kb = hashing.KeyBuilder.init("doxa-runtime-object-v2");
     kb.addBytes(toolchain);
     kb.addBytes(target_arg);
+    kb.addBytes(cpu_key);
     kb.addBytes(opt_flag);
     kb.addBytes(root_source);
     for (include_dirs) |dir| kb.addBytes(dir);
@@ -519,12 +540,14 @@ fn userObjectKey(
     ll_source: []const u8,
     toolchain: []const u8,
     target_arg: []const u8,
+    cpu_key: []const u8,
     clang_flag: []const u8,
     include_dirs: []const []const u8,
 ) hashing.Digest {
-    var kb = hashing.KeyBuilder.init("doxa-user-object-v1");
+    var kb = hashing.KeyBuilder.init("doxa-user-object-v2");
     kb.addBytes(toolchain);
     kb.addBytes(target_arg);
+    kb.addBytes(cpu_key);
     kb.addBytes(clang_flag);
     for (include_dirs) |dir| kb.addBytes(dir);
     kb.addBytes(ll_source);
@@ -583,6 +606,8 @@ fn toolchainIdentity(io: std.Io, allocator: std.mem.Allocator, zig_exe_path: []c
 // The named `--opt-mode=` presets tie the axes together the way zig's C code
 // does (`safe` == `-O2`, `fast` == `-O3`, `small` == `-Oz`); the numeric form
 // picks a clang level and the zig mode that suits it.
+const OverflowBehavior = @import("./codegen/hir/soxa_instructions.zig").OverflowBehavior;
+
 const OptLevel = enum {
     o0,
     o1,
@@ -631,6 +656,18 @@ const Opt = struct {
     // zig optimization mode flag, forwarded to the runtime/link steps.
     fn zigFlag(self: Opt) []const u8 {
         return self.mode.zigFlag();
+    }
+
+    // Phase D-1: the integer-overflow policy that rides the safety axis. The
+    // checked modes (`debug`, `safe`) trap; the unchecked ones (`fast`,
+    // `small`) wrap, matching the C twins the benchmark suite compares against.
+    // `--opt=2`/`-O2` and up select `fast`, so the benchmark canaries see
+    // wrapping arithmetic exactly as C does.
+    fn arithOverflow(self: Opt) OverflowBehavior {
+        return switch (self.mode) {
+            .debug, .safe => .Trap,
+            .fast, .small => .Wrap,
+        };
     }
 
     fn fromMode(text: []const u8) ?Opt {
@@ -685,6 +722,10 @@ fn emitInspectionArtifact(io: std.Io, zig_exe_path: []const u8, cli_options: *co
     try args.appendSlice(&[_][]const u8{ in_name, "-o", out_name });
 
     try target.appendTargetArg(&args);
+    try target.appendCpuArg(&args);
+    // Keep the inspected artifact on the same footing as the object build:
+    // bit-identical float results come from refusing FMA contraction on both.
+    try args.append("-ffp-contract=off");
     try args.append(cli_options.opt.clangFlag());
 
     var child = try std.process.spawn(io, .{
@@ -788,7 +829,7 @@ fn compileToNative(
                 }
             }
         }
-        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getStructTable())), zig_fn_param_types, hir_program.reflected_structs, hir_program.force_struct_descriptors);
+        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getStructTable())), zig_fn_param_types, hir_program.reflected_structs, hir_program.force_struct_descriptors, cli_options.opt.arithOverflow());
         try printer.emitToFile(hir_program, ir_path);
     }
 
@@ -796,7 +837,7 @@ fn compileToNative(
     const obj_path = blk: {
         const ll_source = try std.Io.Dir.cwd().readFileAlloc(io, ir_path, allocator, .unlimited);
         defer allocator.free(ll_source);
-        const key = userObjectKey(ll_source, toolchain, target_arg, cli_options.opt.clangFlag(), cli_options.include_dirs.items);
+        const key = userObjectKey(ll_source, toolchain, target_arg, target.cpuKey(), cli_options.opt.clangFlag(), cli_options.include_dirs.items);
         if (artifact_cache.contains(key, obj_ext)) break :blk try artifact_cache.pathAlloc(key, obj_ext);
 
         const staged = try artifact_cache.stagingPathAlloc(key, obj_ext);
@@ -808,6 +849,10 @@ fn compileToNative(
         defer args.deinit();
         try args.appendSlice(&[_][]const u8{ zig_exe_path, "cc", "-Wno-override-module", "-Wno-unused-command-line-argument", "-c", ir_path, "-o", staged });
         try target.appendTargetArg(&args);
+        try target.appendCpuArg(&args);
+        // Match the C twin's `-ffp-contract=off`: Doxa never forms FMAs, and
+        // refusing contraction keeps float workloads bit-identical.
+        try args.append("-ffp-contract=off");
         try args.append(cli_options.opt.clangFlag());
         var include_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
         defer {
@@ -866,7 +911,7 @@ fn compileToNative(
         const root_source = try buildRootSource(allocator);
         defer allocator.free(root_source);
 
-        const key = runtimeObjectKey(runtime_sources, root_source, toolchain, target_arg, cli_options.opt.zigFlag(), cli_options.include_dirs.items);
+        const key = runtimeObjectKey(runtime_sources, root_source, toolchain, target_arg, target.cpuKey(), cli_options.opt.zigFlag(), cli_options.include_dirs.items);
         if (artifact_cache.contains(key, obj_ext)) break :blk try artifact_cache.pathAlloc(key, obj_ext);
 
         profiler.begin("runtime-stage");
@@ -887,6 +932,7 @@ fn compileToNative(
         defer std.heap.page_allocator.free(emit_flag);
         try args.appendSlice(&[_][]const u8{ zig_exe_path, "build-obj", root_path, emit_flag });
         try target.appendTargetArg(&args);
+        try target.appendCpuArg(&args);
         try args.append(cli_options.opt.zigFlag());
         try args.append("-lc");
         var include_flags = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
@@ -931,6 +977,7 @@ fn compileToNative(
         defer std.heap.page_allocator.free(emit_flag);
         try args_ln.append(emit_flag);
         try target.appendTargetArg(&args_ln);
+        try target.appendCpuArg(&args_ln);
         try args_ln.append(cli_options.opt.zigFlag());
         try args_ln.append("-lc");
         if (target.isWindows() and inline_zig_wrapper_paths.len > 0) {
