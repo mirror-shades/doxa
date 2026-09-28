@@ -9,6 +9,7 @@ pub fn Methods(comptime Ctx: type) type {
     const EnumVariantMeta = Ctx.EnumVariantMeta;
     const Region = Ctx.Region;
     const IntRange = Ctx.IntRange;
+    const range_flow = @import("./range_flow.zig");
 
     return struct {
         pub fn formatFloatLiteral(self: *IRPrinter, value: f64) ![]u8 {
@@ -643,7 +644,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn init(io: std.Io, allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, struct_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType), reflected_structs: ?*const std.StringHashMap(void), force_struct_descriptors: bool) IRPrinter {
+        pub fn init(io: std.Io, allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, struct_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType), reflected_structs: ?*const std.StringHashMap(void), force_struct_descriptors: bool, arith_overflow: Ctx.OverflowBehavior) IRPrinter {
             return .{
                 .allocator = allocator,
                 .io = io,
@@ -682,6 +683,8 @@ pub fn Methods(comptime Ctx: type) type {
                 .reflected_structs = reflected_structs,
                 .force_struct_descriptors = force_struct_descriptors,
                 .skip_descriptor_structs = std.StringHashMap(void).init(allocator),
+                .arith_overflow = arith_overflow,
+                .loop_head_envs = std.StringHashMap(std.StringHashMap(IntRange)).init(allocator),
             };
         }
 
@@ -746,6 +749,13 @@ pub fn Methods(comptime Ctx: type) type {
                 entry.value_ptr.deinit(self.allocator);
             }
             self.enum_print_map.deinit();
+
+            var loop_it = self.loop_head_envs.iterator();
+            while (loop_it.next()) |entry| {
+                entry.value_ptr.deinit();
+            }
+            self.loop_head_envs.deinit();
+            if (self.range_ctx) |*ctx| ctx.deinit();
         }
 
         /// Region class of the arena a fresh heap value is allocated into at the
@@ -871,9 +881,69 @@ pub fn Methods(comptime Ctx: type) type {
         /// the same block makes the rule and the walk agree: a range travels
         /// exactly as far as this single pass can justify.
         pub fn varRange(self: *IRPrinter, var_name: []const u8) IntRange {
+            // Inside an analysed loop the loop-head fixpoint range is a fact
+            // valid at every point in the body (`range_flow.zig`), so it takes
+            // precedence over the block-local walk, which cannot see the back
+            // edge yet.
+            if (self.active_loop_range) |m| {
+                if (m.get(var_name)) |r| return r;
+            }
             const block = self.var_range_blocks.get(var_name) orelse return .unknown();
             if (!std.mem.eql(u8, block, self.current_block)) return .unknown();
             return self.var_ranges.get(var_name) orelse .unknown();
+        }
+
+        /// Phase D-1 follow-on: compute every function's loop-head variable
+        /// ranges once, before emission. Each is keyed by its `loop_start_*`
+        /// label so the emitter can activate it as it reaches that label.
+        pub fn prepareLoopRanges(self: *IRPrinter, hir: *const HIR.HIRProgram) !void {
+            if (self.range_ctx == null) {
+                self.range_ctx = try range_flow.Context.init(self.allocator, hir);
+            }
+            const ctx = &self.range_ctx.?;
+            for (hir.function_table) |func| {
+                const r = ctx.funcRange(func) orelse continue;
+                var map = try range_flow.analyzeLoops(ctx, self.allocator, func, r.start, r.end);
+                var it = map.iterator();
+                while (it.next()) |entry| {
+                    try self.loop_head_envs.put(entry.key_ptr.*, entry.value_ptr.*);
+                }
+                // The inner maps are moved into `loop_head_envs`; only the
+                // outer map's own storage is released here.
+                map.deinit();
+            }
+        }
+
+        /// Phase D-1 follow-on: the callee's return range for a call site,
+        /// computed from the argument ranges currently on the stack. `null`
+        /// when the callee cannot be modelled; the caller leaves the result
+        /// range as the emitter set it.
+        pub fn computeCallResultRange(self: *IRPrinter, c: std.meta.fieldInfo(Ctx.HIRInstruction, .Call).type, stack: *const std.array_list.Managed(StackVal)) ?IntRange {
+            if (c.call_kind != .LocalFunction) return null;
+            const fi = c.function_index orelse return null;
+            const n = c.arg_count;
+            if (stack.items.len < n) return null;
+            const ctx = &(self.range_ctx orelse return null);
+            const args = stack.items[stack.items.len - n ..];
+            // The summary evaluates the callee over the argument ranges as the
+            // call site presents them. Only trust it when every argument is a
+            // plain `i64` and every parameter is `int`: a byte/tetra/float
+            // coercion inside `handleCall` could change the value a range
+            // describes, and the interpreter does not model those coercions.
+            if (fi >= ctx.hir.function_table.len) return null;
+            const callee = ctx.hir.function_table[fi];
+            for (callee.param_types) |pt| {
+                if (pt != .Int) return null;
+            }
+            for (args) |sv| {
+                if (sv.ty != .I64) return null;
+            }
+            const arg_ranges = self.allocator.alloc(IntRange, n) catch return null;
+            defer self.allocator.free(arg_ranges);
+            for (args, 0..) |sv, i| arg_ranges[i] = sv.int_range;
+            var guard = std.StringHashMap(void).init(self.allocator);
+            defer guard.deinit();
+            return range_flow.returnRange(ctx, self.allocator, fi, arg_ranges, &guard, 0);
         }
 
         /// A1 static decision for a store into a *global* (destination is the

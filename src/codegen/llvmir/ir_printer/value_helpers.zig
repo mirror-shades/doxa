@@ -560,6 +560,75 @@ pub fn Methods(comptime Ctx: type) type {
         };
     }
 
+    /// Whether two HIR types name the same boxed member. Groups, unions,
+    /// enums and structs are distinguished by id; primitives never box.
+    fn sameBoxedMember(a: HIR.HIRType, b: HIR.HIRType) bool {
+        return switch (a) {
+            .Struct => |id| b == .Struct and b.Struct == id,
+            .Enum => |id| b == .Enum and b.Enum == id,
+            .Group => |id| b == .Group and b.Group == id,
+            .Union => |u| b == .Union and b.Union.id == u.id,
+            else => false,
+        };
+    }
+
+    /// Member index of a boxed `source` type inside `target`. A union picks
+    /// the member that is the source; a group picks the member declared with
+    /// the same kind and id (`docs/groups.md` §6). `null` when the source has
+    /// no seat, in which case the box is left alone.
+    fn findBoxedMemberIndex(self: *IRPrinter, target: HIR.HIRType, source: HIR.HIRType) ?u32 {
+        switch (target) {
+            .Union => |u| {
+                for (u.members, 0..) |m_ptr, idx| {
+                    if (sameBoxedMember(m_ptr.*, source)) return @intCast(idx);
+                }
+                return null;
+            },
+            .Group => |gid| {
+                const member_kind: GroupTable.MemberKind = switch (source) {
+                    .Enum => .Enum,
+                    .Struct => .Struct,
+                    .Group => .Group,
+                    else => return null,
+                };
+                const member_id: u32 = switch (source) {
+                    .Enum => |id| id,
+                    .Struct => |id| id,
+                    .Group => |id| id,
+                    else => return null,
+                };
+                const gt = asGroupTable(self.group_table) orelse return null;
+                const members = gt.members(gid) orelse return null;
+                for (members, 0..) |member, idx| {
+                    if (member.kind == member_kind and member.id == member_id) return @intCast(idx);
+                }
+                return null;
+            },
+            else => return null,
+        }
+    }
+
+    /// Re-pack a boxed value's `reserved` field for `target`'s member `idx`.
+    /// Only the reserved word changes; the tag and payload describe the same
+    /// member and are carried over untouched.
+    fn retagBoxedValue(self: *IRPrinter, w: anytype, value: StackVal, target: HIR.HIRType, idx: u32, id: *usize) !StackVal {
+        const type_id = boxedTypeId(target) orelse return value;
+        const uid = type_id & (DoxaUnionMeta.union_id_mask >> DoxaUnionMeta.union_id_shift);
+        const reserved_const: u32 = DoxaUnionMeta.is_union_bit | (uid << DoxaUnionMeta.union_id_shift) | (idx & DoxaUnionMeta.member_index_mask);
+
+        const reserved_reg = try self.nextTemp(id);
+        const reserved_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ reserved_reg, reserved_const });
+        defer self.allocator.free(reserved_line);
+        try w.writeAll(reserved_line);
+
+        const retagged = try self.nextTemp(id);
+        const line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n", .{ retagged, value.name, reserved_reg });
+        defer self.allocator.free(line);
+        try w.writeAll(line);
+
+        return StackVal{ .name = retagged, .ty = .Value, .boxed_type = target };
+    }
+
     pub fn buildDoxaValue(
         self: *IRPrinter,
         w: anytype,
@@ -567,8 +636,27 @@ pub fn Methods(comptime Ctx: type) type {
         target_union: ?HIR.HIRType,
         id: *usize,
     ) !StackVal {
-        // If it's already a canonical value, reuse it.
-        if (value.ty == .Value) return value;
+        // If it's already a canonical value, reuse it — unless it is being
+        // placed into a different box (a group returned through a union, say).
+        // The box's reserved word names its own member index; leaving it would
+        // hand the caller the index of the source box, not the target's.
+        if (value.ty == .Value) {
+            if (target_union) |ut| {
+                if (value.boxed_type) |src| {
+                    const same_box = switch (ut) {
+                        .Union => src == .Union and src.Union.id == ut.Union.id,
+                        .Group => src == .Group and src.Group == ut.Group,
+                        else => false,
+                    };
+                    if (!same_box) {
+                        if (findBoxedMemberIndex(self, ut, src)) |idx| {
+                            return try retagBoxedValue(self, w, value, ut, idx, id);
+                        }
+                    }
+                }
+            }
+            return value;
+        }
 
         // Determine tag based on stack type (must match DoxaTag in doxa_rt.zig)
         const tag = DoxaTag;

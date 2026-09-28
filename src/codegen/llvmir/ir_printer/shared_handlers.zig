@@ -20,7 +20,9 @@ pub fn Methods(comptime Ctx: type) type {
     const StackVal = Ctx.StackVal;
     const IntRange = Ctx.IntRange;
     const signFacts = @import("./int_range.zig").signFacts;
+    const arithRange = @import("./int_range.zig").arithRange;
     const FlooredArith = @import("./int_range.zig").Methods(Ctx);
+    const OverflowArith = @import("./overflow.zig").Methods(Ctx);
     const internPeekString = Ctx.internPeekString;
 
     return struct {
@@ -177,7 +179,7 @@ pub fn Methods(comptime Ctx: type) type {
             std.mem.swap(StackVal, &stack.items[top_idx], &stack.items[top_idx - 1]);
         }
 
-        pub fn handleArith(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, a: std.meta.fieldInfo(HIRInstruction, .Arith).type) !void {
+        pub fn handleArith(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, a: std.meta.fieldInfo(HIRInstruction, .Arith).type, current_block: *[]const u8) !void {
             if (stack.items.len < 2) return;
             var rhs = stack.items[stack.items.len - 1];
             var lhs = stack.items[stack.items.len - 2];
@@ -222,27 +224,18 @@ pub fn Methods(comptime Ctx: type) type {
                         // hole in the sequence.
                         const result_name: []const u8 = switch (a.op) {
                             .Add => blk: {
-                                const name = try self.nextTemp(id);
-                                const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                defer self.allocator.free(line);
-                                try w.writeAll(line);
-                                result_range = IntRange.add(lhs.int_range, rhs.int_range);
+                                const name = try OverflowArith.emitIntArith(self, w, id, .Add, lhs.name, rhs.name, lhs.int_range, rhs.int_range, current_block);
+                                result_range = arithRange(.Add, .Int, lhs.int_range, rhs.int_range);
                                 break :blk name;
                             },
                             .Sub => blk: {
-                                const name = try self.nextTemp(id);
-                                const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                defer self.allocator.free(line);
-                                try w.writeAll(line);
-                                result_range = IntRange.sub(lhs.int_range, rhs.int_range);
+                                const name = try OverflowArith.emitIntArith(self, w, id, .Sub, lhs.name, rhs.name, lhs.int_range, rhs.int_range, current_block);
+                                result_range = arithRange(.Sub, .Int, lhs.int_range, rhs.int_range);
                                 break :blk name;
                             },
                             .Mul => blk: {
-                                const name = try self.nextTemp(id);
-                                const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
-                                defer self.allocator.free(line);
-                                try w.writeAll(line);
-                                result_range = IntRange.mul(lhs.int_range, rhs.int_range);
+                                const name = try OverflowArith.emitIntArith(self, w, id, .Mul, lhs.name, rhs.name, lhs.int_range, rhs.int_range, current_block);
+                                result_range = arithRange(.Mul, .Int, lhs.int_range, rhs.int_range);
                                 break :blk name;
                             },
                             .Div => blk: {
@@ -257,26 +250,17 @@ pub fn Methods(comptime Ctx: type) type {
                                 const line = try std.fmt.allocPrint(self.allocator, "  {s} = sdiv i64 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                                 defer self.allocator.free(line);
                                 try w.writeAll(line);
-                                if (rhs.int_range.konst) |c| {
-                                    if (c > 0) result_range = IntRange.flooredDivByConst(lhs.int_range, c);
-                                }
+                                result_range = arithRange(.Div, .Int, lhs.int_range, rhs.int_range);
                                 break :blk name;
                             },
                             .IntDiv => blk: {
                                 const name = try FlooredArith.emitFlooredDiv(self, w, id, lhs.name, rhs.name, signFacts(lhs.int_range, rhs.int_range));
-                                if (rhs.int_range.konst) |c| {
-                                    if (c > 0) result_range = IntRange.flooredDivByConst(lhs.int_range, c);
-                                }
+                                result_range = arithRange(.IntDiv, .Int, lhs.int_range, rhs.int_range);
                                 break :blk name;
                             },
                             .Mod => blk: {
                                 const name = try FlooredArith.emitFlooredMod(self, w, id, lhs.name, rhs.name, signFacts(lhs.int_range, rhs.int_range));
-                                // A positive constant modulus pins the residue
-                                // to `[0, c)`, which is what keeps a bounded
-                                // carry chain bounded.
-                                if (rhs.int_range.konst) |c| {
-                                    if (c > 0) result_range = IntRange.flooredModByConst(lhs.int_range, c);
-                                }
+                                result_range = arithRange(.Mod, .Int, lhs.int_range, rhs.int_range);
                                 break :blk name;
                             },
                             else => unreachable,
@@ -365,19 +349,19 @@ pub fn Methods(comptime Ctx: type) type {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            result_range = .below(256);
+                            result_range = arithRange(a.op, .Byte, lhs.int_range, rhs.int_range);
                         },
                         .Sub => {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            result_range = .below(256);
+                            result_range = arithRange(a.op, .Byte, lhs.int_range, rhs.int_range);
                         },
                         .Mul => {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = mul i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
                             defer self.allocator.free(line);
                             try w.writeAll(line);
-                            result_range = .below(256);
+                            result_range = arithRange(a.op, .Byte, lhs.int_range, rhs.int_range);
                         },
                         .Div => {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = udiv i8 {s}, {s}\n", .{ name, lhs.name, rhs.name });
@@ -2185,12 +2169,11 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                     }
                     if (declared_type) |decl| {
-                        if (arg.ty == .Value and !IRPrinter.isBoxedMemberType(decl)) {
-                            arg = try self.unwrapDoxaValueToType(w, arg, decl, id);
-                            arg_ptr.* = arg;
-                        }
-                        if (arg.ty != .Value and IRPrinter.isBoxedMemberType(decl)) {
+                        if (IRPrinter.isBoxedMemberType(decl)) {
                             arg = try self.buildDoxaValue(w, arg, decl, id);
+                            arg_ptr.* = arg;
+                        } else if (arg.ty == .Value) {
+                            arg = try self.unwrapDoxaValueToType(w, arg, decl, id);
                             arg_ptr.* = arg;
                         }
                     }
@@ -2377,6 +2360,9 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(call_line);
                 const stack_ty = self.hirTypeToStackType(actual_return_type);
                 var pushed = StackVal{ .name = result_name, .ty = stack_ty };
+                if (IRPrinter.isBoxedMemberType(actual_return_type)) {
+                    pushed.boxed_type = actual_return_type;
+                }
                 // A defined Doxa function deep-copies its heap return value into
                 // the arena active at this call site (clone-on-return), so the
                 // result lives in the current region (A1).

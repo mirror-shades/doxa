@@ -331,6 +331,13 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                         current_block = lbl.name;
                         self.current_block = lbl.name;
+                        // Phase D-1 follow-on: activate the precomputed
+                        // loop-head ranges while inside the loop.
+                        if (std.mem.startsWith(u8, lbl.name, "loop_start")) {
+                            if (self.loop_head_envs.getPtr(lbl.name)) |m| self.active_loop_range = m;
+                        } else if (std.mem.startsWith(u8, lbl.name, "loop_exit")) {
+                            self.active_loop_range = null;
+                        }
                         try self.restoreStackForLabel(&merge_map, lbl.name, &stack, &id, w);
                     },
                     .Const => |c| {
@@ -350,7 +357,7 @@ pub fn Methods(comptime Ctx: type) type {
                         if (ret.has_value and stack.items.len > 0) {
                             var v = stack.items[stack.items.len - 1];
                             stack.items.len -= 1;
-                            if (IRPrinter.isBoxedMemberType(func.return_type) and v.ty != .Value) {
+                            if (IRPrinter.isBoxedMemberType(func.return_type)) {
                                 v = try self.buildDoxaValue(w, v, func.return_type, &id);
                             }
                             if (v.ty != target_return_stack_type) {
@@ -584,6 +591,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 .struct_type_name = entry.struct_type_name,
                                 .fixed_array_depth = entry.fixed_array_depth,
                                 .fixed_array_sizes = entry.fixed_array_sizes,
+                                .boxed_type = entry.boxed_declared_type,
                             };
                             if (entry.stack_type == .Value) {
                                 if (try self.loadNarrowedUnion(w, loaded, lv.var_name, &id)) |unwrapped| {
@@ -790,7 +798,7 @@ pub fn Methods(comptime Ctx: type) type {
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
                     .ArraySet => try self.emitArraySet(w, &stack, &id),
                     .ArrayGet => try self.emitArrayGet(w, &stack, &id),
-                    .ArrayCompoundAssign => |a| try self.emitArrayGetAndArith(w, &stack, &id, a.op),
+                    .ArrayCompoundAssign => |a| try self.emitArrayGetAndArith(w, &stack, &id, a.op, &current_block),
                     .ArrayLen => try self.emitArrayLen(w, &stack, &id),
                     .ArrayPush => try self.emitArrayPush(w, &stack, &id),
                     .ArrayPop => try self.emitArrayPop(w, &stack, &id),
@@ -1051,7 +1059,14 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .Call => |c| {
+                        const call_range = self.computeCallResultRange(c, &stack);
                         try self.handleCall(w, &stack, &id, c, hir);
+                        if (call_range) |r| {
+                            if (stack.items.len > 0) {
+                                const top = &stack.items[stack.items.len - 1];
+                                if (top.ty == .I64 or top.ty == .I8) top.int_range = r;
+                            }
+                        }
                         last_instruction_was_terminator = false;
                     },
                     .Halt => {
@@ -1059,7 +1074,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = true;
                     },
                     .Arith => |a| {
-                        try self.handleArith(w, &stack, &id, a);
+                        try self.handleArith(w, &stack, &id, a, &current_block);
                         last_instruction_was_terminator = false;
                     },
                     .Compare => |cmp| {

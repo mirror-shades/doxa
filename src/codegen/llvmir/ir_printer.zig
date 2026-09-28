@@ -28,6 +28,7 @@ pub const IRPrinter = struct {
         pub const EnumVariantMeta = Self.EnumVariantMeta;
         pub const escapeLLVMString = Self.escapeLLVMString;
         pub const internPeekString = Self.internPeekString;
+        pub const OverflowBehavior = Self.OverflowBehavior;
     };
 
     const CoreMethods = @import("./ir_printer/core.zig").Methods(Ctx);
@@ -57,6 +58,8 @@ pub const IRPrinter = struct {
     pub const recordVarRegion = CoreMethods.recordVarRegion;
     pub const recordVarRange = CoreMethods.recordVarRange;
     pub const varRange = CoreMethods.varRange;
+    pub const prepareLoopRanges = CoreMethods.prepareLoopRanges;
+    pub const computeCallResultRange = CoreMethods.computeCallResultRange;
     pub const rehomeForLocalStore = CoreMethods.rehomeForLocalStore;
     pub const rehomeForGlobalStore = CoreMethods.rehomeForGlobalStore;
 
@@ -252,6 +255,21 @@ pub const IRPrinter = struct {
     /// Phase D: the basic block currently being emitted. Mirrors the
     /// `current_block` the emitter threads through its own helpers.
     current_block: []const u8 = "entry",
+    /// Phase D-1: how integer `add`/`sub`/`mul` handle signed overflow. Chosen
+    /// once from the compile mode (trap in checked modes, wrap in fast ones) and
+    /// consulted by the arithmetic lowering. `Saturate` is a valid member of the
+    /// policy but no mode selects it yet.
+    arith_overflow: OverflowBehavior = .Wrap,
+    /// Phase D-1 follow-on: the program-wide label/function index used by the
+    /// loop-carried and interprocedural range analysis. Built once before
+    /// emission; `null` until then.
+    range_ctx: ?@import("./ir_printer/range_flow.zig").Context = null,
+    /// Phase D-1 follow-on: loop-head variable ranges, keyed by `loop_start_*`
+    /// label. The emitter activates the entry matching the loop it is emitting.
+    loop_head_envs: std.StringHashMap(std.StringHashMap(IntRange)),
+    /// The loop-head range map currently in scope, or `null` outside a loop.
+    /// Consulted by `varRange` before the block-local walk.
+    active_loop_range: ?*const std.StringHashMap(IntRange) = null,
     /// B2: struct type names that reach a reflection site anywhere in the program
     /// (borrowed from the generator). Such a type must keep its descriptor.
     reflected_structs: ?*const std.StringHashMap(void) = null,
@@ -279,6 +297,10 @@ pub const IRPrinter = struct {
     /// Phase D value-range lattice, re-exported from the emitter module that
     /// owns it so `StackVal` and the per-function map can name it.
     pub const IntRange = Ctx.IntRange;
+
+    /// Phase D-1 integer-overflow policy. Re-exported from the HIR so the
+    /// emitter and its callers agree on one type.
+    pub const OverflowBehavior = @import("../hir/soxa_instructions.zig").OverflowBehavior;
 
     /// Static region class of a heap value's allocating arena, relative to the
     /// function being emitted (A1 region analysis). A value outlives any store
@@ -315,6 +337,11 @@ pub const IRPrinter = struct {
         string_literal_value: ?[]const u8 = null,
         fixed_array_depth: u3 = 0,
         fixed_array_sizes: [4]u32 = [_]u32{0} ** 4,
+        /// The boxed type a `.Value` was built for (a union or group). Carried
+        /// beside the aggregate so re-boxing it into a different union can
+        /// re-pack the member index from the source type instead of silently
+        /// keeping the first box's index.
+        boxed_type: ?HIR.HIRType = null,
     };
 
     pub const VariableInfo = struct {
