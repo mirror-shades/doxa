@@ -304,6 +304,25 @@ const shared_cases = [_]Case{
             .{ .value = "true" },
         },
     },
+    .{
+        .name = "json",
+        .path = "./test/misc/json.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "scalars ok" },
+            .{ .value = "object read ok" },
+            .{ .value = "array iterate ok" },
+            .{ .value = "misses ok" },
+            .{ .value = "parse error ok" },
+            .{ .value = "stale nodes ok" },
+            .{ .value = "writer exact ok" },
+            .{ .value = "writer escapes ok" },
+            .{ .value = "writer misuse ok" },
+            .{ .value = "tetra reject ok" },
+            .{ .value = "inf reject ok" },
+            .{ .value = "round trip ok" },
+            .{ .value = "bulk array ok" },
+        },
+    },
     // Compile-only: a link smoke test that pulls in the HTTP runtime. It emits
     // no output; the assertion is that the artifact links and starts.
     .{
@@ -311,23 +330,6 @@ const shared_cases = [_]Case{
         .path = "./test/misc/http_link_test.doxa",
         .expected_print = &[_]print_result{},
         .pipelines = &.{.compile},
-    },
-    .{
-        .name = "http loopback",
-        .path = "./test/misc/http_loopback.doxa",
-        .expected_print = &[_]print_result{
-            .{ .value = "primitives ok" },
-            .{ .value = "check-status rejected" },
-            .{ .value = "404 not found 2 a=1 b=2 text/plain true" },
-            .{ .value = "getText not found" },
-            .{ .value = "timeout ok" },
-            .{ .value = "verbs ok" },
-            .{ .value = "redirect credentials ok" },
-            .{ .value = "redirect limit ok" },
-            .{ .value = "download streaming ok" },
-            .{ .value = "download filename ok" },
-            .{ .value = "download status ok" },
-        },
     },
     .{
         .name = "http loopback",
