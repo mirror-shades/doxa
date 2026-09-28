@@ -535,14 +535,6 @@ function mapJSONError(code :: int) returns error.StdError {
     }
 }
 
-public function debugHandle(text :: string) returns int {
-    return JSON.parseDocument(text)
-}
-
-public function debugError() returns int {
-    return JSON.takeLastErrorCode()
-}
-
 public enum Kind {
     Invalid,
     Null,
