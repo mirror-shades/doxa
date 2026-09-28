@@ -1,25 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
 
-const test_run = @import("test/test_run.zig");
-const test_compile = @import("test/test_compile.zig");
-const test_compile_errors = @import("test/test_compile_errors.zig");
-
-test "run suite" {
-    const summary = try test_run.runAll(testing.allocator);
-    try testing.expect(summary.failed == 0 and summary.untested == 0);
-}
-
-test "compile suite" {
-    const summary = try test_compile.runAll(testing.allocator);
-    try testing.expect(summary.failed == 0 and summary.untested == 0);
-}
-
-test "compile errors suite" {
-    const summary = try test_compile_errors.runAll(testing.allocator);
-    try testing.expect(summary.failed == 0 and summary.untested == 0);
-}
-
 test {
     _ = @import("test/test_inline_zig.zig");
     _ = @import("test/test_lazy_modules.zig");
@@ -35,9 +16,6 @@ test {
 // fails when a new test file is added without wiring it in.
 test "suite wiring: every test file is reachable" {
     const wired = [_][]const u8{
-        "test_run.zig",
-        "test_compile.zig",
-        "test_compile_errors.zig",
         "test_inline_zig.zig",
         "test_lazy_modules.zig",
         "test_hashing.zig",
@@ -46,13 +24,19 @@ test "suite wiring: every test file is reachable" {
         "test_artifact_cache.zig",
         "test_floored_arith.zig",
     };
-    // Intentionally outside this root: shared helpers, and the LSP suite, which
-    // is built as its own test executable (see build.zig).
+    // Intentionally outside this root: shared helpers, the LSP suite (its own
+    // executable), and the program suites, which drive the installed `doxa`
+    // binary from `test/suites.zig` -- its own executable, run plainly rather
+    // than through the test-runner protocol (see build.zig).
     const external = [_][]const u8{
         "answers.zig",
         "cases.zig",
         "harness.zig",
         "test_lsp.zig",
+        "suites.zig",
+        "test_run.zig",
+        "test_compile.zig",
+        "test_compile_errors.zig",
     };
 
     var dir = try std.Io.Dir.cwd().openDir(testing.io, "test", .{ .iterate = true });

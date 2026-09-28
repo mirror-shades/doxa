@@ -11,18 +11,6 @@ const Parser = @import("parser_types.zig").Parser;
 pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
 
-    if (method_tok.type == .PRINT) {
-        return try parsePrintMethod(self);
-    }
-
-    if (method_tok.type == .EXIT) {
-        return try parseExitMethod(self);
-    }
-
-    if (method_tok.type == .STD) {
-        return try parseStdMethod(self);
-    }
-
     self.advance();
     if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
     self.advance();
@@ -89,100 +77,5 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
     };
 
     return method_expr;
-}
-
-pub fn parsePrintMethod(self: *Parser) ErrorList!?*ast.Expr {
-    const method_tok = self.peek();
-    self.advance();
-
-    if (self.peek().type != .LEFT_PAREN) {
-        return error.ExpectedLeftParen;
-    }
-    self.advance();
-
-    const format_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-
-    if (self.peek().type != .RIGHT_PAREN) {
-        return error.ExpectedRightParen;
-    }
-    self.advance();
-
-    const args = try self.allocator.alloc(*ast.Expr, 1);
-    args[0] = format_expr;
-
-    const print_expr = try self.allocator.create(ast.Expr);
-    print_expr.* = .{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(method_tok),
-        },
-        .data = .{
-            .BuiltinCall = .{
-                .function = method_tok,
-                .arguments = args,
-            },
-        },
-    };
-
-    return print_expr;
-}
-
-pub fn parseExitMethod(self: *Parser) ErrorList!?*ast.Expr {
-    const method_tok = self.peek();
-    self.advance();
-
-    if (self.peek().type != .LEFT_PAREN) {
-        return error.ExpectedLeftParen;
-    }
-    self.advance();
-
-    const exit_code_expr = try expression_parser.parseExpression(self) orelse return error.ExpectedExpression;
-
-    if (self.peek().type != .RIGHT_PAREN) {
-        return error.ExpectedRightParen;
-    }
-    self.advance();
-
-    const arguments = try self.allocator.alloc(*ast.Expr, 1);
-    arguments[0] = exit_code_expr;
-
-    const exit_expr = try self.allocator.create(ast.Expr);
-    exit_expr.* = .{
-        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
-        .data = .{ .BuiltinCall = .{
-            .function = method_tok,
-            .arguments = arguments,
-        } },
-    };
-
-    return exit_expr;
-}
-
-pub fn parseStdMethod(self: *Parser) ErrorList!?*ast.Expr {
-    const method_tok = self.peek();
-    self.advance();
-
-    if (self.peek().type != .LEFT_PAREN) {
-        return error.ExpectedLeftParen;
-    }
-    self.advance();
-
-    while (self.peek().type == .NEWLINE) self.advance();
-
-    if (self.peek().type != .RIGHT_PAREN) {
-        return error.ExpectedRightParen;
-    }
-    self.advance();
-
-    const std_expr = try self.allocator.create(ast.Expr);
-    std_expr.* = .{
-        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
-        .data = .{ .BuiltinCall = .{
-            .function = method_tok,
-            .arguments = &.{},
-        } },
-    };
-
-    return std_expr;
 }
 

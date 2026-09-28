@@ -7,6 +7,10 @@ pub const BuiltinMethodInfo = struct {
     arg_count_max: ?usize,
     input_types: []const InputTypeSpec,
     return_type: ast.Type,
+    /// Element type of an `.Array` return (`@unpack(...) -> byte[]`). The
+    /// type system only has an untyped array; this names the element so the
+    /// `string` ↔ `byte[]` barrier stays explicit at both ends.
+    return_element_type: ?ast.Type = null,
     can_panic: bool,
     /// Whether the builtin writes through its subject argument in place
     /// (`@push`/`@pop`/`@insert`/`@remove`/`@clear`). Defaults to `true` so an
@@ -19,6 +23,8 @@ pub const BuiltinMethodInfo = struct {
 pub const InputTypeSpec = union(enum) {
     Single: ast.Type,
     Union: []const ast.Type,
+    /// An array whose elements are of the given type (`@pack(byte[])`).
+    TypedArray: ast.Type,
     Any,
     Integer,
     Collection,
@@ -294,7 +300,7 @@ const METHODS = [_]BuiltinMethodInfo{
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
-        .input_types = &[_]InputTypeSpec{Input{ .Single = T.Array }},
+        .input_types = &[_]InputTypeSpec{Input{ .TypedArray = T.Byte }},
         .return_type = T.String,
         .can_panic = true,
     },
@@ -305,6 +311,7 @@ const METHODS = [_]BuiltinMethodInfo{
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Single = T.String }},
         .return_type = T.Array,
+        .return_element_type = T.Byte,
         .can_panic = false,
     },
 };

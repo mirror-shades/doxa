@@ -1,0 +1,2 @@
+var s is "hi"
+@push(s, 42)?

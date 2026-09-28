@@ -38,6 +38,22 @@ pub const expected_union_narrow_results = [_]print_result{
     .{ .value = "c" },
 };
 
+pub const expected_union_stringify_results = [_]print_result{
+    .{ .value = "string arm: hello world" },
+    .{ .value = "int arm: 42" },
+    .{ .value = "enum arm: .BAD_ARG" },
+    .{ .value = "enum var: .BAD_ARG" },
+    .{ .value = "enum lit: .BAD_ARG" },
+    .{ .value = "narrowed: 7" },
+    .{ .value = "other string tag: still a string" },
+    .{ .value = "other int tag: 99" },
+    .{ .value = "two enum arms: <enum:1>" },
+    .{ .value = "at string: hello world" },
+    .{ .value = "at string enum: .BAD_ARG" },
+    .{ .value = "loop 0: .BAD_ARG" },
+    .{ .value = "loop 1: .BAD_ARG" },
+};
+
 pub const expected_group_test_results = [_]print_result{
     .{ .value = "green" },
     .{ .value = "io" },
@@ -530,9 +546,21 @@ pub const expected_methods_results = [_]peek_result{
 
     .{ .type = "string", .value = "\"hello\"" },
     .{ .type = "string", .value = "\"\"" },
+    .{ .type = "string", .value = "\"hi\"" },
     .{ .type = "byte[]", .value = "[104, 101, 108, 108, 111]" },
     .{ .type = "byte[]", .value = "[]" },
     .{ .type = "tetra", .value = "true" },
+
+    .{ .type = "string", .value = "\"h\"" },
+    .{ .type = "byte", .value = "0x68" },
+    .{ .type = "byte", .value = "0x68" },
+    .{ .type = "byte", .value = "0x01" },
+
+    .{ .type = "int", .value = "5" },
+    .{ .type = "string", .value = "\"c\"" },
+    .{ .type = "int", .value = "3" },
+    .{ .type = "byte[]", .value = "[99, 97, 102, 195, 169]" },
+    .{ .type = "int", .value = "5" },
 
     .{ .type = "string", .value = "\"end\"" },
 };

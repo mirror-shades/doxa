@@ -76,9 +76,10 @@ pub const BasicExpressionHandler = struct {
                 .Expression => |expr| {
                     // B2: a struct interpolated into a string is printed, so its
                     // descriptor must stay registered.
-                    self.generator.markReflectedType(self.generator.inferTypeFromExpression(expr));
+                    const value_type = self.generator.inferTypeFromExpression(expr);
+                    self.generator.markReflectedType(value_type);
                     try self.generator.generateExpression(expr, true, false);
-                    try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString } });
+                    try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString, .value_type = value_type } });
                 },
             }
 

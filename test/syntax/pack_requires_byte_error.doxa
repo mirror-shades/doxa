@@ -1,0 +1,2 @@
+var ints :: int[] is [104]
+@pack(ints)?

@@ -92,18 +92,6 @@ fn exprMutates(expr: *const ast.Expr, name: []const u8) bool {
         // still catches any nested write. The registry flags which intrinsics
         // mutate their subject; an intrinsic the registry does not know stays
         // conservatively treated as a write.
-        .BuiltinCall => |bc| {
-            const mutates_arg = if (builtin_methods.getMethodInfoByName(bc.function.lexeme)) |info|
-                info.mutates_arg
-            else
-                true;
-            if (mutates_arg) {
-                for (bc.arguments) |arg| {
-                    if (mentions(arg, name)) return true;
-                }
-            }
-        },
-
         // `@`-prefixed method calls. In-place compiler methods (`@push`,
         // `@insert`, ...) mutate their subject, so any mention of the
         // parameter is a write. Read-only conversions that survive lowering as
@@ -191,9 +179,6 @@ fn forEachChild(
         .FunctionCall => |fc| {
             visit(fc.callee, name, found);
             for (fc.arguments) |arg| visit(arg.expr, name, found);
-        },
-        .BuiltinCall => |bc| {
-            for (bc.arguments) |arg| visit(arg, name, found);
         },
         .InternalCall => |ic| {
             visit(ic.receiver, name, found);

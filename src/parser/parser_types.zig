@@ -1548,12 +1548,6 @@ pub const Parser = struct {
                 break :blk false;
             },
             .EnumMember => |tok| std.mem.eql(u8, tok.lexeme, name),
-            .BuiltinCall => |builtin_call| blk: {
-                for (builtin_call.arguments) |arg| {
-                    if (exprReferencesName(arg, name)) break :blk true;
-                }
-                break :blk false;
-            },
             .Map => |map_expr| mapEntriesReferenceName(map_expr.entries, name),
             .MapLiteral => |map_expr| mapEntriesReferenceName(map_expr.entries, name) or
                 (if (map_expr.else_value) |else_value| exprReferencesName(else_value, name) else false),

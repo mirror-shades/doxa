@@ -173,28 +173,39 @@ language costs; each is a representation choice that a later pass can undo.
 
 ## 5. Measured state (September 2026)
 
-Checkpoint from the benchmark suite (`test/benchmark/suite.doxa`). Every workload is compiled with
-`doxa compile --opt=2` and its C twin with `zig cc -O2`, so the Doxa side optimizes its code at the
+Checkpoint from the benchmark suite (`test/benchmark/suite.doxa`), taken as six
+same-build runs on 2026-09-27 (the window `date >= 1790530050` in
+`test/benchmark/stats.csv`). Every workload is compiled with `doxa compile
+--opt=2` and its C twin with `zig cc -O2`, so the Doxa side optimizes its code at the
 C baseline's exact opt level (LLVM `-O2` on both). Percentages are Doxa compute time relative to the
-C twin; lower is better. All outputs are bit-identical to C (`match: true`).
+C twin — the mean of the six runs, with the range they spanned; lower is better. All outputs are
+bit-identical to C (`match: true`, every run). The seconds columns are gone: absolute
+times in this campaign moved by up to ~46% as background load came and went, so only
+the ratio is quotable; the raw seconds are in `stats.csv`.
 
-| test   | doxa  | c      | % vs C  |
-| ------ | ----- | ------ | ------- |
-| fib    | 1.37s | 1.61s  | −14.53% |
-| sieve  | 0.96s | 0.94s  | +2.06%  |
-| matrix | 1.13s | 1.10s  | +2.78%  |
-| mb     | 0.92s | 0.92s  | +0.80%  |
-| arr    | 1.11s | 0.97s  | +15.20% |
-| call   | 1.20s | 1.04s  | +15.01% |
-| struct | 0.18s | 0.99s  | −81.39% |
-| vec    | 1.04s | 1.07s  | −2.98%  |
+| test   | % vs C (mean of 6) | same-build range |
+| ------ | ------------------ | ---------------- |
+| fib    | −10.98%            | −16.09 … −2.91   |
+| sieve  | +2.78%             | −1.04 … +5.11    |
+| matrix | +2.19%             | −0.40 … +4.02    |
+| mb     | +0.23%             | −0.59 … +0.79    |
+| arr    | +13.74%            | +7.27 … +16.96   |
+| call   | +14.10%            | +12.16 … +15.44  |
+| struct | −5.00%             | −8.54 … −0.31    |
+| vec    | +4.18%             | +0.78 … +9.19    |
 
 Read against sections 3 and 4, this table is exactly the model's story:
 
 - **`fib`, `sieve`, `matrix`, `mb`, `arr`, `vec`** are scalar and flat-array workloads. They live on
   the realized floor (section 3): typed SSA, flat fixed arrays, elided leaf scopes. Their placement
   near C is what the floor looks like.
-- **`arr`** is the largest recovery on record: from +660% in the VM era to parity with C today.
+- **`arr`** is the largest recovery on record: from +660% in the VM era to the mid-teens of C today
+  (+13.74% mean, +7.27% best in this campaign). Its *level* is the one scalar row still open: the
+  2026-09-03 session averaged +0.6% (rows −0.59, +1.84) and the campaign centers on +13.74 — a
+  13-point move, past this row's own 9.69 same-build spread and the only comparable row that crosses
+  that bar — while both twins stayed frozen in between (C 1.029 → 0.966s, Doxa 1.022 → 1.155s). That
+  is a cross-session shift, not the same-build noise the note below accounts for; attribution
+  (zig 0.16.0 toolchain vs doxa codegen) is tracked in the plan's START HERE list.
   Removing the VM replaced a boxed, tag-dispatching value pipeline with typed SSA — the same change
   section 3 describes, applied program-wide.
 - **`struct`** was the last workload still paying a section-4 cost, and no longer does. Its object
@@ -202,22 +213,43 @@ Read against sections 3 and 4, this table is exactly the model's story:
   `%` is *floored* (section 1) where C's truncates, and the sign correction that difference requires
   was five extra instructions per operation on a five-link serial carry chain. A constant divisor
   whose magnitude divides 2^64 — 65536 is a power of two — needs no correction at all, because an
-  unsigned remainder already yields the residue. Each `%` is now a single `and`, and the workload runs
-  at **−81% of C**, faster than its C twin. The dividend is a load out of the array, so no amount of
-  range analysis on the source values would have reached it; the identity came from the divisor alone.
-- **`call`** (~15%) is the same floored-`%` correction on a serial carry chain, and is *not* fixed.
+  unsigned remainder already yields the residue. Each `%` is now a single `and`. The dividend is a
+  load out of the array, so no amount of range analysis on the source values would have reached it;
+  the identity came from the divisor alone.
+
+  The C twin needed the same correction: it wrote `%`, whose operands are loads clang cannot prove
+  non-negative, so every modulo in its loop kept a sign correction the data never needed. It now
+  writes `& (MOD - 1)` — the same mod-2^16 fact the values satisfy — and compiles to the same shape
+  Doxa does. `struct` therefore sits at **parity**: below C in all six runs of this campaign
+  (mean −5.00%, worst −0.31%). Its timed region
+  was also scaled ×5 (`STEPS` 550 → 2750, 2026-09-27) so the row lands at the ~1s norm the other
+  workloads run at — `struct` rows dated before that change did a fifth of the work and are not
+  comparable.
+  Earlier readings of −81% measured floored-vs-truncating `%` semantics, not codegen; the two
+  affected rows were removed from `stats.csv`.
+- **`call`** (+14.10% mean in this campaign, +12.16 … +15.44; +15% when first measured) is the
+  same floored-`%` correction on
+  a serial carry chain, and is *not* fixed.
   Its modulus is 997, which does not divide 2^64, so an unsigned remainder is not the floored residue
   for a negative dividend — and its dividend is a loop-carried accumulator whose sign the compiler does
   not establish. It collects the smaller win (the constant settles the divisor's sign, dropping one
   instruction) which does not move a latency-bound loop. Closing it needs an induction-variable range
   fact, not a cheaper instruction sequence.
 
-**On reading this table.** The six non-canary rows move by several percent run to run, and on the
-machine these were last taken by as much as nine. That is measurement noise, not lowering: none of
-`fib`, `sieve`, `matrix`, `mb`, `arr`, `vec` contains a floored division or modulo *in its timed
-region* — `arr` times a plain `sum += arr[i]` reduction and `vec` a float `y[i] += 1.5 * x[i]`, with
-their only `%` in untimed setup. Treat movement in those rows as noise until a noise floor is
-measured, and do not gate a change on a delta smaller than it.
+**On reading this table.** The percentages are means over six same-build runs, and the range column
+*is* the measurement's noise floor: same binary, same source, nothing recompiled between runs — yet
+`fib` moved 13.18 points, `arr` 9.69, `vec` 8.41, `struct` 8.22, `sieve` 6.15, `matrix` 4.42. Only
+`mb` (1.38) and `call` (3.27) sit near the ±2% that a single-run comparison would need, so one run
+cannot support a claim finer than its row's range; compare campaigns, not runs. The mechanism is
+visible in the log: background load slowed whole invocations by up to ~46% and slowed the Doxa and C
+twins unequally, so the ratio moved without anything being recompiled. The 8-point `arr` swing
+between provably identical builds that earlier notes could not explain falls inside this envelope —
+it was the floor. None of `fib`, `sieve`, `matrix`, `mb`, `arr`, `vec` contains a floored division or
+modulo *in its timed region* — `arr` times a plain `sum += arr[i]` reduction and `vec` a float
+`y[i] += 1.5 * x[i]`, with their only `%` in untimed setup — so movement in those rows is never
+lowering. `doxa run scripts/noise.doxa -- --since <epoch>` prints the distribution for any window of
+the log; a delta below the workload's row is noise, and the canaries are decidable because their
+gaps exceed theirs.
 
 These numbers are a snapshot of the *lowering*, not the language. The workloads that exercise
 section 3's floor match C; the workloads that exercise section 4's conservatism are the ones that do
@@ -294,8 +326,9 @@ five extra instructions per operation sitting on the critical path of any serial
 last remaining reason `struct` ran at twice C. Two static facts now remove it, and a value-range
 lattice (`int_range.zig`, threaded like the region analysis in step A) supplies them: a constant
 divisor whose magnitude divides 2^64 needs no correction at all, and a provably non-negative dividend
-makes truncation equal flooring. `struct`'s `% 65536` is now one `and` and the workload is *faster*
-than C. `call`, whose modulus is 997 and whose dividend is a loop-carried accumulator, is not fixed —
+makes truncation equal flooring. `struct`'s `% 65536` is now one `and`, and with the C twin stating
+the same mod-2^16 fact (`& (MOD - 1)`) the workload measures at parity with C. `call`, whose modulus
+is 997 and whose dividend is a loop-carried accumulator, is not fixed —
 it needs an induction-variable range fact rather than a cheaper instruction sequence.
 
 The same range lattice is the missing prerequisite for the switches above: D-1 wants an upper bound
@@ -311,8 +344,8 @@ imports.
 
 Each step compounds the ones before it: region analysis (A) decides *where* values live, type-directed
 storage (B) decides *how* they are laid out, visibility (C) hands both to LLVM, and the static
-switches (D) stop the model's defined behavior from costing anything. The measured `struct` and `call`
-gaps are the canaries for B/C and D respectively.
+switches (D) stop the model's defined behavior from costing anything. The `struct` gap — the B/C
+canary — is now closed at parity with its corrected C twin; `call` remains the open canary for D.
 
 ---
 
@@ -324,6 +357,18 @@ doxa run test/benchmark/suite.doxa -- --runs 10 --write
 
 `--write` appends the run to `test/benchmark/stats.csv`, the log every table here is drawn from;
 without it the suite only prints.
+
+Before trusting a delta, size the noise: filter the log to one same-build campaign (a `--since`
+unix epoch) and print each workload's distribution — mean, range, and largest step between
+consecutive runs.
+
+```
+doxa run scripts/noise.doxa -- --since <epoch>
+```
+
+Section 5's table is the campaign at `--since 1790530050`. A delta below a workload's range is
+noise; when a gate decision is close, take a fresh pair across sessions as well — this floor is
+within-session.
 
 Each benchmark is compiled with `doxa compile … --opt=2` and its C twin with `zig cc -O2`.
 `--opt=N` mirrors clang: `--opt=2` compiles the program's `.ll` to an object with `zig cc -O2` and

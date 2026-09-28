@@ -1096,9 +1096,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn mapBuiltinToRuntime(name: []const u8) []const u8 {
-            if (std.mem.eql(u8, name, "int")) return "doxa_int";
             if (std.mem.eql(u8, name, "clear")) return "doxa_clear";
-            if (std.mem.eql(u8, name, "print")) return "doxa_write_cstr";
             if (std.mem.eql(u8, name, "exit")) return "doxa_exit";
             if (std.mem.eql(u8, name, "panic")) return "doxa_panic";
             return name;

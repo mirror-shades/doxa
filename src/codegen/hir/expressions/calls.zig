@@ -341,13 +341,26 @@ pub const CallsHandler = struct {
         return null;
     }
 
-    pub fn generateBuiltinCall(self: *CallsHandler, bc: ast.Expr.Data, preserve_result: bool) !void {
-        const builtin_data = bc.BuiltinCall;
-        const name = builtin_data.function.lexeme;
+    pub fn generateInternalCall(self: *CallsHandler, expr: *ast.Expr, preserve_result: bool) !void {
+        const call = expr.data.InternalCall;
+        const name = call.method.lexeme;
+
+        // Receiver-first argument vector: the shape every built-in method below
+        // is written against. `@std` takes none of its own; the receiver the
+        // parser synthesizes for its empty argument list is a placeholder.
+        const args: []const *ast.Expr = if (std.mem.eql(u8, name, "std"))
+            &[_]*ast.Expr{}
+        else blk: {
+            const vector = try self.generator.allocator.alloc(*ast.Expr, call.arguments.len + 1);
+            vector[0] = call.receiver;
+            @memcpy(vector[1..], call.arguments);
+            break :blk vector;
+        };
+        defer self.generator.allocator.free(args);
 
         if (std.mem.eql(u8, name, "type")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            const arg = builtin_data.arguments[0];
+            try self.validateBuiltinArgCount(name, args.len);
+            const arg = args[0];
 
             // For FieldAccess and EnumMember expressions, try to get the custom type name
             const inferred_type = self.generator.inferTypeFromExpression(arg);
@@ -489,17 +502,17 @@ pub const CallsHandler = struct {
             const const_idx = try self.generator.addConstant(type_value);
             try self.generator.instructions.append(.{ .Const = .{ .value = type_value, .constant_id = const_idx } });
         } else if (std.mem.eql(u8, name, "length")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            var t = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
+            var t = self.generator.inferTypeFromExpression(args[0]);
             var use_array_len = t == .Array;
             // A union narrowed by `as` to a single array member behaves like an
             // array for @length (e.g. `x as string then ... else @length(x)`).
             if (t == .Union and t.Union.members.len == 1 and t.Union.members[0].* == .Array) {
                 use_array_len = true;
             }
-            if (builtin_data.arguments[0].data == .Variable) {
-                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+            if (args[0].data == .Variable) {
+                const var_name = args[0].data.Variable.lexeme;
                 if (self.generator.getTrackedVariableType(var_name)) |tracked| {
                     if (t == .Unknown) t = tracked;
                     use_array_len = use_array_len or tracked == .Array;
@@ -518,63 +531,64 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.{ .StringOp = .{ .op = .Length } });
             }
         } else if (std.mem.eql(u8, name, "int")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToInt } });
         } else if (std.mem.eql(u8, name, "float")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToFloat } });
         } else if (std.mem.eql(u8, name, "string")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
+            try self.validateBuiltinArgCount(name, args.len);
             // B2: @string(x) of a struct prints it, so its descriptor must stay.
-            self.generator.markReflectedType(self.generator.inferTypeFromExpression(builtin_data.arguments[0]));
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString } });
+            const value_type = self.generator.inferTypeFromExpression(args[0]);
+            self.generator.markReflectedType(value_type);
+            try self.generator.generateExpression(args[0], true, false);
+            try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString, .value_type = value_type } });
         } else if (std.mem.eql(u8, name, "pack")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .Pack } });
         } else if (std.mem.eql(u8, name, "unpack")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
             try self.generator.instructions.append(.{ .StringOp = .{ .op = .Unpack } });
         } else if (std.mem.eql(u8, name, "byte")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            const t = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
+            const t = self.generator.inferTypeFromExpression(args[0]);
             if (t == .String) {
                 try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToByte } });
             } else {
                 try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
             }
         } else if (std.mem.eql(u8, name, "push")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            if (builtin_data.arguments[0].data == .Variable) {
-                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+            try self.validateBuiltinArgCount(name, args.len);
+            if (args[0].data == .Variable) {
+                const var_name = args[0].data.Variable.lexeme;
                 const storage_kind = self.generator.getTrackedArrayStorageKind(var_name) orelse .dynamic;
                 if (storage_kind == .fixed or storage_kind == .const_literal) {
-                    const location = builtin_data.arguments[0].base.location();
+                    const location = args[0].base.location();
                     self.generator.reporter.reportCompileError(location, ErrorCode.INVALID_ARRAY_TYPE, "cannot push to a fixed-size array", .{});
                     return ErrorList.UnsupportedArrayType;
                 }
             }
-            const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
+            const target_type = self.generator.inferTypeFromExpression(args[0]);
+            try self.generator.generateExpression(args[0], true, false);
+            try self.generator.generateExpression(args[1], true, false);
             if (target_type == .String) {
                 try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
             } else {
                 try self.generator.instructions.append(.{ .ArrayPush = .{ .resize_behavior = .Double } });
             }
-            if (builtin_data.arguments[0].data == .Variable) {
-                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+            if (args[0].data == .Variable) {
+                const var_name = args[0].data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
                 const heap_copy: HeapCopyKind = if (target_type == .String) .rehome else .keep;
                 try self.storeVariableOrAlias(var_name, expected_type, heap_copy);
-            } else if (builtin_data.arguments[0].data == .FieldAccess) {
-                const fa = builtin_data.arguments[0].data.FieldAccess;
+            } else if (args[0].data == .FieldAccess) {
+                const fa = args[0].data.FieldAccess;
                 try self.generator.generateExpression(fa.object, true, false);
                 try self.generator.instructions.append(.Swap);
                 const container_type = self.generator.inferTypeFromExpression(fa.object);
@@ -605,16 +619,16 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Pop);
             }
         } else if (std.mem.eql(u8, name, "pop")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.validateBuiltinArgCount(name, args.len);
+            const target_type = self.generator.inferTypeFromExpression(args[0]);
+            try self.generator.generateExpression(args[0], true, false);
             if (target_type == .String) {
                 try self.generator.instructions.append(.{ .StringOp = .{ .op = .Pop } });
             } else {
                 try self.generator.instructions.append(.ArrayPop);
             }
-            if (builtin_data.arguments[0].data == .Variable) {
-                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+            if (args[0].data == .Variable) {
+                const var_name = args[0].data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
 
                 if (target_type == .String) {
@@ -626,13 +640,13 @@ pub const CallsHandler = struct {
                 }
             }
         } else if (std.mem.eql(u8, name, "insert")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[2], true, false);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
+            try self.generator.generateExpression(args[1], true, false);
+            try self.generator.generateExpression(args[2], true, false);
             try self.generator.instructions.append(.ArrayInsert);
-            if (builtin_data.arguments[0].data == .Variable) {
-                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+            if (args[0].data == .Variable) {
+                const var_name = args[0].data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
                 try self.storeVariableOrAlias(var_name, expected_type, .keep);
             } else {
@@ -642,12 +656,12 @@ pub const CallsHandler = struct {
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx2 } });
             if (!preserve_result) try self.generator.instructions.append(.Pop);
         } else if (std.mem.eql(u8, name, "remove")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
+            try self.generator.generateExpression(args[1], true, false);
             try self.generator.instructions.append(.ArrayRemove);
-            if (builtin_data.arguments[0].data == .Variable) {
-                const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+            if (args[0].data == .Variable) {
+                const var_name = args[0].data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
 
                 try self.generator.instructions.append(.Swap);
@@ -657,18 +671,18 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Pop);
             }
         } else if (std.mem.eql(u8, name, "slice")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[2], true, false);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
+            try self.generator.generateExpression(args[1], true, false);
+            try self.generator.generateExpression(args[2], true, false);
             try self.generator.instructions.append(.ArraySlice);
         } else if (std.mem.eql(u8, name, "clear")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            const target_type = self.generator.inferTypeFromExpression(builtin_data.arguments[0]);
+            try self.validateBuiltinArgCount(name, args.len);
+            const target_type = self.generator.inferTypeFromExpression(args[0]);
 
             if (target_type == .String) {
-                if (builtin_data.arguments[0].data == .Variable) {
-                    const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+                if (args[0].data == .Variable) {
+                    const var_name = args[0].data.Variable.lexeme;
                     const expected_type = self.generator.getTrackedVariableType(var_name) orelse .String;
                     const empty_str_value = HIRValue{ .string = "" };
                     const empty_str_idx = try self.generator.addConstant(empty_str_value);
@@ -676,7 +690,7 @@ pub const CallsHandler = struct {
                     try self.storeVariableOrAlias(var_name, expected_type, .rehome);
                 }
             } else {
-                try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+                try self.generator.generateExpression(args[0], true, false);
                 try self.generator.instructions.append(.{
                     .Call = .{
                         .function_index = null,
@@ -687,8 +701,8 @@ pub const CallsHandler = struct {
                         .return_type = .Nothing,
                     },
                 });
-                if (builtin_data.arguments[0].data == .Variable) {
-                    const var_name = builtin_data.arguments[0].data.Variable.lexeme;
+                if (args[0].data == .Variable) {
+                    const var_name = args[0].data.Variable.lexeme;
                     const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
                     try self.storeVariableOrAlias(var_name, expected_type, .keep);
                 } else {
@@ -702,10 +716,10 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Pop);
             }
         } else if (std.mem.eql(u8, name, "find")) {
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
+            try self.validateBuiltinArgCount(name, args.len);
             // Evaluate receiver/collection and search value
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
-            try self.generator.generateExpression(builtin_data.arguments[1], true, false);
+            try self.generator.generateExpression(args[0], true, false);
+            try self.generator.generateExpression(args[1], true, false);
             try self.generator.instructions.append(.{
                 .Call = .{
                     .function_index = null,
@@ -718,14 +732,14 @@ pub const CallsHandler = struct {
             });
         } else if (std.mem.eql(u8, name, "exit")) {
             // Use centralized data structure for simple builtin calls
-            _ = try self.generateSimpleBuiltinCall(name, builtin_data.arguments);
+            _ = try self.generateSimpleBuiltinCall(name, args);
         } else if (std.mem.eql(u8, name, "panic")) {
             // Use centralized data structure for simple builtin calls
-            _ = try self.generateSimpleBuiltinCall(name, builtin_data.arguments);
+            _ = try self.generateSimpleBuiltinCall(name, args);
         } else if (std.mem.eql(u8, name, "print")) {
             // @print(string) - emits the string to stdout
-            try self.validateBuiltinArgCount(name, builtin_data.arguments.len);
-            try self.generator.generateExpression(builtin_data.arguments[0], true, false);
+            try self.validateBuiltinArgCount(name, args.len);
+            try self.generator.generateExpression(args[0], true, false);
             try self.generator.instructions.append(.{
                 .Call = .{
                     .function_index = null,
@@ -751,129 +765,13 @@ pub const CallsHandler = struct {
             const const_idx = try self.generator.addConstant(path_value);
             try self.generator.instructions.append(.{ .Const = .{ .value = path_value, .constant_id = const_idx } });
         } else {
+            self.generator.reporter.reportCompileError(
+                expr.base.location(),
+                ErrorCode.NOT_IMPLEMENTED,
+                "unimplemented built-in method '@{s}'",
+                .{name},
+            );
             return error.NotImplemented;
-        }
-    }
-
-    pub fn generateInternalCall(self: *CallsHandler, m: ast.Expr.Data) !void {
-        const internal_data = m.InternalCall;
-
-        const name = std.mem.trimStart(u8, internal_data.method.lexeme, "@");
-
-        if (std.mem.eql(u8, name, "substring")) {
-            try self.generator.generateExpression(internal_data.arguments[0], true, false);
-            try self.generator.generateExpression(internal_data.arguments[1], true, false);
-            try self.generator.generateExpression(internal_data.receiver, true, false);
-            try self.generator.instructions.append(.{ .StringOp = .{ .op = .Substring } });
-        } else if (std.mem.eql(u8, name, "string")) {
-            try self.generator.generateExpression(internal_data.receiver, true, false);
-            try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToString } });
-        } else if (std.mem.eql(u8, name, "length")) {
-            try self.generator.generateExpression(internal_data.receiver, true, false);
-            var t = self.generator.inferTypeFromExpression(internal_data.receiver);
-            if (t == .Unknown and internal_data.receiver.data == .Variable) {
-                const var_name = internal_data.receiver.data.Variable.lexeme;
-                if (self.generator.getTrackedVariableType(var_name)) |tracked| {
-                    t = tracked;
-                }
-            }
-            if (t == .Union and t.Union.members.len == 1 and t.Union.members[0].* == .Array) {
-                try self.generator.instructions.append(.ArrayLen);
-            } else switch (t) {
-                .Array => try self.generator.instructions.append(.ArrayLen),
-                else => try self.generator.instructions.append(.{ .StringOp = .{ .op = .Length } }),
-            }
-        } else if (std.mem.eql(u8, name, "int")) {
-            try self.generator.generateExpression(internal_data.receiver, true, false);
-            try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToInt } });
-        } else if (std.mem.eql(u8, name, "float")) {
-            try self.generator.generateExpression(internal_data.receiver, true, false);
-            try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToFloat } });
-        } else if (std.mem.eql(u8, name, "byte")) {
-            try self.generator.generateExpression(internal_data.receiver, true, false);
-            const t = self.generator.inferTypeFromExpression(internal_data.receiver);
-            if (t == .String) {
-                try self.generator.instructions.append(.{ .StringOp = .{ .op = .ToByte } });
-            } else {
-                try self.generator.instructions.append(.{ .Convert = .{ .from_type = t, .to_type = .Byte } });
-            }
-        } else if (std.mem.eql(u8, name, "push")) {
-            if (internal_data.arguments.len != 1) {
-                return error.InvalidArgumentCount;
-            }
-            if (internal_data.receiver.data == .Variable) {
-                const var_name = internal_data.receiver.data.Variable.lexeme;
-                const storage_kind = self.generator.getTrackedArrayStorageKind(var_name) orelse .dynamic;
-                if (storage_kind == .fixed or storage_kind == .const_literal) {
-                    const location = internal_data.receiver.base.location();
-                    self.generator.reporter.reportCompileError(location, ErrorCode.INVALID_ARRAY_TYPE, "cannot push to a fixed-size array", .{});
-                    return ErrorList.UnsupportedArrayType;
-                }
-            }
-            const target_type = self.generator.inferTypeFromExpression(internal_data.receiver);
-            try self.generator.generateExpression(internal_data.receiver, true, false);
-            try self.generator.generateExpression(internal_data.arguments[0], true, false);
-            if (target_type == .String) {
-                try self.generator.instructions.append(.Swap);
-                try self.generator.instructions.append(.{ .StringOp = .{ .op = .Concat } });
-            } else {
-                try self.generator.instructions.append(.{ .ArrayPush = .{ .resize_behavior = .Double } });
-            }
-            if (internal_data.receiver.data == .Variable) {
-                const var_name = internal_data.receiver.data.Variable.lexeme;
-                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                const heap_copy: HeapCopyKind = if (target_type == .String) .rehome else .keep;
-                try self.storeVariableOrAlias(var_name, expected_type, heap_copy);
-            } else if (internal_data.receiver.data == .FieldAccess) {
-                const fa = internal_data.receiver.data.FieldAccess;
-                try self.generator.generateExpression(fa.object, true, false);
-                try self.generator.instructions.append(.Swap);
-                const container_type = self.generator.inferTypeFromExpression(fa.object);
-                var structs_handler = StructsHandler.init(self.generator);
-                const resolved = structs_handler.resolveFieldIndexAndStructName(fa.object, fa.field.lexeme);
-                const struct_id = structs_handler.resolveStructIdFromType(container_type, resolved.struct_name);
-                try self.generator.instructions.append(.{
-                    .SetField = .{
-                        .field_name = fa.field.lexeme,
-                        .container_type = container_type,
-                        .struct_id = struct_id,
-                        .field_index = resolved.field_index,
-                        .field_type = .Unknown,
-                        .nested_struct_id = null,
-                    },
-                });
-                if (fa.object.data == .Variable) {
-                    const var_name = fa.object.data.Variable.lexeme;
-                    try self.storeVariableOrAlias(var_name, container_type, .keep);
-                } else if (fa.object.data == .This) {
-                    try self.storeVariableOrAlias("this", HIRType{ .Struct = 0 }, .keep);
-                }
-            }
-            const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
-            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
-        } else if (std.mem.eql(u8, name, "pop")) {
-            try self.generator.generateExpression(internal_data.receiver, true, false);
-            const target_type = self.generator.inferTypeFromExpression(internal_data.receiver);
-            if (target_type == .String) {
-                try self.generator.instructions.append(.{ .StringOp = .{ .op = .Pop } });
-            } else {
-                try self.generator.instructions.append(.ArrayPop);
-            }
-        } else if (std.mem.eql(u8, name, "type")) {
-            try self.generator.generateExpression(internal_data.receiver, true, false);
-            try self.generator.instructions.append(.{
-                .Call = .{
-                    .function_index = null,
-                    .qualified_name = "type",
-                    .arg_count = 1,
-                    .call_kind = .BuiltinFunction,
-                    .target_module = null,
-                    .return_type = .String,
-                },
-            });
-        } else {
-            const nothing_idx = try self.generator.addConstant(HIRValue.nothing);
-            try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_idx } });
         }
     }
 

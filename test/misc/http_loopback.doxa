@@ -1,0 +1,496 @@
+module std from "std/std.doxa"
+
+zig Fixture {
+    const std = @import("std");
+
+    fn fixtureStateType() type {
+        return struct {
+            var server_thread: ?std.Thread = null;
+            var client_thread: ?std.Thread = null;
+            var ready: std.atomic.Value(bool) = .init(false);
+            var done: std.atomic.Value(bool) = .init(false);
+            var port: std.atomic.Value(i64) = .init(0);
+            var error_code: std.atomic.Value(i64) = .init(0);
+            var request_result: std.atomic.Value(i64) = .init(0);
+            var mode: i64 = 0;
+            var client_result: std.atomic.Value(i64) = .init(0);
+            var destination_port: std.atomic.Value(i64) = .init(0);
+        };
+    }
+
+    fn send(stream: std.Io.net.Stream, bytes: []const u8) bool {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        var buffer: [1024]u8 = undefined;
+        var writer = stream.writer(io, &buffer);
+        writer.interface.writeAll(bytes) catch return false;
+        writer.interface.flush() catch return false;
+        return true;
+    }
+
+    fn consumeRequest(stream: std.Io.net.Stream) bool {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        var read_buffer: [8 * 1024]u8 = undefined;
+        var write_buffer: [1]u8 = undefined;
+        var reader = stream.reader(io, &read_buffer);
+        var writer = stream.writer(io, &write_buffer);
+        var server = std.http.Server.init(&reader.interface, &writer.interface);
+        _ = server.receiveHead() catch return false;
+        return true;
+    }
+
+    fn checkRequest(stream: std.Io.net.Stream, method: std.http.Method, expected_body: []const u8, authorization_expected: bool, custom_header_expected: bool) bool {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        var read_buffer: [8 * 1024]u8 = undefined;
+        var write_buffer: [1]u8 = undefined;
+        var reader = stream.reader(io, &read_buffer);
+        var writer = stream.writer(io, &write_buffer);
+        var server = std.http.Server.init(&reader.interface, &writer.interface);
+        var request = server.receiveHead() catch return false;
+        const head = request.head_buffer;
+        const has_authorization = std.mem.indexOf(u8, head, "Authorization: secret") != null;
+        const has_custom_header = std.mem.indexOf(u8, head, "X-Preserve: yes") != null;
+        var transfer_buffer: [1024]u8 = undefined;
+        const body_reader = request.readerExpectNone(&transfer_buffer);
+        var body: std.array_list.Aligned(u8, .of(u8)) = .empty;
+        defer body.deinit(std.heap.page_allocator);
+        body_reader.appendRemaining(std.heap.page_allocator, &body, .limited(1024)) catch return false;
+        return request.head.method == method and
+            std.mem.eql(u8, body.items, expected_body) and
+            has_authorization == authorization_expected and
+            has_custom_header == custom_header_expected;
+    }
+
+    fn methodForMode(mode: i64) std.http.Method {
+        return switch (mode) {
+            3 => .POST,
+            4 => .PUT,
+            5 => .DELETE,
+            else => .HEAD,
+        };
+    }
+
+    fn serverMain(mode: i64) void {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        if (mode == 9) {
+            const source_address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+            var source = source_address.listen(io, .{ .reuse_address = true }) catch {
+                fixtureStateType().error_code.store(1, .release);
+                fixtureStateType().ready.store(true, .release);
+                fixtureStateType().done.store(true, .release);
+                return;
+            };
+            defer source.deinit(io);
+            const target_address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+            var target = target_address.listen(io, .{ .reuse_address = true }) catch {
+                fixtureStateType().error_code.store(1, .release);
+                fixtureStateType().ready.store(true, .release);
+                fixtureStateType().done.store(true, .release);
+                return;
+            };
+            defer target.deinit(io);
+            fixtureStateType().port.store(source.socket.address.getPort(), .release);
+            fixtureStateType().destination_port.store(target.socket.address.getPort(), .release);
+            fixtureStateType().ready.store(true, .release);
+            const first = source.accept(io) catch {
+                fixtureStateType().error_code.store(2, .release);
+                fixtureStateType().done.store(true, .release);
+                return;
+            };
+            if (!checkRequest(first, .GET, "", true, true)) fixtureStateType().error_code.store(5, .release);
+            const location = std.fmt.allocPrint(std.heap.page_allocator,
+                "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{d}/final\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                .{fixtureStateType().destination_port.load(.acquire)}) catch {
+                fixtureStateType().error_code.store(6, .release);
+                first.close(io);
+                fixtureStateType().done.store(true, .release);
+                return;
+            };
+            defer std.heap.page_allocator.free(location);
+            _ = send(first, location);
+            first.close(io);
+            const second = target.accept(io) catch {
+                fixtureStateType().error_code.store(3, .release);
+                fixtureStateType().done.store(true, .release);
+                return;
+            };
+            fixtureStateType().request_result.store(if (checkRequest(second, .GET, "", false, true)) 1 else -1, .release);
+            _ = send(second,
+                "HTTP/1.1 200 OK\r\nX-Reply: secure\r\nContent-Length: 6\r\nConnection: close\r\n\r\nsecure");
+            second.close(io);
+            fixtureStateType().done.store(true, .release);
+            return;
+        }
+        const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(0) };
+        var server = address.listen(io, .{ .reuse_address = true }) catch {
+            fixtureStateType().error_code.store(1, .release);
+            fixtureStateType().ready.store(true, .release);
+            fixtureStateType().done.store(true, .release);
+            return;
+        };
+        defer server.deinit(io);
+        fixtureStateType().port.store(server.socket.address.getPort(), .release);
+        fixtureStateType().ready.store(true, .release);
+
+        const first = server.accept(io) catch {
+            fixtureStateType().error_code.store(2, .release);
+            fixtureStateType().done.store(true, .release);
+            return;
+        };
+        if (mode == 1) {
+            if (!consumeRequest(first)) fixtureStateType().error_code.store(5, .release);
+            _ = send(first,
+                "HTTP/1.1 302 Found\u{d}\u{a}Location: /final\u{d}\u{a}" ++
+                    "Content-Length: 0\u{d}\u{a}Connection: close\u{d}\u{a}\u{d}\u{a}");
+            first.close(io);
+
+            const second = server.accept(io) catch {
+                fixtureStateType().error_code.store(3, .release);
+                fixtureStateType().done.store(true, .release);
+                return;
+            };
+            if (!consumeRequest(second)) fixtureStateType().error_code.store(6, .release);
+            _ = send(second,
+                "HTTP/1.1 404 Not Found\u{d}\u{a}Content-Type: text/plain\u{d}\u{a}" ++
+                    "Set-Cookie: a=1\u{d}\u{a}Set-Cookie: b=2\u{d}\u{a}" ++
+                    "Content-Length: 9\u{d}\u{a}Connection: close\u{d}\u{a}\u{d}\u{a}not found");
+            second.close(io);
+        } else if (mode == 10) {
+            if (!consumeRequest(first)) fixtureStateType().error_code.store(5, .release);
+            _ = send(first,
+                "HTTP/1.1 302 Found\r\nLocation: /final\r\nContent-Length: 0\r\n" ++
+                    "Connection: close\r\n\r\n");
+            first.close(io);
+        } else if (mode == 11) {
+            if (!consumeRequest(first)) fixtureStateType().error_code.store(5, .release);
+            var download_body: [256 * 1024]u8 = @splat('x');
+            const response_head = std.fmt.allocPrint(std.heap.page_allocator,
+                "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n",
+                .{download_body.len}) catch {
+                fixtureStateType().error_code.store(6, .release);
+                first.close(io);
+                fixtureStateType().done.store(true, .release);
+                return;
+            };
+            defer std.heap.page_allocator.free(response_head);
+            _ = send(first, response_head);
+            _ = send(first, &download_body);
+            first.close(io);
+        } else if (mode == 12) {
+            if (!consumeRequest(first)) fixtureStateType().error_code.store(5, .release);
+            _ = send(first,
+                "HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n" ++
+                    "Connection: close\r\n\r\nnot found");
+            first.close(io);
+        } else if (mode >= 3 and mode <= 6) {
+            const expected_body: []const u8 = if (mode == 3 or mode == 4) "payload" else "";
+            fixtureStateType().request_result.store(
+                if (checkRequest(first, methodForMode(mode), expected_body, false, true)) 1 else -1,
+                .release,
+            );
+            _ = send(first,
+                "HTTP/1.1 201 Created\r\nX-Reply: one\r\nX-Reply: two\r\n" ++
+                    "Content-Length: 11\r\nConnection: close\r\n\r\nverb result");
+            first.close(io);
+        } else {
+            if (!consumeRequest(first)) fixtureStateType().error_code.store(7, .release);
+            _ = send(first,
+                "HTTP/1.1 200 OK\u{d}\u{a}Content-Length: 4\u{d}\u{a}" ++
+                    "Connection: close\u{d}\u{a}\u{d}\u{a}");
+            std.Io.sleep(io, std.Io.Duration.fromNanoseconds(250 * std.time.ns_per_ms), .awake) catch {};
+            first.close(io);
+        }
+        fixtureStateType().done.store(true, .release);
+    }
+
+    fn rawClient(port: i64) void {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(@intCast(port)) };
+        const stream = address.connect(io, .{ .mode = .stream }) catch {
+            fixtureStateType().client_result.store(-1, .release);
+            return;
+        };
+        defer stream.close(io);
+        var read_buffer: [512]u8 = undefined;
+        var reader = stream.reader(io, &read_buffer);
+        var received: std.array_list.Aligned(u8, .of(u8)) = .empty;
+        defer received.deinit(std.heap.page_allocator);
+        reader.interface.appendRemaining(std.heap.page_allocator, &received, .limited(4096)) catch {};
+        fixtureStateType().client_result.store(
+            if (std.mem.indexOf(u8, received.items, "primitive") != null) 1 else -4,
+            .release,
+        );
+    }
+
+    fn startServer(mode: i64) i64 {
+        fixtureStateType().ready.store(false, .release);
+        fixtureStateType().done.store(false, .release);
+        fixtureStateType().port.store(0, .release);
+        fixtureStateType().error_code.store(0, .release);
+        fixtureStateType().request_result.store(0, .release);
+        fixtureStateType().destination_port.store(0, .release);
+        fixtureStateType().mode = mode;
+        fixtureStateType().server_thread = std.Thread.spawn(.{}, serverMain, .{mode}) catch {
+            fixtureStateType().error_code.store(4, .release);
+            return 0;
+        };
+        while (!fixtureStateType().ready.load(.acquire)) {
+            std.Io.sleep(
+                std.Io.Threaded.global_single_threaded.io(),
+                std.Io.Duration.fromNanoseconds(std.time.ns_per_ms),
+                .awake,
+            ) catch {};
+        }
+        return fixtureStateType().port.load(.acquire);
+    }
+
+    pub fn startRedirectServer() i64 {
+        return startServer(1);
+    }
+
+    pub fn startTimeoutServer() i64 {
+        return startServer(2);
+    }
+
+    pub fn startMethodServer(mode: i64) i64 {
+        return startServer(mode);
+    }
+
+    pub fn startCredentialRedirectServer() i64 {
+        return startServer(9);
+    }
+
+    pub fn startLimitServer() i64 {
+        return startServer(10);
+    }
+
+    pub fn startDownloadServer(mode: i64) i64 {
+        return startServer(mode);
+    }
+
+    pub fn downloadedBytes(path: []const u8) i64 {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return -1;
+        defer file.close(io);
+        const stat = file.stat(io) catch return -1;
+        return @intCast(stat.size);
+    }
+
+    pub fn removeDownloadedFile(path: []const u8) void {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        std.Io.Dir.cwd().deleteFile(io, path) catch {};
+    }
+
+    pub fn requestMatched() i64 {
+        return fixtureStateType().request_result.load(.acquire);
+    }
+
+    pub fn finishServer() i64 {
+        if ((fixtureStateType().mode == 1 or fixtureStateType().mode == 9) and !fixtureStateType().done.load(.acquire)) {
+            const io = std.Io.Threaded.global_single_threaded.io();
+            const port = if (fixtureStateType().mode == 9)
+                fixtureStateType().destination_port.load(.acquire)
+            else
+                fixtureStateType().port.load(.acquire);
+            const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(@intCast(port)) };
+            if (address.connect(io, .{ .mode = .stream })) |stream| {
+                stream.close(io);
+            } else |_| {}
+        }
+        if (fixtureStateType().server_thread) |thread| {
+            thread.join();
+            fixtureStateType().server_thread = null;
+        }
+        return fixtureStateType().error_code.load(.acquire);
+    }
+
+    pub fn serverFinished() bool {
+        return fixtureStateType().done.load(.acquire);
+    }
+
+    pub fn startPrimitiveClient(port: i64) void {
+        fixtureStateType().client_result.store(0, .release);
+        fixtureStateType().client_thread = std.Thread.spawn(.{}, rawClient, .{port}) catch {
+            fixtureStateType().client_result.store(-5, .release);
+            return;
+        };
+    }
+
+    pub fn finishPrimitiveClient() i64 {
+        if (fixtureStateType().client_thread) |thread| {
+            thread.join();
+            fixtureStateType().client_thread = null;
+        }
+        return fixtureStateType().client_result.load(.acquire);
+    }
+}
+
+const listener is std.http.listen(0) as int else 0
+const port is std.http.localAddr(listener) as int else 0
+Fixture.startPrimitiveClient(port)
+const connection is std.http.accept(listener) as int else 0
+std.http.respond(connection, 200, "Content-Type: text/plain\u{d}\u{a}", "primitive")
+std.http.close(connection)
+std.http.close(listener)
+const primitive_result is Fixture.finishPrimitiveClient()
+if listener > 0 and port > 0 and connection > 0 and primitive_result == 1 then {
+    @print("primitives ok\n")
+} else {
+    @print("primitives failed\n")
+}
+
+const redirect_port is Fixture.startRedirectServer()
+const response_result is std.http.get("http://127.0.0.1:{redirect_port}/start")
+const redirect_server_error is Fixture.finishServer()
+if redirect_server_error != 0 then @print("redirect fixture error\n")
+function summarizeResponse(response :: Response) returns string {
+    const cookies is response.header("set-cookie")
+    const cookie_count is @length(cookies)
+    const first_cookie is cookies[0]
+    const second_cookie is cookies[1]
+    const content_type is response.header("CONTENT-TYPE")
+    const has_content_type is response.hasHeader("content-type")
+    const check_result is std.http.checkStatus(response)
+    check_result as Response then @print("check-status accepted\n")
+    else @print("check-status rejected\n")
+    const status is response.statusCode()
+    const body is response.body()
+    return "{status} {body} {cookie_count} {first_cookie} {second_cookie} {content_type[0]} {has_content_type}"
+}
+response_result as Response then {
+    const response is response_result
+    @print(summarizeResponse(response) + "\n")
+} else {
+    @print("client failed\n")
+}
+
+const text_port is Fixture.startRedirectServer()
+const text is std.http.getText("http://127.0.0.1:{text_port}/start")
+Fixture.finishServer()
+const text_value is text as string else "getText error"
+@print("getText {text_value}\n")
+
+const timeout_port is Fixture.startTimeoutServer()
+const timeout_started is std.time.monotonic()
+var timeout_request is std.http.Request.new()
+timeout_request.timeout_ms is 50
+const timeout_result is std.http.request("GET", "http://127.0.0.1:{timeout_port}/slow", timeout_request)
+const timeout_elapsed_ms is (std.time.monotonic() - timeout_started) // 1000000
+const server_finished_before_join is Fixture.serverFinished()
+const timeout_server_error is Fixture.finishServer()
+timeout_result as Response then @print("timeout returned a response\n")
+else if timeout_elapsed_ms >= 30 and timeout_elapsed_ms < 200 and server_finished_before_join == false and timeout_server_error == 0 then @print("timeout ok\n")
+else @print("timeout too slow {timeout_elapsed_ms}ms done={server_finished_before_join}\n")
+
+function responseMatches(result :: Response | error.StdError, expected_status :: int, expected_body :: string) returns tetra {
+    result as Response then {
+        const response is result
+        const replies is response.header("x-reply")
+        if response.statusCode() != expected_status then return false
+        if response.body() != expected_body then return false
+        if @length(replies) != 2 then return false
+        if replies[0] != "one" or replies[1] != "two" then return false
+        return true
+    } else {
+        return false
+    }
+    return false
+}
+
+function responseStatusBody(result :: Response | error.StdError, expected_status :: int, expected_body :: string) returns tetra {
+    result as Response then {
+        const response is result
+        if response.statusCode() != expected_status then return false
+        if response.body() != expected_body then return false
+        return true
+    } else {
+        return false
+    }
+    return false
+}
+
+const post_port is Fixture.startMethodServer(3)
+var post_request is std.http.Request.new()
+post_request.body is "payload"
+@push(post_request.headers, "X-Preserve: yes")
+const post_result is std.http.post("http://127.0.0.1:{post_port}/post", post_request)
+const post_server_error is Fixture.finishServer()
+var post_ok is responseMatches(post_result, 201, "verb result")
+if Fixture.requestMatched() != 1 or post_server_error != 0 then post_ok is false
+
+const put_port is Fixture.startMethodServer(4)
+var put_request is std.http.Request.new()
+put_request.body is "payload"
+@push(put_request.headers, "X-Preserve: yes")
+const put_result is std.http.put("http://127.0.0.1:{put_port}/put", put_request)
+const put_server_error is Fixture.finishServer()
+var put_ok is responseMatches(put_result, 201, "verb result")
+if Fixture.requestMatched() != 1 or put_server_error != 0 then put_ok is false
+
+const delete_port is Fixture.startMethodServer(5)
+var delete_request is std.http.Request.new()
+@push(delete_request.headers, "X-Preserve: yes")
+const delete_result is std.http.delete("http://127.0.0.1:{delete_port}/delete", delete_request)
+const delete_server_error is Fixture.finishServer()
+var delete_ok is responseMatches(delete_result, 201, "verb result")
+if Fixture.requestMatched() != 1 or delete_server_error != 0 then delete_ok is false
+
+const head_port is Fixture.startMethodServer(6)
+var head_request is std.http.Request.new()
+@push(head_request.headers, "X-Preserve: yes")
+const head_result is std.http.head("http://127.0.0.1:{head_port}/head", head_request)
+const head_server_error is Fixture.finishServer()
+var head_ok is responseMatches(head_result, 201, "")
+if Fixture.requestMatched() != 1 or head_server_error != 0 then head_ok is false
+if post_ok and put_ok and delete_ok and head_ok then @print("verbs ok\n")
+else @print("verbs failed post={post_ok} put={put_ok} delete={delete_ok} head={head_ok}\n")
+
+const credential_port is Fixture.startCredentialRedirectServer()
+var credential_request is std.http.Request.new()
+@push(credential_request.headers, "Authorization: secret")
+@push(credential_request.headers, "X-Preserve: yes")
+credential_request.max_redirects is 1
+const credential_result is std.http.request("GET", "http://127.0.0.1:{credential_port}/start", credential_request)
+const credential_server_error is Fixture.finishServer()
+var credential_ok is responseStatusBody(credential_result, 200, "secure")
+if Fixture.requestMatched() != 1 or credential_server_error != 0 then credential_ok is false
+if credential_ok then @print("redirect credentials ok\n")
+else @print("redirect credentials failed server={credential_server_error}\n")
+
+const limit_port is Fixture.startLimitServer()
+var limit_request is std.http.Request.new()
+limit_request.max_redirects is 0
+const limit_result is std.http.request("GET", "http://127.0.0.1:{limit_port}/start", limit_request)
+const limit_server_error is Fixture.finishServer()
+var limit_ok is true
+limit_result as Response then {
+    limit_ok is false
+} else {
+    limit_ok is true
+}
+if limit_server_error != 0 then limit_ok is false
+if limit_ok then @print("redirect limit ok\n")
+else @print("redirect limit failed\n")
+
+const stream_port is Fixture.startDownloadServer(11)
+const stream_path is "test/out/http_download.bin"
+const stream_result is std.http.downloadUrl("http://127.0.0.1:{stream_port}/large", stream_path)
+const stream_server_error is Fixture.finishServer()
+const stream_size is Fixture.downloadedBytes(stream_path)
+if stream_result == error.IO.HttpStatus then @print("download stream returned an error\n")
+else if stream_size == 262144 and stream_server_error == 0 then @print("download streaming ok\n")
+else @print("download streaming failed size={stream_size} server={stream_server_error}\n")
+
+const named_download_port is Fixture.startDownloadServer(11)
+const named_download_result is std.http.download("http://127.0.0.1:{named_download_port}/http_download.bin")
+const named_download_server is Fixture.finishServer()
+const named_download_size is Fixture.downloadedBytes("http_download.bin")
+Fixture.removeDownloadedFile("http_download.bin")
+if named_download_result == error.IO.HttpStatus then @print("download filename failed\n")
+else if named_download_size == 262144 and named_download_server == 0 then @print("download filename ok\n")
+else @print("download filename failed size={named_download_size} server={named_download_server}\n")
+
+const download_error_port is Fixture.startDownloadServer(12)
+const download_error_result is std.http.downloadUrl("http://127.0.0.1:{download_error_port}/missing", "test/out/http_missing.bin")
+const download_error_server is Fixture.finishServer()
+if download_error_result == error.IO.HttpStatus and download_error_server == 0 then @print("download status ok\n")
+else @print("download status failed\n")

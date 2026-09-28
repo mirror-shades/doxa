@@ -619,11 +619,6 @@ pub const Expr = struct {
         EnumMember: Token,
         DefaultArgPlaceholder: void,
 
-        BuiltinCall: struct {
-            function: Token,
-            arguments: []const *Expr,
-        },
-
         Map: struct {
             entries: []*MapEntry,
             key_type: ?*TypeInfo = null,
@@ -886,13 +881,6 @@ pub const Expr = struct {
             },
             .EnumMember => {},
             .DefaultArgPlaceholder => {},
-            .BuiltinCall => |*bc| {
-                for (bc.arguments) |arg| {
-                    arg.deinit(allocator);
-                    allocator.destroy(arg);
-                }
-                allocator.free(bc.arguments);
-            },
 
             .Map => |*map_expr| {
                 for (map_expr.entries) |entry| {
@@ -1520,10 +1508,6 @@ fn dumpExpr(writer: *std.Io.Writer, expr: *const Expr, depth: u32) std.Io.Writer
         .GroupDecl => |g| try writer.print("Expr.GroupDecl name={s}\n", .{g.name.lexeme}),
         .EnumMember => |t| try writer.print("Expr.EnumMember {s}\n", .{t.lexeme}),
         .DefaultArgPlaceholder => try writer.print("Expr.DefaultArgPlaceholder\n", .{}),
-        .BuiltinCall => |b| {
-            try writer.print("Expr.BuiltinCall {s}\n", .{b.function.lexeme});
-            for (b.arguments) |arg| try dumpExpr(writer, arg, depth + 1);
-        },
         .Map => |m| {
             try writer.print("Expr.Map\n", .{});
             for (m.entries) |entry| {

@@ -78,6 +78,7 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     const allocator = arena.allocator();
 
     platform.enableUtf8Console();
+    platform.sealStdHandles();
 
     const verbose = harness.verboseFromEnv(allocator);
 
@@ -86,7 +87,10 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
     var untested: usize = 0;
     for (cases.cases) |tc| {
         if (!tc.runsOn(.run)) continue;
-        const result = try runTestCase(allocator, tc);
+        const result = runTestCase(allocator, tc) catch |err| {
+            std.debug.print("  case '{s}' hard-failed: {s}\n  path: {s}\n", .{ tc.name, @errorName(err), tc.path });
+            return err;
+        };
         harness.printCase(tc.name, result, verbose);
         if (!harness.isClean(result)) {
             std.debug.print("  path: {s}\n", .{tc.path});

@@ -155,6 +155,13 @@ pub const SemanticAnalyzer = struct {
         return &self.group_table;
     }
 
+    /// The type the analyzer inferred for `expr`, if it has visited it.
+    /// Codegen reads `@`-call types from here rather than re-deriving them, so
+    /// `inferBuiltinCall` stays the single authority for builtin typing.
+    pub fn getCachedExprType(self: *const SemanticAnalyzer, expr: *const ast.Expr) ?*ast.TypeInfo {
+        return self.type_cache.get(expr.base.id);
+    }
+
     pub fn getStructId(self: *SemanticAnalyzer, name: []const u8) ?StructId {
         return self.struct_table.getIdByName(name);
     }
@@ -212,6 +219,29 @@ pub const SemanticAnalyzer = struct {
             },
             else => return null,
         }
+    }
+
+    /// True when every token before the last is a module segment, so a match
+    /// path names a type through its module (`std.json.Node`) rather than a
+    /// variant of a group member (`error.IO.InvalidData`). Resolves lazily and
+    /// silently, exactly like `moduleNamespacePathOf`.
+    fn pathIsModuleQualified(self: *SemanticAnalyzer, tokens: []const ast.Token) bool {
+        if (tokens.len < 2) return false;
+        const parser_const = self.parser orelse return false;
+        const parser: *Parser = @constCast(parser_const);
+
+        _ = parser.ensureModuleNamespace(tokens[0].lexeme) catch return false;
+        if (!parser.module_namespaces.contains(tokens[0].lexeme)) return false;
+
+        var namespace = std.array_list.Managed(u8).init(self.allocator);
+        defer namespace.deinit();
+        namespace.appendSlice(tokens[0].lexeme) catch return false;
+        for (tokens[1 .. tokens.len - 1]) |tok| {
+            _ = parser.ensureNestedModuleNamespace(namespace.items, tok.lexeme) catch return false;
+            namespace.append('.') catch return false;
+            namespace.appendSlice(tok.lexeme) catch return false;
+        }
+        return parser.module_namespaces.contains(namespace.items);
     }
 
     /// A module namespace (`std`, `std.io`) is a compile-time construct, not a
@@ -648,6 +678,29 @@ pub const SemanticAnalyzer = struct {
             }
         } else {
             try self.struct_methods.put(sd.name.lexeme, method_table);
+        }
+    }
+
+    /// Lazy module namespaces may be loaded after the initial imported-struct
+    /// registration pass. Resolve their public struct methods on first use so
+    /// module-returned values (for example `std.http.get()`'s `Response`) have
+    /// the same method surface as eagerly imported structs.
+    pub fn ensureImportedStructRegistered(self: *SemanticAnalyzer, name: []const u8) ErrorList!void {
+        if (self.struct_methods.contains(name)) return;
+        const parser = self.parser orelse return;
+        var module_it = parser.module_namespaces.iterator();
+        while (module_it.next()) |entry| {
+            const module_ast = entry.value_ptr.ast orelse continue;
+            if (module_ast.data != .Block) continue;
+            for (module_ast.data.Block.statements) |stmt| {
+                if (stmt.data != .Expression) continue;
+                const expr = stmt.data.Expression orelse continue;
+                if (expr.data != .StructDecl) continue;
+                const sd = expr.data.StructDecl;
+                if (!sd.is_public or !std.mem.eql(u8, sd.name.lexeme, name)) continue;
+                try self.registerImportedStruct(sd);
+                return;
+            }
         }
     }
 
@@ -1499,7 +1552,13 @@ pub const SemanticAnalyzer = struct {
                 const path = case.path_patterns[0];
                 if (path.tokens.len >= 1) {
                     const split = path.split(group_name orelse "");
-                    const member_token = split.member;
+                    var member_token = split.member;
+                    // A path can name a module-qualified type (`std.json.Node`)
+                    // rather than a group variant. `split` is written for group paths,
+                    // so it would hand back the qualifier; when the last token is a
+                    // registered type the path names that type directly.
+                    const last_token = path.tokens[path.tokens.len - 1];
+                    if (self.pathIsModuleQualified(path.tokens)) member_token = last_token;
 
                     if (narrows) {
                         const narrow_info = try ast.TypeInfo.createDefault(self.allocator);

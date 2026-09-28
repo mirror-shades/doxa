@@ -207,6 +207,11 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: String manipulation with proper memory management
     StringOp: struct {
         op: StringOpType,
+        /// `.ToString` only: the operand's static type. An enum's stack shape
+        /// is a bare discriminant and a union's is an opaque `%DoxaValue`, so
+        /// the renderer needs the declared type to print a value as what it is
+        /// rather than as its storage. `Peek` carries the same fact.
+        value_type: HIRType = .Unknown,
     },
 
     //==================================================================

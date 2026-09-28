@@ -15,6 +15,413 @@ const builtin_methods = @import("../../runtime/builtin_methods.zig");
 
 const SemanticError = std.mem.Allocator.Error || ErrorList;
 
+fn structMethodName(self: *SemanticAnalyzer, custom_type: []const u8) []const u8 {
+    if (std.mem.lastIndexOfScalar(u8, custom_type, '.')) |dot| {
+        const namespace = custom_type[0..dot];
+        if (helpers.isModuleNamespace(self, namespace)) return custom_type[dot + 1 ..];
+    }
+    return custom_type;
+}
+
+/// The type of a builtin's subject argument. Expression inference can miss a
+/// variable's type (e.g. a global or an imported binding) even though its
+/// declaration is in scope, so fall back to the stored declaration type.
+fn inferBuiltinSubjectType(self: *SemanticAnalyzer, subject: *ast.Expr) SemanticError!*ast.TypeInfo {
+    const subject_type = try inferTypeFromExpr(self, subject);
+    if (subject_type.base != .Nothing or subject.data != .Variable) return subject_type;
+    if (lookupVariable(self, subject.data.Variable.lexeme)) |variable| {
+        if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
+            return storage.type_info;
+        }
+    }
+    return subject_type;
+}
+
+/// Type rules for the built-in `@`-methods, reached by every call shape.
+/// `receiver` is absent only for `@std`, whose argument list is empty.
+///
+/// Memoizing entry point: the `.InternalCall` cases of `inferTypeFromExpr`
+/// return straight through here, so without caching the result a builtin is
+/// re-inferred — and a failing one re-reported — on every analysis pass over
+/// the same expression.
+fn inferBuiltinCall(
+    self: *SemanticAnalyzer,
+    expr: *ast.Expr,
+    fname: []const u8,
+    receiver: ?*ast.Expr,
+    rest: []const *ast.Expr,
+) SemanticError!*ast.TypeInfo {
+    const result = try inferBuiltinCallInner(self, expr, fname, receiver, rest);
+    try self.type_cache.put(expr.base.id, result);
+    return result;
+}
+
+fn inferBuiltinCallInner(
+    self: *SemanticAnalyzer,
+    expr: *ast.Expr,
+    fname: []const u8,
+    receiver: ?*ast.Expr,
+    rest: []const *ast.Expr,
+) SemanticError!*ast.TypeInfo {
+    const buffer = try self.allocator.alloc(*ast.Expr, rest.len + 1);
+    defer self.allocator.free(buffer);
+    const prefix: usize = if (receiver) |r| blk: {
+        buffer[0] = r;
+        break :blk 1;
+    } else 0;
+    @memcpy(buffer[prefix .. prefix + rest.len], rest);
+    const args: []const *ast.Expr = buffer[0 .. prefix + rest.len];
+
+    const type_info = try ast.TypeInfo.createDefault(self.allocator);
+    errdefer self.allocator.destroy(type_info);
+
+    type_info.* = .{ .base = .Nothing };
+
+    // Helper to validate argument count and return early if invalid
+    // Returns true if validation passed, false if we should return early
+    const validateBuiltinArgs = struct {
+        fn check(sem: *SemanticAnalyzer, e: *ast.Expr, name: []const u8, arg_count: usize) bool {
+            if (builtin_methods.getArgCountRangeByName(name)) |range| {
+                if (arg_count < range.min or arg_count > range.max) {
+                    if (arg_count < range.min) {
+                        sem.reporter.reportCompileError(
+                            getLocationFromBase(e.base),
+                            ErrorCode.TOO_FEW_ARGUMENTS,
+                            "Too few arguments to @{s}: expected {d}, got {d}",
+                            .{ name, range.min, arg_count },
+                        );
+                    } else {
+                        sem.reporter.reportCompileError(
+                            getLocationFromBase(e.base),
+                            ErrorCode.TOO_MANY_ARGUMENTS,
+                            "Too many arguments to @{s}: expected {d}, got {d}",
+                            .{ name, range.max, arg_count },
+                        );
+                    }
+                    sem.fatal_error = true;
+                    return false;
+                }
+                return true;
+            }
+            return true; // If method not found, let it fall through to manual handling
+        }
+    };
+
+    if (std.mem.eql(u8, fname, "length")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        const t0 = try inferBuiltinSubjectType(self, args[0]);
+        if (t0.base != .Array and t0.base != .String) {
+            self.reporter.reportCompileError(
+                getLocationFromBase(args[0].base),
+                ErrorCode.INVALID_ARRAY_TYPE,
+                "@length requires array or string, got {s}",
+                .{@tagName(t0.base)},
+            );
+            self.fatal_error = true;
+            return type_info;
+        }
+        type_info.* = .{ .base = .Int };
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "push")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        const val_t = try inferTypeFromExpr(self, args[1]);
+        if (coll_t.base == .Array) {
+            if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@push")) return type_info;
+            if (coll_t.array_type) |elem| {
+                try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(args[1].base) });
+            } else if (val_t.base == .Array and val_t.array_type != null) {
+                self.reporter.reportCompileError(
+                    getLocationFromBase(args[1].base),
+                    ErrorCode.TYPE_MISMATCH,
+                    "Cannot push typed array into array with unspecified element type",
+                    .{},
+                );
+                self.fatal_error = true;
+            }
+        } else if (coll_t.base == .String) {
+            // A string is not a byte array: appending is string concatenation,
+            // so the value must itself be a string. `byte[]` crosses with `@pack`.
+            if (val_t.base != .String) {
+                self.reporter.reportCompileError(
+                    getLocationFromBase(args[1].base),
+                    ErrorCode.TYPE_MISMATCH,
+                    "@push on string requires string value, got {s}",
+                    .{@tagName(val_t.base)},
+                );
+                self.fatal_error = true;
+            }
+        } else {
+            self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@push requires array or string, got {s}", .{@tagName(coll_t.base)});
+            self.fatal_error = true;
+        }
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "pop")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        if (args[0].data == .Variable and std.mem.eql(u8, args[0].data.Variable.lexeme, "list")) {
+            if (coll_t.base == .Array) {
+                if (coll_t.array_type) |elem| type_info.* = elem.*;
+            } else if (coll_t.base == .String) {
+                type_info.* = .{ .base = .String };
+            } else {
+                self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@pop requires array or string, got {s}", .{@tagName(coll_t.base)});
+                self.fatal_error = true;
+                return type_info;
+            }
+        }
+        if (coll_t.base == .Array) {
+            if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@pop")) return type_info;
+            if (coll_t.array_type) |elem| type_info.* = elem.*;
+            return type_info;
+        } else if (coll_t.base == .String) {
+            type_info.* = .{ .base = .String };
+            return type_info;
+        } else {
+            self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@pop requires array or string, got {s}", .{@tagName(coll_t.base)});
+            self.fatal_error = true;
+            return type_info;
+        }
+    } else if (std.mem.eql(u8, fname, "insert")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        const idx_t = try inferTypeFromExpr(self, args[1]);
+        if (idx_t.base != .Int) {
+            self.reporter.reportCompileError(getLocationFromBase(args[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@insert index must be int, got {s}", .{@tagName(idx_t.base)});
+            self.fatal_error = true;
+            return type_info;
+        }
+        if (coll_t.base == .Array) {
+            if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@insert")) return type_info;
+            const val_t = try inferTypeFromExpr(self, args[2]);
+            if (coll_t.array_type) |elem| try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(args[2].base) });
+        } else if (coll_t.base == .String) {
+            // A string is not a byte array: only a string can be inserted.
+            // `byte[]` crosses with `@pack`.
+            const val_t = try inferTypeFromExpr(self, args[2]);
+            if (val_t.base != .String) {
+                self.reporter.reportCompileError(
+                    getLocationFromBase(args[2].base),
+                    ErrorCode.TYPE_MISMATCH,
+                    "@insert on string requires string value, got {s}",
+                    .{@tagName(val_t.base)},
+                );
+                self.fatal_error = true;
+            }
+        } else {
+            self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@insert requires array or string, got {s}", .{@tagName(coll_t.base)});
+            self.fatal_error = true;
+            return type_info;
+        }
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "remove")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        const idx_t = try inferTypeFromExpr(self, args[1]);
+        if (idx_t.base != .Int) {
+            self.reporter.reportCompileError(getLocationFromBase(args[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@remove index must be int, got {s}", .{@tagName(idx_t.base)});
+            self.fatal_error = true;
+            return type_info;
+        }
+        if (coll_t.base == .Array) {
+            if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@remove")) return type_info;
+            if (coll_t.array_type) |elem| {
+                type_info.* = elem.*;
+            } else {
+                type_info.* = .{ .base = .Nothing };
+            }
+            return type_info;
+        } else if (coll_t.base == .String) {
+            type_info.* = .{ .base = .String };
+            return type_info;
+        }
+        self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@remove requires array or string, got {s}", .{@tagName(coll_t.base)});
+        self.fatal_error = true;
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "slice")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        const start_t = try inferTypeFromExpr(self, args[1]);
+        const len_t = try inferTypeFromExpr(self, args[2]);
+        if (start_t.base != .Int or len_t.base != .Int) {
+            self.reporter.reportCompileError(getLocationFromBase(args[1].base), ErrorCode.INVALID_ARGUMENT_TYPE, "@slice start/length must be ints", .{});
+            self.fatal_error = true;
+            return type_info;
+        }
+        if (coll_t.base == .String) {
+            type_info.* = .{ .base = .String };
+        } else if (coll_t.base == .Array) {
+            if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@slice")) return type_info;
+            if (coll_t.array_type) |elem| {
+                const new_elem = try ast.TypeInfo.createDefault(self.allocator);
+                new_elem.* = elem.*;
+                type_info.* = .{ .base = .Array, .array_type = new_elem };
+            } else {
+                type_info.* = .{ .base = .Array };
+            }
+        } else {
+            self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.INVALID_ARGUMENT_TYPE, "@slice requires array or string, got {s}", .{@tagName(coll_t.base)});
+            self.fatal_error = true;
+        }
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "string") or
+        std.mem.eql(u8, fname, "int") or
+        std.mem.eql(u8, fname, "float") or
+        std.mem.eql(u8, fname, "byte") or
+        std.mem.eql(u8, fname, "type") or
+        std.mem.eql(u8, fname, "pack") or
+        std.mem.eql(u8, fname, "unpack"))
+    {
+        // Simple builtins: validate args and return type from centralized data
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        if (builtin_methods.getMethodInfoByName(fname)) |info| {
+            // `@pack` consumes a `byte[]`: the bridge from byte data into a
+            // string is one-way and explicit. The element goes through the same
+            // coercion rule as `@push`, so comptime int literals narrow to `byte`
+            // while a runtime `int[]` is rejected.
+            if (std.mem.eql(u8, fname, "pack")) {
+                const arg_t = try inferTypeFromExpr(self, args[0]);
+                if (arg_t.base != .Array) {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(args[0].base),
+                        ErrorCode.TYPE_MISMATCH,
+                        "@pack requires a byte[] argument, got {s}",
+                        .{@tagName(arg_t.base)},
+                    );
+                    self.fatal_error = true;
+                    return type_info;
+                }
+                if (arg_t.array_type) |elem| {
+                    const byte_elem = try ast.TypeInfo.createDefault(self.allocator);
+                    byte_elem.* = .{ .base = .Byte };
+                    try helpers.unifyTypes(self, byte_elem, elem, .{ .location = getLocationFromBase(args[0].base) });
+                    if (self.fatal_error) return type_info;
+                }
+            }
+            type_info.* = .{ .base = info.return_type };
+            if (info.return_element_type) |elem_base| {
+                const elem = try ast.TypeInfo.createDefault(self.allocator);
+                elem.* = .{ .base = elem_base };
+                type_info.array_type = elem;
+            }
+            return type_info;
+        }
+        // Fallback for methods not in data structure
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "exit")) {
+        // Validate argument count using centralized data
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        // Validate argument type (int | byte)
+        if (args.len > 0) {
+            const arg_type = try inferTypeFromExpr(self, args[0]);
+            if (arg_type.base != .Int and arg_type.base != .Byte) {
+                self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
+                self.fatal_error = true;
+            }
+        }
+        // Get return type from centralized data
+        if (builtin_methods.getMethodInfoByName(fname)) |info| {
+            type_info.* = .{ .base = info.return_type };
+            return type_info;
+        }
+        type_info.* = .{ .base = .Nothing };
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "panic")) {
+        // Validate argument count using centralized data
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        // Validate argument type (string)
+        if (args.len > 0) {
+            const arg_type = try inferTypeFromExpr(self, args[0]);
+            if (arg_type.base != .String) {
+                self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.TYPE_MISMATCH, "@panic: argument must be a string", .{});
+                self.fatal_error = true;
+            }
+        }
+        // Get return type from centralized data
+        if (builtin_methods.getMethodInfoByName(fname)) |info| {
+            type_info.* = .{ .base = info.return_type };
+            return type_info;
+        }
+        type_info.* = .{ .base = .Nothing };
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "clear")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        if (coll_t.base != .Array and coll_t.base != .String) {
+            self.reporter.reportCompileError(
+                getLocationFromBase(args[0].base),
+                ErrorCode.INVALID_ARRAY_TYPE,
+                "@clear requires array or string, got {s}",
+                .{@tagName(coll_t.base)},
+            );
+            self.fatal_error = true;
+            return type_info;
+        }
+        // @clear returns nothing
+        type_info.* = .{ .base = .Nothing };
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "find")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        const coll_t = try inferBuiltinSubjectType(self, args[0]);
+        if (coll_t.base != .Array and coll_t.base != .String) {
+            self.reporter.reportCompileError(
+                getLocationFromBase(args[0].base),
+                ErrorCode.INVALID_ARRAY_TYPE,
+                "@find requires array or string, got {s}",
+                .{@tagName(coll_t.base)},
+            );
+            self.fatal_error = true;
+            return type_info;
+        }
+        type_info.* = .{ .base = .Int };
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "assert")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        if (args.len >= 1) {
+            const cond_t = try inferTypeFromExpr(self, args[0]);
+            if (cond_t.base != .Tetra) {
+                self.reporter.reportCompileError(getLocationFromBase(args[0].base), ErrorCode.TYPE_MISMATCH, "@assert condition must be tetra", .{});
+                self.fatal_error = true;
+            }
+        }
+        if (args.len >= 2) {
+            const msg_t = try inferTypeFromExpr(self, args[1]);
+            if (msg_t.base != .String) {
+                self.reporter.reportCompileError(getLocationFromBase(args[1].base), ErrorCode.TYPE_MISMATCH, "@assert message must be string", .{});
+                self.fatal_error = true;
+            }
+        }
+        type_info.* = .{ .base = .Nothing };
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "std")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        type_info.* = .{ .base = .String };
+        return type_info;
+    } else if (std.mem.eql(u8, fname, "print")) {
+        if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        // `@print` writes bytes straight to stdout; only a string carries a
+        // (ptr, len) pair it can. A value is rendered with `"{}"` in a format
+        // string, which is the path that knows the operand's declared type.
+        const t0 = try inferTypeFromExpr(self, args[0]);
+        if (t0.base != .String) {
+            self.reporter.reportCompileError(
+                getLocationFromBase(args[0].base),
+                ErrorCode.INVALID_ARGUMENT_TYPE,
+                "@print requires string, got {s}; write \"{{expr}}\" to render a value",
+                .{@tagName(t0.base)},
+            );
+            self.fatal_error = true;
+            return type_info;
+        }
+        type_info.* = .{ .base = .Nothing };
+        return type_info;
+    }
+
+    self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});
+    self.fatal_error = true;
+    return type_info;
+}
+
 pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInfo {
     if (self.type_cache.get(expr.base.id)) |cached| {
         return cached;
@@ -161,7 +568,23 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                 if (left_type.base == .String and right_type.base == .String) {
                     type_info.* = .{ .base = .String };
                 } else if (left_type.base == .Array and right_type.base == .Array) {
-                    type_info.* = .{ .base = .Array };
+                    // Concatenation preserves the element type, so `(a + b)[i]`
+                    // still resolves through the `string`/`byte[]` barrier.
+                    const elem_src = left_type.array_type orelse right_type.array_type;
+                    if (elem_src) |src| {
+                        const elem = try ast.TypeInfo.createDefault(self.allocator);
+                        elem.* = src.*;
+                        if (left_type.array_type != null and right_type.array_type != null) {
+                            try helpers.unifyTypes(self, elem, right_type.array_type.?, .{ .location = getLocationFromBase(expr.base) });
+                            if (self.fatal_error) {
+                                type_info.base = .Nothing;
+                                return type_info;
+                            }
+                        }
+                        type_info.* = .{ .base = .Array, .array_type = elem };
+                    } else {
+                        type_info.* = .{ .base = .Array };
+                    }
                 } else if (left_type.base == .Int or left_type.base == .Float or left_type.base == .Byte or
                     right_type.base == .Int or right_type.base == .Float or right_type.base == .Byte)
                 {
@@ -307,7 +730,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                     if (object_type.base == .Custom) {
                         if (object_type.custom_type) |ct_name| {
-                            if (self.struct_methods.get(ct_name)) |method_table| {
+                            const method_struct_name = structMethodName(self, ct_name);
+                            try self.ensureImportedStructRegistered(method_struct_name);
+                            if (self.struct_methods.get(method_struct_name)) |method_table| {
                                 if (method_table.get(method_name)) |method_info| {
                                     if (!method_info.is_static) {
                                         try inferArgs(self, function_call.arguments);
@@ -439,7 +864,9 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
                         // Prefer registered methods over fields when resolving a call
                         if (struct_name) |name| {
-                            if (self.struct_methods.get(name)) |tbl| {
+                            const method_struct_name = structMethodName(self, name);
+                            try self.ensureImportedStructRegistered(method_struct_name);
+                            if (self.struct_methods.get(method_struct_name)) |tbl| {
                                 if (tbl.get(method_name)) |mi| {
                                     try inferArgs(self, function_call.arguments);
                                     type_info.* = mi.return_type.*;
@@ -1210,742 +1637,14 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
         .Unreachable => {
             type_info.* = .{ .base = .Nothing };
         },
-        .BuiltinCall => |bc| {
-            const fname = bc.function.lexeme;
-
-            type_info.* = .{ .base = .Nothing };
-
-            // Helper to validate argument count and return early if invalid
-            // Returns true if validation passed, false if we should return early
-            const validateBuiltinArgs = struct {
-                fn check(sem: *SemanticAnalyzer, e: *ast.Expr, name: []const u8, arg_count: usize) bool {
-                    if (builtin_methods.getArgCountRangeByName(name)) |range| {
-                        if (arg_count < range.min or arg_count > range.max) {
-                            if (arg_count < range.min) {
-                                sem.reporter.reportCompileError(
-                                    getLocationFromBase(e.base),
-                                    ErrorCode.TOO_FEW_ARGUMENTS,
-                                    "Too few arguments to @{s}: expected {d}, got {d}",
-                                    .{ name, range.min, arg_count },
-                                );
-                            } else {
-                                sem.reporter.reportCompileError(
-                                    getLocationFromBase(e.base),
-                                    ErrorCode.TOO_MANY_ARGUMENTS,
-                                    "Too many arguments to @{s}: expected {d}, got {d}",
-                                    .{ name, range.max, arg_count },
-                                );
-                            }
-                            sem.fatal_error = true;
-                            return false;
-                        }
-                        return true;
-                    }
-                    return true; // If method not found, let it fall through to manual handling
-                }
-            };
-
-            if (std.mem.eql(u8, fname, "length")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const t0 = try inferTypeFromExpr(self, bc.arguments[0]);
-                if (t0.base != .Array and t0.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(bc.arguments[0].base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "@length requires array or string, got {s}",
-                        .{@tagName(t0.base)},
-                    );
-                    self.fatal_error = true;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .Int };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "push")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
-                const val_t = try inferTypeFromExpr(self, bc.arguments[1]);
-                if (coll_t.base == .Array) {
-                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@push")) return type_info;
-                    if (coll_t.array_type) |elem| {
-                        try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(bc.arguments[1].base) });
-                    } else if (val_t.base == .Array and val_t.array_type != null) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(bc.arguments[1].base),
-                            ErrorCode.TYPE_MISMATCH,
-                            "Cannot push typed array into array with unspecified element type",
-                            .{},
-                        );
-                        self.fatal_error = true;
-                    }
-                } else if (coll_t.base != .String) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@push requires array or string, got {s}", .{@tagName(coll_t.base)});
-                    self.fatal_error = true;
-                }
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "pop")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
-                if (bc.arguments[0].data == .Variable and std.mem.eql(u8, bc.arguments[0].data.Variable.lexeme, "list")) {
-                    if (coll_t.base == .Array) {
-                        if (coll_t.array_type) |elem| type_info.* = elem.*;
-                    } else if (coll_t.base == .String) {
-                        type_info.* = .{ .base = .String };
-                    } else {
-                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@pop requires array or string, got {s}", .{@tagName(coll_t.base)});
-                        self.fatal_error = true;
-                        return type_info;
-                    }
-                }
-                if (coll_t.base == .Array) {
-                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@pop")) return type_info;
-                    if (coll_t.array_type) |elem| type_info.* = elem.*;
-                    return type_info;
-                } else if (coll_t.base == .String) {
-                    type_info.* = .{ .base = .String };
-                    return type_info;
-                } else {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@pop requires array or string, got {s}", .{@tagName(coll_t.base)});
-                    self.fatal_error = true;
-                    return type_info;
-                }
-            } else if (std.mem.eql(u8, fname, "insert")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
-                const idx_t = try inferTypeFromExpr(self, bc.arguments[1]);
-                if (idx_t.base != .Int) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@insert index must be int, got {s}", .{@tagName(idx_t.base)});
-                    self.fatal_error = true;
-                    return type_info;
-                }
-                if (coll_t.base == .Array) {
-                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@insert")) return type_info;
-                    const val_t = try inferTypeFromExpr(self, bc.arguments[2]);
-                    if (coll_t.array_type) |elem| try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(bc.arguments[2].base) });
-                } else if (coll_t.base != .String) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@insert requires array or string, got {s}", .{@tagName(coll_t.base)});
-                    self.fatal_error = true;
-                    return type_info;
-                }
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "remove")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
-                const idx_t = try inferTypeFromExpr(self, bc.arguments[1]);
-                if (idx_t.base != .Int) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.INVALID_ARRAY_INDEX_TYPE, "@remove index must be int, got {s}", .{@tagName(idx_t.base)});
-                    self.fatal_error = true;
-                    return type_info;
-                }
-                if (coll_t.base == .Array) {
-                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@remove")) return type_info;
-                    if (coll_t.array_type) |elem| {
-                        type_info.* = elem.*;
-                    } else {
-                        type_info.* = .{ .base = .Nothing };
-                    }
-                    return type_info;
-                } else if (coll_t.base == .String) {
-                    type_info.* = .{ .base = .Byte };
-                    return type_info;
-                }
-                self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARRAY_TYPE, "@remove requires array or string, got {s}", .{@tagName(coll_t.base)});
-                self.fatal_error = true;
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "slice")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
-                const start_t = try inferTypeFromExpr(self, bc.arguments[1]);
-                const len_t = try inferTypeFromExpr(self, bc.arguments[2]);
-                if (start_t.base != .Int or len_t.base != .Int) {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.INVALID_ARGUMENT_TYPE, "@slice start/length must be ints", .{});
-                    self.fatal_error = true;
-                    return type_info;
-                }
-                if (coll_t.base == .String) {
-                    type_info.* = .{ .base = .String };
-                } else if (coll_t.base == .Array) {
-                    if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(bc.arguments[0].base), "@slice")) return type_info;
-                    if (coll_t.array_type) |elem| {
-                        const new_elem = try ast.TypeInfo.createDefault(self.allocator);
-                        new_elem.* = elem.*;
-                        type_info.* = .{ .base = .Array, .array_type = new_elem };
-                    } else {
-                        type_info.* = .{ .base = .Array };
-                    }
-                } else {
-                    self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.INVALID_ARGUMENT_TYPE, "@slice requires array or string, got {s}", .{@tagName(coll_t.base)});
-                    self.fatal_error = true;
-                }
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "string") or
-                std.mem.eql(u8, fname, "int") or
-                std.mem.eql(u8, fname, "float") or
-                std.mem.eql(u8, fname, "byte") or
-                std.mem.eql(u8, fname, "type") or
-                std.mem.eql(u8, fname, "pack") or
-                std.mem.eql(u8, fname, "unpack"))
-            {
-                // Simple builtins: validate args and return type from centralized data
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                if (builtin_methods.getMethodInfoByName(fname)) |info| {
-                    type_info.* = .{ .base = info.return_type };
-                    return type_info;
-                }
-                // Fallback for methods not in data structure
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "exit")) {
-                // Validate argument count using centralized data
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                // Validate argument type (int | byte)
-                if (bc.arguments.len > 0) {
-                    const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
-                    if (arg_type.base != .Int and arg_type.base != .Byte) {
-                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@exit: argument must be an integer", .{});
-                        self.fatal_error = true;
-                    }
-                }
-                // Get return type from centralized data
-                if (builtin_methods.getMethodInfoByName(fname)) |info| {
-                    type_info.* = .{ .base = info.return_type };
-                    return type_info;
-                }
-                type_info.* = .{ .base = .Nothing };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "panic")) {
-                // Validate argument count using centralized data
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                // Validate argument type (string)
-                if (bc.arguments.len > 0) {
-                    const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
-                    if (arg_type.base != .String) {
-                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@panic: argument must be a string", .{});
-                        self.fatal_error = true;
-                    }
-                }
-                // Get return type from centralized data
-                if (builtin_methods.getMethodInfoByName(fname)) |info| {
-                    type_info.* = .{ .base = info.return_type };
-                    return type_info;
-                }
-                type_info.* = .{ .base = .Nothing };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "spawn")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
-                if (arg_type.base != .Array) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(bc.arguments[0].base),
-                        ErrorCode.TYPE_MISMATCH,
-                        "@spawn: argument must be array of strings",
-                        .{},
-                    );
-                    self.fatal_error = true;
-                } else if (arg_type.array_type) |elem_type| {
-                    if (elem_type.base != .String and elem_type.base != .Nothing) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(bc.arguments[0].base),
-                            ErrorCode.TYPE_MISMATCH,
-                            "@spawn: array elements must be strings, got {s}",
-                            .{@tagName(elem_type.base)},
-                        );
-                        self.fatal_error = true;
-                    }
-                }
-                type_info.* = .{ .base = .Int };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "kill")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
-                if (arg_type.base != .Int) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(bc.arguments[0].base),
-                        ErrorCode.TYPE_MISMATCH,
-                        "@kill: argument must be process id (int)",
-                        .{},
-                    );
-                    self.fatal_error = true;
-                }
-                type_info.* = .{ .base = .Nothing };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "wait")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const arg_type = try inferTypeFromExpr(self, bc.arguments[0]);
-                if (arg_type.base != .Int) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(bc.arguments[0].base),
-                        ErrorCode.TYPE_MISMATCH,
-                        "@wait: argument must be process id (int)",
-                        .{},
-                    );
-                    self.fatal_error = true;
-                }
-                type_info.* = .{ .base = .Int };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "clear")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
-                if (coll_t.base != .Array and coll_t.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(bc.arguments[0].base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "@clear requires array or string, got {s}",
-                        .{@tagName(coll_t.base)},
-                    );
-                    self.fatal_error = true;
-                    return type_info;
-                }
-                // @clear returns nothing
-                type_info.* = .{ .base = .Nothing };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "find")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                const coll_t = try inferTypeFromExpr(self, bc.arguments[0]);
-                if (coll_t.base != .Array and coll_t.base != .String) {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(bc.arguments[0].base),
-                        ErrorCode.INVALID_ARRAY_TYPE,
-                        "@find requires array or string, got {s}",
-                        .{@tagName(coll_t.base)},
-                    );
-                    self.fatal_error = true;
-                    return type_info;
-                }
-                type_info.* = .{ .base = .Int };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "assert")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                if (bc.arguments.len >= 1) {
-                    const cond_t = try inferTypeFromExpr(self, bc.arguments[0]);
-                    if (cond_t.base != .Tetra) {
-                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[0].base), ErrorCode.TYPE_MISMATCH, "@assert condition must be tetra", .{});
-                        self.fatal_error = true;
-                    }
-                }
-                if (bc.arguments.len >= 2) {
-                    const msg_t = try inferTypeFromExpr(self, bc.arguments[1]);
-                    if (msg_t.base != .String) {
-                        self.reporter.reportCompileError(getLocationFromBase(bc.arguments[1].base), ErrorCode.TYPE_MISMATCH, "@assert message must be string", .{});
-                        self.fatal_error = true;
-                    }
-                }
-                type_info.* = .{ .base = .Nothing };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "std")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                type_info.* = .{ .base = .String };
-                return type_info;
-            } else if (std.mem.eql(u8, fname, "print")) {
-                if (!validateBuiltinArgs.check(self, expr, fname, bc.arguments.len)) return type_info;
-                if (bc.arguments.len >= 1) {
-                    _ = try inferTypeFromExpr(self, bc.arguments[0]);
-                }
-                type_info.* = .{ .base = .Nothing };
-                return type_info;
-            }
-
-            self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.NOT_IMPLEMENTED, "Unknown builtin '@{s}'", .{fname});
-            self.fatal_error = true;
-            return type_info;
-        },
         .InternalCall => |method_call| {
-            var receiver_type = try inferTypeFromExpr(self, method_call.receiver);
             const method_name = method_call.method.lexeme;
-
-            switch (method_call.method.type) {
-                .PUSH,
-                .POP,
-                .INSERT,
-                .REMOVE,
-                .CLEAR,
-                .FIND,
-                .SLICE,
-                => {
-                    if (receiver_type.base == .Nothing and method_call.receiver.data == .Variable) {
-                        const var_name = method_call.receiver.data.Variable.lexeme;
-                        if (lookupVariable(self, var_name)) |variable| {
-                            if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                                receiver_type = storage.type_info;
-                            }
-                        }
-                    }
-                    const allow_string_for_method = receiver_type.base == .String and (method_call.method.type == .PUSH or method_call.method.type == .POP or method_call.method.type == .INSERT or method_call.method.type == .REMOVE or method_call.method.type == .CLEAR or method_call.method.type == .FIND or method_call.method.type == .SLICE);
-                    if (receiver_type.base != .Array and !allow_string_for_method) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(method_call.receiver.base),
-                            ErrorCode.INVALID_ARRAY_TYPE,
-                            "Cannot call array method '{s}' on non-array type {s}",
-                            .{ method_name, @tagName(receiver_type.base) },
-                        );
-                        self.fatal_error = true;
-                        type_info.* = .{ .base = .Nothing };
-                        return type_info;
-                    }
-
-                    switch (method_call.method.type) {
-                        .PUSH => {
-                            if (method_call.arguments.len != 1) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.arguments[0].base),
-                                    ErrorCode.INVALID_ARRAY_TYPE,
-                                    "@push requires exactly one argument",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            const value_type = try inferTypeFromExpr(self, method_call.arguments[0]);
-                            if (receiver_type.base == .Array) {
-                                if (receiver_type.array_type) |elem_type| {
-                                    try helpers.unifyTypes(self, elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[0].base) });
-                                }
-                            } else if (receiver_type.base == .String) {
-                                if (value_type.base != .String) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(method_call.arguments[0].base),
-                                        ErrorCode.TYPE_MISMATCH,
-                                        "@push on string requires string value, got {s}",
-                                        .{@tagName(value_type.base)},
-                                    );
-                                    self.fatal_error = true;
-                                    type_info.* = .{ .base = .Nothing };
-                                    return type_info;
-                                }
-                            }
-
-                            var args = try self.allocator.alloc(*ast.Expr, 2);
-                            args[0] = method_call.receiver;
-                            args[1] = method_call.arguments[0];
-                            expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try inferTypeFromExpr(self, expr);
-                        },
-                        .POP => {
-                            if (method_call.arguments.len != 0) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.INVALID_ARGUMENT_COUNT,
-                                    "@pop requires no arguments",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            var args = try self.allocator.alloc(*ast.Expr, 1);
-                            args[0] = method_call.receiver;
-                            expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try inferTypeFromExpr(self, expr);
-                        },
-                        .INSERT => {
-                            if (method_call.arguments.len != 2) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.INVALID_ARGUMENT_COUNT,
-                                    "@insert requires exactly two arguments (index, element)",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            const index_type = try inferTypeFromExpr(self, method_call.arguments[0]);
-                            if (index_type.base != .Int) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.arguments[0].base),
-                                    ErrorCode.INVALID_ARRAY_INDEX_TYPE,
-                                    "@insert index must be integer, got {s}",
-                                    .{@tagName(index_type.base)},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            const value_type = try inferTypeFromExpr(self, method_call.arguments[1]);
-                            if (receiver_type.array_type) |elem_type| {
-                                try helpers.unifyTypes(self, elem_type, value_type, .{ .location = getLocationFromBase(method_call.arguments[1].base) });
-                            }
-
-                            var args = try self.allocator.alloc(*ast.Expr, 3);
-                            args[0] = method_call.receiver;
-                            args[1] = method_call.arguments[0];
-                            args[2] = method_call.arguments[1];
-                            expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try inferTypeFromExpr(self, expr);
-                        },
-                        .REMOVE => {
-                            if (method_call.arguments.len != 1) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.INVALID_ARGUMENT_COUNT,
-                                    "@remove requires exactly one argument (index)",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            const index_type = try inferTypeFromExpr(self, method_call.arguments[0]);
-                            if (index_type.base != .Int) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.arguments[0].base),
-                                    ErrorCode.INVALID_ARRAY_INDEX_TYPE,
-                                    "@remove index must be integer, got {s}",
-                                    .{@tagName(index_type.base)},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            var args = try self.allocator.alloc(*ast.Expr, 2);
-                            args[0] = method_call.receiver;
-                            args[1] = method_call.arguments[0];
-                            expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try inferTypeFromExpr(self, expr);
-                        },
-                        .SLICE => {
-                            if (method_call.arguments.len != 2) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.INVALID_ARGUMENT_COUNT,
-                                    "@slice requires exactly two arguments (start, length)",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            const start_type = try inferTypeFromExpr(self, method_call.arguments[0]);
-                            const length_type = try inferTypeFromExpr(self, method_call.arguments[1]);
-                            if (start_type.base != .Int) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.arguments[0].base),
-                                    ErrorCode.TYPE_MISMATCH,
-                                    "@slice start index must be integer, got {s}",
-                                    .{@tagName(start_type.base)},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-                            if (length_type.base != .Int) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.arguments[1].base),
-                                    ErrorCode.TYPE_MISMATCH,
-                                    "@slice length must be integer, got {s}",
-                                    .{@tagName(length_type.base)},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            if (receiver_type.base == .Array) {
-                                type_info.* = receiver_type.*;
-                            } else if (receiver_type.base == .String) {
-                                type_info.* = .{ .base = .String };
-                            }
-
-                            var args = try self.allocator.alloc(*ast.Expr, 3);
-                            args[0] = method_call.receiver;
-                            args[1] = method_call.arguments[0];
-                            args[2] = method_call.arguments[1];
-                            expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try inferTypeFromExpr(self, expr);
-                        },
-                        .CLEAR => {
-                            if (method_call.arguments.len != 0) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.INVALID_ARGUMENT_COUNT,
-                                    "@clear takes no arguments",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            if (receiver_type.base != .Array and receiver_type.base != .String) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.TYPE_MISMATCH,
-                                    "@clear requires array or string receiver, got {s}",
-                                    .{@tagName(receiver_type.base)},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            var args = try self.allocator.alloc(*ast.Expr, 1);
-                            args[0] = method_call.receiver;
-                            expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try inferTypeFromExpr(self, expr);
-                        },
-                        .FIND => {
-                            if (method_call.arguments.len != 1) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.INVALID_ARGUMENT_COUNT,
-                                    "@find requires exactly one argument",
-                                    .{},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            if (receiver_type.base != .Array and receiver_type.base != .String) {
-                                self.reporter.reportCompileError(
-                                    getLocationFromBase(method_call.receiver.base),
-                                    ErrorCode.TYPE_MISMATCH,
-                                    "@find requires array or string receiver, got {s}",
-                                    .{@tagName(receiver_type.base)},
-                                );
-                                self.fatal_error = true;
-                                type_info.* = .{ .base = .Nothing };
-                                return type_info;
-                            }
-
-                            var args = try self.allocator.alloc(*ast.Expr, 2);
-                            args[0] = method_call.receiver;
-                            args[1] = method_call.arguments[0];
-                            expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                            return try inferTypeFromExpr(self, expr);
-                        },
-
-                        else => {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(method_call.receiver.base),
-                                ErrorCode.NOT_IMPLEMENTED,
-                                "Array method '{s}' not yet implemented",
-                                .{method_name},
-                            );
-                            self.fatal_error = true;
-                            type_info.* = .{ .base = .Nothing };
-                        },
-                    }
-                },
-
-                .TYPE => {
-                    var args = try self.allocator.alloc(*ast.Expr, 1);
-                    args[0] = method_call.receiver;
-                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                    return try inferTypeFromExpr(self, expr);
-                },
-
-                .LENGTH => {
-                    var args = try self.allocator.alloc(*ast.Expr, 1);
-                    args[0] = method_call.receiver;
-                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                    return try inferTypeFromExpr(self, expr);
-                },
-
-                .PACK, .UNPACK => {
-                    var args = try self.allocator.alloc(*ast.Expr, 1);
-                    args[0] = method_call.receiver;
-                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                    return try inferTypeFromExpr(self, expr);
-                },
-
-                .PANIC => {
-                    var args = try self.allocator.alloc(*ast.Expr, 1);
-                    args[0] = method_call.receiver;
-                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = args } };
-                    return try inferTypeFromExpr(self, expr);
-                },
-
-                .TOSTRING, .TOINT, .TOFLOAT, .TOBYTE => {
-                    switch (method_call.method.type) {
-                        .TOSTRING => {
-                            type_info.* = .{ .base = .String };
-                        },
-                        .TOINT, .TOFLOAT, .TOBYTE => {
-                            // Intrinsics are non-union: infer concrete return types
-                            switch (method_call.method.type) {
-                                .TOINT => type_info.* = .{ .base = .Int },
-                                .TOFLOAT => type_info.* = .{ .base = .Float },
-                                .TOBYTE => type_info.* = .{ .base = .Byte },
-                                else => unreachable,
-                            }
-                        },
-                        else => unreachable,
-                    }
-                },
-
-                .ASSERT => {
-                    const argc = method_call.arguments.len;
-                    if (argc < 1 or argc > 2) {
-                        if (argc < 1) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.TOO_FEW_ARGUMENTS,
-                                "@assert requires at least 1 argument (condition)",
-                                .{},
-                            );
-                        } else {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.TOO_MANY_ARGUMENTS,
-                                "@assert takes at most 2 arguments (condition, message)",
-                                .{},
-                            );
-                        }
-                        self.fatal_error = true;
-                        type_info.* = .{ .base = .Nothing };
-                        return type_info;
-                    }
-
-                    const cond_type = try inferTypeFromExpr(self, method_call.arguments[0]);
-                    if (cond_type.base != .Tetra) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(method_call.arguments[0].base),
-                            ErrorCode.TYPE_MISMATCH,
-                            "@assert condition must be tetra, got {s}",
-                            .{@tagName(cond_type.base)},
-                        );
-                        self.fatal_error = true;
-                        type_info.* = .{ .base = .Nothing };
-                        return type_info;
-                    }
-
-                    if (argc == 2) {
-                        const msg_type = try inferTypeFromExpr(self, method_call.arguments[1]);
-                        if (msg_type.base != .String) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(method_call.arguments[1].base),
-                                ErrorCode.TYPE_MISMATCH,
-                                "@assert message must be string, got {s}",
-                                .{@tagName(msg_type.base)},
-                            );
-                            self.fatal_error = true;
-                            type_info.* = .{ .base = .Nothing };
-                            return type_info;
-                        }
-                    }
-
-                    expr.data = .{ .BuiltinCall = .{ .function = method_call.method, .arguments = method_call.arguments } };
-                    return try inferTypeFromExpr(self, expr);
-                },
-
-                else => {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(method_call.receiver.base),
-                        ErrorCode.NOT_IMPLEMENTED,
-                        "Unknown method '{s}'",
-                        .{method_name},
-                    );
-                    self.fatal_error = true;
-                    type_info.* = .{ .base = .Nothing };
-                },
+            // `@std` takes no arguments; its parser-supplied receiver is a
+            // placeholder, not an argument.
+            if (method_call.method.type == .STD) {
+                return try inferBuiltinCall(self, expr, method_name, null, &.{});
             }
+            return try inferBuiltinCall(self, expr, method_name, method_call.receiver, method_call.arguments);
         },
         .EnumMember => |member_token| {
             // Resolve the enum member to its parent enum type
@@ -2855,8 +2554,6 @@ fn assignValueOrNothingUnion(self: *SemanticAnalyzer, dest: *ast.TypeInfo, value
 fn expressionDiverges(expr: *ast.Expr) bool {
     return switch (expr.data) {
         .ReturnExpr, .Unreachable => true,
-        .BuiltinCall => |bc| std.mem.eql(u8, bc.function.lexeme, "panic") or
-            std.mem.eql(u8, bc.function.lexeme, "exit"),
         .InternalCall => |ic| ic.method.type == .PANIC or ic.method.type == .EXIT,
         .Block => |block| blockDiverges(block.statements),
         else => false,

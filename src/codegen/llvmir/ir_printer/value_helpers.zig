@@ -11,54 +11,55 @@ pub fn Methods(comptime Ctx: type) type {
     const StackVal = Ctx.StackVal;
 
     return struct {
-    pub fn emitRTCallReturningString(
+    /// The `%str_out_ptr` / `%str_out_len` slots a string-returning runtime call
+    /// writes through. Both body emitters allocate them in the entry block
+    /// before the first body instruction, so every arm of a branch that calls
+    /// into the runtime writes through memory that dominates them all.
+    pub const StrOutSlots = struct { ptr: []const u8, len: []const u8 };
+
+    pub fn strOutSlots(self: *IRPrinter) StrOutSlots {
+        return .{ .ptr = self.entry_str_out_ptr.?, .len = self.entry_str_out_len.? };
+    }
+
+    /// Emit the call and leave its result in `slots`. Reading the slots is the
+    /// caller's move, so a branch can write every arm first and read once where
+    /// they merge.
+    pub fn callReturningString(
         self: *IRPrinter,
         w: anytype,
-        stack: *std.array_list.Managed(StackVal),
-        id: *usize,
         fn_name: []const u8,
         args_line: []const u8,
+        slots: StrOutSlots,
     ) !void {
-        const out_ptr_slot = if (self.entry_str_out_ptr) |p| p else blk: {
-            const s = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-            id.* += 1;
-            break :blk s;
-        };
-        const out_len_slot = if (self.entry_str_out_len) |p| p else blk: {
-            const s = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
-            id.* += 1;
-            break :blk s;
-        };
-
-        if (self.entry_str_out_ptr == null) {
-            const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
-            const alloca_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
-            defer self.allocator.free(alloca_ptr_line);
-            defer self.allocator.free(alloca_len_line);
-            try w.writeAll(alloca_ptr_line);
-            try w.writeAll(alloca_len_line);
-        }
-
-        const init_ptr_line = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
-        const init_len_line = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
+        const init_ptr_line = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{slots.ptr});
+        const init_len_line = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{slots.len});
         defer self.allocator.free(init_ptr_line);
         defer self.allocator.free(init_len_line);
         try w.writeAll(init_ptr_line);
         try w.writeAll(init_len_line);
 
         const call_line = if (args_line.len > 0)
-            try std.fmt.allocPrint(self.allocator, "  call void @{s}({s}, ptr {s}, ptr {s})\n", .{ fn_name, args_line, out_ptr_slot, out_len_slot })
+            try std.fmt.allocPrint(self.allocator, "  call void @{s}({s}, ptr {s}, ptr {s})\n", .{ fn_name, args_line, slots.ptr, slots.len })
         else
-            try std.fmt.allocPrint(self.allocator, "  call void @{s}(ptr {s}, ptr {s})\n", .{ fn_name, out_ptr_slot, out_len_slot });
+            try std.fmt.allocPrint(self.allocator, "  call void @{s}(ptr {s}, ptr {s})\n", .{ fn_name, slots.ptr, slots.len });
         defer self.allocator.free(call_line);
         try w.writeAll(call_line);
+    }
 
+    /// Read `slots` and push the `%DoxaString` a string call left there.
+    pub fn pushStringResult(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+        slots: StrOutSlots,
+    ) !void {
         const loaded_ptr = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
         id.* += 1;
         const loaded_len = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
         id.* += 1;
-        const load_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{loaded_ptr, out_ptr_slot});
-        const load_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{loaded_len, out_len_slot});
+        const load_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ loaded_ptr, slots.ptr });
+        const load_len_line = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ loaded_len, slots.len });
         defer self.allocator.free(load_ptr_line);
         defer self.allocator.free(load_len_line);
         try w.writeAll(load_ptr_line);
@@ -66,13 +67,13 @@ pub fn Methods(comptime Ctx: type) type {
 
         const tmp_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
         id.* += 1;
-        const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{tmp_name, loaded_ptr});
+        const ins0 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString undef, ptr {s}, 0\n", .{ tmp_name, loaded_ptr });
         defer self.allocator.free(ins0);
         try w.writeAll(ins0);
 
         const result_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
         id.* += 1;
-        const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {s}, 1\n", .{result_name, tmp_name, loaded_len});
+        const ins1 = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaString {s}, i64 {s}, 1\n", .{ result_name, tmp_name, loaded_len });
         defer self.allocator.free(ins1);
         try w.writeAll(ins1);
 
@@ -82,6 +83,65 @@ pub fn Methods(comptime Ctx: type) type {
         // string (e.g. `doxa_array_get_str`) override the region with the
         // container's region immediately after.
         try stack.append(.{ .name = result_name, .ty = .STRING, .region = self.currentRegionTag() });
+    }
+
+    pub fn emitRTCallReturningString(
+        self: *IRPrinter,
+        w: anytype,
+        stack: *std.array_list.Managed(StackVal),
+        id: *usize,
+        fn_name: []const u8,
+        args_line: []const u8,
+    ) !void {
+        const slots = self.strOutSlots();
+        try self.callReturningString(w, fn_name, args_line, slots);
+        try self.pushStringResult(w, stack, id, slots);
+    }
+
+    /// An addressable copy of a boxed `%DoxaValue`, for a runtime entry that
+    /// takes `ptr`. The slot is hoisted to the entry block: this value can sit
+    /// in a loop, and a per-iteration alloca would grow the shadow stack every
+    /// time round. Named rather than a numeric temp because the alloca is
+    /// replayed in the entry block, and LLVM requires unnamed temps to be
+    /// numbered in order.
+    pub fn boxDoxaValue(self: *IRPrinter, w: anytype, val: StackVal) ![]const u8 {
+        const box_name = try std.fmt.allocPrint(self.allocator, "%doxa.value.box.{d}", .{self.synth_header_counter});
+        self.synth_header_counter += 1;
+        try self.entry_allocas.append(try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{box_name}));
+        const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ val.name, box_name });
+        defer self.allocator.free(store_line);
+        try w.writeAll(store_line);
+        return box_name;
+    }
+
+    /// The enum type a value of `hir_type` renders as: an enum itself, or — when
+    /// the value is still boxed — the single enum arm of a union. A union's arm
+    /// list describes the box, not a member that has since been narrowed out of
+    /// it, so `boxed` is what lets it speak. Null when the type names no enum,
+    /// or names more than one, where only narrowing can say which is live, and
+    /// then nothing but the storage is left to render with.
+    pub fn enumTypeNameFor(self: *IRPrinter, hir_type: HIR.HIRType, boxed: bool) ?[]const u8 {
+        const eid: HIR.EnumId = switch (hir_type) {
+            .Enum => |e| e,
+            .Union => |u| blk: {
+                if (!boxed) return null;
+                var found: ?HIR.EnumId = null;
+                for (u.members) |member| {
+                    switch (member.*) {
+                        .Enum => |e| {
+                            if (found != null) return null;
+                            found = e;
+                        },
+                        else => continue,
+                    }
+                }
+                break :blk found orelse return null;
+            },
+            else => return null,
+        };
+        const et_opaque = self.enum_table orelse return null;
+        const et: *EnumTable = @ptrCast(@alignCast(et_opaque));
+        return et.getName(eid);
     }
 
     pub fn createEnumTypeNameGlobal(self: *IRPrinter, type_name: []const u8, _: *usize) ![]const u8 {

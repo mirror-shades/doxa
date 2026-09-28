@@ -427,6 +427,56 @@ pub export fn doxa_array_to_string(hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len
     out_len.* = ds.len;
 }
 
+/// Render a boxed `DoxaValue` as a string by dispatching on its runtime tag.
+/// This is the buffer-returning half of `doxa_print_value`: interpolation and
+/// `@string` need bytes to concatenate, not a write to stdout, but the tag
+/// decides both readings. Only the `Int` tag stores an integer in
+/// `payload_bits`, so reading it without first asking the tag would format
+/// whatever the payload happens to hold — a string arm would be rendered as
+/// the address of its characters.
+pub export fn doxa_value_to_string(val: *const DoxaValue, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
+    const tag: DoxaTag = @enumFromInt(val.tag);
+    switch (tag) {
+        .Int => doxa_int_to_string(val.payload_bits, out_ptr, out_len),
+        .Float => doxa_float_to_string(asFloat(val.payload_bits), out_ptr, out_len),
+        .Byte => doxa_byte_to_string(@intCast(asByte(val.payload_bits)), out_ptr, out_len),
+        .Tetra => doxa_tetra_to_string(val.payload_bits, out_ptr, out_len),
+        .Nothing => doxa_nothing_to_string(out_ptr, out_len),
+        .String => outString(stringPayload(val), out_ptr, out_len),
+        .Array => doxa_array_to_string(payloadAs(val, ArrayHeader), out_ptr, out_len),
+        .Struct => doxa_struct_to_string(payloadAs(val, anyopaque), out_ptr, out_len),
+        // A `DoxaValue` carries no enum type name, so a boxed enum can only
+        // show its discriminant here. Callers that know the arm statically
+        // render it with `doxa_enum_to_string` instead (see the IR printer).
+        .Enum => doxa_enum_to_string(null, 0, val.payload_bits, out_ptr, out_len),
+        .Function => outString("<function>", out_ptr, out_len),
+        .Map => outString("<map>", out_ptr, out_len),
+    }
+}
+
+/// The character buffer a `String`-tagged payload points at, or an empty slice
+/// for the null sentinel.
+fn stringPayload(val: *const DoxaValue) []const u8 {
+    const addr: u64 = @bitCast(val.payload_bits);
+    if (addr == 0) return "";
+    const ptr: [*]const u8 = @ptrFromInt(@as(usize, @intCast(addr)));
+    return ptr[0..@intCast(val.payload_len)];
+}
+
+/// The heap object a payload address names, or null for the 0 sentinel.
+fn payloadAs(val: *const DoxaValue, comptime T: type) ?*T {
+    const addr: u64 = @bitCast(val.payload_bits);
+    if (addr == 0) return null;
+    const any_ptr: *anyopaque = @ptrFromInt(@as(usize, @intCast(addr)));
+    return @ptrCast(@alignCast(any_ptr));
+}
+
+fn outString(bytes: []const u8, out_ptr: *?[*]u8, out_len: *u64) void {
+    const ds = allocDoxaString(bytes);
+    out_ptr.* = @constCast(ds.ptr);
+    out_len.* = ds.len;
+}
+
 pub export fn doxa_pack_bytes(hdr: ?*ArrayHeader, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     if (hdr == null) {
         out_ptr.* = null;
@@ -516,6 +566,19 @@ pub export fn doxa_str_clone_at(levels: i64, ptr: ?[*]const u8, len: u64, out_pt
 /// function and block that may have constructed the value.
 pub export fn doxa_str_clone_root(ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     strCloneInto(scope_arena.rootScope(), ptr, len, out_ptr, out_len);
+}
+
+/// Clone a string into the scope active at the call site — the arena the call's
+/// region tag names. This is the inline-Zig string-return boundary: the
+/// generated wrapper hands the bytes across the ABI already owned by the
+/// caller's arena, so the value follows the ordinary arena rules and needs no
+/// separate free.
+pub export fn doxa_str_clone_current(ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
+    const scope: ?*scope_arena.Scope = scope_arena.currentScope() orelse blk: {
+        _ = scope_arena.allocator(); // lazily creates the root scope
+        break :blk scope_arena.currentScope();
+    };
+    strCloneInto(scope, ptr, len, out_ptr, out_len);
 }
 
 /// Clone with a null terminator, returning the raw C-string pointer. Maps are

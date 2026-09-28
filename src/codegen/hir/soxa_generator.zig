@@ -18,6 +18,11 @@ const SoxaTypes = @import("soxa_types.zig");
 pub const HIRType = SoxaTypes.HIRType;
 const CallKind = SoxaTypes.CallKind;
 const HIRProgram = SoxaTypes.HIRProgram;
+const builtin_methods = @import("../../runtime/builtin_methods.zig");
+
+/// Element types for a builtin's `.Array` return (e.g. `@unpack` -> `byte[]`).
+const builtin_byte_element: HIRType = .Byte;
+const builtin_unknown_element: HIRType = .Unknown;
 const import_parser = @import("../../parser/import_parser.zig");
 const ParamMutation = @import("param_mutation.zig");
 const ResourceManager = @import("resource_manager.zig");
@@ -1303,8 +1308,7 @@ pub const HIRGenerator = struct {
             .Range => |range| try collections_handler.generateRange(.{ .start = range.start, .end = range.end }, preserve_result),
 
             .FunctionCall => try calls_handler.generateFunctionCall(expr.data, preserve_result, should_pop_after_use),
-            .BuiltinCall => try calls_handler.generateBuiltinCall(expr.data, preserve_result),
-            .InternalCall => try calls_handler.generateInternalCall(expr.data),
+            .InternalCall => try calls_handler.generateInternalCall(expr, preserve_result),
 
             .StructLiteral => try structs_handler.generateStructLiteral(expr.data),
             .FieldAccess => |field| try structs_handler.generateFieldAccess(field),
@@ -1315,7 +1319,7 @@ pub const HIRGenerator = struct {
             .Assignment => |assign| try assignments_handler.generateAssignment(assign, preserve_result),
             .CompoundAssign => |compound| try assignments_handler.generateCompoundAssign(compound, preserve_result),
 
-            .Print => unreachable, // @print is now a BuiltinCall, handled by generateBuiltinCall
+            .Print => unreachable, // @print is lowered to an InternalCall
             .Peek => |peek| try io_handler.generatePeek(peek, preserve_result),
             .PeekStruct => try io_handler.generatePeekStruct(expr.data, preserve_result),
             .Input => try io_handler.generateInput(expr.data),
@@ -1707,8 +1711,9 @@ pub const HIRGenerator = struct {
                 return;
             }
         } else if (std.mem.eql(u8, name, "string")) {
+            const value_type = self.inferTypeFromExpression(receiver);
             try self.generateExpression(receiver, true, false);
-            try self.instructions.append(.{ .StringOp = .{ .op = .ToString } });
+            try self.instructions.append(.{ .StringOp = .{ .op = .ToString, .value_type = value_type } });
             return;
         } else if (std.mem.eql(u8, name, "length")) {
             try self.generateExpression(receiver, true, false);
@@ -2226,6 +2231,24 @@ pub const HIRGenerator = struct {
         }
     }
 
+    /// HIR view of a builtin's declared return type, taken from the single
+    /// `builtin_methods` registry.
+    fn builtinReturnType(return_type: ast.Type, return_element_type: ?ast.Type) HIRType {
+        return switch (return_type) {
+            .Int => .Int,
+            .Float => .Float,
+            .String => .String,
+            .Byte => .Byte,
+            .Tetra => .Tetra,
+            .Nothing => .Nothing,
+            .Array => .{ .Array = if (return_element_type) |element|
+                (if (element == .Byte) &builtin_byte_element else &builtin_unknown_element)
+            else
+                &builtin_unknown_element },
+            else => .Unknown,
+        };
+    }
+
     pub fn inferCallReturnType(self: *HIRGenerator, function_name: []const u8, call_kind: CallKind) !HIRType {
         switch (call_kind) {
             .LocalFunction => {
@@ -2239,10 +2262,9 @@ pub const HIRGenerator = struct {
                 if (std.mem.eql(u8, function_name, "remove")) {
                     return error.InvalidAliasType;
                 }
-                // Look up the centralised builtin registry.
-                const builtin_registry = @import("../../runtime/builtin_registry.zig");
-                if (builtin_registry.get(function_name)) |info| {
-                    return info.return_type;
+                // The built-in signatures have a single home: `builtin_methods`.
+                if (builtin_methods.getMethodInfoByName(function_name)) |info| {
+                    return builtinReturnType(info.return_type, info.return_element_type);
                 }
                 // Fall back: check if this is really a user-defined function
                 // that was misclassified as a builtin.
