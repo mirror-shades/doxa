@@ -472,6 +472,28 @@
   
   
     <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../struct/" class="md-nav__link">
         
   
@@ -860,13 +882,17 @@ TypePath        := IDENT ( &#39;.&#39; IDENT )*
 <li>[ ] Implement ambiguous-name detection by collecting all variant/field names across expanded members and flagging duplicates.</li>
 <li>[x] Add <code>group_instance: HIRGroup { member_index, payload }</code> to <code>HIRValue</code> for runtime group representation.</li>
 <li>[x] Implement implicit widening from member types to their enclosing group in the type checker (<code>typeIsGroupMember</code>, <code>typeMatchesUnionMember</code> in <code>unifyTypes</code>).</li>
-<li>[x] Implement <code>match</code> exhaustiveness checking across the flat expanded member list for both enum variants and struct members.</li>
+<li>[x] Emit the group tag at every construction site so a member value widens to its group on assignment, return, and call argument (<code>buildDoxaValue</code>, <code>isBoxedMemberType</code>).</li>
+<li>[x] Implement <code>match</code> on a group subject: <code>GroupCheck</code> decides an arm by boxed member index, and an arm naming a variant (<code>Group.Member.Variant</code>) additionally compares the extracted payload.</li>
 <li>[x] Implement domain wildcard patterns (<code>Group.Member.*</code>) that narrow the matched value to the member type.</li>
-<li>[x] Implement struct destructuring patterns (<code>Group.Member { field }</code>) inside <code>match</code> arms.</li>
+<li>[x] Implement struct destructuring patterns (<code>Group.Member { field }</code>) inside <code>match</code> arms, including binding the fields as arm locals.</li>
+<li>[x] Implement <code>match</code> exhaustiveness checking across the flat expanded member list per §4.1: an arm list that leaves a member uncovered is a compile error (<code>E1033</code>) unless it ends in <code>else</code>.</li>
+<li>[ ] Implement <code>as</code> narrowing from a group type to a member type as a value transform. The cast decides correctly and the semantic side narrows the bound name, but reading the narrowed binding inside the branch is broken — and so is reading a narrowed union binding on <code>master</code>, so the defect sits in the shared narrowing path rather than in groups.</li>
 <li>[ ] Implement cross-member equality as a compile error.</li>
-<li>[x] Add group type handling to bytecode (<code>module.zig</code>) and the VM interpreter.</li>
+<li>[x] Add group type handling to the native LLVM backend: <code>GroupCheck</code> and <code>GroupExtractPayload</code> lower against <code>%DoxaValue</code>, and group members are wrapped like union arms.</li>
 <li>[x] Validate that <code>registerSpecificSymbol</code> uses the correct <code>.Group</code> kind instead of <code>.Enum</code> for imported group symbols.</li>
-<li>[x] Fix the fixed-2 allocation in <code>getSetSourceMemberNames</code> (or its replacement) to iterate actual expanded members.</li>
+<li>[x] Fix the fixed-2 allocation in <code>getGroupMemberNames</code> (was <code>getSetSourceMemberNames</code>) to iterate actual expanded members.</li>
+<li>[ ] Give the group-cycle error (<code>E1003</code>) a real source location; it currently reports <code>:0:0</code>.</li>
 </ul>
 
 

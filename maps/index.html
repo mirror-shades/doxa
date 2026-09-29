@@ -451,6 +451,15 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#performance" class="md-nav__link">
+    <span class="md-ellipsis">
+      Performance
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -538,6 +547,28 @@
   
   <span class="md-ellipsis">
     Standard Library
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
     
   </span>
   
@@ -688,6 +719,8 @@ narrow_entry? # &quot;bar&quot;
 }
 </code></pre></div>
 <h3 id="notes-on-inference">Notes on Inference</h3>
+<h3 id="performance">Performance</h3>
+<p>Maps are allocated from the current scope's arena. All keys and values are stored in contiguous pools — two slices holding all keys and all values respectively. Map mutations are performed in-place: setting a value for an existing key updates the value slot directly without copying the map. New entries extend the pools via realloc.</p>
 
 
 

@@ -472,6 +472,28 @@
   
   
     <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../struct/" class="md-nav__link">
         
   
@@ -570,11 +592,18 @@
 
 
 <h1 id="strings">Strings</h1>
-<p>Doxa strings are UTF-8 encoded and backed by a contiguous <code>u8</code> array under the hood. The
-underlying runtime representation is a null-terminated byte sequence, which means strings
-interop naturally with both Zig's <code>[:0]const u8</code> and C's <code>const char*</code>.</p>
+<p>Doxa strings are UTF-8 encoded and backed by a contiguous <code>u8</code> buffer. The <strong>byte length</strong>
+is explicit: it is not inferred from a terminating NUL, and embedded <code>U+0000</code> bytes are
+valid. Inside Zig, values are <code>[]const u8</code> slices; at the inline Zig module boundary they
+cross as pointer + byte length (a <code>(ptr, u64 len)</code> parameter pair, or <code>out_ptr</code>/<code>out_len</code>
+out-params for returns), as documented in <a href="../zig/">zig.md</a>.</p>
+<p>The LLVM backend still declares many string builtins (<code>@doxa_str_*</code>, etc.) as <code>ptr</code> into
+NUL-terminated allocations for C-style helpers—so compiled programs may still touch
+null-terminated buffers <strong>inside</strong> those runtime calls, even though the language model is
+pointer + length. Byte lengths at that compiled boundary are a fixed 64-bit <code>u64</code> on every
+target (matching the emitted IR's <code>i64</code> lengths); only pointers follow the target's pointer
+width.</p>
 <h2 id="quote-semantics">Quote semantics</h2>
-<h3 id="double-quotes-interpolation">Double quotes — interpolation</h3>
 <p>Double-quoted strings (<code>"..."</code>) interpret <code>{expression}</code> blocks anywhere in the string body.
 Any valid Doxa expression — a variable, an arithmetic operation, a function call — can appear
 between the braces and will be stringified in place at runtime:</p>
@@ -586,14 +615,6 @@ var x is 10
 </code></pre></div>
 <p>Interpolation works wherever a string literal is accepted: in <code>@print</code> / <code>@println</code> calls,
 variable initialisers, function arguments, map keys, and so on.</p>
-<h3 id="single-quotes-literal-text">Single quotes — literal text</h3>
-<p>Single-quoted strings (<code>'...'</code>) are <strong>literal</strong> — no interpolation is performed. Every
-character between the delimiters, including <code>{</code> and <code>}</code>, is preserved as written:</p>
-<div class="highlight"><pre><span></span><code>var json is &#39;{ &quot;x&quot;: 1, &quot;y&quot;: 2 }&#39;        # braces stay as text
-var template is &#39;Hello {name}&#39;           # literal &quot;{name}&quot;, not a reference
-</code></pre></div>
-<p>Use single quotes when you need curly braces to remain part of the string value itself
-(JSON, code snippets, format templates, etc.).</p>
 <h2 id="the-string-type">The <code>string</code> type</h2>
 <p><code>string</code> is a first-class primitive type alongside <code>int</code>, <code>float</code>, <code>byte</code>, <code>tetra</code>, and
 <code>nothing</code>:</p>
@@ -615,23 +636,24 @@ strings and byte data with <code>pack</code> and <code>unpack</code>:</p>
 </thead>
 <tbody>
 <tr>
-<td><code>pack(array)</code></td>
-<td><code>int[]</code> → <code>string</code></td>
-<td>Interpret each int as a u8 codepoint</td>
+<td><code>@pack(bytes)</code></td>
+<td><code>byte[]</code> → <code>string</code></td>
+<td>Interpret each byte as a u8 codepoint</td>
 </tr>
 <tr>
-<td><code>unpack(string)</code></td>
-<td><code>string</code> → <code>int[]</code></td>
+<td><code>@unpack(string)</code></td>
+<td><code>string</code> → <code>byte[]</code></td>
 <td>Decompose a string into byte values</td>
 </tr>
 </tbody>
 </table>
-<div class="highlight"><pre><span></span><code>const bytes is [0x48, 0x69, 0x21]       # [72, 105, 33]
-const word is pack(bytes)                # &quot;Hi!&quot;
-const back is unpack(word)               # [72, 105, 33]
+<div class="highlight"><pre><span></span><code>const bytes :: byte[] is [0x48, 0x69, 0x21]   # [72, 105, 33]
+const word is @pack(bytes)                     # &quot;Hi!&quot;
+const back is @unpack(word)                    # byte[] is [72, 105, 33]
 </code></pre></div>
-<p><code>pack</code> / <code>unpack</code> use the same byte-width guarantee as the underlying <code>u8</code> storage —
-values outside 0–255 are truncated to fit.</p>
+<p><code>@pack</code> requires a <code>byte[]</code>; an array of integer literals narrows to <code>byte</code> in the
+same way as any other <code>byte</code> context. <code>@unpack</code> decomposes a string byte-for-byte, so
+<code>@pack</code> / <code>@unpack</code> round-trip the underlying <code>u8</code> storage.</p>
 <h2 id="common-operations">Common operations</h2>
 <table>
 <thead>
@@ -650,8 +672,12 @@ values outside 0–255 are truncated to fit.</p>
 <td><code>5</code></td>
 </tr>
 <tr>
+<td><code>"hello"[0]</code></td>
+<td><code>"h"</code> (a 1-byte string)</td>
+</tr>
+<tr>
 <td><code>"こんにちは"[0]</code></td>
-<td>(byte at index 0)</td>
+<td>the leading byte of the first character, as a string</td>
 </tr>
 <tr>
 <td><code>string(42)</code></td>
@@ -665,19 +691,23 @@ values outside 0–255 are truncated to fit.</p>
 <td><code>type("hello")</code></td>
 <td><code>"string"</code></td>
 </tr>
-<tr>
-<td><code>"hello"[0]</code></td>
-<td><code>104</code> (byte value)</td>
-</tr>
 </tbody>
 </table>
-<p>String indexing returns the raw <code>u8</code> byte at that position. For multi-byte UTF-8 characters
-iterate with <code>unpack</code> and reconstruct manually, or use a Zig block for Unicode-aware
-processing.</p>
+<p>A <code>string</code> and a <code>byte[]</code> do not share elements. Indexing, <code>@pop</code>, <code>@remove</code>, and
+<code>@slice</code> on a <code>string</code> produce <code>string</code>s; the same operations on a <code>byte[]</code> produce
+<code>byte</code>s. <code>@pack</code> and <code>@unpack</code> are the only bridge between the two.</p>
+<p>Indexing, slicing, <code>@find</code>, <code>@pop</code>, <code>@remove</code>, and <code>for</code>/<code>each</code> iteration all address
+<strong>bytes</strong>, not UTF-8 codepoints — <code>@length</code> is the byte length — so <code>"こんにちは"[0]</code> is
+the leading byte of a three-byte character, not the whole character, and
+<code>each c in "日本語"</code> yields nine one-byte strings. To walk codepoints, <code>@unpack</code> the
+string and reconstruct with <code>@pack</code>, or use a Zig block for Unicode-aware processing.</p>
 <h2 id="interop-with-zig">Interop with Zig</h2>
-<p>Doxa strings map directly to Zig's <code>?[*:0]const u8</code> (a nullable null-terminated pointer).
-When calling into Zig from Doxa — or embedding a <code>zig {}</code> block — strings are passed and
-returned as this C-compatible pointer type without any conversion overhead.</p>
+<p>For <strong>inline Zig modules</strong> (<code>zig { … }</code> blocks compiled into the program), the generated
+wrappers pass strings as <strong>pointer + byte length</strong>, not C strings. See
+<a href="../zig/">zig.md</a> for the full ABI.</p>
+<p>The <strong>LLVM runtime</strong> (<code>doxa_rt</code>) still exposes several helpers that take or return
+<code>?[*:0]const u8</code> so those entry points stay C-compatible; that is an implementation detail
+of those helpers, not the definition of the <code>string</code> type at the Zig module boundary.</p>
 
 
 

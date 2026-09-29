@@ -448,18 +448,18 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#scope-based-cleanup" class="md-nav__link">
+  <a href="#every-block-is-a-lifetime-boundary" class="md-nav__link">
     <span class="md-ellipsis">
-      Scope-Based Cleanup
+      Every Block is a Lifetime Boundary
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#block-cleanup" class="md-nav__link">
+  <a href="#anonymous-block-cleanup" class="md-nav__link">
     <span class="md-ellipsis">
-      Block Cleanup
+      Anonymous Block Cleanup
     </span>
   </a>
   
@@ -480,44 +480,11 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#allocation-strategy" class="md-nav__link">
+  <a href="#native-runtime-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Allocation Strategy
+      Native Runtime Model
     </span>
   </a>
-  
-    <nav class="md-nav" aria-label="Allocation Strategy">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#dynamic-arrays" class="md-nav__link">
-    <span class="md-ellipsis">
-      Dynamic Arrays
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fixed-arrays" class="md-nav__link">
-    <span class="md-ellipsis">
-      Fixed Arrays
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#constants" class="md-nav__link">
-    <span class="md-ellipsis">
-      Constants
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
   
 </li>
       
@@ -544,6 +511,15 @@
   <a href="#trade-offs" class="md-nav__link">
     <span class="md-ellipsis">
       Trade-offs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#known-trade-offs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Known Trade-offs
     </span>
   </a>
   
@@ -595,6 +571,24 @@
   <a href="#large-allocations" class="md-nav__link">
     <span class="md-ellipsis">
       Large Allocations
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#analysis-phase-scopes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Analysis-Phase Scopes
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#lexer-lifetime-borrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lexer-Lifetime Borrowing
     </span>
   </a>
   
@@ -670,6 +664,28 @@
   
   <span class="md-ellipsis">
     Standard Library
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
     
   </span>
   
@@ -784,90 +800,158 @@
 
 
 <h1 id="memory-management">Memory Management</h1>
-<p>Doxa's memory system uses arena based scoping to provide automatic management which is consistent, predicitable, and fast. Doxa does not use garbage collection, and it uses limited amounts of refrence counting. It does this by relying on arena allocations based on block scopes.</p>
+<p>Doxa's memory system uses arena-based scoping to provide automatic management that is consistent, predictable, and fast. Doxa does not use garbage collection. It relies on arena allocations tied to block scopes.</p>
 <h2 id="core-principles">Core Principles</h2>
-<h3 id="scope-based-cleanup">Scope-Based Cleanup</h3>
-<p>Every scope (function, block, loop body) has its own arena allocator. When a scope exits, the entire arena is deallocated in bulk. Since deallocation of arenas is O(1) cleanup is fast.</p>
-<div class="highlight"><pre><span></span><code>fn registerEmployee(name :: string, age :: int) returns Employee 
-{ # an arena scope is created for this function
-    return $Employee {name is name, age is age} # since this will be destroyed, the return is a deep copy
-} # the arena scope is destroyed
+<h3 id="every-block-is-a-lifetime-boundary">Every Block is a Lifetime Boundary</h3>
+<p>The fundamental rule is that <strong>every <code>{</code> creates a lexical lifetime boundary and every <code>}</code> ends it.</strong> The compiler may represent that boundary without creating a physical arena when the block contains only primitives, borrows, or other trivially managed values. When managed storage is required, the arena is entered and all memory allocated within that scope is freed in O(1) time.</p>
+<div class="highlight"><pre><span></span><code>fn registerEmployee(name :: string, age :: int) returns Employee
+{ # arena scope created for this function body
+    return $Employee {name is name, age is age}
+} # arena scope bulk-freed — returned value is copied (or constructed) into the caller&#39;s arena
 </code></pre></div>
-<h3 id="block-cleanup">Block Cleanup</h3>
-<p>The easiest mental model is to think of curly braces as where memory arenas are created and destroyed. This can also be used to clean up data allocations using blocks.</p>
-<div class="highlight"><pre><span></span><code>fn registerEmployee(id :: int) returns Employee | nothing { # scope one created
-    var new_employee :: Employee | nothing is nothing
-    { # scope 2 is created
-        const list is loadEmployeeList() # big list loaded into memory
-        new_employee is list.find(id)
-    } # scope 2 is cleaned up, list is freed
-    ...
-    return new_employee
-} # scope one is cleaned up
+<p>Nothing can outlive its allocating scope. This means:
+- Any value returned from a scope must be deep-copied into the parent scope's arena.
+  The compiler satisfies this either by cloning after the fact or, for a value
+  built directly in the <code>return</code>, by constructing it in the parent arena.
+- There are no dangling pointers, no use-after-free, no memory leaks.
+- Deep copies are the cost of this guarantee; aliases are the escape hatch.</p>
+<h3 id="anonymous-block-cleanup">Anonymous Block Cleanup</h3>
+<p>The easiest mental model: curly braces are where memory arenas are created and destroyed. Anonymous blocks are a tool for controlling memory lifetime within a function.</p>
+<div class="highlight"><pre><span></span><code>fn processData(id :: int) returns Employee | nothing {
+    var result :: Employee | nothing is nothing
+    { # anonymous arena created
+        const list is loadEmployeeList()   # large allocation
+        result is list.find(id)            # deep-copied out to parent arena
+    } # arena bulk-freed — list is gone
+    return result
+}
 </code></pre></div>
+<p>Because the anonymous block is its own managed lifetime, the large list is freed immediately after <code>result</code> is extracted, rather than living until the function returns.</p>
 <h3 id="parameter-aliasing">Parameter Aliasing</h3>
-<p>One of the tradeoffs is that pointers don't play nice with this kind of cleanup. So rather than use pointers, Doxa uses parameter aliasing. When you specify a parameter as an alias, the function will access the caller's arena scope when changing that variable. Values can be passed by alias in only one direction, all return statements produce copies.</p>
-<div class="highlight"><pre><span></span><code>fn inByReturn(value :: int) returns int {
-    return value + 1  # A new allocation is created in the caller scope for the return copy
+<p>Pointers don't play well with arena scoping — a pointer into a freed arena is a dangling pointer. Instead, Doxa uses <strong>parameter aliasing</strong> (<code>^</code>). When you declare a parameter with <code>^</code>, the function accesses the <em>caller's</em> variable directly. This is the mechanism for mutation without pointers.</p>
+<div class="highlight"><pre><span></span><code>fn incByReturn(value :: int) returns int {
+    return value + 1   # caller gets a copy in its arena
 }
 
 fn incByAlias(^value :: int) {
-    value += 1  # The int from the caller scope is incremented directly
+    value += 1          # caller&#39;s variable mutated in place, no allocation
 }
 </code></pre></div>
-<p>These alias calls can be chained allowing you to pass around values by alias throughout your program.</p>
-<div class="highlight"><pre><span></span><code>function levelOne(^value :: int) {
-    value += 1
-    levelTwo(^value)
-}
-
-function levelTwo(^value :: int) {
-    value *= 2
-}
-var x is 1
-levelOne(^x) # x becomes 4
-</code></pre></div>
+<p>Aliases can be chained — <code>levelOne(^x)</code> calls <code>levelTwo(^x)</code> — passing the alias reference through the call stack.</p>
 <p><strong>Safety rules:</strong>
 - Only full variables can be aliased (no temporaries, fields, or array elements)
 - Explicit opt-in at call site with <code>^</code>
 - No alias duplication or mixing aliased/by-value parameters
-- Exclusive borrow during call</p>
-<h2 id="allocation-strategy">Allocation Strategy</h2>
-<h3 id="dynamic-arrays">Dynamic Arrays</h3>
-<div class="highlight"><pre><span></span><code>var dynamic :: int[] is [1, 2, 3]     # Heap allocated, resizable
-</code></pre></div>
-<h3 id="fixed-arrays">Fixed Arrays</h3>
-<div class="highlight"><pre><span></span><code>var fixed :: int[100] is [1, 2, 3]    # Stack allocated, fixed size
-</code></pre></div>
-<h3 id="constants">Constants</h3>
-<div class="highlight"><pre><span></span><code>const data is [1, 2, 3]               # Read-only static data
-</code></pre></div>
+- Exclusive borrow during call (the aliased variable cannot be read or written elsewhere)</p>
+<h2 id="native-runtime-model">Native Runtime Model</h2>
+<p>The compiled backend implements the arena model directly. The runtime keeps a <strong>scope-arena stack</strong> (<code>src/runtime/scope_arena.zig</code>): a linked list of <code>std.heap.ArenaAllocator</code> nodes. The IR printer emits calls to <code>doxa_scope_enter()</code> and <code>doxa_scope_exit()</code> only for managed lexical lifetimes, plus <code>doxa_scope_reset()</code> for reusable loop bodies. The program root scope is pushed once at the start of <code>doxa_program_main</code> and is never freed — the OS reclaims it at process exit.</p>
+<p>Loop bodies have two logical lifetimes: a loop scope for state that persists between iterations and a body scope for iteration-local values. The body arena is entered once, reset at each iteration boundary, and exited once when the loop ends. <code>continue</code> resets the body before continuing; <code>break</code> exits both scopes; <code>return</code> unwinds all active scopes after preparing any escaping result.</p>
+<p>All heap values are allocated from the <strong>current</strong> scope arena:</p>
+<table>
+<thead>
+<tr>
+<th>Value kind</th>
+<th>Allocation path</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Arrays</td>
+<td><code>doxa_array_new</code> → <code>doxa_scope_alloc</code> (header + data)</td>
+</tr>
+<tr>
+<td>Strings</td>
+<td><code>doxa_str_clone</code>, <code>doxa_str_concat</code>, <code>doxa_substring</code>, …</td>
+</tr>
+<tr>
+<td>Structs</td>
+<td><code>doxa_scope_alloc</code> (contiguous <code>i64</code> field array)</td>
+</tr>
+<tr>
+<td>Maps</td>
+<td><code>doxa_map_new</code> (<code>map_runtime.zig</code>)</td>
+</tr>
+</tbody>
+</table>
+<p>Because a value can only be reached while its allocating scope is on the stack, values that escape a scope are <strong>rehomed into the destination scope</strong>:</p>
+<ul>
+<li><strong>Rehome on escape.</strong> Heap values are copied only when lifetime or value-semantics require it:</li>
+<li><strong>Globals</strong> live in the program-root arena. Storing a new value into a global rehomes it there. In-place mutations (<code>@push</code>, <code>arr[i] is x</code>, <code>n.field is …</code>) write through the existing root-owned object — they do not snapshot it.</li>
+<li><strong>Structs</strong> keep identity when they already outlive the destination (a global array element, a same-scope struct). An unknown allocation is treated as long-lived, so <code>each n in neutrons { n.x_pos += 1 }</code> mutates the element. By-value parameters always snapshot.</li>
+<li><strong>Arrays</strong> preserve identity when their owning arena already outlives the destination and are cloned only when the source could be destroyed first. Explicit snapshot operations still produce independent arrays.</li>
+<li>
+<p><strong>Strings</strong> never carry identity: they are immutable, so a store that does not already outlive its destination is simply a copy. Because a copy is observationally identical to keeping the original, the compiler decides every string store statically — there is no runtime scope lookup for strings.</p>
+</li>
+<li>
+<p><strong>Clone on return.</strong> A function frees its body scope on <code>return</code>; heap return
+  values are copied into the caller's scope first (<code>doxa_str_clone_at</code>,
+  <code>doxa_array_clone_at</code>, <code>doxa_struct_clone_at</code>, <code>doxa_clone_doxa_value_at</code>).
+  A value constructed <em>directly</em> in the <code>return</code> (a struct or array literal) is
+  an exception: its destination is statically one region up the nest, so it is
+  allocated in the caller's arena at construction instead of being cloned there
+  (<code>doxa_scope_alloc_at</code>, <code>doxa_array_new_at</code>, <code>doxa_struct_register_at</code>). The
+  result is identical — a fresh object owned by the caller — with the deep copy
+  folded into construction.</p>
+</li>
+<li><strong>Clone on element store.</strong> Pushing or assigning a heap element into an array re-homes it into the array's own arena (tracked in the <code>ArrayHeader.scope</code> field), which is what makes <code>^</code>-aliased arrays safe — structs built in a callee are copied into the caller's array before the callee tears down.</li>
+</ul>
+<p>Structs and arrays are cloned recursively: string fields and array fields are re-cloned into the destination arena, so a deep copy is genuinely independent of the source.</p>
 <h2 id="performance-characteristics">Performance Characteristics</h2>
 <h3 id="advantages">Advantages</h3>
 <ul>
-<li><strong>Fast allocation:</strong> Arena allocation is extremely efficient</li>
-<li><strong>Bulk deallocation:</strong> Scopes clean up in O(1) time</li>
-<li><strong>Cache-friendly:</strong> Related data allocated contiguously</li>
-<li><strong>No GC pauses:</strong> Deterministic cleanup timing</li>
-<li><strong>Memory safe:</strong> No dangling pointers or use-after-free</li>
+<li><strong>Fast allocation:</strong> Arena allocation is bump-pointer, extremely efficient</li>
+<li><strong>Bulk deallocation:</strong> Scopes clean up in O(1) via a single <code>arena.deinit()</code></li>
+<li><strong>Cache-friendly:</strong> Related data allocated contiguously within the arena</li>
+<li><strong>No GC pauses:</strong> Deterministic cleanup timing, scope-exit bounded</li>
+<li><strong>Memory safe:</strong> No dangling pointers, no use-after-free, no leaks by construction</li>
 </ul>
 <h3 id="trade-offs">Trade-offs</h3>
 <ul>
-<li><strong>Memory usage:</strong> Arenas hold memory until scope exit</li>
+<li><strong>Memory usage:</strong> Arenas hold all memory until scope exit (no incremental free)</li>
 <li><strong>No heap compaction:</strong> Memory fragmentation within arenas</li>
 <li><strong>Scope lifetime:</strong> Objects can't outlive their allocating scope</li>
-<li><strong>Copy on return:</strong> Return values are copied between scopes</li>
+<li><strong>Deep copy cost:</strong> Return values are copied between scopes</li>
 </ul>
+<h3 id="known-trade-offs">Known Trade-offs</h3>
+<table>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Rationale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Arena buffer accumulation on resize</strong> — When an array or map grows, the old buffer is abandoned in the arena. Repeated resizes accumulate dead buffers.</td>
+<td>All buffers bulk-freed on scope exit in O(1).</td>
+</tr>
+<tr>
+<td><strong>Rehome decisions follow lifetime, not access</strong> — Arrays preserve identity when their owner outlives the destination, while explicit snapshots remain independent. <code>@push</code> / index assignment mutate the header in place and keep it. Struct stores keep identity when the source already outlives the destination, which is what makes <code>each n in arr { n.field is ... }</code> mutate the element. Strings are immutable, so they are simply copied when they do not already outlive the destination; identity never matters.</td>
+<td>Only an actual escape needs a copy. Globals and longer-lived containers still receive storage that survives the source scope.</td>
+</tr>
+<tr>
+<td><strong>Struct clones are registered, not garbage-collected</strong> — <code>struct_registry</code> entries (address → descriptor) are appended, never removed. A scalar-only struct that is never reflected and never crosses a container/union/signature boundary skips the registry entirely and is cloned with a typed word copy (B2/B3-lite).</td>
+<td>Needed for <code>@string(struct)</code> and descriptor-backed recursive cloning. Bounded by the number of structs created; acceptable for program lifetime.</td>
+</tr>
+<tr>
+<td><strong>Empty array literals require an element type</strong> — <code>var x is []</code> is a compile error (E6019); the element type must come from an annotation (<code>var x :: int[] is []</code>) or surrounding context (<code>x = []</code>, <code>foo([])</code>, <code>return []</code>).</td>
+<td>An unannotated empty literal has no element type to infer, so it would otherwise carry tag 255 and be treated as struct pointers by the runtime.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="edge-cases">Edge Cases</h2>
-<p>An advantage to this approach is that many common edge cases and foot guns are avoided with zero effort on the part of the programmer.</p>
 <h3 id="cyclic-references">Cyclic References</h3>
-<p>Not applicable - scope cleanup prevents cycles by design.</p>
+<p>Scope cleanup prevents cycles by design. A value's arena outlives all references to it.</p>
 <h3 id="dangling-pointers">Dangling Pointers</h3>
-<p>Impossible - objects can't outlive their scope.</p>
+<p>Objects can't outlive their scope. There are no pointers in user code; aliases are scoped to the call.</p>
 <h3 id="memory-leaks">Memory Leaks</h3>
-<p>Prevented - scopes guarantee cleanup.</p>
+<p>Scopes guarantee cleanup. Every <code>{</code> is matched by a <code>}</code> that frees the arena.</p>
 <h3 id="large-allocations">Large Allocations</h3>
-<p>Handled through scope-based cleanup timing.</p>
+<p>Controlled through scope-based cleanup timing. Anonymous blocks can be used within a scope to create narrower arenas that will clean up large allocations.</p>
+<h3 id="analysis-phase-scopes">Analysis-Phase Scopes</h3>
+<p>During semantic analysis, a parallel scope tree is maintained by <code>MemoryManager</code> / <code>ScopeManager</code> (see <code>src/utils/memory.zig</code>). These analysis scopes track variable declarations, types, and aliasing for type-checking and name resolution. They are independent of the runtime scope-arena stack and are cleaned up after IR generation.</p>
+<h3 id="lexer-lifetime-borrowing">Lexer-Lifetime Borrowing</h3>
+<p>The AST borrows lexer-owned buffers: string literal contents and the lexemes of tokens inside format-string placeholders (<code>{@string(x)}</code>) are slices into a <code>LexicalAnalyzer</code>'s buffers. A lexer must not be freed while the AST it produced is still alive. The main-file lexer is deliberately leaked into the analysis arena for this reason; module and placeholder lexers transfer ownership of their string buffers (<code>takeOwnershipOfStrings</code>) before deinit. The analysis arena reclaims everything at program end.</p>
 
 
 

@@ -72,7 +72,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#method-calls" class="md-skip">
+        <a href="#intrinsic-methods" class="md-skip">
           Skip to content
         </a>
       
@@ -460,13 +460,13 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#core-intrinsics" class="md-nav__link">
+  <a href="#list-of-methods" class="md-nav__link">
     <span class="md-ellipsis">
-      Core Intrinsics
+      List of Methods
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Core Intrinsics">
+    <nav class="md-nav" aria-label="List of Methods">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -502,22 +502,13 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#removed-core-intrinsics" class="md-nav__link">
+  <a href="#failure-behavior" class="md-nav__link">
     <span class="md-ellipsis">
-      Removed Core Intrinsics
+      Failure Behavior
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#failure-behavior-current-runtime" class="md-nav__link">
-    <span class="md-ellipsis">
-      Failure Behavior (Current Runtime)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Failure Behavior (Current Runtime)">
+    <nav class="md-nav" aria-label="Failure Behavior">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -542,48 +533,6 @@
   <a href="#diagnostics-output_1" class="md-nav__link">
     <span class="md-ellipsis">
       Diagnostics / Output
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#safe-standard-library-wrappers" class="md-nav__link">
-    <span class="md-ellipsis">
-      Safe Standard Library Wrappers
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Safe Standard Library Wrappers">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#import" class="md-nav__link">
-    <span class="md-ellipsis">
-      Import
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#collection-wrappers" class="md-nav__link">
-    <span class="md-ellipsis">
-      Collection Wrappers
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#conversion-wrappers" class="md-nav__link">
-    <span class="md-ellipsis">
-      Conversion Wrappers
     </span>
   </a>
   
@@ -637,6 +586,28 @@
   
   <span class="md-ellipsis">
     Standard Library
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
     
   </span>
   
@@ -750,62 +721,59 @@
 
 
 
-<h1 id="method-calls">Method Calls</h1>
-<p>Doxa supports two method-call families:</p>
-<ul>
-<li>Core intrinsics: <code>@...</code> calls implemented in core/compiler runtime.</li>
-<li>Standard library calls: module functions such as <code>std.io.input()</code>.</li>
-</ul>
-<p><code>std.io.println</code> and <code>std.io.eprintln</code> append the <strong>native</strong> text line terminator for the OS (<code>\r\n</code> on Windows, <code>\n</code> on POSIX-style targets), similar to the newline part of C++ <code>std::endl</code>. They still <strong>flush</strong> the stream after each call (like <code>std::endl</code>), via the underlying Zig stdout/stderr writers.</p>
-<h2 id="core-intrinsics">Core Intrinsics</h2>
-<p>These are the minimal core intrinsics intended to remain as the stable base.
-Prefer <code>std.*</code> wrappers where available.</p>
+<h1 id="intrinsic-methods">Intrinsic Methods</h1>
+<p>Doxa clearly distinguishes between compiler level "builtin" methods, and user space methods. All methods and functions provided by the compiler are prefixed with the @ symbol. A couple advantages, take this line for example, imagine you are reading some code in a programming language you have never read before: </p>
+<p><code>pet_snake.length()</code></p>
+<p>Is this a user level method defining the length of the snake, or a compiler level method on a particular type like a string or array? We cannot know without more context about the language syntax. The same ambiguity goes for built in functions as well, consider:</p>
+<p><code>length(pet_snake)</code></p>
+<p>Mixing compiler level syntax and user level syntax is too ambigious. Doxa solves this by prefixing all compiler level methods with <code>@</code></p>
+<p><code>@length(pet_snake)</code></p>
+<p>Wherever you see and @ you know this is not a user space functions. This also allows for a second advantage, that of method collision. If you want to define a length method for your pet snake struct, you can do so without risk of collision with the builtin length method. </p>
+<p>All methods are function level, including ones you may not be used to seeing at the function level:</p>
+<div class="highlight"><pre><span></span><code>@push(my_array, 42)
+const my_value is @pop(my_array)
+</code></pre></div>
+<p>If you would prefer using an intrinsic method post fix, you can do so using <code>.</code> and the value will be passed as the first argument:</p>
+<div class="highlight"><pre><span></span><code>my_array.@push(42)
+const my_value is my_array.@pop()
+</code></pre></div>
+<p>Intrinsic methods can be considered inherently considered unsafe, and they may error. If an error occurs, there may be undefined behavior, panics, and other potentially unrecoverable errors. If you want bounds checking, and other safe wrappings, you must either define them yourself, or use the standard library which provides safe versions under the <code>method</code> sublibrary.</p>
+<h2 id="list-of-methods">List of Methods</h2>
+<p>Here is a list of our intrinsic methods and an explaination of what they do. </p>
 <h3 id="collection">Collection</h3>
+<p>A <code>string</code> and a <code>byte[]</code> do not share elements: the operations below return <code>string</code>s
+when the collection is a <code>string</code> and <code>byte</code>s when it is a <code>byte[]</code>. <code>@pack</code> / <code>@unpack</code>
+are the only bridge between the two. String positions (an index, <code>@slice</code>, <code>@find</code>,
+<code>@remove</code>) are byte offsets — see <a href="../strings/">strings.md</a>.</p>
 <ul>
-<li><code>@length(value)</code> -&gt; <code>int</code></li>
-<li><code>@push(collection, value)</code> -&gt; <code>nothing</code></li>
-<li><code>@pop(collection)</code> -&gt; <code>any</code></li>
-<li><code>@insert(collection, index, value)</code> -&gt; <code>nothing</code></li>
-<li><code>@remove(collection, index)</code> -&gt; <code>any</code></li>
-<li><code>@clear(collection)</code> -&gt; <code>nothing</code></li>
-<li><code>@find(collection, value)</code> -&gt; <code>int</code></li>
-<li><code>@slice(collection, start, length)</code> -&gt; <code>string | array</code></li>
+<li><code>@length(value :: string | array)</code> -&gt; <code>int</code> (the byte length for a <code>string</code>)</li>
+<li><code>@push(collection :: string | array, value :: any)</code> -&gt; <code>nothing</code> — appends; a <code>string</code> takes a <code>string</code> (concatenates it), an array takes its element type</li>
+<li><code>@pop(collection :: string | array)</code> -&gt; <code>string</code> for a <code>string</code>, the element type for an array</li>
+<li><code>@insert(collection :: string | array, index :: int, value :: any)</code> -&gt; <code>nothing</code></li>
+<li><code>@remove(collection :: string | array, index :: int)</code> -&gt; <code>string</code> for a <code>string</code>, the element type for an array</li>
+<li><code>@clear(collection :: string | array)</code> -&gt; <code>nothing</code></li>
+<li><code>@find(collection :: string | array, value :: any)</code> -&gt; <code>int</code></li>
+<li><code>@slice(collection :: string | array, start :: int, length :: int)</code> -&gt; the same collection type</li>
+<li><code>@pack(bytes :: byte[])</code> -&gt; <code>string</code> — interprets each byte as a u8 codepoint</li>
+<li><code>@unpack(word :: string)</code> -&gt; <code>byte[]</code> — decomposes a string into its byte values</li>
 </ul>
 <h3 id="type-conversion">Type / Conversion</h3>
 <ul>
-<li><code>@string(value)</code> -&gt; <code>string</code></li>
-<li><code>@int(value)</code> -&gt; <code>int</code></li>
-<li><code>@float(value)</code> -&gt; <code>float</code></li>
-<li><code>@byte(value)</code> -&gt; <code>byte</code></li>
-<li><code>@type(value)</code> -&gt; <code>string</code></li>
+<li><code>@string(value :: any)</code> -&gt; <code>string</code></li>
+<li><code>@int(value :: float | byte | string)</code> -&gt; <code>int</code></li>
+<li><code>@float(value :: int | byte | string)</code> -&gt; <code>float</code></li>
+<li><code>@byte(value :: int | float | string)</code> -&gt; <code>byte</code></li>
+<li><code>@type(value :: any)</code> -&gt; <code>string</code></li>
 </ul>
+<p>These are required in value positions (assignment, function arguments, return values) whenever a runtime or named-const value needs to cross type boundaries that aren't lossless. Literals written directly in source widen implicitly (for example <code>var x :: float is 60</code>), but <code>const LIT is 60; takesFloat(LIT)</code> is an error — write <code>takesFloat(@float(LIT))</code> instead. The rule mirrors how <code>int</code> → <code>byte</code> already works. Operators and array literals promote automatically and don't need explicit casts.</p>
 <h3 id="diagnostics-output">Diagnostics / Output</h3>
 <ul>
-<li><code>@print("text")</code> -&gt; <code>nothing</code></li>
-<li><code>@assert(condition, "message"?)</code> -&gt; <code>nothing</code></li>
-<li><code>@panic(message)</code> -&gt; <code>nothing</code></li>
-<li><code>@exit(code)</code> -&gt; <code>nothing</code></li>
+<li><code>@print(format :: string)</code> -&gt; <code>nothing</code></li>
+<li><code>@assert(condition :: tetra, message :: string?)</code> -&gt; <code>nothing</code></li>
+<li><code>@panic(message :: string)</code> -&gt; <code>nothing</code></li>
+<li><code>@exit(code :: int | byte)</code> -&gt; <code>nothing</code></li>
 </ul>
-<h2 id="removed-core-intrinsics">Removed Core Intrinsics</h2>
-<p>These intrinsics were transitional and are now removed from core/runtime.
-Use std-library modules instead:</p>
-<ul>
-<li><code>@random()</code></li>
-<li><code>@os()</code></li>
-<li><code>@arch()</code></li>
-<li><code>@abi()</code></li>
-<li><code>@time()</code></li>
-<li><code>@tick()</code></li>
-<li><code>@input()</code></li>
-<li><code>@sleep(ms)</code></li>
-<li><code>@build(src, out, arch, os, abi, debug)</code></li>
-<li><code>@read(path)</code></li>
-<li><code>@argc()</code></li>
-<li><code>@argv(index)</code></li>
-</ul>
-<p>Use std-library modules (<code>std.io</code>, <code>std.time</code>, <code>std.process</code>, <code>std.file</code>, etc.)
-instead of adding new dependencies on these intrinsics.</p>
-<h2 id="failure-behavior-current-runtime">Failure Behavior (Current Runtime)</h2>
+<h2 id="failure-behavior">Failure Behavior</h2>
 <p>Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument failures are accepted behavior and should be treated as runtime traps unless noted otherwise.</p>
 <h3 id="collection_1">Collection</h3>
 <ul>
@@ -813,12 +781,13 @@ instead of adding new dependencies on these intrinsics.</p>
 <li>Fails at compile time for statically-known non-collection values.</li>
 <li>Can fail at runtime for invalid dynamic values.</li>
 <li><code>@push(collection, value)</code></li>
-<li>Fails at compile time for some obvious type mismatches (for example, pushing non-string into string).</li>
+<li>Fails at compile time when the value type does not match: a non-string pushed into a <code>string</code>, or a non-element pushed into a typed array.</li>
 <li>Can fail at runtime if target is not array/string in dynamic paths.</li>
 <li><code>@pop(collection)</code></li>
 <li>Fails at runtime on empty array/string.</li>
 <li>Current implementation can cascade into a secondary <code>StackUnderflow</code> after the primary runtime error in some statement forms.</li>
 <li><code>@insert(collection, index, value)</code></li>
+<li>Fails at compile time when the inserted value type does not match (a non-string into a <code>string</code>, or a non-element into a typed array).</li>
 <li>Fails at runtime for negative index, out-of-bounds index, wrong index type, or wrong inserted type for string targets.</li>
 <li>Current implementation can cascade into <code>StackUnderflow</code> after the primary runtime error in some variable-assignment forms.</li>
 <li><code>@remove(collection, index)</code></li>
@@ -833,6 +802,11 @@ instead of adding new dependencies on these intrinsics.</p>
 <li><code>@slice(collection, start, length)</code></li>
 <li>Fails at runtime for negative indices/length, out-of-bounds ranges, wrong index types, or non-collection targets.</li>
 <li>Current implementation can cascade into <code>StackUnderflow</code> after the primary runtime error in some statement forms.</li>
+<li><code>@pack(bytes)</code></li>
+<li>Fails at compile time unless the argument is a <code>byte[]</code> (an integer literal array narrows to <code>byte[]</code>).</li>
+<li>Fails at runtime for arrays whose elements cannot be coerced to a u8 codepoint.</li>
+<li><code>@unpack(word)</code></li>
+<li>Does not currently fail for supported runtime values.</li>
 </ul>
 <h3 id="type-conversion_1">Type / Conversion</h3>
 <ul>
@@ -842,6 +816,7 @@ instead of adding new dependencies on these intrinsics.</p>
 <li>Fails at runtime for invalid parse, non-finite values, overflow, or unsupported source type.</li>
 <li><code>@float(value)</code></li>
 <li>Fails at runtime for invalid parse, non-finite values, or unsupported source type.</li>
+<li>Required for any non-literal <code>int</code> or <code>byte</code> value used where a <code>float</code> is expected; literals widen implicitly. See <a href="../getstarted/3-types.md#numeric-conversions">Types</a>.</li>
 <li><code>@byte(value)</code></li>
 <li>String conversion path fails at runtime for invalid parse or out-of-range values.</li>
 <li>Numeric conversion path can clamp/zero out some invalid values (for example, <code>@byte(999)</code> currently yields <code>0x00</code>).</li>
@@ -850,52 +825,15 @@ instead of adding new dependencies on these intrinsics.</p>
 </ul>
 <h3 id="diagnostics-output_1">Diagnostics / Output</h3>
 <ul>
-<li><code>@print("text")</code></li>
-<li>Prints any expression. Double-quoted strings interpolate <code>{...}</code> expressions before printing, so <code>@print("value is {value}")</code> prints the current value. Use single-quoted strings for literal braces, such as <code>@print('{ y: 2 }')</code>.</li>
-<li><code>@assert(condition, "message"?)</code></li>
-<li>False condition halts execution and reports assertion failure location/message.</li>
+<li><code>@print(format :: string)</code></li>
+<li>Argument must be a <code>string</code>. <code>@print</code> writes that string as-is; it does not interpolate or interpret <code>{...}</code>. Interpolation happens when a string value is produced (for example, in a double-quoted literal), so <code>@print("value is {value}")</code> still prints the current value because the literal is evaluated to a <code>string</code> before <code>@print</code> runs.</li>
+<li><code>@assert(condition :: tetra, message :: string?)</code></li>
+<li>False condition writes the message (if any) and <code>Assertion failed</code> to stderr, then halts execution with exit code 1.</li>
 <li><code>@panic(message)</code></li>
-<li>Always terminates execution with a runtime panic.</li>
+<li>Writes the message to stderr and always terminates execution with exit code 1.</li>
 <li><code>@exit(code)</code></li>
-<li>Terminates process with the provided status code (<code>int | byte</code>).</li>
+<li>Terminates the process with the provided status code (<code>int | byte</code>).</li>
 </ul>
-<h2 id="safe-standard-library-wrappers">Safe Standard Library Wrappers</h2>
-<p>Use <code>std.methods</code> for guarded wrappers around intrinsic operations that can fail/trap. Non-failing intrinsics are not wrapped.</p>
-<h3 id="import">Import</h3>
-<ul>
-<li><code>module std from "std"</code></li>
-</ul>
-<h3 id="collection-wrappers">Collection Wrappers</h3>
-<p>Collection wrappers are type-specific so mismatched element types are rejected at compile time.</p>
-<ul>
-<li>Push:</li>
-<li><code>std.methods.pushString(^string, string)</code> -&gt; <code>nothing</code></li>
-<li><code>std.methods.pushInt(^int[], int)</code> -&gt; <code>nothing</code></li>
-<li><code>std.methods.pushFloat(^float[], float)</code> -&gt; <code>nothing</code></li>
-<li><code>std.methods.pushByte(^byte[], byte)</code> -&gt; <code>nothing</code></li>
-<li><code>std.methods.pushTetra(^tetra[], tetra)</code> -&gt; <code>nothing</code></li>
-<li><code>std.methods.pushStringArray(^string[], string)</code> -&gt; <code>nothing</code></li>
-<li>Pop:</li>
-<li><code>std.methods.popString(^string)</code> -&gt; <code>string | error.Method</code></li>
-<li><code>std.methods.popInt(^int[])</code> -&gt; <code>int | error.Method</code></li>
-<li><code>std.methods.popFloat(^float[])</code> -&gt; <code>float | error.Method</code></li>
-<li><code>std.methods.popByte(^byte[])</code> -&gt; <code>byte | error.Method</code></li>
-<li><code>std.methods.popTetra(^tetra[])</code> -&gt; <code>tetra | error.Method</code></li>
-<li><code>std.methods.popStringArray(^string[])</code> -&gt; <code>string | error.Method</code></li>
-<li>Insert / Remove / Slice:</li>
-<li><code>insert*</code>, <code>remove*</code>, and <code>slice*</code> wrappers exist for each type above and return <code>error.Method.OutOfBounds</code> on invalid ranges/indexes.</li>
-<li>Clear:</li>
-<li><code>clear*</code> wrappers exist for each type above and return <code>nothing</code>.</li>
-<li>Find:</li>
-<li><code>find*</code> wrappers exist for each type above and return <code>int</code> (<code>-1</code> if not found).</li>
-</ul>
-<h3 id="conversion-wrappers">Conversion Wrappers</h3>
-<ul>
-<li><code>std.methods.toInt(value)</code> where <code>value :: int | float | byte | string</code> -&gt; <code>int | error.Method</code></li>
-<li><code>std.methods.toFloat(value)</code> where <code>value :: int | float | byte | string</code> -&gt; <code>float | error.Method</code></li>
-<li><code>std.methods.toByte(value)</code> where <code>value :: int | float | byte | string</code> -&gt; <code>byte | error.Method</code></li>
-</ul>
-<p>String parsing and range checks are guarded, returning <code>error.Method.InvalidNumber</code> or <code>error.Method.Overflow</code> instead of trapping.</p>
 
 
 

@@ -396,6 +396,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#block-values-and-lift" class="md-nav__link">
+    <span class="md-ellipsis">
+      Block values and lift
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#if-vs-as" class="md-nav__link">
     <span class="md-ellipsis">
       if vs as
@@ -574,6 +583,28 @@
   
   
     <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../struct/" class="md-nav__link">
         
   
@@ -681,40 +712,75 @@
 </ul>
 <p>Examples:</p>
 <div class="highlight"><pre><span></span><code>if x &gt; 10 then {
-    @print(&quot;x is greater than 10/n&quot;)
+    @print(&quot;x is greater than 10\n&quot;)
 } else {
-    @print(&quot;x is 10 or less/n&quot;)
+    @print(&quot;x is 10 or less\n&quot;)
 }
 
 var condition is if true then &quot;true&quot; else &quot;false&quot;
 </code></pre></div>
 <p>Chaining and statement-style:</p>
-<div class="highlight"><pre><span></span><code>if current % 3 equals 0 and current % 5 equals 0 then @print(&quot;fizzbuzz/n&quot;)
-else if current % 3 equals 0 then @print(&quot;fizz/n&quot;)
-else if current % 5 equals 0 then @print(&quot;buzz/n&quot;)
-else @print(current)
+<div class="highlight"><pre><span></span><code>if current % 3 equals 0 and current % 5 equals 0 then @print(&quot;fizzbuzz\n&quot;)
+else if current % 3 equals 0 then @print(&quot;fizz\n&quot;)
+else if current % 5 equals 0 then @print(&quot;buzz\n&quot;)
+else @print(&quot;{current}\n&quot;)
 </code></pre></div>
 <h3 id="as-then-else-type-narrowing">as / then / else (type narrowing)</h3>
 <ul>
 <li><strong>else required</strong>, <strong>then optional</strong>.</li>
 <li>Same body rules: expression bodies end with <code></code>, block bodies do not.</li>
+<li>The tested variable is narrowed in both branches: the <strong>then</strong> branch narrows to the target type, the <strong>else</strong> branch narrows to the remainder (union minus target).</li>
 </ul>
 <p>Examples:</p>
-<div class="highlight"><pre><span></span><code># Success and failure as expressions
+<div class="highlight"><pre><span></span><code># Inline fallback value
 const n_or_zero is value as int else 0
 
-# Block failure case
-value as int else {
-    @print(&quot;value is not an int/n&quot;)
+# Block with explicit return (guard pattern)
+const n is value as int else {
+    @print(&quot;value is not an int\n&quot;)
+    return -1
 }
 
-# Explicit success block
-value as int then {
-    # use the narrowed int value here
+# Block with lift (provides fallback value, continues)
+const n is value as int else {
+    @print(&quot;value is not an int, using default\n&quot;)
+    lift 0
+}
+
+# Type narrowing in both branches
+const val :: int | float | Error is foo()
+val as int then {
+    # val :: int here
 } else {
-    # handle non-int here
+    # val :: float | Error here
 }
 </code></pre></div>
+<p><strong>Then block behavior</strong>: when the then branch is a block, it runs for side effects only. The <code>as</code> expression's value on the success path is the original narrowed value. When the then branch is an inline expression, its value is used as the result.</p>
+<div class="highlight"><pre><span></span><code>var x is val as int then 20 else 0        # x is 20 (inline then)
+var x is val as int then { work() } else 0 # x is val&#39;s int value (block then, side-effects)
+</code></pre></div>
+<h3 id="block-values-and-lift">Block values and <code>lift</code></h3>
+<p>In <code>if</code> and <code>as</code> branches, blocks do <strong>not</strong> implicitly return their last expression. The last expression in a block is discarded (side-effect only). To provide a value from a block, use <code>lift</code>:</p>
+<div class="highlight"><pre><span></span><code># lift provides a value from a block
+var x is if cond then { lift compute() } else { lift 0 }
+
+# Without lift, blocks produce nothing — use inline for simple values
+var x is if cond then compute() else 0
+</code></pre></div>
+<p><code>lift</code> terminates the block (code after <code>lift</code> is unreachable). It scopes to the immediately enclosing block <code>{ }</code>.</p>
+<p><code>return</code> always exits the enclosing function. <code>lift</code> always provides a value to the enclosing expression.</p>
+<div class="highlight"><pre><span></span><code>var x is foo() as int else {
+    @print(&quot;error\n&quot;)
+    lift 0               # x gets 0, execution continues after the as expression
+}
+
+var x is foo() as int else {
+    @print(&quot;fatal\n&quot;)
+    return -1            # function exits, x is never assigned
+}
+</code></pre></div>
+<p>When <code>as</code> or <code>if</code> is used in assignment, block branches must either <code>lift</code> a value or diverge via <code>return</code>/<code>break</code>. A block that falls through without <code>lift</code> produces <code>nothing</code>, which is a compile error when a value is expected.</p>
+<p><code>match</code> arms are not affected — implicit last-expression returns are preserved in match blocks.</p>
 <h3 id="if-vs-as">if vs as</h3>
 <p>In Doxa, if and as both use the then / else pattern, but they invert the emphasis:</p>
 <table>
@@ -744,7 +810,7 @@ value as int then {
 <p><code>if</code> is a keyword which implicitly requires a success condition, <code>as</code> implicity requires a fail condition, but both use then/else blocks in the same way.</p>
 <p>Examples</p>
 <div class="highlight"><pre><span></span><code># IF: Truth-driven
-if x &gt; 10 then @print(&quot;big/n&quot;) else @print(&quot;small/n&quot;)
+if x &gt; 10 then @print(&quot;big\n&quot;) else @print(&quot;small\n&quot;)
 
 # AS: Fallback-driven
 value as int else 0         # If not int, use 0
@@ -752,13 +818,14 @@ value as int then 20 else 0  # If int, use 20  else 0
 
 # Both in action
 if isReady then start() else wait()
-data as string then parse(data) else log(&quot;Bad data/n&quot;)
+data as string then parse(data) else log(&quot;Bad data\n&quot;)
 </code></pre></div>
 <h3 id="match-values-and-union-types">match (values and union types)</h3>
 <p>Use match to branch on:</p>
 <ul>
 <li><strong>Concrete values</strong>: numbers, strings, enum variants (<code>.Red</code>, <code>.Green</code>, ...)</li>
 <li><strong>Union type arms</strong>: <code>int</code>, <code>float</code>, <code>string</code>, <code>byte</code>, <code>tetra</code>, <code>nothing</code>, or custom types</li>
+<li><strong>Struct subjects</strong>: the struct's name as a type test, optionally with <code>{ field, ... }</code> to bind its fields</li>
 </ul>
 <p>Arm syntax and delimiters:</p>
 <ul>
@@ -769,8 +836,8 @@ data as string then parse(data) else log(&quot;Bad data/n&quot;)
 <p>Match on union types:</p>
 <div class="highlight"><pre><span></span><code>fn kind(value :: int | float) returns(string) {
     return match value {
-        int then @print(&quot;integer/n&quot;)
-        float then @print(&quot;float/n&quot;)
+        int then @print(&quot;integer\n&quot;)
+        float then @print(&quot;float\n&quot;)
     }
 }
 </code></pre></div>
@@ -797,24 +864,44 @@ var msg3 is match s {
     else &quot;It&#39;s something else&quot;
 }
 </code></pre></div>
+<p>Match on structs:</p>
+<div class="highlight"><pre><span></span><code>struct FileError { public path :: string }
+
+var e :: FileError is $FileError { path is &quot;a.txt&quot; }
+
+match e {
+    FileError then @print(&quot;it failed\n&quot;),          # type test: the subject is that struct
+}
+
+match e {
+    FileError { path } then @print(path + &quot;\n&quot;),   # binds each named field for the body
+    else @print(&quot;unreachable\n&quot;),
+}
+</code></pre></div>
+<p>The test is decided at compile time: a pattern naming a <em>different</em> struct never
+matches, so that arm is skipped and control falls to the next arm (or <code>else</code>).
+A subject that is not a struct cannot be tested this way — narrow it with <code>as</code>
+first.</p>
 <p>Block arms in match:</p>
 <div class="highlight"><pre><span></span><code>var msg is match color {
     # semicolons can be used to represent line breaks
-    .Red then { @print(&quot;stop/n&quot;); &quot;red&quot;}
-    .Green then { @print(&quot;go/n&quot;); &quot;green&quot;
-    else { @print(&quot;caution/n&quot;); &quot;yellowish&quot;}
+    .Red then { @print(&quot;stop\n&quot;); &quot;red&quot;}
+    .Green then { @print(&quot;go\n&quot;); &quot;green&quot;
+    else { @print(&quot;caution\n&quot;); &quot;yellowish&quot;}
 }
 </code></pre></div>
 <p>Notes:</p>
 <ul>
+<li><strong>Narrowing</strong>: a single-pattern arm narrows the subject to the member that arm selected, so its fields, arithmetic and later casts read as that member — the same contract <code>as</code> gives its branches. An <code>else</code> arm narrows nothing (any member may have arrived) and an arm listing several patterns is not narrowed (any of them could have selected it).</li>
 <li><strong>Exhaustiveness</strong>: For enums, prefer covering all variants or add an <code>else</code> arm. For unions, cover the needed type arms <code>else</code> is optional.</li>
-<li><strong>Result type</strong>: All arms must produce a compatible result type. For block arms, the last expression is the arm’s value.</li>
+<li><strong>Result type</strong>: All arms must produce a compatible result type. For block arms, the last expression is the arm's value.</li>
 </ul>
 <h3 id="quick-reference">Quick reference</h3>
 <ul>
-<li><strong>if</strong>: then required else optional expression body ends with <code></code>, block body does not.</li>
-<li><strong>as</strong>: else required then optional same body rules.</li>
-<li><strong>match</strong>: pattern then BODY else BODY arm separation via expression <code></code> or closing block <code>}</code>.</li>
+<li><strong>if</strong>: then required else optional. Inline expressions or blocks with <code>lift</code>.</li>
+<li><strong>as</strong>: else required then optional. Type narrowing in both branches. Blocks use <code>lift</code> or <code>return</code>.</li>
+<li><strong>match</strong>: pattern then BODY else BODY. Block arms use implicit last expression.</li>
+<li><strong>lift</strong>: provides a value from a block, terminates the block. Scopes to the immediately enclosing <code>{ }</code>.</li>
 </ul>
 
 

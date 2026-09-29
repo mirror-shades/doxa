@@ -1,0 +1,6233 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../stdlib/">
+      
+      
+        <link rel="next" href="../struct/">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Standard Library API - Doxa Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#standard-library-api" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Doxa Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Standard Library API
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4m0-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Doxa Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Syntax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../alias/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Alias
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arrays/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Arrays
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Control
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Loops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Maps
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memory
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Methods
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sets.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Sets
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#stdio" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.io
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.io">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#print" class="md-nav__link">
+    <span class="md-ellipsis">
+      print
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#println" class="md-nav__link">
+    <span class="md-ellipsis">
+      println
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eprint" class="md-nav__link">
+    <span class="md-ellipsis">
+      eprint
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eprintln" class="md-nav__link">
+    <span class="md-ellipsis">
+      eprintln
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#input" class="md-nav__link">
+    <span class="md-ellipsis">
+      input
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inputbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      inputByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inputprompt" class="md-nav__link">
+    <span class="md-ellipsis">
+      inputPrompt
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdprocess" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.process
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.process">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#exec" class="md-nav__link">
+    <span class="md-ellipsis">
+      exec
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execcapture" class="md-nav__link">
+    <span class="md-ellipsis">
+      execCapture
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execok" class="md-nav__link">
+    <span class="md-ellipsis">
+      execOk
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#args" class="md-nav__link">
+    <span class="md-ellipsis">
+      args
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#argc" class="md-nav__link">
+    <span class="md-ellipsis">
+      argc
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#argv" class="md-nav__link">
+    <span class="md-ellipsis">
+      argv
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exit" class="md-nav__link">
+    <span class="md-ellipsis">
+      exit
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cwd" class="md-nav__link">
+    <span class="md-ellipsis">
+      cwd
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      getenv
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.file
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.file">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#makedir" class="md-nav__link">
+    <span class="md-ellipsis">
+      makeDir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#makepath" class="md-nav__link">
+    <span class="md-ellipsis">
+      makePath
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#copyfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      copyFile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete" class="md-nav__link">
+    <span class="md-ellipsis">
+      delete
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#copydir" class="md-nav__link">
+    <span class="md-ellipsis">
+      copyDir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unzipfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      unzipFile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#isdir" class="md-nav__link">
+    <span class="md-ellipsis">
+      IsDir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#renamedir" class="md-nav__link">
+    <span class="md-ellipsis">
+      renameDir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rename" class="md-nav__link">
+    <span class="md-ellipsis">
+      rename
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#read" class="md-nav__link">
+    <span class="md-ellipsis">
+      read
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#write" class="md-nav__link">
+    <span class="md-ellipsis">
+      write
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#append" class="md-nav__link">
+    <span class="md-ellipsis">
+      append
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exists" class="md-nav__link">
+    <span class="md-ellipsis">
+      exists
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#isfile" class="md-nav__link">
+    <span class="md-ellipsis">
+      isFile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cwd_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      cwd
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#touch" class="md-nav__link">
+    <span class="md-ellipsis">
+      touch
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdhttp" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.http
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.http">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#mapioerror" class="md-nav__link">
+    <span class="md-ellipsis">
+      mapIOError
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#downloadurl" class="md-nav__link">
+    <span class="md-ellipsis">
+      downloadUrl
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#download" class="md-nav__link">
+    <span class="md-ellipsis">
+      download
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#response" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Response">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#responsestatuscode" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response.statusCode
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responsebody" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response.body
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responseheader" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response.header
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#responsehasheader" class="md-nav__link">
+    <span class="md-ellipsis">
+      Response.hasHeader
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#listen" class="md-nav__link">
+    <span class="md-ellipsis">
+      listen
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#localaddr" class="md-nav__link">
+    <span class="md-ellipsis">
+      localAddr
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#accept" class="md-nav__link">
+    <span class="md-ellipsis">
+      accept
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serverrequest" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ServerRequest">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#serverrequestpath" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest.path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serverrequestbody" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest.body
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serverrequestheader" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest.header
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#serverrequesthasheader" class="md-nav__link">
+    <span class="md-ellipsis">
+      ServerRequest.hasHeader
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#readrequest" class="md-nav__link">
+    <span class="md-ellipsis">
+      readRequest
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#takerequest" class="md-nav__link">
+    <span class="md-ellipsis">
+      takeRequest
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iswebsocket" class="md-nav__link">
+    <span class="md-ellipsis">
+      isWebSocket
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keepalive" class="md-nav__link">
+    <span class="md-ellipsis">
+      keepAlive
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsop" class="md-nav__link">
+    <span class="md-ellipsis">
+      WsOp
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#message" class="md-nav__link">
+    <span class="md-ellipsis">
+      Message
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#upgradewebsocket" class="md-nav__link">
+    <span class="md-ellipsis">
+      upgradeWebSocket
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wssend" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsSend
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsnext" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsNext
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsmessage" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsMessage
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsbuffered" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsBuffered
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#takelasterrorcode" class="md-nav__link">
+    <span class="md-ellipsis">
+      takeLastErrorCode
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#eventkind" class="md-nav__link">
+    <span class="md-ellipsis">
+      EventKind
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#event" class="md-nav__link">
+    <span class="md-ellipsis">
+      Event
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#poll" class="md-nav__link">
+    <span class="md-ellipsis">
+      poll
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#route" class="md-nav__link">
+    <span class="md-ellipsis">
+      Route
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Route">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#routeparam" class="md-nav__link">
+    <span class="md-ellipsis">
+      Route.param
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#router" class="md-nav__link">
+    <span class="md-ellipsis">
+      Router
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Router">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#routernew" class="md-nav__link">
+    <span class="md-ellipsis">
+      Router.new
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#routeradd" class="md-nav__link">
+    <span class="md-ellipsis">
+      Router.add
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#route_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      route
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#respond" class="md-nav__link">
+    <span class="md-ellipsis">
+      respond
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#close" class="md-nav__link">
+    <span class="md-ellipsis">
+      close
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#get" class="md-nav__link">
+    <span class="md-ellipsis">
+      get
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#getwithtimeout" class="md-nav__link">
+    <span class="md-ellipsis">
+      getWithTimeout
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request" class="md-nav__link">
+    <span class="md-ellipsis">
+      Request
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Request">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#requestnew" class="md-nav__link">
+    <span class="md-ellipsis">
+      Request.new
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#request_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      request
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#post" class="md-nav__link">
+    <span class="md-ellipsis">
+      post
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#put" class="md-nav__link">
+    <span class="md-ellipsis">
+      put
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#delete_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      delete
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#head" class="md-nav__link">
+    <span class="md-ellipsis">
+      head
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#gettext" class="md-nav__link">
+    <span class="md-ellipsis">
+      getText
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#checkstatus" class="md-nav__link">
+    <span class="md-ellipsis">
+      checkStatus
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsaccept" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsAccept
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsread" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsRead
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wswrite" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsWrite
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wstext" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsText
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsbinary" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsBinary
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsping" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsPing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wspong" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsPong
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#wsclose" class="md-nav__link">
+    <span class="md-ellipsis">
+      wsClose
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdhost" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.host
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.host">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#os" class="md-nav__link">
+    <span class="md-ellipsis">
+      os
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#arch" class="md-nav__link">
+    <span class="md-ellipsis">
+      arch
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#abi" class="md-nav__link">
+    <span class="md-ellipsis">
+      abi
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#iswindows" class="md-nav__link">
+    <span class="md-ellipsis">
+      isWindows
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#islinux" class="md-nav__link">
+    <span class="md-ellipsis">
+      isLinux
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ismac" class="md-nav__link">
+    <span class="md-ellipsis">
+      isMac
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdtime" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.time
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.time">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unix" class="md-nav__link">
+    <span class="md-ellipsis">
+      unix
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tick" class="md-nav__link">
+    <span class="md-ellipsis">
+      tick
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#monotonic" class="md-nav__link">
+    <span class="md-ellipsis">
+      monotonic
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unixms" class="md-nav__link">
+    <span class="md-ellipsis">
+      unixMs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sleep" class="md-nav__link">
+    <span class="md-ellipsis">
+      sleep
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sleepseconds" class="md-nav__link">
+    <span class="md-ellipsis">
+      sleepSeconds
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdrandom" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.random
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.random">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#random" class="md-nav__link">
+    <span class="md-ellipsis">
+      random
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdbuild" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.build
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.build">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#optimization" class="md-nav__link">
+    <span class="md-ellipsis">
+      Optimization
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#optmodename" class="md-nav__link">
+    <span class="md-ellipsis">
+      optModeName
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#joinlines" class="md-nav__link">
+    <span class="md-ellipsis">
+      joinLines
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#target" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Target">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#targethost" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.host
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#targetcross" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.cross
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#targetiswindows" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.isWindows
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#targetislinux" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.isLinux
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#targetismac" class="md-nav__link">
+    <span class="md-ellipsis">
+      Target.isMac
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executable" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Executable">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#executablenew" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.new
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executableinclude" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.include
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executablelibdir" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.libdir
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executablelink" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.link
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#executableframework" class="md-nav__link">
+    <span class="md-ellipsis">
+      Executable.framework
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#context" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Context">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#contextnew" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context.new
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#contexthost" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context.host
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#contextaddartifact" class="md-nav__link">
+    <span class="md-ellipsis">
+      Context.addArtifact
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#run" class="md-nav__link">
+    <span class="md-ellipsis">
+      run
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execute" class="md-nav__link">
+    <span class="md-ellipsis">
+      execute
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compile" class="md-nav__link">
+    <span class="md-ellipsis">
+      compile
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compilehost" class="md-nav__link">
+    <span class="md-ellipsis">
+      compileHost
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stderror" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.error
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.error">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#common" class="md-nav__link">
+    <span class="md-ellipsis">
+      Common
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#io" class="md-nav__link">
+    <span class="md-ellipsis">
+      IO
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#process" class="md-nav__link">
+    <span class="md-ellipsis">
+      Process
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#method" class="md-nav__link">
+    <span class="md-ellipsis">
+      Method
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#stderror_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      StdError
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdmethods" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.methods
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.methods">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pushstring" class="md-nav__link">
+    <span class="md-ellipsis">
+      pushString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pushint" class="md-nav__link">
+    <span class="md-ellipsis">
+      pushInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pushfloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      pushFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pushbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      pushByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pushtetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      pushTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#pushstringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      pushStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popstring" class="md-nav__link">
+    <span class="md-ellipsis">
+      popString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popint" class="md-nav__link">
+    <span class="md-ellipsis">
+      popInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popfloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      popFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      popByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#poptetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      popTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#popstringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      popStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#insertstring" class="md-nav__link">
+    <span class="md-ellipsis">
+      insertString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#insertint" class="md-nav__link">
+    <span class="md-ellipsis">
+      insertInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#insertfloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      insertFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#insertbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      insertByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#inserttetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      insertTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#insertstringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      insertStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removestring" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removeint" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removefloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removebyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removetetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#removestringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      removeStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clearstring" class="md-nav__link">
+    <span class="md-ellipsis">
+      clearString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clearint" class="md-nav__link">
+    <span class="md-ellipsis">
+      clearInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clearfloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      clearFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clearbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      clearByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cleartetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      clearTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#clearstringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      clearStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#findstring" class="md-nav__link">
+    <span class="md-ellipsis">
+      findString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#findint" class="md-nav__link">
+    <span class="md-ellipsis">
+      findInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#findfloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      findFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#findbyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      findByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#findtetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      findTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#findstringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      findStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicestring" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceString
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sliceint" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicefloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicebyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceByte
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicetetra" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceTetra
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#slicestringarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      sliceStringArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#toint" class="md-nav__link">
+    <span class="md-ellipsis">
+      toInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tofloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      toFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#tobyte" class="md-nav__link">
+    <span class="md-ellipsis">
+      toByte
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#stdjson" class="md-nav__link">
+    <span class="md-ellipsis">
+      std.json
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="std.json">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#kind" class="md-nav__link">
+    <span class="md-ellipsis">
+      Kind
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Node">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodekind" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.kind
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodecount" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.count
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodeelement" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.element
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodefield" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.field
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodekey" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.key
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodetext" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.text
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodeintvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.intValue
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodefloatvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.floatValue
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodebooleanvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      Node.booleanValue
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#parse" class="md-nav__link">
+    <span class="md-ellipsis">
+      parse
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#beginobject" class="md-nav__link">
+    <span class="md-ellipsis">
+      beginObject
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#beginarray" class="md-nav__link">
+    <span class="md-ellipsis">
+      beginArray
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#end" class="md-nav__link">
+    <span class="md-ellipsis">
+      end
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writekey" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeKey
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writetext" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeText
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writeint" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeInt
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writefloat" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeFloat
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writeboolean" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeBoolean
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#writenull" class="md-nav__link">
+    <span class="md-ellipsis">
+      writeNull
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#finish" class="md-nav__link">
+    <span class="md-ellipsis">
+      finish
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../struct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Structs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tetras/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tetras
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../unions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Unions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Zig
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="standard-library-api">Standard Library API</h1>
+<blockquote>
+<p><strong>Generated file.</strong> Built from the Doxa standard library sources by
+<code>scripts/gen_stdlib_docs.zig</code>. Do not edit by hand; run <code>zig build docs</code>
+to regenerate it after changing anything under <code>std/</code>.</p>
+</blockquote>
+<p>Each section is one standard-library module. Every entry shows its declared
+signature, the description comment that precedes it in the source (when one
+exists), and a collapsible copy of the full source declaration.</p>
+<h2 id="stdio"><code>std.io</code></h2>
+<h3 id="print"><code>print</code></h3>
+<div class="highlight"><pre><span></span><code>public function print(input :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function print(input :: string) returns error.StdError {
+    IO.print(input);
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="println"><code>println</code></h3>
+<div class="highlight"><pre><span></span><code>public function println(input :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function println(input :: string) returns error.StdError {
+    IO.printlnStdout(input);
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="eprint"><code>eprint</code></h3>
+<div class="highlight"><pre><span></span><code>public function eprint(input :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function eprint(input :: string) returns error.StdError {
+    IO.eprint(input);
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="eprintln"><code>eprintln</code></h3>
+<div class="highlight"><pre><span></span><code>public function eprintln(input :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function eprintln(input :: string) returns error.StdError {
+    IO.eprintlnStderr(input);
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="input"><code>input</code></h3>
+<div class="highlight"><pre><span></span><code>public function input() returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function input() returns string | error.StdError {
+    const value is IO.input();
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return value
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="inputbyte"><code>inputByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function inputByte() returns byte | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function inputByte() returns byte | error.StdError {
+    const value is IO.inputByte()
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return @byte(value)
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="inputprompt"><code>inputPrompt</code></h3>
+<div class="highlight"><pre><span></span><code>public function inputPrompt(prompt :: string) returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function inputPrompt(prompt :: string) returns string | error.StdError {
+    const value is IO.inputPrompt(prompt);
+    const err is IO.takeLastErrorCode()
+    if err == 0 then return value
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdprocess"><code>std.process</code></h2>
+<h3 id="exec"><code>exec</code></h3>
+<div class="highlight"><pre><span></span><code>public function exec(input :: string) returns int | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function exec(input :: string) returns int | error.StdError {
+    var input_string :: string
+    if Process.osName() == &quot;windows&quot; then {
+        each c in input {
+            if c == &quot;/&quot; then {
+                @push(input_string, &quot;\\&quot;)
+            } else {
+                @push(input_string, c)
+            }
+        }
+    } else {
+        input_string is input
+    }
+
+    const code is Process.exec_cmd(input_string)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return code
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execcapture"><code>execCapture</code></h3>
+<div class="highlight"><pre><span></span><code>public function execCapture(input :: string) returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execCapture(input :: string) returns string | error.StdError {
+    var input_string :: string
+    if Process.osName() == &quot;windows&quot; then {
+        each c in input {
+            if c == &quot;/&quot; then {
+                @push(input_string, &quot;\\&quot;)
+            } else {
+                @push(input_string, c)
+            }
+        }
+    } else {
+        input_string is input
+    }
+
+    const output is Process.exec_capture_stdout(input_string)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return output
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execok"><code>execOk</code></h3>
+<div class="highlight"><pre><span></span><code>public function execOk(input :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execOk(input :: string) returns tetra {
+    const result is exec(input)
+    result as int then {
+        return true
+    }
+    else {
+        return false
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="args"><code>args</code></h3>
+<div class="highlight"><pre><span></span><code>public function args() returns string[] | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function args() returns string[] | error.StdError {
+    const _argc is argc() as int else {
+        return mapProcessError(Process.takeLastErrorCode())
+    }
+    var result :: string[]
+    for i while i &lt; _argc do i += 1 {
+        const arg is argv(i) as string else {
+            return mapProcessError(Process.takeLastErrorCode())
+        }
+        @push(result, arg)
+    }
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return result
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="argc"><code>argc</code></h3>
+<div class="highlight"><pre><span></span><code>public function argc() returns int | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function argc() returns int | error.StdError {
+    const count is Process.argCount();
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return count
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="argv"><code>argv</code></h3>
+<div class="highlight"><pre><span></span><code>public function argv(index :: int) returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function argv(index :: int) returns string | error.StdError {
+    const value is Process.argAt(@string(index));
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return value
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="exit"><code>exit</code></h3>
+<div class="highlight"><pre><span></span><code>public function exit(code :: int)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function exit(code :: int) {
+    Process.exitCode(@string(code));
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="cwd"><code>cwd</code></h3>
+<div class="highlight"><pre><span></span><code>public function cwd() returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function cwd() returns string | error.StdError {
+    const value is Process.cwd();
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return value
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="getenv"><code>getenv</code></h3>
+<div class="highlight"><pre><span></span><code>public function getenv(name :: string) returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function getenv(name :: string) returns string | error.StdError {
+    const value is Process.getEnv(name);
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return value
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdfile"><code>std.file</code></h2>
+<h3 id="makedir"><code>makeDir</code></h3>
+<div class="highlight"><pre><span></span><code>public function makeDir(path :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function makeDir(path :: string) returns nothing | error.StdError {
+    File.makeDir(path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="makepath"><code>makePath</code></h3>
+<div class="highlight"><pre><span></span><code>public function makePath(path :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function makePath(path :: string) returns nothing | error.StdError {
+    File.makePath(path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="copyfile"><code>copyFile</code></h3>
+<div class="highlight"><pre><span></span><code>public function copyFile(source :: string, destination :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function copyFile(source :: string, destination :: string) returns nothing | error.StdError {
+    File.copyFile(source, destination)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="delete"><code>delete</code></h3>
+<div class="highlight"><pre><span></span><code>public function delete(path :: string, recursive :: tetra) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function delete(path :: string, recursive :: tetra) returns nothing | error.StdError {
+    File.delete(path, recursive)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="copydir"><code>copyDir</code></h3>
+<div class="highlight"><pre><span></span><code>public function copyDir(source :: string, destination :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function copyDir(source :: string, destination :: string) returns nothing | error.StdError {
+    File.copyDir(source, destination)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="unzipfile"><code>unzipFile</code></h3>
+<div class="highlight"><pre><span></span><code>public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function unzipFile(zip_path :: string, unzip_path :: string) returns nothing | error.StdError {
+    File.unzipFile(zip_path, unzip_path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="isdir"><code>IsDir</code></h3>
+<div class="highlight"><pre><span></span><code>public function IsDir(path :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function IsDir(path :: string) returns tetra {
+    return File.IsDir(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="renamedir"><code>renameDir</code></h3>
+<div class="highlight"><pre><span></span><code>public function renameDir(old_folder :: string, new_folder :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function renameDir(old_folder :: string, new_folder :: string) returns nothing | error.StdError {
+    File.renameDir(old_folder, new_folder)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="rename"><code>rename</code></h3>
+<div class="highlight"><pre><span></span><code>public function rename(old_path :: string, new_path :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function rename(old_path :: string, new_path :: string) returns nothing | error.StdError {
+    File.rename(old_path, new_path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="read"><code>read</code></h3>
+<div class="highlight"><pre><span></span><code>public function read(path :: string) returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function read(path :: string) returns string | error.StdError {
+    const value is File.read(path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return value
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="write"><code>write</code></h3>
+<div class="highlight"><pre><span></span><code>public function write(path :: string, content :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function write(path :: string, content :: string) returns nothing | error.StdError {
+    File.write(path, content)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="append"><code>append</code></h3>
+<div class="highlight"><pre><span></span><code>public function append(path :: string, content :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function append(path :: string, content :: string) returns nothing | error.StdError {
+    File.append(path, content)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="exists"><code>exists</code></h3>
+<div class="highlight"><pre><span></span><code>public function exists(path :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function exists(path :: string) returns tetra {
+    return File.exists(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="isfile"><code>isFile</code></h3>
+<div class="highlight"><pre><span></span><code>public function isFile(path :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isFile(path :: string) returns tetra {
+    return File.isFile(path)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="cwd_1"><code>cwd</code></h3>
+<div class="highlight"><pre><span></span><code>public function cwd() returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function cwd() returns string | error.StdError {
+    const value is File.cwd()
+    const err is File.takeLastErrorCode()
+    if err == 0 then return value
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="touch"><code>touch</code></h3>
+<div class="highlight"><pre><span></span><code>public function touch(path :: string) returns nothing | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function touch(path :: string) returns nothing | error.StdError {
+    File.touch(path)
+    const err is File.takeLastErrorCode()
+    if err == 0 then return
+    return mapFileError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdhttp"><code>std.http</code></h2>
+<h3 id="mapioerror"><code>mapIOError</code></h3>
+<div class="highlight"><pre><span></span><code>public function mapIOError(code :: int) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function mapIOError(code :: int) returns error.StdError {
+    return match code {
+        1 then error.Common.InvalidArgument,
+        2 then error.Common.OutOfMemory,
+        3 then error.Common.PermissionDenied,
+        4 then error.Common.NotSupported,
+        100 then error.IO.NotFound,
+        101 then error.IO.AlreadyExists,
+        102 then error.IO.NotDirectory,
+        103 then error.IO.IsDirectory,
+        104 then error.IO.InvalidPath,
+        105 then error.IO.OpenFailed,
+        106 then error.IO.ReadFailed,
+        107 then error.IO.WriteFailed,
+        108 then error.IO.CreateFailed,
+        109 then error.IO.DeleteFailed,
+        110 then error.IO.RenameFailed,
+        111 then error.IO.CopyFailed,
+        112 then error.IO.IterateFailed,
+        113 then error.IO.InvalidData,
+        114 then error.IO.ConnectionFailed,
+        115 then error.IO.Timeout,
+        116 then error.IO.HttpStatus,
+        117 then error.IO.Unexpected,
+        else error.Common.Unexpected,
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="downloadurl"><code>downloadUrl</code></h3>
+<div class="highlight"><pre><span></span><code>public function downloadUrl(url :: string, destination :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function downloadUrl(url :: string, destination :: string) returns error.StdError {
+    HTTP.downloadUrl(url, destination)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="download"><code>download</code></h3>
+<div class="highlight"><pre><span></span><code>public function download(url :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function download(url :: string) returns error.StdError {
+    HTTP.download(url)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="response"><code>Response</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Response
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Response {
+    status_code :: int,
+    raw_headers :: string,
+    body_text :: string,
+
+    public method statusCode() returns int {
+        return this.status_code
+    }
+
+    public method body() returns string {
+        return this.body_text
+    }
+
+    public method header(name :: string) returns string[] {
+        var values :: string[]
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then {
+                @push(values, HTTP.headerValueAt(this.raw_headers, i))
+            }
+        }
+        return values
+    }
+
+    public method hasHeader(name :: string) returns tetra {
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then return true
+        }
+        return false
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="responsestatuscode"><code>Response.statusCode</code></h4>
+<div class="highlight"><pre><span></span><code>public method statusCode() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method statusCode() returns int {
+        return this.status_code
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="responsebody"><code>Response.body</code></h4>
+<div class="highlight"><pre><span></span><code>public method body() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method body() returns string {
+        return this.body_text
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="responseheader"><code>Response.header</code></h4>
+<div class="highlight"><pre><span></span><code>public method header(name :: string) returns string[]
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method header(name :: string) returns string[] {
+        var values :: string[]
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then {
+                @push(values, HTTP.headerValueAt(this.raw_headers, i))
+            }
+        }
+        return values
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="responsehasheader"><code>Response.hasHeader</code></h4>
+<div class="highlight"><pre><span></span><code>public method hasHeader(name :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method hasHeader(name :: string) returns tetra {
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then return true
+        }
+        return false
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="listen"><code>listen</code></h3>
+<div class="highlight"><pre><span></span><code>public function listen(port :: int) returns int | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function listen(port :: int) returns int | error.StdError {
+    const handle is HTTP.listen(port)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return handle
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="localaddr"><code>localAddr</code></h3>
+<div class="highlight"><pre><span></span><code>public function localAddr(handle :: int) returns int | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function localAddr(handle :: int) returns int | error.StdError {
+    const port is HTTP.localAddr(handle)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return port
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="accept"><code>accept</code></h3>
+<div class="highlight"><pre><span></span><code>public function accept(handle :: int) returns int | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function accept(handle :: int) returns int | error.StdError {
+    const connection is HTTP.accept(handle)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return connection
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="serverrequest"><code>ServerRequest</code></h3>
+<div class="highlight"><pre><span></span><code>public struct ServerRequest
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct ServerRequest {
+    public verb :: string,
+    public target :: string,
+    public body_text :: string,
+    raw_headers :: string,
+
+    public method path() returns string {
+        return this.target
+    }
+
+    public method body() returns string {
+        return this.body_text
+    }
+
+    public method header(name :: string) returns string[] {
+        var values :: string[]
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then {
+                @push(values, HTTP.headerValueAt(this.raw_headers, i))
+            }
+        }
+        return values
+    }
+
+    public method hasHeader(name :: string) returns tetra {
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then return true
+        }
+        return false
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="serverrequestpath"><code>ServerRequest.path</code></h4>
+<div class="highlight"><pre><span></span><code>public method path() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method path() returns string {
+        return this.target
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="serverrequestbody"><code>ServerRequest.body</code></h4>
+<div class="highlight"><pre><span></span><code>public method body() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method body() returns string {
+        return this.body_text
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="serverrequestheader"><code>ServerRequest.header</code></h4>
+<div class="highlight"><pre><span></span><code>public method header(name :: string) returns string[]
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method header(name :: string) returns string[] {
+        var values :: string[]
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then {
+                @push(values, HTTP.headerValueAt(this.raw_headers, i))
+            }
+        }
+        return values
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="serverrequesthasheader"><code>ServerRequest.hasHeader</code></h4>
+<div class="highlight"><pre><span></span><code>public method hasHeader(name :: string) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method hasHeader(name :: string) returns tetra {
+        const count is HTTP.headerCount(this.raw_headers)
+        for i while i &lt; count do i += 1 {
+            if HTTP.headerNameMatches(this.raw_headers, i, name) then return true
+        }
+        return false
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="readrequest"><code>readRequest</code></h3>
+<div class="highlight"><pre><span></span><code>public function readRequest(connection :: int) returns int
+</code></pre></div>
+<p>Parse the next request from the connection's buffer. Returns <code>1</code> when a
+request is ready (read it with <code>takeRequest</code>), <code>0</code> when more bytes are needed
+(retry on the next <code>Readable</code> event), and a negative status on a connection
+error. Decoding is non-blocking, so a slow or partial sender cannot stall the
+loop.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function readRequest(connection :: int) returns int {
+    return HTTP.readRequest(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="takerequest"><code>takeRequest</code></h3>
+<div class="highlight"><pre><span></span><code>public function takeRequest(connection :: int) returns ServerRequest
+</code></pre></div>
+<p>The request parsed by the last successful <code>readRequest</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function takeRequest(connection :: int) returns ServerRequest {
+    return $ServerRequest {
+        verb is HTTP.requestMethod(connection),
+        target is HTTP.requestTarget(connection),
+        body_text is HTTP.requestBody(connection),
+        raw_headers is HTTP.requestHead(connection),
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="iswebsocket"><code>isWebSocket</code></h3>
+<div class="highlight"><pre><span></span><code>public function isWebSocket(connection :: int) returns tetra
+</code></pre></div>
+<p>Whether the connection has completed the WebSocket handshake.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isWebSocket(connection :: int) returns tetra {
+    return HTTP.isWebSocket(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="keepalive"><code>keepAlive</code></h3>
+<div class="highlight"><pre><span></span><code>public function keepAlive(connection :: int) returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function keepAlive(connection :: int) returns tetra {
+    return HTTP.keepAlive(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsop"><code>WsOp</code></h3>
+<div class="highlight"><pre><span></span><code>public enum WsOp
+</code></pre></div>
+<p>WebSocket frame kinds. The inline-Zig boundary only carries scalars, so the
+codes crossing it are the RFC 6455 opcodes and <code>wsOpFromCode</code>/<code>wsOpCode</code>
+translate to and from this enum.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum WsOp {
+    Text,
+    Binary,
+    Ping,
+    Pong,
+    Close,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="message"><code>Message</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Message
+</code></pre></div>
+<p>One decoded WebSocket message. Data frames carry their payload; control
+frames (ping/pong/close) are surfaced so the caller owns the policy.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Message {
+    public op :: WsOp,
+    public data :: string,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="upgradewebsocket"><code>upgradeWebSocket</code></h3>
+<div class="highlight"><pre><span></span><code>public function upgradeWebSocket(connection :: int) returns error.StdError
+</code></pre></div>
+<p>Complete the RFC 6455 handshake on an accepted connection whose pending
+request asked to upgrade. Call after <code>readRequest</code>, before <code>wsSend</code>/<code>wsNext</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function upgradeWebSocket(connection :: int) returns error.StdError {
+    HTTP.upgradeWebSocket(connection)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wssend"><code>wsSend</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError
+</code></pre></div>
+<p>Send one WebSocket frame with <code>data</code> as its payload.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+    HTTP.wsSend(connection, wsOpCode(op), data)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsnext"><code>wsNext</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsNext(connection :: int) returns int
+</code></pre></div>
+<p>Advance the connection's frame decoder. Returns <code>1</code> when a message is ready
+(read it with <code>wsMessage</code>), <code>0</code> when more bytes are needed (retry on the next
+<code>Readable</code> event), <code>2</code> when the peer closed, and a negative status on a
+protocol or transport error. Fragmented messages are reassembled before they
+are surfaced. Decoding is non-blocking.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsNext(connection :: int) returns int {
+    return HTTP.wsNext(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsmessage"><code>wsMessage</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsMessage(connection :: int) returns Message
+</code></pre></div>
+<p>The message decoded by the last successful <code>wsNext</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsMessage(connection :: int) returns Message {
+    return $Message {
+        op is wsOpFromCode(HTTP.wsMessageOp(connection)),
+        data is HTTP.wsMessageData(connection),
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsbuffered"><code>wsBuffered</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsBuffered(connection :: int) returns tetra
+</code></pre></div>
+<p>Whether undecoded bytes are already buffered for the connection. A poll loop
+uses <code>while std.http.wsBuffered(handle) { ... wsNext ... }</code> to drain frames
+that arrived with (or pipelined behind) the handshake before waiting on
+another readiness event.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsBuffered(connection :: int) returns tetra {
+    return HTTP.wsBuffered(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="takelasterrorcode"><code>takeLastErrorCode</code></h3>
+<div class="highlight"><pre><span></span><code>public function takeLastErrorCode() returns int
+</code></pre></div>
+<p>The last error code left by <code>readRequest</code>/<code>ws*</code>, taken and cleared.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function takeLastErrorCode() returns int {
+    return HTTP.takeLastErrorCode()
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="eventkind"><code>EventKind</code></h3>
+<div class="highlight"><pre><span></span><code>public enum EventKind
+</code></pre></div>
+<p>Why a <code>poll</code> event fired. <code>Accepted</code> is a fresh connection, <code>Readable</code> is a
+connection with bytes to read, and <code>Closed</code> is a peer that closed or errored.
+The inline-Zig boundary only carries scalars, so the codes crossing it are
+mapped by <code>eventKindFromCode</code>.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum EventKind {
+    Accepted,
+    Readable,
+    Closed,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="event"><code>Event</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Event
+</code></pre></div>
+<p>One readiness event from <code>poll</code>. <code>handle</code> is the connection (or listener)
+handle.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Event {
+    public handle :: int,
+    public kind :: EventKind,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="poll"><code>poll</code></h3>
+<div class="highlight"><pre><span></span><code>public function poll(listener :: int, timeout_ms :: int) returns Event[]
+</code></pre></div>
+<p>Wait for readiness across the listener and every live connection. Blocks up
+to <code>timeout_ms</code> (0 polls immediately, negative waits indefinitely) and
+returns the events that fired.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function poll(listener :: int, timeout_ms :: int) returns Event[] {
+    HTTP.poll(listener, timeout_ms)
+    var events :: Event[]
+    const count is HTTP.eventCount()
+    for i while i &lt; count do i += 1 {
+        @push(events, $Event {
+            handle is HTTP.eventHandle(i),
+            kind is eventKindFromCode(HTTP.eventKind(i)),
+        })
+    }
+    return events
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="route"><code>Route</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Route
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Route {
+    public id :: int,
+    public pattern :: string,
+    param_names :: string[],
+    param_values :: string[],
+
+    public method param(name :: string) returns string | nothing {
+        for i while i &lt; @length(this.param_names) do i += 1 {
+            if this.param_names[i] == name then {
+                const found is this.param_values[i]
+                return found
+            }
+        }
+        return nothing
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="routeparam"><code>Route.param</code></h4>
+<div class="highlight"><pre><span></span><code>public method param(name :: string) returns string | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method param(name :: string) returns string | nothing {
+        for i while i &lt; @length(this.param_names) do i += 1 {
+            if this.param_names[i] == name then {
+                const found is this.param_values[i]
+                return found
+            }
+        }
+        return nothing
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="router"><code>Router</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Router
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Router {
+    verbs :: string[],
+    patterns :: string[],
+    ids :: int[],
+
+    public function new() returns Router {
+        return $Router {
+            verbs is [],
+            patterns is [],
+            ids is [],
+        }
+    }
+
+    public method add(verb :: string, pattern :: string, id :: int) {
+        @push(this.verbs, verb)
+        @push(this.patterns, pattern)
+        @push(this.ids, id)
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="routernew"><code>Router.new</code></h4>
+<div class="highlight"><pre><span></span><code>public function new() returns Router
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function new() returns Router {
+        return $Router {
+            verbs is [],
+            patterns is [],
+            ids is [],
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="routeradd"><code>Router.add</code></h4>
+<div class="highlight"><pre><span></span><code>public method add(verb :: string, pattern :: string, id :: int)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method add(verb :: string, pattern :: string, id :: int) {
+        @push(this.verbs, verb)
+        @push(this.patterns, pattern)
+        @push(this.ids, id)
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="route_1"><code>route</code></h3>
+<div class="highlight"><pre><span></span><code>public function route(^router :: Router, verb :: string, path :: string) returns Route | nothing
+</code></pre></div>
+<p><code>^router</code> borrows the caller's Router instead of snapshotting its three
+arrays on every call, which the arena model would otherwise deep-copy per
+request (docs/memory.md by-value parameters snapshot).</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function route(^router :: Router, verb :: string, path :: string) returns Route | nothing {
+    for i while i &lt; @length(router.patterns) do i += 1 {
+        if router.verbs[i] == verb then {
+            if HTTP.matchPattern(router.patterns[i], path) == 1 then {
+                var names :: string[]
+                var values :: string[]
+                const count is HTTP.paramCount()
+                for j while j &lt; count do j += 1 {
+                    @push(names, HTTP.paramNameAt(j))
+                    @push(values, HTTP.paramValueAt(j))
+                }
+                return $Route {
+                    id is router.ids[i],
+                    pattern is router.patterns[i],
+                    param_names is names,
+                    param_values is values,
+                }
+            }
+        }
+    }
+    return nothing
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="respond"><code>respond</code></h3>
+<div class="highlight"><pre><span></span><code>public function respond(connection :: int, status :: int, headers :: string, body :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function respond(connection :: int, status :: int, headers :: string, body :: string) returns error.StdError {
+    HTTP.respond(connection, status, headers, body)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="close"><code>close</code></h3>
+<div class="highlight"><pre><span></span><code>public function close(handle :: int) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function close(handle :: int) returns error.StdError {
+    HTTP.close(handle)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="get"><code>get</code></h3>
+<div class="highlight"><pre><span></span><code>public function get(url :: string) returns Response | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function get(url :: string) returns Response | error.StdError {
+    return performGet(url, 30000)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="getwithtimeout"><code>getWithTimeout</code></h3>
+<div class="highlight"><pre><span></span><code>public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
+    return performGet(url, timeout_ms)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="request"><code>Request</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Request
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Request {
+    public headers :: string[],
+    public body :: string,
+    public timeout_ms :: int,
+    public max_redirects :: int,
+
+    public function new() returns Request {
+        return $Request {
+            headers is [],
+            body is &quot;&quot;,
+            timeout_ms is 30000,
+            max_redirects is 3,
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="requestnew"><code>Request.new</code></h4>
+<div class="highlight"><pre><span></span><code>public function new() returns Request
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function new() returns Request {
+        return $Request {
+            headers is [],
+            body is &quot;&quot;,
+            timeout_ms is 30000,
+            max_redirects is 3,
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="request_1"><code>request</code></h3>
+<div class="highlight"><pre><span></span><code>public function request(verb :: string, url :: string, ^req :: Request) returns Response | error.StdError
+</code></pre></div>
+<p><code>^req</code> borrows the caller's Request so <code>req.headers</code> is not deep-copied.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function request(verb :: string, url :: string, ^req :: Request) returns Response | error.StdError {
+    var header_blob is &quot;&quot;
+    for i while i &lt; @length(req.headers) do i += 1 {
+        header_blob is header_blob + req.headers[i] + &quot;\u{d}\u{a}&quot;
+    }
+    const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
+    const status is HTTP.takeStatusCode()
+    const headers is HTTP.takeResponseHeaders()
+    const err is HTTP.takeLastErrorCode()
+    HTTP.releaseResponse()
+    if err == 0 then return $Response {
+        status_code is status,
+        raw_headers is headers,
+        body_text is value,
+    }
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="post"><code>post</code></h3>
+<div class="highlight"><pre><span></span><code>public function post(url :: string, ^req :: Request) returns Response | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function post(url :: string, ^req :: Request) returns Response | error.StdError {
+    return request(&quot;POST&quot;, url, ^req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="put"><code>put</code></h3>
+<div class="highlight"><pre><span></span><code>public function put(url :: string, ^req :: Request) returns Response | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function put(url :: string, ^req :: Request) returns Response | error.StdError {
+    return request(&quot;PUT&quot;, url, ^req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="delete_1"><code>delete</code></h3>
+<div class="highlight"><pre><span></span><code>public function delete(url :: string, ^req :: Request) returns Response | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function delete(url :: string, ^req :: Request) returns Response | error.StdError {
+    return request(&quot;DELETE&quot;, url, ^req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="head"><code>head</code></h3>
+<div class="highlight"><pre><span></span><code>public function head(url :: string, ^req :: Request) returns Response | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function head(url :: string, ^req :: Request) returns Response | error.StdError {
+    return request(&quot;HEAD&quot;, url, ^req)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="gettext"><code>getText</code></h3>
+<div class="highlight"><pre><span></span><code>public function getText(url :: string) returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function getText(url :: string) returns string | error.StdError {
+    const value is HTTP.getText(url, 30000)
+    const _status is HTTP.takeStatusCode()
+    const _headers is HTTP.takeResponseHeaders()
+    const err is HTTP.takeLastErrorCode()
+    HTTP.releaseResponse()
+    if err == 0 then return value
+    return mapIOError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="checkstatus"><code>checkStatus</code></h3>
+<div class="highlight"><pre><span></span><code>public function checkStatus(response :: Response) returns Response | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function checkStatus(response :: Response) returns Response | error.StdError {
+    const status is response.statusCode()
+    if status &lt; 200 or status &gt;= 300 then return error.IO.HttpStatus
+    return response
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsaccept"><code>wsAccept</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsAccept(connection :: int) returns tetra
+</code></pre></div>
+<p>Complete the handshake if <code>connection</code>'s buffered request is a WebSocket
+upgrade. Returns <code>true</code> once it is a WebSocket; while it is still <code>false</code>,
+call again after the next readable event.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsAccept(connection :: int) returns tetra {
+    if isWebSocket(connection) then return true
+    const status is readRequest(connection)
+    if status != 1 then return false
+    upgradeWebSocket(connection)
+    return takeLastErrorCode() == 0
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsread"><code>wsRead</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsRead(connection :: int) returns Message | nothing | error.StdError
+</code></pre></div>
+<p>The next complete message, <code>nothing</code> when none is buffered yet or the peer
+closed, or an error on a protocol/transport failure. Fragmented messages are
+reassembled before they are surfaced.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsRead(connection :: int) returns Message | nothing | error.StdError {
+    const status is wsNext(connection)
+    if status == 1 then return wsMessage(connection)
+    const err is takeLastErrorCode()
+    if err != 0 then return mapIOError(err)
+    return nothing
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wswrite"><code>wsWrite</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsWrite(connection :: int, op :: WsOp, data :: string) returns error.StdError
+</code></pre></div>
+<p>Send one frame with an explicit opcode.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsWrite(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+    return wsSend(connection, op, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wstext"><code>wsText</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsText(connection :: int, data :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsText(connection :: int, data :: string) returns error.StdError {
+    return wsSend(connection, WsOp.Text, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsbinary"><code>wsBinary</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsBinary(connection :: int, data :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsBinary(connection :: int, data :: string) returns error.StdError {
+    return wsSend(connection, WsOp.Binary, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsping"><code>wsPing</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsPing(connection :: int, data :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsPing(connection :: int, data :: string) returns error.StdError {
+    return wsSend(connection, WsOp.Ping, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wspong"><code>wsPong</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsPong(connection :: int, data :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsPong(connection :: int, data :: string) returns error.StdError {
+    return wsSend(connection, WsOp.Pong, data)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="wsclose"><code>wsClose</code></h3>
+<div class="highlight"><pre><span></span><code>public function wsClose(connection :: int) returns error.StdError
+</code></pre></div>
+<p>Send a Close frame (empty payload) and drop the connection.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function wsClose(connection :: int) returns error.StdError {
+    wsSend(connection, WsOp.Close, &quot;&quot;)
+    return close(connection)
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdhost"><code>std.host</code></h2>
+<h3 id="os"><code>os</code></h3>
+<div class="highlight"><pre><span></span><code>public function os() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function os() returns string {
+    return Host.osName();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="arch"><code>arch</code></h3>
+<div class="highlight"><pre><span></span><code>public function arch() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function arch() returns string {
+    return Host.archName();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="abi"><code>abi</code></h3>
+<div class="highlight"><pre><span></span><code>public function abi() returns string
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function abi() returns string {
+    return Host.abiName();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="iswindows"><code>isWindows</code></h3>
+<div class="highlight"><pre><span></span><code>public function isWindows() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isWindows() returns tetra {
+    return Host.isWindows();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="islinux"><code>isLinux</code></h3>
+<div class="highlight"><pre><span></span><code>public function isLinux() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isLinux() returns tetra {
+    return Host.isLinux();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="ismac"><code>isMac</code></h3>
+<div class="highlight"><pre><span></span><code>public function isMac() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function isMac() returns tetra {
+    return Host.isMac();
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdtime"><code>std.time</code></h2>
+<h3 id="unix"><code>unix</code></h3>
+<div class="highlight"><pre><span></span><code>public function unix() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function unix() returns int {
+    return Time.unixSeconds();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="tick"><code>tick</code></h3>
+<div class="highlight"><pre><span></span><code>public function tick() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function tick() returns int {
+    return Time.tickNs();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="monotonic"><code>monotonic</code></h3>
+<div class="highlight"><pre><span></span><code>public function monotonic() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function monotonic() returns int {
+    return Time.monotonicNs();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="unixms"><code>unixMs</code></h3>
+<div class="highlight"><pre><span></span><code>public function unixMs() returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function unixMs() returns int {
+    return Time.unixMillis();
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="sleep"><code>sleep</code></h3>
+<div class="highlight"><pre><span></span><code>public function sleep(ms :: int)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sleep(ms :: int) {
+    Time.sleepMs(@string(ms));
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="sleepseconds"><code>sleepSeconds</code></h3>
+<div class="highlight"><pre><span></span><code>public function sleepSeconds(s :: int)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sleepSeconds(s :: int) {
+    Time.sleepSeconds(@string(s));
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdrandom"><code>std.random</code></h2>
+<h3 id="random"><code>random</code></h3>
+<div class="highlight"><pre><span></span><code>public function random() returns float
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function random() returns float {
+    return Random.floatUnit();
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdbuild"><code>std.build</code></h2>
+<h3 id="optimization"><code>Optimization</code></h3>
+<div class="highlight"><pre><span></span><code>public enum Optimization
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum Optimization {
+    None,
+    Some,
+    Speed,
+    Size,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="optmodename"><code>optModeName</code></h3>
+<div class="highlight"><pre><span></span><code>public function optModeName(o :: Optimization) returns string
+</code></pre></div>
+<p>Maps the four-cornered Optimization to the backend's release modes, mirrored by
+the compiler's <code>--opt-mode</code> flag (debug | safe | fast | small). Written with
+enum equality rather than <code>match</code>: a <code>match</code> expression on an enum currently
+does not produce its arm value (a compiler bug; <code>==</code> is correct).</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function optModeName(o :: Optimization) returns string {
+    if o == Optimization.None then return &quot;debug&quot;
+    if o == Optimization.Some then return &quot;safe&quot;
+    if o == Optimization.Speed then return &quot;fast&quot;
+    return &quot;small&quot;
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="joinlines"><code>joinLines</code></h3>
+<div class="highlight"><pre><span></span><code>public function joinLines(parts :: string[]) returns string
+</code></pre></div>
+<p>The inline-Zig ABI is scalar-only, so array-valued directives cross into the
+compiler shim as newline-joined strings.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function joinLines(parts :: string[]) returns string {
+    var out is &quot;&quot;
+    var i is 0
+    while i &lt; @length(parts) {
+        if i &gt; 0 then out is out + &quot;\n&quot;
+        out is out + parts[i]
+        i is i + 1
+    }
+    return out
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="target"><code>Target</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Target
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Target {
+    public arch :: string,
+    public os :: string,
+    public abi :: string,
+
+    public function host() returns Target {
+        return $Target {
+            arch is Build.hostArch(),
+            os is Build.hostOs(),
+            abi is Build.hostAbi(),
+        }
+    }
+
+    # Cross-compilation target. `os` is the raw OS name passed to `--os=`; an
+    # empty OS is rejected at build time (`run`), never silently collapsed to the
+    # host.
+    public function cross(arch :: string, os :: string, abi :: string) returns Target {
+        return $Target {
+            arch is arch,
+            os is os,
+            abi is abi,
+        }
+    }
+
+    public method isWindows() returns tetra {
+        return this.os == &quot;windows&quot;
+    }
+
+    public method isLinux() returns tetra {
+        return this.os == &quot;linux&quot;
+    }
+
+    public method isMac() returns tetra {
+        return this.os == &quot;macos&quot;
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="targethost"><code>Target.host</code></h4>
+<div class="highlight"><pre><span></span><code>public function host() returns Target
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function host() returns Target {
+        return $Target {
+            arch is Build.hostArch(),
+            os is Build.hostOs(),
+            abi is Build.hostAbi(),
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="targetcross"><code>Target.cross</code></h4>
+<div class="highlight"><pre><span></span><code>public function cross(arch :: string, os :: string, abi :: string) returns Target
+</code></pre></div>
+<p>Cross-compilation target. <code>os</code> is the raw OS name passed to <code>--os=</code>; an
+empty OS is rejected at build time (<code>run</code>), never silently collapsed to the
+host.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function cross(arch :: string, os :: string, abi :: string) returns Target {
+        return $Target {
+            arch is arch,
+            os is os,
+            abi is abi,
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="targetiswindows"><code>Target.isWindows</code></h4>
+<div class="highlight"><pre><span></span><code>public method isWindows() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method isWindows() returns tetra {
+        return this.os == &quot;windows&quot;
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="targetislinux"><code>Target.isLinux</code></h4>
+<div class="highlight"><pre><span></span><code>public method isLinux() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method isLinux() returns tetra {
+        return this.os == &quot;linux&quot;
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="targetismac"><code>Target.isMac</code></h4>
+<div class="highlight"><pre><span></span><code>public method isMac() returns tetra
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method isMac() returns tetra {
+        return this.os == &quot;macos&quot;
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="executable"><code>Executable</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Executable
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Executable {
+    public name :: string,
+    public entry_point :: string,
+    public output :: string,
+    public includes :: string[],
+    public libdirs :: string[],
+    public links :: string[],
+    public frameworks :: string[],
+
+    public function new(name :: string, entry_point :: string, output :: string) returns Executable {
+        return $Executable {
+            name is name,
+            entry_point is entry_point,
+            output is output,
+            includes is [],
+            libdirs is [],
+            links is [],
+            frameworks is [],
+        }
+    }
+
+    public method include(x :: string | string[]) {
+        x as string then @push(this.includes, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.includes, x[i])
+                i is i + 1
+            }
+        }
+    }
+
+    public method libdir(x :: string | string[]) {
+        x as string then @push(this.libdirs, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.libdirs, x[i])
+                i is i + 1
+            }
+        }
+    }
+
+    public method link(x :: string | string[]) {
+        x as string then @push(this.links, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.links, x[i])
+                i is i + 1
+            }
+        }
+    }
+
+    public method framework(x :: string | string[]) {
+        x as string then @push(this.frameworks, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.frameworks, x[i])
+                i is i + 1
+            }
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="executablenew"><code>Executable.new</code></h4>
+<div class="highlight"><pre><span></span><code>public function new(name :: string, entry_point :: string, output :: string) returns Executable
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function new(name :: string, entry_point :: string, output :: string) returns Executable {
+        return $Executable {
+            name is name,
+            entry_point is entry_point,
+            output is output,
+            includes is [],
+            libdirs is [],
+            links is [],
+            frameworks is [],
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="executableinclude"><code>Executable.include</code></h4>
+<div class="highlight"><pre><span></span><code>public method include(x :: string | string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method include(x :: string | string[]) {
+        x as string then @push(this.includes, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.includes, x[i])
+                i is i + 1
+            }
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="executablelibdir"><code>Executable.libdir</code></h4>
+<div class="highlight"><pre><span></span><code>public method libdir(x :: string | string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method libdir(x :: string | string[]) {
+        x as string then @push(this.libdirs, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.libdirs, x[i])
+                i is i + 1
+            }
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="executablelink"><code>Executable.link</code></h4>
+<div class="highlight"><pre><span></span><code>public method link(x :: string | string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method link(x :: string | string[]) {
+        x as string then @push(this.links, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.links, x[i])
+                i is i + 1
+            }
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="executableframework"><code>Executable.framework</code></h4>
+<div class="highlight"><pre><span></span><code>public method framework(x :: string | string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method framework(x :: string | string[]) {
+        x as string then @push(this.frameworks, x) else {
+            var i is 0
+            while i &lt; @length(x) {
+                @push(this.frameworks, x[i])
+                i is i + 1
+            }
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="context"><code>Context</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Context
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Context {
+    public target :: Target,
+    public debug :: tetra,
+    public optimization :: Optimization,
+    public artifacts :: Executable[],
+
+    public function new(target :: Target) returns Context {
+        return $Context {
+            target is target,
+            debug is false,
+            optimization is Optimization.None,
+            artifacts is [],
+        }
+    }
+
+    public function host() returns Context {
+        return Context.new(Target.host())
+    }
+
+    public method addArtifact(b :: Executable) {
+        @push(this.artifacts, b)
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="contextnew"><code>Context.new</code></h4>
+<div class="highlight"><pre><span></span><code>public function new(target :: Target) returns Context
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function new(target :: Target) returns Context {
+        return $Context {
+            target is target,
+            debug is false,
+            optimization is Optimization.None,
+            artifacts is [],
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="contexthost"><code>Context.host</code></h4>
+<div class="highlight"><pre><span></span><code>public function host() returns Context
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function host() returns Context {
+        return Context.new(Target.host())
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="contextaddartifact"><code>Context.addArtifact</code></h4>
+<div class="highlight"><pre><span></span><code>public method addArtifact(b :: Executable)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method addArtifact(b :: Executable) {
+        @push(this.artifacts, b)
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="run"><code>run</code></h3>
+<div class="highlight"><pre><span></span><code>public function run(c :: Context, force :: tetra) returns int | error.StdError
+</code></pre></div>
+<p>Drive the compiler over every artifact in the context. Returns the first
+non-zero exit code or mapped error encountered, or 0 on success. <code>force</code>
+bypasses the artifact-level up-to-date skip.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function run(c :: Context, force :: tetra) returns int | error.StdError {
+    # A cross target must name its OS; an empty OS is never silently resolved to
+    # the host.
+    if @length(c.target.os) == 0 then return error.Common.InvalidArgument
+    # Written as an assignment rather than an `if` expression: a runtime `if`
+    # expression that produces a string currently yields a corrupted value.
+    var opt is &quot;debug&quot;
+    if not c.debug then opt is optModeName(c.optimization)
+    var i is 0
+    while i &lt; @length(c.artifacts) {
+        const art is c.artifacts[i]
+
+        if not force and artifactIsUpToDate(art, c.target.os) then {
+            i is i + 1
+            continue
+        }
+
+        const links is joinLines(art.links)
+        const libdirs is joinLines(art.libdirs)
+        const frameworks is joinLines(art.frameworks)
+        const includes is joinLines(art.includes)
+        const code is Build.compileArtifact(art.entry_point, art.output, c.target.arch, c.target.os, c.target.abi, opt, links, libdirs, frameworks, includes)
+        const err is Build.takeLastErrorCode()
+        if err != 0 then return mapBuildError(err)
+        if code != 0 then return code
+
+        i is i + 1
+    }
+    return 0
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execute"><code>execute</code></h3>
+<div class="highlight"><pre><span></span><code>public function execute(c :: Context, force :: tetra)
+</code></pre></div>
+<p>Drive the compiler over every artifact and propagate the outcome through the
+process exit code: a successful build exits 0, an <code>int</code> result exits with that
+code, and an <code>error.StdError</code> prints a mapped message to stderr and exits 1.
+<code>execute</code> is the terminal statement of a build script; it never returns.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execute(c :: Context, force :: tetra) {
+    const outcome is run(c, force)
+    outcome as int then {
+        @print(&quot;build exit code: {string(outcome)}\n&quot;)
+    } else {
+        # The compiler&#39;s own diagnostics already describe the failing artifact;
+        # here we only need to signal the failure on the standard channel.
+        io.eprintln(&quot;Build failed&quot;)
+        @exit(1)
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="compile"><code>compile</code></h3>
+<div class="highlight"><pre><span></span><code>public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.StdError
+</code></pre></div>
+<p>Low-level single-file compile, retained for direct use and the build test
+harness. <code>debug</code> forces the debug optimization mode.</p>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function compile(src :: string, out :: string, arch :: string, os :: string, abi :: string, debug :: tetra) returns int | error.StdError {
+    # Assignment form: a runtime `if` expression producing a string is corrupt.
+    var opt is &quot;debug&quot;
+    if not debug then opt is &quot;fast&quot;
+    const code is Build.compileArtifact(src, out, arch, os, abi, opt, &quot;&quot;, &quot;&quot;, &quot;&quot;, &quot;&quot;)
+    const err is Build.takeLastErrorCode()
+    if err == 0 then return code
+    return mapBuildError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="compilehost"><code>compileHost</code></h3>
+<div class="highlight"><pre><span></span><code>public function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function compileHost(src :: string, out :: string, debug :: tetra) returns int | error.StdError {
+    return compile(src, out, Build.hostArch(), Build.hostOs(), Build.hostAbi(), debug)
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stderror"><code>std.error</code></h2>
+<h3 id="common"><code>Common</code></h3>
+<div class="highlight"><pre><span></span><code>public enum Common
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum Common {
+    InvalidArgument,
+    OutOfMemory,
+    PermissionDenied,
+    NotSupported,
+    Unexpected,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="io"><code>IO</code></h3>
+<div class="highlight"><pre><span></span><code>public enum IO
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum IO {
+    NotFound,
+    AlreadyExists,
+    NotDirectory,
+    IsDirectory,
+    InvalidPath,
+    OpenFailed,
+    ReadFailed,
+    WriteFailed,
+    CreateFailed,
+    DeleteFailed,
+    RenameFailed,
+    CopyFailed,
+    IterateFailed,
+    InvalidData,
+    ConnectionFailed,
+    Timeout,
+    HttpStatus,
+    Unexpected,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="process"><code>Process</code></h3>
+<div class="highlight"><pre><span></span><code>public enum Process
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum Process {
+    CommandNotFound,
+    NotExecutable,
+    SpawnFailed,
+    WaitFailed,
+    KillFailed,
+    CaptureFailed,
+    OutputTooLarge,
+    NonZeroExit,
+    Unexpected,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="method"><code>Method</code></h3>
+<div class="highlight"><pre><span></span><code>public enum Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum Method {
+    OutOfBounds,
+    EmptyCollection,
+    InvalidNumber,
+    Overflow,
+    Unexpected,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="stderror_1"><code>StdError</code></h3>
+<div class="highlight"><pre><span></span><code>public group StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public group StdError {
+    Common,
+    IO,
+    Process,
+    Method
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdmethods"><code>std.methods</code></h2>
+<h3 id="pushstring"><code>pushString</code></h3>
+<div class="highlight"><pre><span></span><code>public function pushString(^collection :: string, value :: string)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function pushString(^collection :: string, value :: string) {
+    @push(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="pushint"><code>pushInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function pushInt(^collection :: int[], value :: int)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function pushInt(^collection :: int[], value :: int) {
+    @push(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="pushfloat"><code>pushFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function pushFloat(^collection :: float[], value :: float)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function pushFloat(^collection :: float[], value :: float) {
+    @push(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="pushbyte"><code>pushByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function pushByte(^collection :: byte[], value :: byte)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function pushByte(^collection :: byte[], value :: byte) {
+    @push(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="pushtetra"><code>pushTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function pushTetra(^collection :: tetra[], value :: tetra)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function pushTetra(^collection :: tetra[], value :: tetra) {
+    @push(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="pushstringarray"><code>pushStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function pushStringArray(^collection :: string[], value :: string)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function pushStringArray(^collection :: string[], value :: string) {
+    @push(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popstring"><code>popString</code></h3>
+<div class="highlight"><pre><span></span><code>public function popString(^collection :: string) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popString(^collection :: string) returns string | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popint"><code>popInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function popInt(^collection :: int[]) returns int | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popInt(^collection :: int[]) returns int | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popfloat"><code>popFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function popFloat(^collection :: float[]) returns float | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popFloat(^collection :: float[]) returns float | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popbyte"><code>popByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function popByte(^collection :: byte[]) returns byte | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popByte(^collection :: byte[]) returns byte | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="poptetra"><code>popTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function popTetra(^collection :: tetra[]) returns tetra | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popTetra(^collection :: tetra[]) returns tetra | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="popstringarray"><code>popStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function popStringArray(^collection :: string[]) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function popStringArray(^collection :: string[]) returns string | error.Method {
+    if @length(collection) == 0 then return error.Method.EmptyCollection
+    return @pop(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="insertstring"><code>insertString</code></h3>
+<div class="highlight"><pre><span></span><code>public function insertString(^collection :: string, index :: int, value :: string) returns error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function insertString(^collection :: string, index :: int, value :: string) returns error.Method {
+    const len is @length(collection)
+    if index &lt; 0 then return error.Method.OutOfBounds
+    if index &gt; len then return error.Method.OutOfBounds
+    @insert(collection, index, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="insertint"><code>insertInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function insertInt(^collection :: int[], index :: int, value :: int) returns error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function insertInt(^collection :: int[], index :: int, value :: int) returns error.Method {
+    const len is @length(collection)
+    if index &lt; 0 then return error.Method.OutOfBounds
+    if index &gt; len then return error.Method.OutOfBounds
+    @insert(collection, index, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="insertfloat"><code>insertFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function insertFloat(^collection :: float[], index :: int, value :: float) returns error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function insertFloat(^collection :: float[], index :: int, value :: float) returns error.Method {
+    const len is @length(collection)
+    if index &lt; 0 then return error.Method.OutOfBounds
+    if index &gt; len then return error.Method.OutOfBounds
+    @insert(collection, index, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="insertbyte"><code>insertByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function insertByte(^collection :: byte[], index :: int, value :: byte) returns error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function insertByte(^collection :: byte[], index :: int, value :: byte) returns error.Method {
+    const len is @length(collection)
+    if index &lt; 0 then return error.Method.OutOfBounds
+    if index &gt; len then return error.Method.OutOfBounds
+    @insert(collection, index, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="inserttetra"><code>insertTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function insertTetra(^collection :: tetra[], index :: int, value :: tetra) returns error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function insertTetra(^collection :: tetra[], index :: int, value :: tetra) returns error.Method {
+    const len is @length(collection)
+    if index &lt; 0 then return error.Method.OutOfBounds
+    if index &gt; len then return error.Method.OutOfBounds
+    @insert(collection, index, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="insertstringarray"><code>insertStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function insertStringArray(^collection :: string[], index :: int, value :: string) returns error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function insertStringArray(^collection :: string[], index :: int, value :: string) returns error.Method {
+    const len is @length(collection)
+    if index &lt; 0 then return error.Method.OutOfBounds
+    if index &gt; len then return error.Method.OutOfBounds
+    @insert(collection, index, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removestring"><code>removeString</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeString(^collection :: string, index :: int) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeString(^collection :: string, index :: int) returns string | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removeint"><code>removeInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeInt(^collection :: int[], index :: int) returns int | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeInt(^collection :: int[], index :: int) returns int | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removefloat"><code>removeFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeFloat(^collection :: float[], index :: int) returns float | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeFloat(^collection :: float[], index :: int) returns float | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removebyte"><code>removeByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeByte(^collection :: byte[], index :: int) returns byte | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeByte(^collection :: byte[], index :: int) returns byte | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removetetra"><code>removeTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeTetra(^collection :: tetra[], index :: int) returns tetra | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeTetra(^collection :: tetra[], index :: int) returns tetra | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="removestringarray"><code>removeStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function removeStringArray(^collection :: string[], index :: int) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function removeStringArray(^collection :: string[], index :: int) returns string | error.Method {
+    const len is @length(collection)
+    if outOfBounds(index, len) then return error.Method.OutOfBounds
+    return @remove(collection, index)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="clearstring"><code>clearString</code></h3>
+<div class="highlight"><pre><span></span><code>public function clearString(^collection :: string)
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function clearString(^collection :: string) {
+    @clear(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="clearint"><code>clearInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function clearInt(^collection :: int[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function clearInt(^collection :: int[]) {
+    @clear(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="clearfloat"><code>clearFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function clearFloat(^collection :: float[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function clearFloat(^collection :: float[]) {
+    @clear(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="clearbyte"><code>clearByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function clearByte(^collection :: byte[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function clearByte(^collection :: byte[]) {
+    @clear(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="cleartetra"><code>clearTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function clearTetra(^collection :: tetra[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function clearTetra(^collection :: tetra[]) {
+    @clear(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="clearstringarray"><code>clearStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function clearStringArray(^collection :: string[])
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function clearStringArray(^collection :: string[]) {
+    @clear(collection)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="findstring"><code>findString</code></h3>
+<div class="highlight"><pre><span></span><code>public function findString(collection :: string, value :: string) returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function findString(collection :: string, value :: string) returns int {
+    return @find(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="findint"><code>findInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function findInt(collection :: int[], value :: int) returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function findInt(collection :: int[], value :: int) returns int {
+    return @find(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="findfloat"><code>findFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function findFloat(collection :: float[], value :: float) returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function findFloat(collection :: float[], value :: float) returns int {
+    return @find(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="findbyte"><code>findByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function findByte(collection :: byte[], value :: byte) returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function findByte(collection :: byte[], value :: byte) returns int {
+    return @find(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="findtetra"><code>findTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function findTetra(collection :: tetra[], value :: tetra) returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function findTetra(collection :: tetra[], value :: tetra) returns int {
+    return @find(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="findstringarray"><code>findStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function findStringArray(collection :: string[], value :: string) returns int
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function findStringArray(collection :: string[], value :: string) returns int {
+    return @find(collection, value)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicestring"><code>sliceString</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceString(collection :: string, start :: int, length :: int) returns string | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceString(collection :: string, start :: int, length :: int) returns string | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="sliceint"><code>sliceInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceInt(collection :: int[], start :: int, length :: int) returns int[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceInt(collection :: int[], start :: int, length :: int) returns int[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicefloat"><code>sliceFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceFloat(collection :: float[], start :: int, length :: int) returns float[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceFloat(collection :: float[], start :: int, length :: int) returns float[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicebyte"><code>sliceByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceByte(collection :: byte[], start :: int, length :: int) returns byte[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceByte(collection :: byte[], start :: int, length :: int) returns byte[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicetetra"><code>sliceTetra</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceTetra(collection :: tetra[], start :: int, length :: int) returns tetra[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceTetra(collection :: tetra[], start :: int, length :: int) returns tetra[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="slicestringarray"><code>sliceStringArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function sliceStringArray(collection :: string[], start :: int, length :: int) returns string[] | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function sliceStringArray(collection :: string[], start :: int, length :: int) returns string[] | error.Method {
+    if sliceOutOfBounds(start, length, @length(collection)) then return error.Method.OutOfBounds
+    return @slice(collection, start, length)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="toint"><code>toInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function toInt(value :: int | float | byte | string) returns int | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function toInt(value :: int | float | byte | string) returns int | error.Method {
+    match value {
+        int then {
+            return value
+        } 
+        float then {
+        if value != value then return error.Method.InvalidNumber
+        if value &gt; 9223372036854775807.0 then return error.Method.Overflow
+        if value &lt; -9223372036854775808.0 then return error.Method.Overflow
+        return @int(value)
+        }
+        byte then {
+            if value &lt; 0 or value &gt; 255 then return error.Method.Overflow
+            return @int(value)
+        }
+        string then {
+            return Parse.parseIntSafe(value)
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="tofloat"><code>toFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function toFloat(value :: int | float | byte | string) returns float | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function toFloat(value :: int | float | byte | string) returns float | error.Method {
+    match value {
+        float then {
+            if value != value then return error.Method.InvalidNumber
+            return value
+        }
+        int then {
+            return @float(value)
+        }
+        byte then {
+            return @float(value)
+        }
+        string then {
+            if Parse.isFloat(value) then return Parse.parseFloatSafe(value)
+            return error.Method.InvalidNumber
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="tobyte"><code>toByte</code></h3>
+<div class="highlight"><pre><span></span><code>public function toByte(value :: int | float | byte | string) returns byte | error.Method
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function toByte(value :: int | float | byte | string) returns byte | error.Method {
+    match value {
+        byte then {
+            return value
+        }
+        int then {
+            if value &lt; 0 or value &gt; 255 then return error.Method.Overflow
+            return @byte(value)
+        }
+        float then {
+            if value != value then return error.Method.InvalidNumber
+            if value &lt; 0.0 or value &gt; 255.0 then return error.Method.Overflow
+            return @byte(value)
+        }
+        string then {
+            if Parse.isByte(value) then return Parse.parseByteSafe(value)
+            return error.Method.InvalidNumber
+        }
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h2 id="stdjson"><code>std.json</code></h2>
+<h3 id="kind"><code>Kind</code></h3>
+<div class="highlight"><pre><span></span><code>public enum Kind
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public enum Kind {
+    Invalid,
+    Null,
+    Boolean,
+    Integer,
+    Number,
+    Text,
+    Array,
+    Object,
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="node"><code>Node</code></h3>
+<div class="highlight"><pre><span></span><code>public struct Node
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public struct Node {
+    handle :: int,
+
+    function new(h :: int) returns Node {
+        return $Node {
+            handle is h
+        }
+    }
+
+    public method kind() returns Kind {
+        const code is JSON.nodeKind(this.handle)
+        return match code {
+            1 then Kind.Null,
+            2 then Kind.Boolean,
+            3 then Kind.Integer,
+            4 then Kind.Number,
+            5 then Kind.Text,
+            6 then Kind.Array,
+            7 then Kind.Object,
+            else Kind.Invalid,
+        }
+    }
+
+    public method count() returns int | nothing {
+        const value is JSON.nodeCount(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method element(index :: int) returns Node | nothing {
+        const child is JSON.nodeChild(this.handle, index)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return Node.new(child)
+    }
+
+    public method field(name :: string) returns Node | nothing {
+        const child is JSON.nodeField(this.handle, name)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return Node.new(child)
+    }
+
+    public method key() returns string | nothing {
+        const value is JSON.nodeKey(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method text() returns string | nothing {
+        const value is JSON.nodeText(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method intValue() returns int | nothing {
+        const value is JSON.nodeIntValue(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method floatValue() returns float | nothing {
+        const value is JSON.nodeFloatValue(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+
+    public method booleanValue() returns tetra | nothing {
+        const value is JSON.nodeBooleanValue(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+}
+</code></pre></div>
+
+</details>
+
+<h4 id="nodekind"><code>Node.kind</code></h4>
+<div class="highlight"><pre><span></span><code>public method kind() returns Kind
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method kind() returns Kind {
+        const code is JSON.nodeKind(this.handle)
+        return match code {
+            1 then Kind.Null,
+            2 then Kind.Boolean,
+            3 then Kind.Integer,
+            4 then Kind.Number,
+            5 then Kind.Text,
+            6 then Kind.Array,
+            7 then Kind.Object,
+            else Kind.Invalid,
+        }
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodecount"><code>Node.count</code></h4>
+<div class="highlight"><pre><span></span><code>public method count() returns int | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method count() returns int | nothing {
+        const value is JSON.nodeCount(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodeelement"><code>Node.element</code></h4>
+<div class="highlight"><pre><span></span><code>public method element(index :: int) returns Node | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method element(index :: int) returns Node | nothing {
+        const child is JSON.nodeChild(this.handle, index)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return Node.new(child)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodefield"><code>Node.field</code></h4>
+<div class="highlight"><pre><span></span><code>public method field(name :: string) returns Node | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method field(name :: string) returns Node | nothing {
+        const child is JSON.nodeField(this.handle, name)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return Node.new(child)
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodekey"><code>Node.key</code></h4>
+<div class="highlight"><pre><span></span><code>public method key() returns string | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method key() returns string | nothing {
+        const value is JSON.nodeKey(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodetext"><code>Node.text</code></h4>
+<div class="highlight"><pre><span></span><code>public method text() returns string | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method text() returns string | nothing {
+        const value is JSON.nodeText(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodeintvalue"><code>Node.intValue</code></h4>
+<div class="highlight"><pre><span></span><code>public method intValue() returns int | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method intValue() returns int | nothing {
+        const value is JSON.nodeIntValue(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodefloatvalue"><code>Node.floatValue</code></h4>
+<div class="highlight"><pre><span></span><code>public method floatValue() returns float | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method floatValue() returns float | nothing {
+        const value is JSON.nodeFloatValue(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+</code></pre></div>
+
+</details>
+
+<h4 id="nodebooleanvalue"><code>Node.booleanValue</code></h4>
+<div class="highlight"><pre><span></span><code>public method booleanValue() returns tetra | nothing
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public method booleanValue() returns tetra | nothing {
+        const value is JSON.nodeBooleanValue(this.handle)
+        if JSON.takeLastErrorCode() != 0 then return nothing
+        return value
+    }
+</code></pre></div>
+
+</details>
+
+<h3 id="parse"><code>parse</code></h3>
+<div class="highlight"><pre><span></span><code>public function parse(text :: string) returns Node | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function parse(text :: string) returns Node | error.StdError {
+    const root is JSON.parseDocument(text)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return Node.new(root)
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="beginobject"><code>beginObject</code></h3>
+<div class="highlight"><pre><span></span><code>public function beginObject() returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function beginObject() returns error.StdError {
+    JSON.writerBeginObject()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="beginarray"><code>beginArray</code></h3>
+<div class="highlight"><pre><span></span><code>public function beginArray() returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function beginArray() returns error.StdError {
+    JSON.writerBeginArray()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="end"><code>end</code></h3>
+<div class="highlight"><pre><span></span><code>public function end() returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function end() returns error.StdError {
+    JSON.writerEnd()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writekey"><code>writeKey</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeKey(name :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeKey(name :: string) returns error.StdError {
+    JSON.writerKey(name)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writetext"><code>writeText</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeText(text :: string) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeText(text :: string) returns error.StdError {
+    JSON.writerText(text)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writeint"><code>writeInt</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeInt(value :: int) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeInt(value :: int) returns error.StdError {
+    JSON.writerInt(value)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writefloat"><code>writeFloat</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeFloat(value :: float) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeFloat(value :: float) returns error.StdError {
+    JSON.writerFloat(value)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writeboolean"><code>writeBoolean</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeBoolean(value :: tetra) returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeBoolean(value :: tetra) returns error.StdError {
+    if value == both or value == neither then {
+        JSON.writerReject(1)
+        return error.Common.InvalidArgument
+    }
+    JSON.writerBoolean(value == true)
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="writenull"><code>writeNull</code></h3>
+<div class="highlight"><pre><span></span><code>public function writeNull() returns error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function writeNull() returns error.StdError {
+    JSON.writerNull()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="finish"><code>finish</code></h3>
+<div class="highlight"><pre><span></span><code>public function finish() returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function finish() returns string | error.StdError {
+    const value is JSON.writerFinish()
+    const code is JSON.takeLastErrorCode()
+    if code == 0 then return value
+    return mapJSONError(code)
+}
+</code></pre></div>
+
+</details>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        <div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mirror-shades/doxa" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.sections", "navigation.path", "navigation.instant", "toc.integrate", "toc.follow", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>

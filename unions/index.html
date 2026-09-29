@@ -476,6 +476,28 @@
   
   
     <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../struct/" class="md-nav__link">
         
   
@@ -624,6 +646,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#using-a-union-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      Using a union value
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#error-handling" class="md-nav__link">
     <span class="md-ellipsis">
       Error Handling
@@ -766,6 +797,12 @@ function findValue(arr :: MyObject[], target :: string) returns(int | nothing) {
 <li>You want to represent optional values (like <code>T | nothing</code>)</li>
 <li>You're working with data that can have multiple valid representations</li>
 </ul>
+<h2 id="using-a-union-value">Using a union value</h2>
+<p>A union value is usable only as the member it is holding: reading its fields, doing
+arithmetic on it, or passing it where a member type is expected all require it to be
+narrowed first — with <code>as</code>, or by matching it (<a href="../control/">control.md</a>). Narrowing
+holds for the branch that selected the member and no further; which branches narrow
+is described under <a href="../control/#match-values-and-union-types">match</a>.</p>
 <h2 id="error-handling">Error Handling</h2>
 <p>Here is a robust example of how error handling can be done using Doxa. Note that none of this handling is specific to <em>errors</em>, it is a general return pattern which relies on normal values making semanitcs extremely clear and flexible. This relies on the <code>as</code> keyword which attempts to narrow a value into another type.</p>
 <div class="highlight"><pre><span></span><code>enum ErrorList {

@@ -9,7 +9,7 @@
       
       
       
-        <link rel="prev" href="../stdlib/">
+        <link rel="prev" href="../stdlib-api/">
       
       
         <link rel="next" href="../tetras/">
@@ -473,6 +473,28 @@
       
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
     
   
   
@@ -632,7 +654,7 @@
   <h1>Structs</h1>
 
 <p>Since Doxa has a tightly limited number of types, structs are useful for modeling more complex data. Structs are based off composition to avoid pitfalls inherent to inheretance. Variables, functions, and methods are all private unless marked pub.</p>
-<p>Struct instantiation uses a <code>$</code> sigil prefix to diferentiate it from a normal identifier. </p>
+<p>Struct instantiation <strong>always</strong> requires a <code>$</code> sigil prefix. An identifier followed by <code>{</code> without <code>$</code> is always parsed as an implicit match expression — never as a struct literal.</p>
 <h3 id="real-world-example">Real world example</h3>
 <p>struct Point {<br />
     x :: int, # unless marked pub, values are private
@@ -687,6 +709,10 @@ var dog is $Dog {
 }
 
 dog.bark() # Spot says woof!
+
+### Performance
+
+Structs are allocated from the current scope&#39;s arena. All field values are stored in a single contiguous pool alongside field metadata, giving excellent cache locality. Structs created and assigned within the same scope benefit from same-scope move semantics — no deep copy occurs when the source and destination share an arena.
 </code></pre></div>
 
 

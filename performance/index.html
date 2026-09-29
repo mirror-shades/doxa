@@ -1,0 +1,1122 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.14">
+    
+    
+      
+        <title>Performance - Doxa Docs</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.342714a4.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#performance" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Doxa Docs" class="md-header__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Doxa Docs
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Performance
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4m0-7c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="lime"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 6H7c-3.31 0-6 2.69-6 6s2.69 6 6 6h10c3.31 0 6-2.69 6-6s-2.69-6-6-6m0 10H7c-2.21 0-4-1.79-4-4s1.79-4 4-4h10c2.21 0 4 1.79 4 4s-1.79 4-4 4M7 9c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Doxa Docs" class="md-nav__button md-logo" aria-label="Doxa Docs" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Doxa Docs
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../syntax/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Syntax
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../alias/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Alias
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../arrays/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Arrays
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../control/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Control
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../loops/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Loops
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../maps/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Maps
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../memory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memory
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../methods/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Methods
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../sets.md" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Sets
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../struct/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Structs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tetras/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tetras
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../unions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Unions
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../zig/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Zig
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="performance">Performance</h1>
+<p>The performance contract of the Doxa execution model — the structural advantages the model gives the
+compiler, how the current lowering spends them, what is measured, and the roadmap to cash the rest.</p>
+<p>This is not a benchmark log. Doxa's performance story is the execution model's story: the two pillars
+that define how a Doxa program may run are <strong>static typing</strong> and <strong>region memory</strong>. Everything below
+follows from them.</p>
+<hr />
+<h2 id="1-the-structural-edge">1. The structural edge</h2>
+<p>A C compiler is barred from a whole class of optimizations because, in C, allocation, aliasing, and
+representation are <em>user-observable</em>. Doxa makes all three <em>compiler-owned</em>. Concretely:</p>
+<ul>
+<li>
+<p><strong>Every allocation is the compiler's.</strong> There is no user <code>free</code>, no user <code>malloc</code>, no pointer
+  arithmetic. A value is born in one place — its defining block's arena — and dies when that block's
+  <code>}</code> runs. The compiler knows, at compile time, exactly which scope owns every value it allocates.</p>
+</li>
+<li>
+<p><strong>Reclamation is bulk and nested.</strong> A scope is a single bump region; exiting it frees everything in
+  O(1). Because blocks nest lexically, the whole allocation history of a running program is a LIFO
+  stack of regions. There is no per-object teardown, no free ordering to respect, no fragmentation
+  work in the hot path — only the bump pointer.</p>
+</li>
+<li>
+<p><strong>There are no pointers, so there is no aliasing problem.</strong> Reads and writes reach a value only
+  through its name, an index, or a field. Mutation is confined to <code>var</code> bindings, in-place field and
+  element stores, and <code>^</code> alias parameters — and an alias is an <em>exclusive</em> borrow, enforced at
+  compile time. The compiler never has to guess whether two accesses alias; where a C compiler
+  reaches for <code>restrict</code> and hopes, Doxa already knows.</p>
+</li>
+<li>
+<p><strong>Types are static everywhere, including container elements and struct fields.</strong> There is no
+  <code>auto</code>, no <code>any</code>, no reflection-driven dispatch in the language. When the compiler emits an access
+  into <code>arr[i]</code> it knows the element's type; when it emits a field read it knows the field's type and
+  its offset. Representation is therefore a compiler decision, revisitable per type and per value.</p>
+</li>
+<li>
+<p><strong>Copy semantics are explicit, so copy boundaries are movable.</strong> Doxa is a value language: a value
+  that crosses a scope boundary is deep-copied into the destination arena; identity is preserved only
+  when the source already lives in a scope that outlives the destination. Those rules are part of the
+  language, not emergent from aliasing, so the compiler may satisfy them however it likes — by
+  copying, or by <em>not needing to</em> when it can prove the source outlives the destination.</p>
+</li>
+<li>
+<p><strong>The whole program is one compilation.</strong> Imports are resolved and inlined into a single IR; every
+  function signature and every type is known before codegen begins. Nothing about the user program is
+  opaque to the compiler at link time.</p>
+</li>
+<li>
+<p><strong>Safety is defined, not undefined.</strong> Out-of-bounds access and integer overflow are <em>defined</em>
+  behavior, never UB. Signed <code>int</code> <code>add</code> / <code>sub</code> / <code>mul</code> trap on overflow in the checked modes
+  (<code>debug</code>, <code>safe</code>) and wrap in the unchecked ones (<code>fast</code>, <code>small</code>) — the same <code>--opt-mode</code> axis
+  that governs the runtime's own checks, so <code>--opt=2</code> produces exactly the wrapping arithmetic its
+  C twin does. That means the checks are ordinary code the compiler can reason about and remove — a
+  trap is dropped wherever the value-range analysis proves the result fits — not a wall of UB that
+  forbids every transformation.</p>
+</li>
+</ul>
+<h3 id="what-c-cannot-do-with-any-of-this">What C cannot do with any of this</h3>
+<table>
+<thead>
+<tr>
+<th>Advantage</th>
+<th>Removes, versus C</th>
+<th>Why C structurally can't</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Bulk, nested reclamation</td>
+<td>Per-object <code>free</code>, allocator metadata, free-ordering constraints</td>
+<td><code>free</code> is observable; its timing and order are part of the program</td>
+</tr>
+<tr>
+<td>Compiler-owned allocation</td>
+<td>The malloc/free "region"</td>
+<td>The compiler may not move, merge, or elide a user's allocation</td>
+</tr>
+<tr>
+<td>No pointers / exclusive alias</td>
+<td>Alias analysis, <code>restrict</code>, load-ordering barriers</td>
+<td>Pointers are first-class and freely copied in C</td>
+</tr>
+<tr>
+<td>Static element/field types</td>
+<td>Tag dispatch, dynamic layout, per-element boxing</td>
+<td>C does not own containers; their internals are user code</td>
+</tr>
+<tr>
+<td>Explicit value/identity semantics</td>
+<td>Copy elision heuristics</td>
+<td>Whether a C object is copied is up to the optimizer, invisibly</td>
+</tr>
+<tr>
+<td>Whole-program knowledge</td>
+<td>Cross-TU/link-time blind spots</td>
+<td>Separate compilation + dynamic linking are defaults</td>
+</tr>
+</tbody>
+</table>
+<p>That combination is what "beyond C" means for Doxa: <strong>liveness and layout are analysis problems the
+compiler is allowed to solve</strong>, because nothing about where a value lives or how it is laid out is
+observable to the program.</p>
+<hr />
+<h2 id="2-what-the-edge-unlocks-in-principle">2. What the edge unlocks, in principle</h2>
+<p>Each of these is a transformation a C compiler cannot express because one of the above freedoms is
+missing. None of them are speculative language features — they are direct consequences of the model.</p>
+<ul>
+<li>
+<p><strong>Escape → stack.</strong> A value that cannot outlive its defining scope needs no arena at all. If it
+  cannot even outlive its function, it can live in a register or an <code>alloca</code> and be promoted by LLVM
+  like any local. The compiler decides this per value, per use.</p>
+</li>
+<li>
+<p><strong>Region elision.</strong> A scope that allocates nothing needs no arena. Today this is decided per whole
+  function and only for pure-scalar bodies; nothing stops it being decided per scope, per value.</p>
+</li>
+<li>
+<p><strong>Copy-free returns.</strong> A returned value must land in a scope that outlives the callee. Since the
+  callee's arena is freed on return, today that means clone-on-return. But the destination region is
+  known statically — the callee's region sits directly inside the caller's, so the destination is
+  exactly one level up the nest — and the returned object can simply be <em>allocated there in the first
+  place</em>, turning a deep copy into a placement choice. Cloning then remains only for genuinely
+  dynamic escapes.</p>
+</li>
+<li>
+<p><strong>Type-directed storage.</strong> Because container and struct internals are compiler-owned, an array of
+  structs can be contiguous by-value storage, byte fields can occupy a byte, and a hot numeric struct
+  can be promoted into SSA registers the way C's <code>struct</code> locals are. LLVM can then vectorize, CSE,
+  and hoist on a plain object graph — but with the <em>guarantee</em> that no alias can invalidate a load.</p>
+</li>
+<li>
+<p><strong>Visible allocation.</strong> If a value's arena is a real stack object (or its clones are real,
+  type-specialized inline copies), LLVM sees loads and stores to memory it can analyze, rather than
+  opaque external calls it must assume have arbitrary side effects.</p>
+</li>
+<li>
+<p><strong>Cheap safety.</strong> Because bounds and overflow checks are defined behavior the compiler controls, it
+  can emit them, prove them away, or turn them off per policy — the language never pays for UB.</p>
+</li>
+</ul>
+<hr />
+<h2 id="3-what-the-current-lowering-spends-the-realized-floor">3. What the current lowering spends (the realized floor)</h2>
+<p>The backend already spends the model's edge wherever it lowers to <strong>plain typed SSA and flat
+storage</strong> and lets LLVM optimize it like C:</p>
+<ul>
+<li>Scalars (int, float, byte, tetra, enums) travel as <code>i64</code> / <code>double</code> / <code>i8</code> / <code>i2</code> in registers.</li>
+<li>Strings are two words — <code>(ptr, len)</code> — with no length header to chase.</li>
+<li>Fixed-size arrays of scalar types lower to flat contiguous buffers (<code>alloca</code> below a size
+  threshold, arena otherwise) with GEP-based element access; no per-element indirection.</li>
+<li>Dynamic arrays carry an <code>%ArrayHeader</code>, but scalar element <em>reads</em> are inline GEP loads computed in
+  the IR, which is what lets LLVM hoist and vectorize element loops.</li>
+<li>Scope elision removes the <code>doxa_scope_enter</code> / <code>doxa_scope_exit</code> round trip from functions whose
+  values are all scalar, so a leaf call in a tight loop is a plain call, not two page-allocator
+  transactions.</li>
+<li>Union values are the <em>only</em> runtime-tagged box; everything else is native.</li>
+</ul>
+<p>This is the C-like floor. It is why the measured scalar, string, and integer workloads sit within a
+few percent of their C twins (section 5): at that point the emitted IR is structurally what clang
+would have produced, and LLVM's optimizer applies unchanged.</p>
+<hr />
+<h2 id="4-where-the-edge-is-still-on-the-table">4. Where the edge is still on the table</h2>
+<p>The same workloads expose where the lowering is conservative — where it carries a uniform,
+runtime-generic representation even though the static type is sitting right there in the HIR.</p>
+<ul>
+<li>
+<p><strong>Structs are word boxes.</strong> A struct instance is a heap block of one <code>i64</code> word per non-string
+  field (two for a string — the <code>(ptr, len)</code> pair), addressed only through an anonymous <code>{ i64, i64,
+  … }</code> index type and registered into a runtime descriptor registry so the <em>generic</em> runtime clone
+  and print functions can walk its fields. A struct value is never loaded as an aggregate, so it
+  cannot be promoted into registers. Consequences: a <code>byte</code> field burns a full word, and every struct
+  construction pays a registry write. B2/B3-lite has landed a first cut for scalar-only structs: a
+  struct whose fields are all scalar and that the whole-program predicate proves never needs the
+  descriptor (not reflected, not in a container/union/signature) skips the registry write and is
+  cloned with a typed word copy. Reflected and heap-field structs still box and register.</p>
+</li>
+<li>
+<p><strong>Arrays of structs are arrays of box pointers.</strong> Each element slot is an 8-byte reference to a
+  separately arena-allocated, registered box, and each element <em>store</em> deep-clones the struct into
+  the array's arena. Field access is therefore pointer-then-field — two dependent loads where C has
+  one — and LLVM can never see a contiguous object graph to vectorize. B1 has landed the fix for
+  <em>fixed-size</em> arrays of <em>scalar-only</em> structs: they are now a flat <code>[{N} x { i64, … }]</code> buffer with
+  single-GEP element/field access and a word-copy element store. Dynamic arrays, and structs with
+  heap fields, still use boxes.</p>
+</li>
+<li>
+<p><strong>Element access still round-trips through tag dispatch.</strong> Dynamic-array element <em>stores</em> (and
+  compound assigns) and every non-scalar element <em>read</em> (string, array, struct) call opaque runtime
+  accessors — <code>doxa_array_set_i64</code>, <code>doxa_array_get_i64</code> — that bounds-check and switch on the
+  header's <em>runtime</em> <code>elem_tag</code>. The compiler knows the element type statically at every one of those
+  call sites; the tag exists for the generic runtime, not for the language. Because the calls are
+  external, LLVM can neither inline, CSE, nor hoist them.</p>
+</li>
+<li>
+<p><strong>Escape and rehoming are computed at runtime.</strong> To answer "does this value already live in a
+  scope that outlives the destination?" the emitted code walks the live scope stack (<code>isEqualOrDescendant</code>)
+  and consults the per-object <code>struct_scopes</code> / <code>ArrayHeader.scope</code> registries. But the allocating
+  scope of every value is a <em>compile-time</em> fact — its defining block — and lifetimes are lexical and
+  nested. The runtime walk is a dynamic emulation of a static region calculation. A2 has already
+  retired strings from this path: immutable, their store is decided entirely at compile time (an
+  unknown string is simply cloned, which is observably identical to preserving its identity), so
+  <code>string_scopes</code> and the string rehome exports are gone. A3 has started retiring the clone-on-return:
+  a struct or array literal that is the top-level value of a <code>return</code> is born in the caller's arena at
+  construction (<code>doxa_scope_alloc_at</code> / <code>doxa_array_new_at</code>) instead of being deep-copied there, with
+  only the non-direct returns still cloning.</p>
+</li>
+<li>
+<p><strong>Allocation and clone boundaries are opaque.</strong> Heap allocation is an external <code>doxa_scope_alloc</code>;
+  clones are external recursive calls; structs are written into process-global registries. None of
+  this is visible to LLVM, so its alias, DSE, and SROA passes stop at the call.</p>
+</li>
+</ul>
+<p>These five costs are the difference between the realized floor and the model's ceiling. They are not
+language costs; each is a representation choice that a later pass can undo.</p>
+<hr />
+<h2 id="5-measured-state-september-2026">5. Measured state (September 2026)</h2>
+<p>Checkpoint from the benchmark suite (<code>test/benchmark/suite.doxa</code>), taken as six
+same-build runs on 2026-09-27 (the window <code>date &gt;= 1790530050</code> in
+<code>test/benchmark/stats.csv</code>). Every workload is compiled with <code>doxa compile
+--opt=2</code> and its C twin with <code>zig cc -O2</code>, so the Doxa side optimizes its code at the
+C baseline's exact opt level (LLVM <code>-O2</code> on both). Percentages are Doxa compute time relative to the
+C twin — the mean of the six runs, with the range they spanned; lower is better. All outputs are
+bit-identical to C (<code>match: true</code>, every run). The seconds columns are gone: absolute
+times in this campaign moved by up to ~46% as background load came and went, so only
+the ratio is quotable; the raw seconds are in <code>stats.csv</code>.</p>
+<table>
+<thead>
+<tr>
+<th>test</th>
+<th>% vs C (mean of 6)</th>
+<th>same-build range</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>fib</td>
+<td>−10.98%</td>
+<td>−16.09 … −2.91</td>
+</tr>
+<tr>
+<td>sieve</td>
+<td>+2.78%</td>
+<td>−1.04 … +5.11</td>
+</tr>
+<tr>
+<td>matrix</td>
+<td>+2.19%</td>
+<td>−0.40 … +4.02</td>
+</tr>
+<tr>
+<td>mb</td>
+<td>+0.23%</td>
+<td>−0.59 … +0.79</td>
+</tr>
+<tr>
+<td>arr</td>
+<td>+13.74%</td>
+<td>+7.27 … +16.96</td>
+</tr>
+<tr>
+<td>call</td>
+<td>+14.10%</td>
+<td>+12.16 … +15.44</td>
+</tr>
+<tr>
+<td>struct</td>
+<td>−5.00%</td>
+<td>−8.54 … −0.31</td>
+</tr>
+<tr>
+<td>vec</td>
+<td>+4.18%</td>
+<td>+0.78 … +9.19</td>
+</tr>
+</tbody>
+</table>
+<p>Read against sections 3 and 4, this table is exactly the model's story:</p>
+<ul>
+<li><strong><code>fib</code>, <code>sieve</code>, <code>matrix</code>, <code>mb</code>, <code>arr</code>, <code>vec</code></strong> are scalar and flat-array workloads. They live on
+  the realized floor (section 3): typed SSA, flat fixed arrays, elided leaf scopes. Their placement
+  near C is what the floor looks like.</li>
+<li><strong><code>arr</code></strong> is the largest recovery on record: from +660% in the VM era to the mid-teens of C today
+  (+13.74% mean, +7.27% best in this campaign). Its <em>level</em> is the one scalar row still open: the
+  2026-09-03 session averaged +0.6% (rows −0.59, +1.84) and the campaign centers on +13.74 — a
+  13-point move, past this row's own 9.69 same-build spread and the only comparable row that crosses
+  that bar — while both twins stayed frozen in between (C 1.029 → 0.966s, Doxa 1.022 → 1.155s). That
+  is a cross-session shift, not the same-build noise the note below accounts for; attribution
+  was resolved as the target confound (see §6), not a codegen shift.
+  Removing the VM replaced a boxed, tag-dispatching value pipeline with typed SSA — the same change
+  section 3 describes, applied program-wide.</li>
+<li><strong><code>struct</code></strong> was the last workload still paying a section-4 cost, and no longer does. Its object
+  graph was already contiguous (section 4, first two bullets), so what remained was arithmetic: Doxa's
+  <code>%</code> is <em>floored</em> (section 1) where C's truncates, and the sign correction that difference requires
+  was five extra instructions per operation on a five-link serial carry chain. A constant divisor
+  whose magnitude divides 2^64 — 65536 is a power of two — needs no correction at all, because an
+  unsigned remainder already yields the residue. Each <code>%</code> is now a single <code>and</code>. The dividend is a
+  load out of the array, so no amount of range analysis on the source values would have reached it;
+  the identity came from the divisor alone.</li>
+</ul>
+<p>The C twin needed the same correction: it wrote <code>%</code>, whose operands are loads clang cannot prove
+  non-negative, so every modulo in its loop kept a sign correction the data never needed. It now
+  writes <code>&amp; (MOD - 1)</code> — the same mod-2^16 fact the values satisfy — and compiles to the same shape
+  Doxa does. <code>struct</code> therefore sits at <strong>parity</strong>: below C in all six runs of this campaign
+  (mean −5.00%, worst −0.31%). Its timed region
+  was also scaled ×5 (<code>STEPS</code> 550 → 2750, 2026-09-27) so the row lands at the ~1s norm the other
+  workloads run at — <code>struct</code> rows dated before that change did a fifth of the work and are not
+  comparable.
+  Earlier readings of −81% measured floored-vs-truncating <code>%</code> semantics, not codegen; the two
+  affected rows were removed from <code>stats.csv</code>.
+- <strong><code>call</code></strong> was the last workload on the floored-<code>%</code> correction — the same serial carry chain as
+  <code>struct</code>, with a modulus (997) that does not divide 2^64 and a dividend (<code>sum</code>) that is a
+  loop-carried accumulator. In this 2026-09-27 campaign it sat at +14.10% mean (+12.16 … +15.44).
+  The loop-carried / interprocedural range analysis (§6-D) now discharges the correction: it proves
+  <code>sum &gt;= 0</code> across the loop <em>and</em> the opaque <code>leaf_add(i, …)</code> call, and the emitted IR shows a single
+  <code>urem</code> with no sign fixup. The row's residual <strong>+7.06%</strong> (after the 2026-09-28 target fix; the
+  first −18.76% reading was the AVX2/SSE2 confound) turned out to be a <em>second</em> benchmark confound,
+  not codegen: C's clang IR pins <code>"tune-cpu"="generic"</code> while Doxa's <code>.ll</code> carried no target
+  attributes, so the <code>.ll</code> path inherited the native tune model, whose unroller sized this serial loop
+  8× and spilled where generic sizes it 2×. The emitter now pins <code>"tune-cpu"="generic"</code> on every
+  function (§6); <code>call</code> measures <strong>−17.9%</strong> vs C, so D-1b's <code>urem</code> win is finally visible. The same
+  correction changes every other row too — most dramatically <code>arr</code>, which was +13.55% under the
+  original confound and is <strong>−1.29%</strong> at target parity. The table above is left as the 2026-09-27
+  snapshot; §6 records both fixes and the corrected figures.</p>
+<p><strong>On reading this table.</strong> The percentages are means over six same-build runs, and the range column
+<em>is</em> the measurement's noise floor: same binary, same source, nothing recompiled between runs — yet
+<code>fib</code> moved 13.18 points, <code>arr</code> 9.69, <code>vec</code> 8.41, <code>struct</code> 8.22, <code>sieve</code> 6.15, <code>matrix</code> 4.42. Only
+<code>mb</code> (1.38) and <code>call</code> (3.27) sit near the ±2% that a single-run comparison would need, so one run
+cannot support a claim finer than its row's range; compare campaigns, not runs. The mechanism is
+visible in the log: background load slowed whole invocations by up to ~46% and slowed the Doxa and C
+twins unequally, so the ratio moved without anything being recompiled. The 8-point <code>arr</code> swing
+between provably identical builds that earlier notes could not explain falls inside this envelope —
+it was the floor. None of <code>fib</code>, <code>sieve</code>, <code>matrix</code>, <code>mb</code>, <code>arr</code>, <code>vec</code> contains a floored division or
+modulo <em>in its timed region</em> — <code>arr</code> times a plain <code>sum += arr[i]</code> reduction and <code>vec</code> a float
+<code>y[i] += 1.5 * x[i]</code>, with their only <code>%</code> in untimed setup — so movement in those rows is never
+lowering. <code>doxa run scripts/noise.doxa -- --since &lt;epoch&gt;</code> prints the distribution for any window of
+the log; a delta below the workload's row is noise, and the canaries are decidable because their
+gaps exceed theirs.</p>
+<p>These numbers are a snapshot of the <em>lowering</em>, not the language. The workloads that exercise
+section 3's floor match C; the workloads that exercise section 4's conservatism are the ones that do
+not.</p>
+<hr />
+<h2 id="6-cashing-the-edge-roadmap">6. Cashing the edge (roadmap)</h2>
+<p>Ordered by leverage, and roughly by dependency. Each step spends one of the section-1 freedoms; none
+requires a language change.</p>
+<h3 id="a-static-region-escape-analysis-on-the-hir">A. Static region / escape analysis on the HIR</h3>
+<p>Replace the runtime rehome machinery with a compile-time liveness calculation. Every value's home is
+its defining scope; compute, per value, the region it can reach (does it return, store into an outer
+variable, enter a container that escapes, cross an alias call?) and then:</p>
+<ul>
+<li>decide clone-vs-move at compile time, deleting <code>isEqualOrDescendant</code>, <code>scopeAt</code> level arithmetic,
+  and the <code>struct_scopes</code> / <code>ArrayHeader.scope</code> registries (A2 already deleted <code>string_scopes</code> for
+  strings, which are clone-decided statically);</li>
+<li>place function results into the caller's region instead of clone-on-return (the destination is one
+  region up the nest — a fact, not a runtime query), turning deep copies into placement — partially
+  landed (A3): direct-return struct/array literals are now constructed in the caller's arena;</li>
+<li>demote non-escaping values out of arenas entirely.</li>
+</ul>
+<p><strong>Invariants to preserve</strong> (the escape rules already documented in <code>memory.md</code>): a global store
+re-homes to the root arena and globals are identity — in-place mutation must write through the
+root-owned object, never a disconnected snapshot; element stores into an array re-home into that
+array's arena, which is what keeps <code>^</code>-aliased arrays safe. Values that can reach a global or an
+aliased container stay on the conservative path. The exclusive-borrow rule on <code>^</code> parameters is a
+static guarantee the analysis can lean on.</p>
+<h3 id="b-type-directed-storage">B. Type-directed storage</h3>
+<p>Spend the static element and field types that the HIR already carries:</p>
+<ul>
+<li>arrays of structs become contiguous by-value element storage when elements do not need independent
+  rehoming — the box-pointer representation is retained only where element identity genuinely
+  escapes. Partially landed (B1): fixed arrays of scalar-only structs are flat; dynamic arrays and
+  heap-field structs are still boxed;</li>
+<li>structs whose type is never reflected (never <code>@string</code>ed, peeked, or generically cloned) get real
+  typed layouts — packed bytes, true aggregates — instead of <code>[N x i64]</code> word boxes. Partially landed
+  (B2/B3-lite): a scalar-only struct proven never to need the descriptor skips its registry write and
+  clones with a typed word copy (the word-box layout itself is unchanged);</li>
+<li>emit <em>specialized per-type</em> deep copies (compile-time recursive: string fields clone, nested
+  structs clone, raw fields memcpy) so cloning never needs the runtime descriptor registry.
+  Partially landed (B3-lite) for scalar-only structs.</li>
+</ul>
+<p>Partitioning reflection out per type, rather than globally, is what makes the boxed word-array layout
+a special case instead of the default.</p>
+<h3 id="c-make-allocation-and-cloning-visible-to-llvm">C. Make allocation and cloning visible to LLVM</h3>
+<p>Where a value's arena is provably local, lower allocation to a stack region (<code>alloca</code> or a
+function-local bump buffer) and lower clones to typed inline copies — or mark the remaining runtime
+helpers with the attributes that are true of them (<code>noalias</code>, <code>readonly</code>/<code>readnone</code>, <code>alwaysinline</code>)
+so LLVM can CSE, hoist, and delete. An opaque external call is a wall; the same operation expressed
+in IR is an optimization opportunity.</p>
+<h3 id="d-wire-the-dormant-static-switches">D. Wire the dormant static switches</h3>
+<p>Several static decisions already exist in the HIR; some are honored, some not. Integer-overflow
+behavior is now selected from the safety axis — D-1 landed: the checked modes trap with
+<code>llvm.s*add.with.overflow</code> plus a real <code>llvm.trap</code>, the unchecked modes wrap, and a trap is skipped
+whenever the value-range lattice proves the result fits. Still dormant: <code>Call.tail</code> is set but no
+<code>tail</code>/<code>musttail</code> is ever emitted; <code>bounds_check</code> is carried but discarded; <code>@push</code> resize is
+hardcoded to <code>Double</code>. Wiring the rest turns the model's "defined, cheap safety" into reality: real
+tail calls (which, combined with copy-free returns from step A, need no post-call clone) and bounds
+removal where the index is statically safe.</p>
+<p><strong>Landed: the arithmetic lowerings these switches ride on.</strong> Doxa's <code>//</code> and <code>%</code> are floored, so they
+cannot lower to LLVM's truncating <code>sdiv</code>/<code>srem</code> without a sign correction, and that correction was
+five extra instructions per operation sitting on the critical path of any serial carry chain — the
+last remaining reason <code>struct</code> ran at twice C. Two static facts now remove it, and a value-range
+lattice (<code>int_range.zig</code>, threaded like the region analysis in step A) supplies them: a constant
+divisor whose magnitude divides 2^64 needs no correction at all, and a provably non-negative dividend
+makes truncation equal flooring. <code>struct</code>'s <code>% 65536</code> is now one <code>and</code>, and with the C twin stating
+the same mod-2^16 fact (<code>&amp; (MOD - 1)</code>) the workload measures at parity with C.</p>
+<p><strong>Landed: the lattice now crosses a loop and a call.</strong> <code>call</code>'s dividend is a loop-carried
+accumulator updated by an opaque <code>leaf_add(i, …)</code> call, so its sign needed two facts the original
+single linear walk could not produce. <code>range_flow.zig</code> adds an abstract stack-machine interpreter
+with a widened fixpoint over each loop body and return-range summaries for straight-line callees; it
+proves <code>sum &gt;= 0</code> and the <code>% 997</code> collapses to a single <code>urem</code>. The optimization is real (the C twin's
+truncating <code>%</code> keeps the correction clang cannot discharge). Its first measured payoff read −18.76%
+under the pre-fix confounded builds, then <strong>+7.06%</strong> at target parity (<code>-mcpu=native</code>, §6) — but that
+residual was a second confound, not codegen: C's clang IR pins <code>"tune-cpu"="generic"</code>, Doxa's <code>.ll</code>
+carried no target attributes, and the resulting native tune made the loop unroller size this serial
+carry chain 8× with spills instead of 2×. The emitter now emits
+<code>attributes #0 = { "tune-cpu"="generic" }</code> and every <code>define</code> references it, matching clang's
+frontend convention; <code>call</code> measures <strong>−17.9%</strong> vs C. The analysis itself is partial and falls back
+to the old behavior for anything it does not model, so it can only ever be additive.</p>
+<p>The same range lattice is what the remaining arithmetic switches consume: D-1 skips an overflow trap
+whenever the operand bounds prove the result fits, and D-3 wants the same upper bound to prove an
+index is in range before dropping a check. D-3 is the one that still needs the lattice to reach
+<em>memory</em> (an index is a value that has usually been stored and reloaded).</p>
+<h3 id="e-whole-program-abi-polish">E. Whole-program ABI polish</h3>
+<p>Every function and type is known before codegen; nothing prevents interprocedural use of that
+knowledge — cross-function inlining of the specialized helpers from step B, <code>noalias</code> on every
+by-value boundary (true by construction in this language), and constant propagation across module
+imports.</p>
+<p>Each step compounds the ones before it: region analysis (A) decides <em>where</em> values live, type-directed
+storage (B) decides <em>how</em> they are laid out, visibility (C) hands both to LLVM, and the static
+switches (D) stop the model's defined behavior from costing anything. The <code>struct</code> gap — the B/C
+canary — is closed at parity with its corrected C twin, and <code>call</code> (the D canary) is now below C
+after the <code>tune-cpu</code> fix.</p>
+<hr />
+<h2 id="reproducing-the-measurements">Reproducing the measurements</h2>
+<div class="highlight"><pre><span></span><code>doxa run test/benchmark/suite.doxa -- --runs 10 --write
+</code></pre></div>
+<p><code>--write</code> appends the run to <code>test/benchmark/stats.csv</code>, the log every table here is drawn from;
+without it the suite only prints.</p>
+<p>Before trusting a delta, size the noise: filter the log to one same-build campaign (a <code>--since</code>
+unix epoch) and print each workload's distribution — mean, range, and largest step between
+consecutive runs.</p>
+<div class="highlight"><pre><span></span><code>doxa run scripts/noise.doxa -- --since &lt;epoch&gt;
+</code></pre></div>
+<p>Section 5's table is the campaign at <code>--since 1790530050</code>. A delta below a workload's range is
+noise; when a gate decision is close, take a fresh pair across sessions as well — this floor is
+within-session.</p>
+<p>Each benchmark is compiled with <code>doxa compile … --opt=2</code> and its C twin with <code>zig cc -O2
+-mcpu=native -ffp-contract=off</code>. <code>--opt=N</code> mirrors clang: <code>--opt=2</code> compiles the program's <code>.ll</code> to
+an object with <code>zig cc -O2</code> and links an unchecked (<code>ReleaseFast</code>) runtime. Both sides target the
+host CPU: a native <code>doxa compile</code> adds <code>-mcpu=native</code> itself, because its required explicit <code>-target</code>
+otherwise makes <code>zig cc</code> fall back to baseline x86-64 (SSE2). Without that, Doxa would be built for
+SSE2 while its C twin gets AVX2 — the confound that, until 2026-09-28, biased every ratio in this
+document. <code>doxa compile … --emit-opt-ir</code> writes the post-LLVM-optimization IR (<code>&lt;stem&gt;.opt.ll</code>) to the
+cache directory, which is the artifact the <code>struct</code> and <code>call</code> analyses in section 5 are based on.</p>
+<p>To see where compile time goes, <code>doxa compile … --profile</code> prints a per-phase span tree
+(<code>--profile-out=&lt;path&gt;</code> also writes it as JSON). The runtime object and the user <code>.ll</code> object are
+content-cached per (toolchain, target, optimizer level, source closure), so warm recompiles skip
+<code>zig cc</code> / <code>zig build-obj</code>; see <code>plan/artifact-cache.md</code>. When measuring compile time, note whether
+the cache is warm or cold.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+  <script>var tabs=__md_get("__tabs");if(Array.isArray(tabs))e:for(var set of document.querySelectorAll(".tabbed-set")){var labels=set.querySelector(".tabbed-labels");for(var tab of tabs)for(var label of labels.getElementsByTagName("label"))if(label.innerText.trim()===tab){var input=document.getElementById(label.htmlFor);input.checked=!0;continue e}}</script>
+
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        <div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/mirror-shades/doxa" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.7.2 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8M97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.sections", "navigation.path", "navigation.instant", "toc.integrate", "toc.follow", "search.highlight", "search.suggest", "content.tabs.link", "content.code.annotation", "content.code.copy"], "search": "../assets/javascripts/workers/search.d50fe291.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.13a4f30d.min.js"></script>
+      
+    
+  </body>
+</html>

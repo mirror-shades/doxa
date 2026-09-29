@@ -70,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#current-source-level-rules" class="md-skip">
+        <a href="#file-imports" class="md-skip">
           Skip to content
         </a>
       
@@ -474,6 +474,28 @@
   
   
     <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../struct/" class="md-nav__link">
         
   
@@ -586,6 +608,15 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#file-imports" class="md-nav__link">
+    <span class="md-ellipsis">
+      File imports
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#current-source-level-rules" class="md-nav__link">
     <span class="md-ellipsis">
       Current source-level rules
@@ -595,46 +626,46 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#inline-zig-abi-argvargc-model" class="md-nav__link">
+  <a href="#inline-zig-abi" class="md-nav__link">
     <span class="md-ellipsis">
-      Inline Zig ABI (argv/argc model)
+      Inline Zig ABI
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="Inline Zig ABI (argv/argc model)">
+    <nav class="md-nav" aria-label="Inline Zig ABI">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#canonical-abi-value-layout" class="md-nav__link">
+  <a href="#generated-wrapper" class="md-nav__link">
     <span class="md-ellipsis">
-      Canonical ABI value layout
+      Generated wrapper
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#wrapper-export-signature" class="md-nav__link">
+  <a href="#passing-rules-fixed-64-bit-lengths" class="md-nav__link">
     <span class="md-ellipsis">
-      Wrapper export signature
+      Passing rules (fixed 64-bit lengths)
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#encoding-rules" class="md-nav__link">
+  <a href="#string-rule" class="md-nav__link">
     <span class="md-ellipsis">
-      Encoding rules
+      String rule
     </span>
   </a>
   
 </li>
         
           <li class="md-nav__item">
-  <a href="#ownership-and-lifetime-v1" class="md-nav__link">
+  <a href="#ownership-and-lifetime" class="md-nav__link">
     <span class="md-ellipsis">
-      Ownership and lifetime (v1)
+      Ownership and lifetime
     </span>
   </a>
   
@@ -651,24 +682,6 @@
         
       </ul>
     </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#compilerun-parity-requirement" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compile/run parity requirement
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#migration-notes" class="md-nav__link">
-    <span class="md-ellipsis">
-      Migration notes
-    </span>
-  </a>
   
 </li>
       
@@ -699,6 +712,23 @@
   <h1>Zig</h1>
 
 <p><code>zig</code> blocks are embedded Zig modules.</p>
+<p>Zig can be brought into a Doxa program two ways, both subject to the same rules below:</p>
+<ul>
+<li><strong>Inline block</strong> — <code>zig &lt;Name&gt; { ... }</code> defines module <code>&lt;Name&gt;</code> directly in the <code>.doxa</code> source.</li>
+<li><strong>File import</strong> — <code>module &lt;Alias&gt; from "&lt;path&gt;.zig"</code> imports an external <code>.zig</code> file as module <code>&lt;Alias&gt;</code>.</li>
+</ul>
+<p>Both forms are validated by the same extractor and lower to the same code generation and ABI path, so <code>&lt;Name&gt;.func(...)</code> calls behave identically regardless of form.</p>
+<h2 id="file-imports">File imports</h2>
+<div class="highlight"><pre><span></span><code>module Math from &quot;mathutil.zig&quot;
+
+const n is Math.double(21)
+</code></pre></div>
+<ul>
+<li>The import alias (<code>Math</code>) names the module; calls use <code>Alias.func(...)</code>.</li>
+<li>The path resolves relative to the importing <code>.doxa</code> file, like any other <code>module ... from</code> import.</li>
+<li>The imported file must obey the restricted subset below; violations are reported as a compile error (<code>E7010</code>).</li>
+<li>Edits to the imported <code>.zig</code> are picked up automatically on the next build — the generated module is content-hashed (together with the toolchain, target, and optimization level) and rebuilt whenever any of those changes, so no manual cache clearing is needed.</li>
+</ul>
 <h2 id="current-source-level-rules">Current source-level rules</h2>
 <ol>
 <li>Top-level is restricted to:</li>
@@ -721,93 +751,66 @@
 <p>The compiler validates these rules before invoking Zig.</p>
 </li>
 </ol>
-<h2 id="inline-zig-abi-argvargc-model">Inline Zig ABI (argv/argc model)</h2>
-<p>The VM/runtime boundary for inline Zig must use a single argument vector ABI:</p>
-<ul>
-<li><code>argv</code>: pointer to an array of ABI values (<code>DoxaAbiValue</code>)</li>
-<li><code>argc</code>: number of entries in <code>argv</code></li>
-<li>one ABI entry per Doxa call argument, in source order</li>
-</ul>
-<p>Wrappers decode by tag, then call the real Zig function.</p>
-<h3 id="canonical-abi-value-layout">Canonical ABI value layout</h3>
-<div class="highlight"><pre><span></span><code><span class="n">public</span><span class="w"> </span><span class="kr">const</span><span class="w"> </span><span class="n">DoxaAbiTag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">enum</span><span class="p">(</span><span class="kt">u32</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">Int</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">    </span><span class="n">Float</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<span class="w">    </span><span class="n">Byte</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
-<span class="w">    </span><span class="n">String</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
-<span class="w">    </span><span class="n">Tetra</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">4</span><span class="p">,</span>
-<span class="w">    </span><span class="n">Nothing</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">5</span><span class="p">,</span>
-<span class="p">};</span>
-
-<span class="n">public</span><span class="w"> </span><span class="kr">const</span><span class="w"> </span><span class="n">DoxaAbiValue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="kr">extern</span><span class="w"> </span><span class="k">struct</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">tag</span><span class="o">:</span><span class="w"> </span><span class="n">DoxaAbiTag</span><span class="p">,</span>
-<span class="w">    </span><span class="n">flags</span><span class="o">:</span><span class="w"> </span><span class="kt">u32</span><span class="p">,</span><span class="w">    </span><span class="c1">// reserved, currently 0</span>
-<span class="w">    </span><span class="n">payload0</span><span class="o">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">,</span><span class="w"> </span><span class="c1">// bits or pointer</span>
-<span class="w">    </span><span class="n">payload1</span><span class="o">:</span><span class="w"> </span><span class="kt">u64</span><span class="p">,</span><span class="w"> </span><span class="c1">// extra payload (String length)</span>
-<span class="p">};</span>
-
-<span class="n">public</span><span class="w"> </span><span class="kr">const</span><span class="w"> </span><span class="n">DoxaAbiStatus</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="k">enum</span><span class="p">(</span><span class="kt">i32</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
-<span class="w">    </span><span class="n">ok</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
-<span class="w">    </span><span class="n">bad_arity</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
-<span class="w">    </span><span class="n">bad_tag</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">2</span><span class="p">,</span>
-<span class="w">    </span><span class="n">bad_value</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">3</span><span class="p">,</span>
-<span class="w">    </span><span class="n">internal</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">255</span><span class="p">,</span>
-<span class="p">};</span>
+<h2 id="inline-zig-abi">Inline Zig ABI</h2>
+<p>Each module compiles to an object file exporting one symbol per signature,
+<code>&lt;Module&gt;.&lt;fn&gt;</code>, and the LLVM backend declares and calls those symbols directly
+(<code>declare i64 @Math.double(i64)</code> / <code>call … @Math.double(...)</code>). The wrapper
+object is linked into the program next to the runtime — nothing is loaded or
+looked up at run time (no <code>dlopen</code>, no <code>GetProcAddress</code>), and <code>doxa run</code> and
+<code>doxa compile</code> build the same objects and issue the same calls.</p>
+<h3 id="generated-wrapper">Generated wrapper</h3>
+<p>For a Doxa-visible <code>fn f</code> in module <code>&lt;Module&gt;</code>, the generator emits:</p>
+<div class="highlight"><pre><span></span><code><span class="kr">pub</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="n">__doxa_native__</span><span class="o">&lt;</span><span class="n">Module</span><span class="o">&gt;</span><span class="n">_f</span><span class="p">(</span><span class="n">a0</span><span class="o">:</span><span class="w"> </span><span class="n">T0</span><span class="p">,</span><span class="w"> </span><span class="err">…</span><span class="p">)</span><span class="w"> </span><span class="n">callconv</span><span class="p">(.</span><span class="n">c</span><span class="p">)</span><span class="w"> </span><span class="n">R</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="err">…</span><span class="w"> </span><span class="p">}</span>
+<span class="kr">comptime</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="nb">@export</span><span class="p">(</span><span class="o">&amp;</span><span class="n">__doxa_native__</span><span class="o">&lt;</span><span class="n">Module</span><span class="o">&gt;</span><span class="n">_f</span><span class="p">,</span><span class="w"> </span><span class="p">.{</span><span class="w"> </span><span class="p">.</span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s">&quot;&lt;Module&gt;.f&quot;</span><span class="w"> </span><span class="p">});</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>Notes:
-- Layout is part of the ABI contract and must remain stable.
-- <code>extern struct</code> is required for a predictable C ABI layout.
-- <code>flags</code> is reserved for future use (ownership/nullability/union metadata).</p>
-<h3 id="wrapper-export-signature">Wrapper export signature</h3>
-<p>Generated wrapper functions should use:</p>
-<div class="highlight"><pre><span></span><code><span class="n">public</span><span class="w"> </span><span class="kr">export</span><span class="w"> </span><span class="k">fn</span><span class="w"> </span><span class="n">__doxa_export__Module_fn</span><span class="p">(</span>
-<span class="w">    </span><span class="n">argv</span><span class="o">:</span><span class="w"> </span><span class="p">[</span><span class="o">*</span><span class="p">]</span><span class="kr">const</span><span class="w"> </span><span class="n">DoxaAbiValue</span><span class="p">,</span>
-<span class="w">    </span><span class="n">argc</span><span class="o">:</span><span class="w"> </span><span class="kt">usize</span><span class="p">,</span>
-<span class="w">    </span><span class="n">out_ret</span><span class="o">:</span><span class="w"> </span><span class="o">*</span><span class="n">DoxaAbiValue</span><span class="p">,</span>
-<span class="p">)</span><span class="w"> </span><span class="n">callconv</span><span class="p">(.</span><span class="n">c</span><span class="p">)</span><span class="w"> </span><span class="n">DoxaAbiStatus</span>
-</code></pre></div>
-<p>Behavior:
-- validate <code>argc</code> first
-- decode each argument from <code>argv[i]</code> by tag
-- on mismatch, return <code>bad_tag</code> or <code>bad_value</code>
-- call user Zig function only after successful decode
-- encode return into <code>out_ret</code>, return <code>ok</code></p>
-<h3 id="encoding-rules">Encoding rules</h3>
+<p>The body is a thin adapter from the ABI types below to the user's Zig
+signature: it re-slices string parameters and, for string returns, performs the
+arena clone described under ownership. There is no argument vector, no tag
+decoding, and no status code.</p>
+<h3 id="passing-rules-fixed-64-bit-lengths">Passing rules (fixed 64-bit lengths)</h3>
 <ul>
-<li><code>Int</code>: <code>payload0 = bitcast(i64 -&gt; u64)</code></li>
-<li><code>Float</code>: <code>payload0 = bitcast(f64 -&gt; u64)</code></li>
-<li><code>Byte</code>: <code>payload0 = u8</code></li>
-<li><code>Tetra</code>: <code>payload0 = u2</code> (<code>0=false</code>, <code>1=true</code>, <code>2=both</code>, <code>3=neither</code>)</li>
-<li><code>String</code>: <code>payload0 = ptr</code>, <code>payload1 = len</code></li>
-<li><code>Nothing</code>: payload ignored</li>
+<li>Scalars pass as their Zig types: <code>int</code> → <code>i64</code>, <code>float</code> → <code>f64</code>,
+  <code>byte</code> → <code>u8</code>, <code>tetra</code> → <code>bool</code>, <code>nothing</code> → <code>void</code>.</li>
+<li>A <code>string</code> parameter passes as <code>(ptr, u64 len)</code> — a pointer followed by a
+  <strong>fixed 64-bit</strong> byte length — and the wrapper re-slices it to <code>[]const u8</code>.</li>
+<li>A <code>string</code> return writes through <code>out_ptr: *?[*]u8, out_len: *u64</code> — two
+  out-params, not a <code>(ptr, len)</code> return pair. The empty string crosses as
+  <code>(null, 0)</code> and allocates nothing.</li>
+<li>The runtime's exported string helpers (<code>doxa_str_*</code>, <code>doxa_*_to_string</code>, …)
+  use the same fixed 64-bit <code>len: u64</code> / <code>*u64</code> for lengths and byte counts.</li>
 </ul>
-<p>String rule:
-- Strings are <code>(ptr,len)</code>, not C-strings.
-- Embedded <code>\0</code> is valid and must be preserved.</p>
-<h3 id="ownership-and-lifetime-v1">Ownership and lifetime (v1)</h3>
+<p>Lengths are 64-bit on every target so the emitted LLVM IR — which declares
+<code>%DoxaString = { ptr, i64 }</code> and <code>i64</code> length parameters — needs no
+target-specific rewriting. Pointers keep the target's pointer width; a pointer
+that meets a 64-bit length slot is widened or narrowed with <code>@intCast</code> /
+<code>@intFromPtr</code>.</p>
+<h3 id="string-rule">String rule</h3>
 <ul>
-<li><code>argv</code> values are borrowed for the duration of the call.</li>
-<li><code>out_ret.String</code> is owned by callee and must be freed by runtime/VM using the module free hook.</li>
-<li>Non-string scalar returns are by value in <code>out_ret</code>.</li>
+<li>Strings cross as pointer + byte length, never as C-strings.</li>
+<li>Embedded <code>\0</code> is valid and must be preserved.</li>
+</ul>
+<h3 id="ownership-and-lifetime">Ownership and lifetime</h3>
+<ul>
+<li>String parameters are borrowed for the duration of the call.</li>
+<li>A returned string lands in the scope arena active at the call site: the
+  wrapper clones the bytes with <code>doxa_str_clone_current</code>, so the value follows
+  the ordinary arena rules in <a href="../memory/">memory.md</a> — bulk-freed with its
+  scope, and no free hook. Codegen tags the result with that call-site region
+  rather than <code>Root</code>.</li>
+<li>Non-string returns cross by value.</li>
+<li>A module may keep <strong>process-lifetime Zig-owned state</strong> (the <code>std.json</code> node
+  table, the <code>std.http</code> client and connection tables) provided it never retains
+  a Doxa arena pointer across calls: values crossing in are borrowed for the
+  call, copied with an owned allocation if they must outlive it, and every owned
+  buffer is released explicitly, since arena scopes do not cover Zig-owned
+  memory.</li>
 </ul>
 <h3 id="error-model">Error model</h3>
-<p>Wrapper returns status; no trap/panic for user type mismatch:
-- <code>bad_arity</code>: <code>argc</code> does not match expected function arity
-- <code>bad_tag</code>: tag incompatible with expected parameter type
-- <code>bad_value</code>: malformed payload (e.g. null pointer with non-zero string length)
-- <code>internal</code>: unexpected wrapper/runtime failure</p>
-<p>The caller (VM/runtime) turns status into a Doxa runtime error.</p>
-<h2 id="compilerun-parity-requirement">Compile/run parity requirement</h2>
-<p>Both modes must use the same logical ABI:
-- <code>doxa run</code>: dynamic library call path uses <code>argv/argc</code>
-- <code>doxa compile</code>: generated call path should align with the same value model</p>
-<p>No per-signature C ABI shims should be required at the VM boundary.</p>
-<h2 id="migration-notes">Migration notes</h2>
-<ul>
-<li>Old per-argument exports (<code>fn(x: i64)</code>, C-string-only string bridge, 0/1-arg VM specialization) are legacy.</li>
-<li>New architecture is the <code>argv/argc</code> + tagged decode wrapper model.</li>
-<li>Existing inline Zig source syntax does not need to change.</li>
-</ul>
+<p>There is no runtime ABI error channel to translate into a Doxa error — the
+shape of the call is settled at compile time. Parameter or return types that
+cannot cross the boundary (arrays, structs, maps, enums, functions, unions)
+fail the compile with <code>E8002</code> while the wrapper is generated, before Zig is
+invoked.</p>
 
 
 

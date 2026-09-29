@@ -472,6 +472,28 @@
   
   
     <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../struct/" class="md-nav__link">
         
   
@@ -638,7 +660,30 @@
 -7 % -2        # -1
 </code></pre></div>
 <h2 id="type-promotion">Type promotion</h2>
-<p>Doxa promotes numeric operands to a common type before evaluation:</p>
+<p>Doxa promotes numeric <strong>operands</strong> to a common type before evaluation. This applies to binary operators (<code>+</code>, <code>-</code>, <code>*</code>, <code>/</code>, <code>**</code>, <code>%</code>, <code>//</code>) and array literals, but <strong>not</strong> to variable assignment, function arguments, return values, or struct fields.</p>
+<table>
+<thead>
+<tr>
+<th>Position</th>
+<th>Rule</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Operator</strong> (e.g. <code>1 + 2.5</code>)</td>
+<td>Int or byte operands promote to float automatically</td>
+</tr>
+<tr>
+<td><strong>Array initializer</strong> (e.g. <code>float[] is [1, 2, 3]</code>)</td>
+<td>Elements promote to the array's element type</td>
+</tr>
+<tr>
+<td><strong>Value position</strong> (assignment, call arg, return)</td>
+<td>Only comptime literals are implicit; runtime values require <code>@float()</code></td>
+</tr>
+</tbody>
+</table>
+<h3 id="operator-promotion">Operator promotion</h3>
 <ol>
 <li><strong>Float dominance:</strong> If either operand is <code>float</code>, or the operator is <code>/</code>, the result is <code>float</code>.</li>
 <li><strong>Int fallback:</strong> If either operand is <code>int</code>, the result is <code>int</code> (except for <code>/</code>).</li>
@@ -649,6 +694,20 @@
 1 // 2         # 0       (integer division)
 1 / 2          # 0.5     (float division, always)
 </code></pre></div>
+<h3 id="value-position-widening">Value position widening</h3>
+<p>For value positions (assignment, function arguments, return values), int or byte does <strong>not</strong> implicitly widen to float unless the value is a literal written directly in source:</p>
+<div class="highlight"><pre><span></span><code>var x :: float is 60         # allowed — literal 60 widens to 60.0
+takesFloat(60)               # allowed — literal 60 widens to 60.0
+
+const LIT is 60
+takesFloat(LIT)              # error — named const, use @float(LIT)
+
+var i :: int is 60
+takesFloat(i)                # error — runtime value, use @float(i)
+
+var f :: float is i          # error — runtime value, use @float(i)
+</code></pre></div>
+<p>This rule mirrors how <code>int</code> → <code>byte</code> already works (comptime literals are allowed; runtime values require <code>@byte()</code>). The <code>@float()</code> intrinsic converts int, byte, or string values to float.</p>
 <h2 id="division-by-zero">Division by zero</h2>
 <p>Division or modulo by zero in any context (float, int, byte) produces a runtime error.</p>
 

@@ -12,7 +12,7 @@
         <link rel="prev" href="../methods/">
       
       
-        <link rel="next" href="../struct/">
+        <link rel="next" href="../stdlib-api/">
       
       
       <link rel="icon" href="../assets/images/favicon.png">
@@ -558,6 +558,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#json" class="md-nav__link">
+    <span class="md-ellipsis">
+      JSON
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#methods" class="md-nav__link">
     <span class="md-ellipsis">
       Methods
@@ -597,6 +606,28 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib-api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Standard Library API
+    
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -714,7 +745,269 @@
 <h2 id="file">File</h2>
 <h2 id="host">Host</h2>
 <h2 id="http">HTTP</h2>
+<p><code>std.http</code> provides a buffered client plus the loopback socket primitives that
+the sequential server layer builds on.</p>
+<div class="highlight"><pre><span></span><code>module std from @std()
+
+function printResponse(response :: Response) {
+    @print(&quot;status {response.statusCode()}\n&quot;)
+    @print(&quot;{response.body()}\n&quot;)
+    const content_types is response.header(&quot;content-type&quot;)
+    if @length(content_types) &gt; 0 then {
+        @print(&quot;content type {content_types[0]}\n&quot;)
+    }
+}
+
+const response is std.http.get(&quot;https://example.com/&quot;)
+response as Response then {
+    const value is response
+    printResponse(value)
+}
+else {
+    @print(&quot;request failed\n&quot;)
+}
+</code></pre></div>
+<ul>
+<li><code>get(url)</code> returns <code>Response | error.StdError</code>. HTTP status is data; a <code>404</code>
+  still returns a response. <code>getText(url)</code> returns the body regardless of
+  status, while <code>checkStatus(response)</code> opts into <code>error.IO.HttpStatus</code> for
+  non-2xx responses.</li>
+<li><code>Request.new()</code> creates request settings with an empty <code>headers</code> array and
+  defaults of a 30-second response-read timeout and three followed redirects.
+  Each header entry is a <code>"Name: value"</code> string. Set <code>body</code>, <code>timeout_ms</code>, or
+  <code>max_redirects</code> on the request before calling <code>request(method, url, ^req)</code>.
+  <code>post(url, ^req)</code>, <code>put(url, ^req)</code>, <code>delete(url, ^req)</code>, and <code>head(url, ^req)</code>
+  are thin method-specific wrappers; <code>request</code> also accepts <code>"GET"</code>. The request
+  is borrowed with <code>^</code> so its <code>headers</code> array is not deep-copied per call.</li>
+</ul>
+<p><div class="highlight"><pre><span></span><code>var req is std.http.Request.new()
+req.body is &quot;hello&quot;
+@push(req.headers, &quot;Content-Type: text/plain&quot;)
+@push(req.headers, &quot;X-Trace: demo&quot;)
+const response is std.http.post(&quot;https://example.com/submit&quot;, ^req)
+</code></pre></div>
+- <code>Response.statusCode()</code>, <code>body()</code>, <code>header(name)</code>, and <code>hasHeader(name)</code> are
+  accessors. <code>header</code> returns every matching value in order and compares names
+  case-insensitively.
+- <code>timeout_ms</code> and <code>getWithTimeout(url, timeout_ms)</code> bound response-head and body
+  reads. They do not interrupt DNS lookup, connection establishment, or request
+  writes. A value of <code>0</code> disables the read deadline.
+- Redirects are followed up to <code>max_redirects</code> times (three by default); an
+  exhausted limit is a request error. <code>Authorization</code>, <code>Proxy-Authorization</code>,
+  <code>Cookie</code>, and <code>Cookie2</code> are stripped when the redirect changes the strict
+  origin (scheme, host, or effective port). Other custom headers continue to
+  the destination.
+- The server primitives bind only to loopback: <code>listen(port)</code> (use <code>0</code> for an
+  ephemeral port), <code>localAddr(listener)</code>, <code>accept(listener)</code>, <code>close(handle)</code>,
+  and the request/response pair <code>readRequest(connection)</code> /
+  <code>takeRequest(connection)</code> and <code>respond(connection, status, headers, body)</code>.
+  <code>readRequest</code> is <strong>non-blocking</strong>: it returns <code>1</code> when a request is ready
+  (read it with <code>takeRequest</code>, a <code>ServerRequest</code> whose <code>.verb</code>, <code>.target</code>, and
+  <code>.body_text</code> hold the parsed fields, with <code>header(name)</code> / <code>hasHeader(name)</code>
+  reading repeated request headers case-insensitively), <code>0</code> when more bytes are
+  needed (retry on the next <code>Readable</code> event), and a negative status on a
+  connection error. <code>respond</code> must follow a successfully parsed request; its
+  <code>headers</code> argument is a CRLF-separated blob, and the library supplies
+  <code>Content-Length</code> and connection framing. A client that asks for
+  <code>Connection: close</code> gets it back, and <code>keepAlive(connection)</code> reports whether
+  the request may reuse the connection. <code>accept(listener)</code> is the low-level
+  primitive; a poll loop reads requests from <code>poll</code> events instead.</p>
+<ul>
+<li><code>poll(listener, timeout_ms)</code> waits across the listener and every live
+  connection at once and returns <code>Event[]</code>. Each <code>Event</code> carries a connection
+  <code>handle</code> and a <code>kind :: EventKind</code>: <code>Accepted</code> for a freshly accepted
+  connection, <code>Readable</code> for data to read, and <code>Closed</code> for a peer that closed
+  or errored. <code>timeout_ms == 0</code> polls immediately and a negative value blocks
+  until an event; closing the listener is the way to stop a loop. There is no
+  fixed connection ceiling. A server serves many keep-alive clients without
+  blocking on any one connection by polling instead of calling <code>accept</code>
+  directly:</li>
+</ul>
+<div class="highlight"><pre><span></span><code>const listener is std.http.listen(0) as int else 0
+while true {
+    const events is std.http.poll(listener, 1000)
+    for i while i &lt; @length(events) do i += 1 {
+        const event is events[i]
+        if event.kind == std.http.EventKind.Closed then {
+            std.http.close(event.handle)
+        } else {
+            # 1 = request ready, 0 = wait for more bytes, negative = error.
+            const status is std.http.readRequest(event.handle)
+            if status == 1 then {
+                const value is std.http.takeRequest(event.handle)
+                std.http.respond(event.handle, 200, &quot;Content-Type: text/plain\r\n&quot;, &quot;hello {value.target}&quot;)
+            } else if status &lt; 0 then {
+                std.http.close(event.handle)
+            }
+        }
+    }
+}
+</code></pre></div>
+<ul>
+<li><code>Router</code> matches request paths to integer route ids as data:
+  <code>Router.new()</code>, <code>add(verb, pattern, id)</code>, and
+  <code>route(^router, verb, path) → Route | nothing</code>. A pattern segment written
+  <code>:name</code> captures the matching path segment, and <code>Route.param(name)</code> reads the
+  capture. Matching is exact per segment and verb, so <code>/users/:id</code> matches
+  <code>/users/42</code> with <code>param("id") == "42"</code>, but not <code>/users/42/posts</code> or a
+  different verb. (<code>{}</code> placeholders are not usable: Doxa string literals
+  interpolate on <code>{</code>.)</li>
+</ul>
+<div class="highlight"><pre><span></span><code>var router is std.http.Router.new()
+router.add(&quot;GET&quot;, &quot;/users/:id&quot;, 1)
+
+const matched is std.http.route(^router, &quot;GET&quot;, &quot;/users/42&quot;)
+matched as Route then {
+    const id is matched.param(&quot;id&quot;) as string else &quot;&quot;
+    @print(&quot;user {id}\n&quot;)
+}
+</code></pre></div>
+<ul>
+<li><code>download(url)</code> / <code>downloadUrl(url, destination)</code> use the same redirect,
+  timeout, and status handling as requests, but stream response bytes directly
+  to the destination file. Non-2xx responses still write their body and then
+  return <code>error.IO.HttpStatus</code>.</li>
+<li>WebSockets upgrade a connection after its handshake request has been read:
+  <code>isWebSocket(connection)</code> reports whether the handshake has completed, and
+  <code>upgradeWebSocket(connection)</code> completes the RFC 6455 handshake on a buffered
+  request that asked to switch protocols. <code>wsSend(connection, op, data)</code> sends
+  one frame; <code>wsNext(connection)</code> advances the decoder and returns <code>1</code> when a
+  message is ready (read it with <code>wsMessage</code>, whose <code>op</code> is <code>WsOp.Text</code>,
+  <code>Binary</code>, <code>Ping</code>, <code>Pong</code>, or <code>Close</code> and whose <code>data</code> is the payload), <code>0</code> when
+  more bytes are needed (retry on the next <code>Readable</code> event), <code>2</code> when the peer
+  closed, and a negative status on a protocol or transport error. Fragmented
+  messages are reassembled before they are surfaced, and control frames are
+  surfaced rather than handled silently, so the caller owns ping/pong/close
+  policy. Decoding is non-blocking, so a partial frame from one peer cannot stall
+  other connections. A text message that is not valid UTF-8, a malformed close
+  frame, or a frame larger than 16 MiB fails the connection with the
+  corresponding Close code (<code>1007</code> / <code>1002</code> / <code>1009</code>).</li>
+</ul>
+<div class="highlight"><pre><span></span><code>const listener is std.http.listen(0) as int else 0
+while true {
+    const events is std.http.poll(listener, 1000)
+    for i while i &lt; @length(events) do i += 1 {
+        const event is events[i]
+        if event.kind == std.http.EventKind.Closed then {
+            std.http.close(event.handle)
+        } else {
+            if not std.http.isWebSocket(event.handle) then {
+                const status is std.http.readRequest(event.handle)
+                if status == 1 then {
+                    std.http.upgradeWebSocket(event.handle)
+                } else if status &lt; 0 then {
+                    std.http.close(event.handle)
+                }
+            }
+            if std.http.isWebSocket(event.handle) then {
+                var reading is true
+                while reading {
+                    const ws is std.http.wsNext(event.handle)
+                    if ws == 1 then {
+                        const message is std.http.wsMessage(event.handle)
+                        if message.op == std.http.WsOp.Text then {
+                            std.http.wsSend(event.handle, std.http.WsOp.Text, message.data)
+                        } else if message.op == std.http.WsOp.Close then {
+                            std.http.wsSend(event.handle, std.http.WsOp.Close, message.data)
+                            std.http.close(event.handle)
+                            reading is false
+                        }
+                    } else if ws == 2 or ws &lt; 0 then {
+                        std.http.close(event.handle)
+                        reading is false
+                    } else {
+                        reading is false
+                    }
+                }
+            }
+        }
+    }
+}
+</code></pre></div>
+<p>Most servers only need the Go-flavoured sugar; the primitives above stay
+  public for full control:</p>
+<ul>
+<li><code>wsAccept(connection)</code> completes the handshake once the request is buffered
+    and returns <code>true</code> once the connection is a WebSocket (it is a no-op after).
+    It returns <code>false</code> while the request is still incomplete.</li>
+<li><code>wsRead(connection)</code> returns the next <code>Message</code>, <code>nothing</code> when none is
+    buffered yet or the peer closed, or an error on failure.</li>
+<li><code>wsWrite(connection, op, data)</code> sends a frame with an explicit opcode;
+    <code>wsText</code>, <code>wsBinary</code>, <code>wsPing</code>, <code>wsPong</code> name the common kinds, and
+    <code>wsClose(connection)</code> sends a Close frame and drops the connection.</li>
+</ul>
+<div class="highlight"><pre><span></span><code>const listener is std.http.listen(0) as int else 0
+while true {
+    const events is std.http.poll(listener, 1000)
+    for i while i &lt; @length(events) do i += 1 {
+        const event is events[i]
+        if event.kind == std.http.EventKind.Closed then {
+            std.http.close(event.handle)
+        } else if std.http.wsAccept(event.handle) then {
+            var reading is true
+            while reading {
+                const m is std.http.wsRead(event.handle)
+                m as Message then {
+                    const message is m
+                    if message.op == std.http.WsOp.Text then {
+                        std.http.wsText(event.handle, &quot;echo: {message.data}&quot;)
+                    } else if message.op == std.http.WsOp.Close then {
+                        std.http.wsClose(event.handle)
+                        reading is false
+                    }
+                } else {
+                    reading is false
+                }
+            }
+        }
+    }
+}
+</code></pre></div>
 <h2 id="io">IO</h2>
+<h2 id="json">JSON</h2>
+<p><code>std.json</code> parses a document into a handle-based tree and writes one back out.
+A <code>Node</code> is a small generation-checked handle into a single document slot, so
+retaining one past the next <code>parse</code> is safe: it reads as <code>Kind.Invalid</code> rather
+than a dangling value.</p>
+<div class="highlight"><pre><span></span><code>module std from @std()
+
+const result is std.json.parse(&quot;{\&quot;name\&quot;:\&quot;doxa\&quot;,\&quot;stars\&quot;:5}&quot;)
+match result {
+    std.json.Node then {
+        const name is result.field(&quot;name&quot;)
+        match name {
+            std.json.Node then @print(&quot;{name.text()}\n&quot;)
+            else @print(&quot;no name\n&quot;)
+        }
+    }
+    else {
+        @print(&quot;malformed\n&quot;)
+    }
+}
+</code></pre></div>
+<ul>
+<li><code>parse(text)</code> returns <code>Node | error.StdError</code>. Objects keep their key order.
+  Duplicate keys are rejected. A malformed document, invalid UTF-8, and a
+  <code>number_string</code> that is not finite all surface as <code>error.IO.InvalidData</code>;
+  the writer returns <code>error.Common.InvalidArgument</code> for misuse (a value where a
+  key was expected, an unbalanced end, a second root value, and so on).</li>
+<li><code>kind()</code> never fails and returns a <code>Kind</code>: <code>Invalid</code>, <code>Null</code>, <code>Boolean</code>,
+  <code>Integer</code>, <code>Number</code>, <code>Text</code>, <code>Array</code>, or <code>Object</code>. An integer that the runtime
+  could not fit in <code>i64</code> or an exponent beyond the float range arrives as
+  <code>Number</code> (<code>1e400</code> reads as infinity from <code>floatValue()</code>).</li>
+<li><code>count()</code>, <code>element(index)</code>, <code>field(name)</code>, <code>key()</code>, <code>text()</code>, <code>intValue()</code>,
+  <code>floatValue()</code>, and <code>booleanValue()</code> are strict: a wrong kind, a missing
+  field, or an out-of-range index yields <code>nothing</code>. <code>count</code> works on arrays and
+  objects; <code>field</code> only on objects; the value accessors only on the matching
+  scalar kind.</li>
+<li>Writing mirrors the document shape: <code>beginObject()</code> / <code>beginArray()</code> open a
+  container, <code>writeKey(name)</code> precedes a member value, and <code>end()</code> closes it.
+  <code>finish()</code> returns the escaped text as <code>string | error.StdError</code> and releases
+  the writer; the next writer call starts a fresh document.</li>
+<li>The writer emits <code>\b</code>, <code>\f</code>, <code>\n</code>, <code>\r</code>, <code>\t</code> as their two-character escapes
+  and any other control byte below <code>0x20</code> as a lowercase <code>\u00xx</code> sequence. It
+  validates UTF-8 before quoting and refuses NaN or infinity.</li>
+</ul>
 <h2 id="methods">Methods</h2>
 <h2 id="process">Process</h2>
 <h2 id="random">Random</h2>
