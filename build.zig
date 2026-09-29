@@ -194,6 +194,21 @@ pub fn build(b: *std.Build) void {
     }
     compress_step.dependOn(&compress_cmd.step);
 
+    // Regenerate the standard-library API reference from `std/`. Kept as its
+    // own step so it never runs implicitly; the generated page is committed.
+    const docs_tool = b.addExecutable(.{
+        .name = "gen_stdlib_docs",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("scripts/gen_stdlib_docs.zig"),
+            .target = host_target,
+            .optimize = .ReleaseSafe,
+        }),
+    });
+    const gen_docs = b.addRunArtifact(docs_tool);
+    gen_docs.setCwd(b.path("."));
+    const docs_step = b.step("docs", "Regenerate docs/stdlib-api.md from std/");
+    docs_step.dependOn(&gen_docs.step);
+
     const answers_module = b.createModule(.{
         .root_source_file = b.path("test/answers.zig"),
     });
