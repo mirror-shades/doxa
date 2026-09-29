@@ -74,32 +74,19 @@ else {
   the destination.
 - The server primitives bind only to loopback: `listen(port)` (use `0` for an
   ephemeral port), `localAddr(listener)`, `accept(listener)`, `close(handle)`,
-  and the request/response pair `readRequest(connection)` →
-  `ServerRequest | error.StdError` and `respond(connection, status, headers,
-  body)`. `readRequest` reads the next request's head and body on the accepted
-  connection; `ServerRequest.verb`, `.target`, and `.body_text` hold the parsed
-  fields, and `header(name)` / `hasHeader(name)` read repeated request headers
-  case-insensitively. `respond` must follow a `readRequest`; its `headers`
-  argument is a CRLF-separated blob, and the library supplies `Content-Length`
-  and connection framing. A client that asks for `Connection: close` gets it
-  back, and `keepAlive(connection)` reports whether the request may reuse the
-  connection.
-
-  ```doxa
-  module std from @std()
-
-  const listener is std.http.listen(8080) as int else 0
-  const connection is std.http.accept(listener) as int else 0
-  const request is std.http.readRequest(connection)
-  request as ServerRequest then {
-      const value is request
-      std.http.respond(connection, 200, "Content-Type: text/plain\r\n", "hello {value.verb}")
-  } else {
-      std.http.respond(connection, 400, "", "bad request")
-  }
-  std.http.close(connection)
-  std.http.close(listener)
-  ```
+  and the request/response pair `readRequest(connection)` /
+  `takeRequest(connection)` and `respond(connection, status, headers, body)`.
+  `readRequest` is **non-blocking**: it returns `1` when a request is ready
+  (read it with `takeRequest`, a `ServerRequest` whose `.verb`, `.target`, and
+  `.body_text` hold the parsed fields, with `header(name)` / `hasHeader(name)`
+  reading repeated request headers case-insensitively), `0` when more bytes are
+  needed (retry on the next `Readable` event), and a negative status on a
+  connection error. `respond` must follow a successfully parsed request; its
+  `headers` argument is a CRLF-separated blob, and the library supplies
+  `Content-Length` and connection framing. A client that asks for
+  `Connection: close` gets it back, and `keepAlive(connection)` reports whether
+  the request may reuse the connection. `accept(listener)` is the low-level
+  primitive; a poll loop reads requests from `poll` events instead.
 
 - `poll(listener, timeout_ms)` waits across the listener and every live
   connection at once and returns `Event[]`. Each `Event` carries a connection
@@ -120,11 +107,12 @@ else {
           if event.kind == std.http.EventKind.Closed then {
               std.http.close(event.handle)
           } else {
-              const request is std.http.readRequest(event.handle)
-              request as ServerRequest then {
-                  const value is request
+              # 1 = request ready, 0 = wait for more bytes, negative = error.
+              const status is std.http.readRequest(event.handle)
+              if status == 1 then {
+                  const value is std.http.takeRequest(event.handle)
                   std.http.respond(event.handle, 200, "Content-Type: text/plain\r\n", "hello {value.target}")
-              } else {
+              } else if status < 0 then {
                   std.http.close(event.handle)
               }
           }
@@ -156,46 +144,104 @@ else {
   timeout, and status handling as requests, but stream response bytes directly
   to the destination file. Non-2xx responses still write their body and then
   return `error.IO.HttpStatus`.
-- WebSockets upgrade an accepted connection after a `readRequest`:
-  `upgradeWebSocket(connection)` completes the RFC 6455 handshake on a request
-  that asked to switch protocols. `wsSend(connection, op, data)` sends one
-  frame; `wsNext(connection)` returns the next `Message | nothing |
-  error.StdError`, where a `Message` has an `op` (`WsOp.Text`, `Binary`, `Ping`,
-  `Pong`, or `Close`) and its `data`. Fragmented messages are reassembled before
-  they are returned, and control frames are surfaced rather than handled
-  silently, so the caller owns ping/pong/close policy. `nothing` means the
-  connection is finished. A frame larger than 16 MiB fails the connection with a
-  Close `1009` and returns an error.
-
-  A `poll` loop must call `wsNext` on a readable event even when nothing is
-  buffered yet, then drain any pipelined frames the reader already holds with
-  `wsBuffered(connection)`:
+- WebSockets upgrade a connection after its handshake request has been read:
+  `isWebSocket(connection)` reports whether the handshake has completed, and
+  `upgradeWebSocket(connection)` completes the RFC 6455 handshake on a buffered
+  request that asked to switch protocols. `wsSend(connection, op, data)` sends
+  one frame; `wsNext(connection)` advances the decoder and returns `1` when a
+  message is ready (read it with `wsMessage`, whose `op` is `WsOp.Text`,
+  `Binary`, `Ping`, `Pong`, or `Close` and whose `data` is the payload), `0` when
+  more bytes are needed (retry on the next `Readable` event), `2` when the peer
+  closed, and a negative status on a protocol or transport error. Fragmented
+  messages are reassembled before they are surfaced, and control frames are
+  surfaced rather than handled silently, so the caller owns ping/pong/close
+  policy. Decoding is non-blocking, so a partial frame from one peer cannot stall
+  other connections. A text message that is not valid UTF-8, a malformed close
+  frame, or a frame larger than 16 MiB fails the connection with the
+  corresponding Close code (`1007` / `1002` / `1009`).
 
   ```doxa
   const listener is std.http.listen(0) as int else 0
-  const connection is std.http.accept(listener) as int else 0
-  const request is std.http.readRequest(connection)
-  request as ServerRequest then {
-      std.http.upgradeWebSocket(connection)
-      var more is true
-      while more {
-          const next is std.http.wsNext(connection)
-          next as Message then {
-              const message is next
-              if message.op == std.http.WsOp.Text then {
-                  std.http.wsSend(connection, std.http.WsOp.Text, message.data)
-              } else if message.op == std.http.WsOp.Close then {
-                  std.http.wsSend(connection, std.http.WsOp.Close, message.data)
-                  more is false
-              }
-              if not std.http.wsBuffered(connection) then more is false
+  while true {
+      const events is std.http.poll(listener, 1000)
+      for i while i < @length(events) do i += 1 {
+          const event is events[i]
+          if event.kind == std.http.EventKind.Closed then {
+              std.http.close(event.handle)
           } else {
-              more is false
+              if not std.http.isWebSocket(event.handle) then {
+                  const status is std.http.readRequest(event.handle)
+                  if status == 1 then {
+                      std.http.upgradeWebSocket(event.handle)
+                  } else if status < 0 then {
+                      std.http.close(event.handle)
+                  }
+              }
+              if std.http.isWebSocket(event.handle) then {
+                  var reading is true
+                  while reading {
+                      const ws is std.http.wsNext(event.handle)
+                      if ws == 1 then {
+                          const message is std.http.wsMessage(event.handle)
+                          if message.op == std.http.WsOp.Text then {
+                              std.http.wsSend(event.handle, std.http.WsOp.Text, message.data)
+                          } else if message.op == std.http.WsOp.Close then {
+                              std.http.wsSend(event.handle, std.http.WsOp.Close, message.data)
+                              std.http.close(event.handle)
+                              reading is false
+                          }
+                      } else if ws == 2 or ws < 0 then {
+                          std.http.close(event.handle)
+                          reading is false
+                      } else {
+                          reading is false
+                      }
+                  }
+              }
           }
       }
   }
-  std.http.close(connection)
-  std.http.close(listener)
+  ```
+
+  Most servers only need the Go-flavoured sugar; the primitives above stay
+  public for full control:
+
+  - `wsAccept(connection)` completes the handshake once the request is buffered
+    and returns `true` once the connection is a WebSocket (it is a no-op after).
+    It returns `false` while the request is still incomplete.
+  - `wsRead(connection)` returns the next `Message`, `nothing` when none is
+    buffered yet or the peer closed, or an error on failure.
+  - `wsWrite(connection, op, data)` sends a frame with an explicit opcode;
+    `wsText`, `wsBinary`, `wsPing`, `wsPong` name the common kinds, and
+    `wsClose(connection)` sends a Close frame and drops the connection.
+
+  ```doxa
+  const listener is std.http.listen(0) as int else 0
+  while true {
+      const events is std.http.poll(listener, 1000)
+      for i while i < @length(events) do i += 1 {
+          const event is events[i]
+          if event.kind == std.http.EventKind.Closed then {
+              std.http.close(event.handle)
+          } else if std.http.wsAccept(event.handle) then {
+              var reading is true
+              while reading {
+                  const m is std.http.wsRead(event.handle)
+                  m as Message then {
+                      const message is m
+                      if message.op == std.http.WsOp.Text then {
+                          std.http.wsText(event.handle, "echo: {message.data}")
+                      } else if message.op == std.http.WsOp.Close then {
+                          std.http.wsClose(event.handle)
+                          reading is false
+                      }
+                  } else {
+                      reading is false
+                  }
+              }
+          }
+      }
+  }
   ```
 
 
