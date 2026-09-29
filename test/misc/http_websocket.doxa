@@ -1,0 +1,302 @@
+module std from "std/std.doxa"
+
+/* Bind both listeners before the declarations below: an imported module's types
+   become visible only after the first call into it, so `Message`, `WsOp`, and
+   `ServerRequest` resolve in the functions that follow. */
+const codec_listener is std.http.listen(0) as int else 0
+const codec_port is std.http.localAddr(codec_listener) as int else 0
+const oversize_listener is std.http.listen(0) as int else 0
+const oversize_port is std.http.localAddr(oversize_listener) as int else 0
+
+zig WsFixture {
+    const std = @import("std");
+
+    fn fixtureStateType() type {
+        return struct {
+            var thread: ?std.Thread = null;
+            var results: [5]std.atomic.Value(i64) = .{
+                .init(0), .init(0), .init(0), .init(0), .init(0),
+            };
+        };
+    }
+
+    fn sendRaw(stream: std.Io.net.Stream, bytes: []const u8) bool {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        var buffer: [1024]u8 = undefined;
+        var writer = stream.writer(io, &buffer);
+        writer.interface.writeAll(bytes) catch return false;
+        writer.interface.flush() catch return false;
+        return true;
+    }
+
+    fn sendUpgrade(stream: std.Io.net.Stream) bool {
+        const request =
+            "GET / HTTP/1.1\r\n" ++
+            "Host: 127.0.0.1\r\n" ++
+            "Upgrade: websocket\r\n" ++
+            "Connection: Upgrade\r\n" ++
+            "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" ++
+            "Sec-WebSocket-Version: 13\r\n" ++
+            "\r\n";
+        return sendRaw(stream, request);
+    }
+
+    fn readHandshake(reader: *std.Io.net.Stream.Reader) bool {
+        var head: [1024]u8 = undefined;
+        var n: usize = 0;
+        while (n < head.len) {
+            const byte = reader.interface.takeByte() catch return false;
+            head[n] = byte;
+            n += 1;
+            if (n >= 4 and head[n - 4] == '\r' and head[n - 3] == '\n' and
+                head[n - 2] == '\r' and head[n - 1] == '\n') break;
+        }
+        return std.mem.indexOf(u8, head[0..n], " 101 ") != null;
+    }
+
+    // Client-to-server frames must be masked (RFC 6455 section 5.3).
+    fn sendFrame(stream: std.Io.net.Stream, opcode: u8, fin: bool, payload: []const u8) bool {
+        const io = std.Io.Threaded.global_single_threaded.io();
+        var header: [14]u8 = undefined;
+        var header_len: usize = 2;
+        header[0] = (if (fin) @as(u8, 0x80) else @as(u8, 0)) | (opcode & 0x0f);
+        const len = payload.len;
+        if (len <= 125) {
+            header[1] = 0x80 | @as(u8, @intCast(len));
+        } else if (len <= 0xffff) {
+            header[1] = 0x80 | 126;
+            std.mem.writeInt(u16, header[2..4], @intCast(len), .big);
+            header_len = 4;
+        } else {
+            header[1] = 0x80 | 127;
+            std.mem.writeInt(u64, header[2..10], @intCast(len), .big);
+            header_len = 10;
+        }
+        const mask: [4]u8 = .{ 0x11, 0x22, 0x33, 0x44 };
+        @memcpy(header[header_len..][0..4], &mask);
+        header_len += 4;
+        var masked: [256]u8 = undefined;
+        if (len > masked.len) return false;
+        for (payload, 0..) |byte, i| masked[i] = byte ^ mask[i % 4];
+        var buffer: [1024]u8 = undefined;
+        var writer = stream.writer(io, &buffer);
+        writer.interface.writeAll(header[0..header_len]) catch return false;
+        writer.interface.writeAll(masked[0..len]) catch return false;
+        writer.interface.flush() catch return false;
+        return true;
+    }
+
+    // Declares a 17 MiB text frame and sends only the header: the payload is
+    // never needed because the server must reject on the declared length.
+    fn sendOversize(stream: std.Io.net.Stream) bool {
+        var header: [14]u8 = undefined;
+        header[0] = 0x81;
+        header[1] = 0x80 | 127;
+        std.mem.writeInt(u64, header[2..10], 17 * 1024 * 1024, .big);
+        const mask: [4]u8 = .{ 0, 0, 0, 0 };
+        @memcpy(header[10..14], &mask);
+        return sendRaw(stream, &header);
+    }
+
+    fn readFrame(reader: *std.Io.net.Stream.Reader, out: []u8) ?struct { opcode: u8, len: usize, close_code: u16 } {
+        const iface = &reader.interface;
+        const header = iface.takeArray(2) catch return null;
+        const opcode: u8 = header[0] & 0x0f;
+        const masked = (header[1] & 0x80) != 0;
+        var len: usize = header[1] & 0x7f;
+        if (len == 126) {
+            len = iface.takeInt(u16, .big) catch return null;
+        } else if (len == 127) {
+            const wide = iface.takeInt(u64, .big) catch return null;
+            len = std.math.cast(usize, wide) orelse return null;
+        }
+        var mask: [4]u8 = .{ 0, 0, 0, 0 };
+        if (masked) {
+            const m = iface.takeArray(4) catch return null;
+            mask = m.*;
+        }
+        if (len > out.len) return null;
+        const payload = iface.take(len) catch return null;
+        if (masked) {
+            for (payload, 0..) |*byte, i| byte.* ^= mask[i % 4];
+        }
+        @memcpy(out[0..len], payload);
+        var close_code: u16 = 0;
+        if (opcode == 8 and len >= 2) close_code = std.mem.readInt(u16, out[0..2], .big);
+        return .{ .opcode = opcode, .len = len, .close_code = close_code };
+    }
+
+    fn clientMain(port: i64, mode: i64) void {
+        const state = fixtureStateType();
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(@intCast(port)) };
+        const stream = address.connect(io, .{ .mode = .stream }) catch {
+            state.results[0].store(-1, .release);
+            return;
+        };
+        defer stream.close(io);
+        var read_buffer: [16 * 1024]u8 = undefined;
+        var reader = stream.reader(io, &read_buffer);
+        if (!sendUpgrade(stream)) {
+            state.results[0].store(-2, .release);
+            return;
+        }
+        if (!readHandshake(&reader)) {
+            state.results[0].store(-3, .release);
+            return;
+        }
+
+        var out: [256]u8 = undefined;
+        if (mode == 2) {
+            if (!sendOversize(stream)) {
+                state.results[4].store(-1, .release);
+                return;
+            }
+            if (readFrame(&reader, &out)) |frame| {
+                const ok = frame.opcode == 8 and frame.close_code == 1009;
+                state.results[4].store(if (ok) 1 else -1, .release);
+            } else {
+                state.results[4].store(-2, .release);
+            }
+            return;
+        }
+
+        if (!sendFrame(stream, 0x1, true, "hello")) {
+            state.results[0].store(-4, .release);
+            return;
+        }
+        if (readFrame(&reader, &out)) |frame| {
+            const ok = frame.opcode == 0x1 and std.mem.eql(u8, out[0..frame.len], "hello");
+            state.results[0].store(if (ok) 1 else -1, .release);
+        } else {
+            state.results[0].store(-5, .release);
+        }
+
+        _ = sendFrame(stream, 0x1, false, "foo");
+        _ = sendFrame(stream, 0x0, false, "bar");
+        _ = sendFrame(stream, 0x0, true, "baz");
+        if (readFrame(&reader, &out)) |frame| {
+            const ok = frame.opcode == 0x1 and std.mem.eql(u8, out[0..frame.len], "foobarbaz");
+            state.results[1].store(if (ok) 1 else -1, .release);
+        } else {
+            state.results[1].store(-2, .release);
+        }
+
+        _ = sendFrame(stream, 0x9, true, "hb");
+        if (readFrame(&reader, &out)) |frame| {
+            const ok = frame.opcode == 0xA and std.mem.eql(u8, out[0..frame.len], "hb");
+            state.results[2].store(if (ok) 1 else -1, .release);
+        } else {
+            state.results[2].store(-2, .release);
+        }
+
+        const close_payload = [2]u8{ 0x03, 0xE8 };
+        _ = sendFrame(stream, 0x8, true, &close_payload);
+        if (readFrame(&reader, &out)) |frame| {
+            state.results[3].store(if (frame.opcode == 0x8) 1 else -1, .release);
+        } else {
+            state.results[3].store(-2, .release);
+        }
+    }
+
+    pub fn start(port: i64, mode: i64) void {
+        const state = fixtureStateType();
+        for (0..5) |i| state.results[i].store(0, .release);
+        state.thread = std.Thread.spawn(.{}, clientMain, .{ port, mode }) catch null;
+    }
+
+    pub fn finish() i64 {
+        const state = fixtureStateType();
+        if (state.thread) |thread| {
+            thread.join();
+            state.thread = null;
+        }
+        var total: i64 = 0;
+        for (0..5) |i| total += state.results[i].load(.acquire);
+        return total;
+    }
+
+    pub fn resultAt(index: i64) i64 {
+        const state = fixtureStateType();
+        return state.results[@intCast(index)].load(.acquire);
+    }
+}
+
+/* Echo data frames, answer pings with pongs, and echo close. Returns true when
+   the connection should be considered finished. */
+function wsRespond(connection :: int, message :: Message) returns tetra {
+    if message.op == std.http.WsOp.Text or message.op == std.http.WsOp.Binary then {
+        std.http.wsSend(connection, message.op, message.data)
+        return false
+    }
+    if message.op == std.http.WsOp.Ping then {
+        std.http.wsSend(connection, std.http.WsOp.Pong, message.data)
+        return false
+    }
+    if message.op == std.http.WsOp.Close then {
+        std.http.wsSend(connection, std.http.WsOp.Close, message.data)
+        return true
+    }
+    return false
+}
+
+/* Drive the multiplexed poll loop until the peer closes, a protocol error
+   fails the connection, or the guard trips. A readable event means bytes are on
+   the socket, so the first `wsNext` must run even with nothing buffered yet;
+   after it returns, `wsBuffered` drains any pipelined frames. */
+function serve(listener :: int) returns int {
+    var served is 0
+    var done is false
+    var guard is 0
+    while not done and guard < 100 do guard += 1 {
+        const events is std.http.poll(listener, 500)
+        for i while i < @length(events) do i += 1 {
+            const event is events[i]
+            if event.kind == 3 then {
+                std.http.close(event.handle)
+            } else {
+                if event.kind == 1 then {
+                    const request is std.http.readRequest(event.handle)
+                    request as ServerRequest then {
+                        std.http.upgradeWebSocket(event.handle)
+                    } else {
+                        std.http.close(event.handle)
+                    }
+                }
+                var more is event.kind == 2
+                if std.http.wsBuffered(event.handle) then more is true
+                while more and not done {
+                    more is false
+                    const next is std.http.wsNext(event.handle)
+                    next as Message then {
+                        const message is next
+                        const stop is wsRespond(event.handle, message)
+                        served += 1
+                        if stop then done is true
+                        else if std.http.wsBuffered(event.handle) then more is true
+                    } else {
+                        done is true
+                    }
+                }
+            }
+        }
+    }
+    return served
+}
+
+WsFixture.start(codec_port, 1)
+const codec_served is serve(codec_listener)
+WsFixture.finish()
+std.http.close(codec_listener)
+@print("echo {WsFixture.resultAt(0)}\n")
+@print("fragmented {WsFixture.resultAt(1)}\n")
+@print("ping {WsFixture.resultAt(2)}\n")
+@print("close {WsFixture.resultAt(3)}\n")
+@print("served {codec_served}\n")
+
+WsFixture.start(oversize_port, 2)
+const oversize_served is serve(oversize_listener)
+WsFixture.finish()
+std.http.close(oversize_listener)
+@print("oversize {WsFixture.resultAt(4)}\n")
+@print("oversize served {oversize_served}\n")
