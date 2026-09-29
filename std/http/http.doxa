@@ -258,6 +258,13 @@ zig HTTP {
             head: []const u8 = "",
             body: []const u8 = "",
             keep_alive: bool = false,
+            is_websocket: bool = false,
+            ws_closed: bool = false,
+            ws_peer_closed: bool = false,
+            ws_frag_opcode: u4 = 0,
+            ws_frag: std.ArrayList(u8) = .empty,
+            ws_msg_op: i64 = 0,
+            ws_msg_data: []const u8 = "",
         };
     }
 
@@ -291,6 +298,7 @@ zig HTTP {
         freeOwned(&state.target);
         freeOwned(&state.head);
         freeOwned(&state.body);
+        state.ws_frag.deinit(std.heap.page_allocator);
         state.stream.close(httpIo());
         std.heap.page_allocator.destroy(state);
     }
@@ -364,6 +372,13 @@ zig HTTP {
         state.head = "";
         state.body = "";
         state.keep_alive = false;
+        state.is_websocket = false;
+        state.ws_closed = false;
+        state.ws_peer_closed = false;
+        state.ws_frag_opcode = 0;
+        state.ws_frag = .empty;
+        state.ws_msg_op = 0;
+        state.ws_msg_data = "";
         const connection_handle = allocHandle();
         serverStateType().connections.put(allocator, connection_handle, state) catch {
             state.stream.close(httpIo());
@@ -577,6 +592,259 @@ zig HTTP {
             return;
         };
         state.request = null;
+    }
+
+    // Server-side WebSockets. Zig ships the handshake (`respondWebSocket`) and
+    // the write half (`WebSocket.writeMessage`) but its `readSmallMessage` is
+    // single-frame, input-buffer-bounded, rejects fragmentation, and silently
+    // drops pongs, so the read path is a real frame codec here. Decoding draws
+    // from the connection's buffered reader, one message (or control frame) at
+    // a time; a fragmented message is reassembled in `ws_frag` up to the size
+    // cap before it is surfaced.
+    fn wsUnmask(payload: []u8, mask: u32) void {
+        const mask_bytes: [4]u8 = @bitCast(mask);
+        for (payload, 0..) |*byte, i| byte.* ^= mask_bytes[i % 4];
+    }
+
+    fn wsOpcodeFromCode(code: i64) ?std.http.Server.WebSocket.Opcode {
+        return switch (code) {
+            1 => .text,
+            2 => .binary,
+            8 => .connection_close,
+            9 => .ping,
+            10 => .pong,
+            else => null,
+        };
+    }
+
+    fn wsCodeFromOpcode(op: std.http.Server.WebSocket.Opcode) i64 {
+        return switch (op) {
+            .text => 1,
+            .binary => 2,
+            .connection_close => 8,
+            .ping => 9,
+            .pong => 10,
+            else => 0,
+        };
+    }
+
+    fn wsOf(state: *connectionStateType()) std.http.Server.WebSocket {
+        return .{
+            .key = "",
+            .input = state.server.reader.in,
+            .output = state.server.out,
+        };
+    }
+
+    fn wsWrite(state: *connectionStateType(), opcode: std.http.Server.WebSocket.Opcode, data: []const u8) !void {
+        var ws = wsOf(state);
+        try ws.writeMessage(data, opcode);
+    }
+
+    // Fail the WebSocket connection (RFC 6455 §7.1.7): emit a Close frame with
+    // the status code, then stop reading and writing.
+    fn wsFail(state: *connectionStateType(), code: u16) void {
+        var payload: [2]u8 = undefined;
+        std.mem.writeInt(u16, &payload, code, .big);
+        wsWrite(state, .connection_close, &payload) catch {};
+        state.ws_closed = true;
+    }
+
+    // The error set is spelled `anyerror` because the inline-Zig extractor only
+    // accepts scalar signatures on exported functions and its brace scanner
+    // cannot see an `error{...}` literal in a private signature; `wsNext` maps
+    // the concrete errors it expects and treats the rest as transport failures.
+    fn wsDecode(state: *connectionStateType()) anyerror!std.http.Server.WebSocket.Opcode {
+        const in = state.server.reader.in;
+        const max_message_size: usize = 16 * 1024 * 1024;
+        while (true) {
+            const header = try in.takeArray(2);
+            const h0: std.http.Server.WebSocket.Header0 = @bitCast(header[0]);
+            const h1: std.http.Server.WebSocket.Header1 = @bitCast(header[1]);
+
+            const is_control = switch (h0.opcode) {
+                .connection_close, .ping, .pong => true,
+                .continuation, .text, .binary => false,
+                else => return error.WsProtocol,
+            };
+            if (h0.rsv1 != 0 or h0.rsv2 != 0 or h0.rsv3 != 0) return error.WsProtocol;
+            if (!h1.mask) return error.WsProtocol;
+            if (is_control and !h0.fin) return error.WsProtocol;
+
+            const len: usize = switch (h1.payload_len) {
+                .len16 => try in.takeInt(u16, .big),
+                .len64 => std.math.cast(usize, try in.takeInt(u64, .big)) orelse return error.WsOversize,
+                else => @intFromEnum(h1.payload_len),
+            };
+            if (is_control and len > 125) return error.WsProtocol;
+
+            const pending: usize = if (h0.opcode == .continuation)
+                state.ws_frag.items.len + len
+            else
+                len;
+            if (pending > max_message_size) return error.WsOversize;
+
+            const mask: u32 = @bitCast((try in.takeArray(4)).*);
+            const payload = try in.take(len);
+            wsUnmask(payload, mask);
+
+            switch (h0.opcode) {
+                .continuation => {
+                    if (state.ws_frag_opcode == 0) return error.WsProtocol;
+                    try state.ws_frag.appendSlice(std.heap.page_allocator, payload);
+                    if (h0.fin) {
+                        state.ws_msg_data = state.ws_frag.items;
+                        const op: std.http.Server.WebSocket.Opcode =
+                            if (state.ws_frag_opcode == 1) .text else .binary;
+                        state.ws_frag_opcode = 0;
+                        return op;
+                    }
+                },
+                .text, .binary => {
+                    if (state.ws_frag_opcode != 0) return error.WsProtocol;
+                    if (h0.fin) {
+                        state.ws_msg_data = payload;
+                        return h0.opcode;
+                    }
+                    state.ws_frag.clearRetainingCapacity();
+                    try state.ws_frag.appendSlice(std.heap.page_allocator, payload);
+                    state.ws_frag_opcode = @intFromEnum(h0.opcode);
+                },
+                .ping, .pong, .connection_close => {
+                    state.ws_msg_data = payload;
+                    if (h0.opcode == .connection_close) state.ws_peer_closed = true;
+                    return h0.opcode;
+                },
+                else => return error.WsProtocol,
+            }
+        }
+    }
+
+    // Upgrade a request that asked to switch protocols to a WebSocket. The
+    // connection must hold a pending request from `readRequest`.
+    pub fn upgradeWebSocket(handle: i64) i64 {
+        clearLastError();
+        const state = connectionOf(handle) orelse {
+            setLastError(1);
+            return 1;
+        };
+        if (state.is_websocket) {
+            setLastError(1);
+            return 1;
+        }
+        const request = if (state.request) |*request| request else {
+            setLastError(1);
+            return 1;
+        };
+        const key = switch (request.upgradeRequested()) {
+            .websocket => |maybe_key| maybe_key orelse {
+                setLastError(1);
+                return 1;
+            },
+            else => {
+                setLastError(1);
+                return 1;
+            },
+        };
+        _ = request.respondWebSocket(.{ .key = key }) catch |err| {
+            setLastError(mapNetworkError(@errorName(err)));
+            return 1;
+        };
+        state.writer.interface.flush() catch |err| {
+            setLastError(mapNetworkError(@errorName(err)));
+            return 1;
+        };
+        state.is_websocket = true;
+        state.request = null;
+        return 0;
+    }
+
+    pub fn wsSend(handle: i64, op: i64, data: []const u8) void {
+        clearLastError();
+        const state = connectionOf(handle) orelse {
+            setLastError(1);
+            return;
+        };
+        if (!state.is_websocket or state.ws_closed) {
+            setLastError(1);
+            return;
+        }
+        const opcode = wsOpcodeFromCode(op) orelse {
+            setLastError(1);
+            return;
+        };
+        wsWrite(state, opcode, data) catch |err| {
+            setLastError(mapNetworkError(@errorName(err)));
+            return;
+        };
+    }
+
+    // Returns 1 when a message is ready (`wsMessageOp`/`wsMessageData`), 0 when
+    // the connection is finished (clean EOF or a peer close already reported),
+    // and -1 on protocol/transport failure with `takeLastErrorCode` set.
+    pub fn wsNext(handle: i64) i64 {
+        clearLastError();
+        const state = connectionOf(handle) orelse {
+            setLastError(1);
+            return -1;
+        };
+        if (!state.is_websocket) {
+            setLastError(1);
+            return -1;
+        }
+        if (state.ws_closed or state.ws_peer_closed) return 0;
+        const opcode = wsDecode(state) catch |err| switch (err) {
+            error.EndOfStream => {
+                state.ws_closed = true;
+                return 0;
+            },
+            error.WsOversize => {
+                wsFail(state, 1009);
+                setLastError(113);
+                return -1;
+            },
+            error.WsProtocol => {
+                wsFail(state, 1002);
+                setLastError(113);
+                return -1;
+            },
+            error.OutOfMemory => {
+                setLastError(2);
+                return -1;
+            },
+            error.ReadFailed => {
+                if (state.reader.err) |read_err| {
+                    setLastError(mapNetworkError(@errorName(read_err)));
+                } else {
+                    setLastError(114);
+                }
+                return -1;
+            },
+            else => {
+                setLastError(114);
+                return -1;
+            },
+        };
+        state.ws_msg_op = wsCodeFromOpcode(opcode);
+        return 1;
+    }
+
+    pub fn wsMessageOp(handle: i64) i64 {
+        const state = connectionOf(handle) orelse return 0;
+        return state.ws_msg_op;
+    }
+
+    pub fn wsMessageData(handle: i64) []const u8 {
+        const state = connectionOf(handle) orelse return "";
+        return state.ws_msg_data;
+    }
+
+    // Whether the connection's reader already holds undecoded bytes. A poll loop
+    // drains with this because a frame that arrived with (or pipelined behind)
+    // the handshake is already off the socket and invisible to `poll`.
+    pub fn wsBuffered(handle: i64) bool {
+        const state = connectionOf(handle) orelse return false;
+        return state.server.reader.in.bufferedLen() > 0;
     }
 
     pub fn close(handle: i64) void {
@@ -1280,6 +1548,82 @@ public function readRequest(connection :: int) returns ServerRequest | error.Std
 
 public function keepAlive(connection :: int) returns tetra {
     return HTTP.keepAlive(connection)
+}
+
+/* WebSocket frame kinds. The inline-Zig boundary only carries scalars, so the
+   codes crossing it are the RFC 6455 opcodes and `wsOpFromCode`/`wsOpCode`
+   translate to and from this enum. */
+public enum WsOp {
+    Text,
+    Binary,
+    Ping,
+    Pong,
+    Close,
+}
+
+/* One decoded WebSocket message. Data frames carry their payload; control
+   frames (ping/pong/close) are surfaced so the caller owns the policy. */
+public struct Message {
+    public op :: WsOp,
+    public data :: string,
+}
+
+function wsOpCode(op :: WsOp) returns int {
+    if op == WsOp.Text then return 1
+    if op == WsOp.Binary then return 2
+    if op == WsOp.Ping then return 9
+    if op == WsOp.Pong then return 10
+    return 8
+}
+
+function wsOpFromCode(code :: int) returns WsOp {
+    if code == 1 then return WsOp.Text
+    if code == 2 then return WsOp.Binary
+    if code == 9 then return WsOp.Ping
+    if code == 10 then return WsOp.Pong
+    return WsOp.Close
+}
+
+/* Complete the RFC 6455 handshake on an accepted connection whose pending
+   request asked to upgrade. Call after `readRequest`, before `wsSend`/`wsNext`. */
+public function upgradeWebSocket(connection :: int) returns error.StdError {
+    HTTP.upgradeWebSocket(connection)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+
+/* Send one WebSocket frame with `data` as its payload. */
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+    HTTP.wsSend(connection, wsOpCode(op), data)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+
+/* Read the next complete message. Fragmented messages are reassembled before
+   they are returned. `nothing` means the connection is finished (the peer
+   closed cleanly or a close frame was already reported); an error means the
+   connection failed. */
+public function wsNext(connection :: int) returns Message | nothing | error.StdError {
+    const status is HTTP.wsNext(connection)
+    const err is HTTP.takeLastErrorCode()
+    if err != 0 then return mapIOError(err)
+    if status == 0 then return nothing
+    const code is HTTP.wsMessageOp(connection)
+    const data is HTTP.wsMessageData(connection)
+    return $Message {
+        op is wsOpFromCode(code),
+        data is data,
+    }
+}
+
+/* Whether undecoded bytes are already buffered for the connection. A poll loop
+   uses `while std.http.wsBuffered(handle) { ... wsNext ... }` to drain frames
+   that arrived with (or pipelined behind) the handshake before waiting on
+   another readiness event. */
+public function wsBuffered(connection :: int) returns tetra {
+    return HTTP.wsBuffered(connection)
 }
 
 /* One readiness event from `poll`. `kind` is 1 for a freshly accepted

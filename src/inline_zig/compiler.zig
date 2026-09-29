@@ -346,10 +346,15 @@ pub fn compileInlineZigObjects(
             for (include_dirs) |dir| {
                 try args_list.append(try std.fmt.allocPrint(dir_arena.allocator(), "-I{s}", .{dir}));
             }
-            // A module that cImports C headers needs libc to resolve them.
-            if (std.mem.indexOf(u8, decl.zig_source, "@cImport") != null) {
-                try args_list.append("-lc");
-            }
+            // Every object linked into a Doxa program must be compiled with the
+            // same libc-ness as the runtime root object (`src/main.zig`, which
+            // passes `-lc`) and the final link (also `-lc`). Without this, an
+            // inline shim's `builtin.link_libc` is false while the program still
+            // links libc: `std.Thread` then selects `LinuxThreadImpl` and reads
+            // the uninitialized `std.os.linux.tls.area_desc` under glibc's
+            // startup, aborting on an invalid-alignment assertion. See
+            // `plan/libc-dependence.md`.
+            try args_list.append("-lc");
 
             var child = try std.process.spawn(io, .{
                 .argv = args_list.items,
