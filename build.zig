@@ -271,6 +271,16 @@ pub fn build(b: *std.Build) void {
     run_test_suites.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
     run_test_suites.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
 
+    // The suites spawn hundreds of `doxa` children for about a minute. Under
+    // load that can starve the `--listen=-` protocol roots above and trip the
+    // runner's 60s idle-response window ("test runner failed to respond"), even
+    // though every test passes. Serialize the protocol roots after the
+    // subprocess suite to remove the contention; if a serialized run ever flakes
+    // again, contention is ruled out and the next suspect is pipe/EOF teardown
+    // (see `plan/http.md`, Phase 0B remaining work).
+    run_test_suite.step.dependOn(&run_test_suites.step);
+    run_test_lsp.step.dependOn(&run_test_suites.step);
+
     const test_step = b.step("test", "Run all tests");
     if (can_run_target) {
         test_step.dependOn(&run_test_suite.step);
