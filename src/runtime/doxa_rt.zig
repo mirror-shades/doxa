@@ -1209,11 +1209,15 @@ fn structCloneScalarInto(scope: ?*scope_arena.Scope, word_count: usize, ptr: ?*a
     return @ptrCast(dst.ptr);
 }
 
-// TODO(A2 residue): array/struct rehome survives only for the latent mixed
-// Root/Deep phi; no corpus program emits a call. Remove this family
-// (`struct_scopes`, `ArrayHeader.scope`, `isEqualOrDescendant`,
-// `doxa_struct_rehome_*`, `doxa_array_rehome_*`) once that edge is resolved —
-// see plan/performance-upgrades.md, "A2 completion landing notes".
+// A2 residue: array/struct rehome survives for the one `Unknown` region source
+// — a phi that merges a Root and a Deep array/struct pointer. It is *live*,
+// not latent: `test/misc/expression_branch_merge.doxa` and
+// `test/misc/descriptor_skip.doxa` emit these calls on every test run, and the
+// root-aliasing identity the path preserves is load-bearing. Removing this
+// family (`struct_scopes`, `ArrayHeader.scope`, `isEqualOrDescendant`,
+// `doxa_struct_rehome_*`, `doxa_array_rehome_*`) is a semantic change to a live
+// path, not a cleanup — decide it with the user first. See
+// plan/performance-upgrades.md, "A2 completion landing notes".
 /// Like `structCloneInto`, but keep the original pointer when its allocating
 /// arena already outlives `scope` (same arena or an ancestor). That preserves
 /// identity for `each n in arr { n.field is ... }` — a snapshot clone would
@@ -1475,8 +1479,10 @@ pub export fn doxa_array_clone_root(hdr: ?*ArrayHeader) callconv(.c) *ArrayHeade
 /// only when storing across a scope boundary would otherwise leave a dangling
 /// header or backing buffer.
 ///
-/// TODO(A2 residue): see `structRehomeInto` — retained only for the latent mixed
-/// Root/Deep phi and unreachable from the corpus.
+/// A2 residue: see `structRehomeInto` — this array/struct rehome path is live,
+/// called for the mixed Root/Deep phi
+/// (`test/misc/expression_branch_merge.doxa`), and must not be mistaken for
+/// dead code. Removing it is a semantic change to identity preservation.
 fn arrayRehomeIn(scope: ?*scope_arena.Scope, hdr: ?*ArrayHeader) *ArrayHeader {
     const src = hdr orelse return arrayNewIn(scope, 8, 0, 0);
     if (scope_arena.isEqualOrDescendant(scope, src.scope)) return src;

@@ -323,6 +323,18 @@ const shared_cases = [_]Case{
             .{ .value = "bulk array ok" },
         },
     },
+    .{
+        .name = "http router",
+        .path = "./test/misc/http_router.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "root 1" },
+            .{ .value = "user 2 42" },
+            .{ .value = "post 3 7 99" },
+            .{ .value = "absent miss" },
+            .{ .value = "verb miss" },
+            .{ .value = "extra miss" },
+        },
+    },
     // Compile-only: a link smoke test that pulls in the HTTP runtime. It emits
     // no output; the assertion is that the artifact links and starts.
     .{
@@ -346,6 +358,16 @@ const shared_cases = [_]Case{
             .{ .value = "download streaming ok" },
             .{ .value = "download filename ok" },
             .{ .value = "download status ok" },
+        },
+    },
+    .{
+        .name = "http server",
+        .path = "./test/misc/http_server.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "accepts 1" },
+            .{ .value = "keep-alive requests ok" },
+            .{ .value = "accepts 3" },
+            .{ .value = "multiplex ok" },
         },
     },
     .{

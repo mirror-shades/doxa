@@ -206,7 +206,7 @@ pub fn Methods(comptime Ctx: type) type {
             const emitted_name = try self.functionSymbol(func);
             defer self.allocator.free(emitted_name);
 
-            const func_decl = try std.fmt.allocPrint(self.allocator, "define {s} @{s}({s}) {{\n", .{ return_type_str, emitted_name, params_str });
+            const func_decl = try std.fmt.allocPrint(self.allocator, "define {s} @{s}({s}){s} {{\n", .{ return_type_str, emitted_name, params_str, Ctx.function_attr_group });
             defer self.allocator.free(func_decl);
             try outer_w.writeAll(func_decl);
 
@@ -1415,7 +1415,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .{ .name = "forall_quantifier_eq", .runtime = "doxa_forall_quantifier_eq" },
             };
             for (wrappers) |wrap| {
-                const header = try std.fmt.allocPrint(self.allocator, "define i2 @{s}(ptr %hdr, ptr %value_ptr, i64 %value_len) {{\n", .{wrap.name});
+                const header = try std.fmt.allocPrint(self.allocator, "define i2 @{s}(ptr %hdr, ptr %value_ptr, i64 %value_len){s} {{\n", .{ wrap.name, Ctx.function_attr_group });
                 defer self.allocator.free(header);
                 try w.writeAll(header);
                 try w.writeAll("entry:\n");

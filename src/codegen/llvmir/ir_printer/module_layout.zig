@@ -614,6 +614,9 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(global_line);
                 }
             }
+
+            // Every `define` above references `#0`; emit its body once here.
+            try w.writeAll(Ctx.function_attr_block);
         }
 
         pub fn findFunctionsSectionStart(self: *IRPrinter, hir: *const HIR.HIRProgram, func_start_labels: *std.StringHashMap(bool)) usize {
@@ -651,7 +654,7 @@ pub fn Methods(comptime Ctx: type) type {
             peek_state: *PeekEmitState,
             entry_mangled_name: ?[]const u8,
         ) !void {
-            try outer_w.writeAll("define void @doxa_program_main() {\n");
+            try outer_w.writeAll("define void @doxa_program_main()" ++ Ctx.function_attr_group ++ " {\n");
             try outer_w.writeAll("entry:\n");
             try outer_w.writeAll("  %str_out_ptr = alloca ptr\n");
             try outer_w.writeAll("  %str_out_len = alloca i64\n");

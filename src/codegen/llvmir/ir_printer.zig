@@ -29,6 +29,15 @@ pub const IRPrinter = struct {
         pub const escapeLLVMString = Self.escapeLLVMString;
         pub const internPeekString = Self.internPeekString;
         pub const OverflowBehavior = Self.OverflowBehavior;
+
+        /// Function attributes every emitted `define` references. Clang's C
+        /// frontend emits `"tune-cpu"="generic"` when only the CPU model is
+        /// given (`-mcpu=native` selects features, not `-mtune`), so the `.ll`
+        /// backend path must name it too: otherwise the function inherits the
+        /// native tune model, whose loop unroller picks a pathological unroll
+        /// for some serial loops. Naming it keeps the two sides tuned alike.
+        pub const function_attr_group = " #0";
+        pub const function_attr_block = "\nattributes #0 = { \"tune-cpu\"=\"generic\" }\n";
     };
 
     const CoreMethods = @import("./ir_printer/core.zig").Methods(Ctx);
