@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Doxa WebSocket echo</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 2rem; max-width: 40rem; }
+      code { background: #eee; padding: 0.1rem 0.3rem; }
+      #log { background: #111; color: #0f0; padding: 1rem; min-height: 8rem; }
+    </style>
+  </head>
+  <body>
+    <h1>Doxa WebSocket echo</h1>
+    <p>Start the server with <code>doxa run demo/ws/echo.doxa</code>.</p>
+    <input id="message" value="hello from the browser" size="40" />
+    <button id="send">Send</button>
+    <pre id="log"></pre>
+    <script>
+      const log = (line) => {
+        document.getElementById("log").textContent += line + "\n";
+      };
+
+      const socket = new WebSocket("ws://127.0.0.1:8765");
+      socket.onopen = () => log("connected");
+      socket.onmessage = (event) => log("echo: " + event.data);
+      socket.onclose = () => log("closed");
+
+      const send = () => socket.send(document.getElementById("message").value);
+      document.getElementById("send").onclick = send;
+      document.getElementById("message").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") send();
+      });
+    </script>
+  </body>
+</html>
