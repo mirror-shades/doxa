@@ -209,7 +209,7 @@ Read against sections 3 and 4, this table is exactly the model's story:
   13-point move, past this row's own 9.69 same-build spread and the only comparable row that crosses
   that bar — while both twins stayed frozen in between (C 1.029 → 0.966s, Doxa 1.022 → 1.155s). That
   is a cross-session shift, not the same-build noise the note below accounts for; attribution
-  (zig 0.16.0 toolchain vs doxa codegen) is tracked in the plan's START HERE list.
+  was resolved as the target confound (see §6), not a codegen shift.
   Removing the VM replaced a boxed, tag-dispatching value pipeline with typed SSA — the same change
   section 3 describes, applied program-wide.
 - **`struct`** was the last workload still paying a section-4 cost, and no longer does. Its object
@@ -236,14 +236,15 @@ Read against sections 3 and 4, this table is exactly the model's story:
   loop-carried accumulator. In this 2026-09-27 campaign it sat at +14.10% mean (+12.16 … +15.44).
   The loop-carried / interprocedural range analysis (§6-D) now discharges the correction: it proves
   `sum >= 0` across the loop *and* the opaque `leaf_add(i, …)` call, and the emitted IR shows a single
-  `urem` with no sign fixup. **Caveat on the numbers.** A first 2026-09-28 reading put `call` at
-  −18.76%, but that campaign (like every row above) compiled C for the native CPU (AVX2) and Doxa for
-  baseline x86-64 (SSE2) — a benchmark bug, corrected the same day by compiling both for the host CPU
-  (§6). Re-baselined native-vs-native, `call` is **+7.06%** (Doxa 1.2190s, C 1.1387s): the correction
-  is gone, but at AVX2 clang generates a ~1.8× larger inner loop for Doxa's IR, which costs more than
-  it saves. The same correction changes every other row too — most dramatically `arr`, which was
-  +13.55% under the confound and is **−1.29%** at target parity. The table above is left as the
-  2026-09-27 snapshot; §6 records both the fix and the corrected figures.
+  `urem` with no sign fixup. The row's residual **+7.06%** (after the 2026-09-28 target fix; the
+  first −18.76% reading was the AVX2/SSE2 confound) turned out to be a *second* benchmark confound,
+  not codegen: C's clang IR pins `"tune-cpu"="generic"` while Doxa's `.ll` carried no target
+  attributes, so the `.ll` path inherited the native tune model, whose unroller sized this serial loop
+  8× and spilled where generic sizes it 2×. The emitter now pins `"tune-cpu"="generic"` on every
+  function (§6); `call` measures **−17.9%** vs C, so D-1b's `urem` win is finally visible. The same
+  correction changes every other row too — most dramatically `arr`, which was +13.55% under the
+  original confound and is **−1.29%** at target parity. The table above is left as the 2026-09-27
+  snapshot; §6 records both fixes and the corrected figures.
 
 **On reading this table.** The percentages are means over six same-build runs, and the range column
 *is* the measurement's noise floor: same binary, same source, nothing recompiled between runs — yet
@@ -344,11 +345,14 @@ accumulator updated by an opaque `leaf_add(i, …)` call, so its sign needed two
 single linear walk could not produce. `range_flow.zig` adds an abstract stack-machine interpreter
 with a widened fixpoint over each loop body and return-range summaries for straight-line callees; it
 proves `sum >= 0` and the `% 997` collapses to a single `urem`. The optimization is real (the C twin's
-truncating `%` keeps the correction clang cannot discharge), but its measured payoff depends on the
-target: under the pre-fix confounded builds it read −18.76%, and at target parity (`-mcpu=native`,
-§6) it is **+7.06%**, because AVX2 codegen roughly doubles the inner loop's size for Doxa's IR. The
-analysis itself is partial and falls back to the old behavior for anything it does not model, so it
-can only ever be additive.
+truncating `%` keeps the correction clang cannot discharge). Its first measured payoff read −18.76%
+under the pre-fix confounded builds, then **+7.06%** at target parity (`-mcpu=native`, §6) — but that
+residual was a second confound, not codegen: C's clang IR pins `"tune-cpu"="generic"`, Doxa's `.ll`
+carried no target attributes, and the resulting native tune made the loop unroller size this serial
+carry chain 8× with spills instead of 2×. The emitter now emits
+`attributes #0 = { "tune-cpu"="generic" }` and every `define` references it, matching clang's
+frontend convention; `call` measures **−17.9%** vs C. The analysis itself is partial and falls back
+to the old behavior for anything it does not model, so it can only ever be additive.
 
 The same range lattice is what the remaining arithmetic switches consume: D-1 skips an overflow trap
 whenever the operand bounds prove the result fits, and D-3 wants the same upper bound to prove an
@@ -365,7 +369,8 @@ imports.
 Each step compounds the ones before it: region analysis (A) decides *where* values live, type-directed
 storage (B) decides *how* they are laid out, visibility (C) hands both to LLVM, and the static
 switches (D) stop the model's defined behavior from costing anything. The `struct` gap — the B/C
-canary — is now closed at parity with its corrected C twin; `call` remains the open canary for D.
+canary — is closed at parity with its corrected C twin, and `call` (the D canary) is now below C
+after the `tune-cpu` fix.
 
 ---
 
