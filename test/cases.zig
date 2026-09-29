@@ -371,6 +371,19 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "http websocket",
+        .path = "./test/misc/http_websocket.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "echo 1" },
+            .{ .value = "fragmented 1" },
+            .{ .value = "ping 1" },
+            .{ .value = "close 1" },
+            .{ .value = "served 4" },
+            .{ .value = "oversize 1" },
+            .{ .value = "oversize served 0" },
+        },
+    },
+    .{
         .name = "logic",
         .path = "./test/misc/logic.doxa",
         .mode = .peek,
