@@ -1390,7 +1390,7 @@ const SCAFFOLD_BUILD =
     \\c.debug is false
     \\c.optimization is build.Optimization.Speed
     \\
-    \\var exe is build.Builder.executable("app", "src/main.doxa", "bin/app")
+    \\var exe is build.Executable.new("app", "src/main.doxa", "bin/app")
     \\
     \\c.addArtifact(exe)
     \\

@@ -25,6 +25,7 @@ Doxa is a simple to write, highly readible language based on four corned logical
 - [Methods and intrinsics](methods.md) — `@` intrinsics
 - [Groups](groups.md) — named tagged unions of enums, structs, and other groups
 - [Standard Library](stdlib.md) — standard library functions
+- [Standard Library API](stdlib-api.md) — generated reference for every public `std` declaration
 - [Structs](struct.md) — composition-based records, visibility, and `$` construction
 - [Tetras](tetras.md) — four-valued logic in place of booleans
 - [Typed unions](unions.md) — `A | B` unions and narrowing
