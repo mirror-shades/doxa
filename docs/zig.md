@@ -91,6 +91,12 @@ that meets a 64-bit length slot is widened or narrowed with `@intCast` /
   scope, and no free hook. Codegen tags the result with that call-site region
   rather than `Root`.
 - Non-string returns cross by value.
+- A module may keep **process-lifetime Zig-owned state** (the `std.json` node
+  table, the `std.http` client and connection tables) provided it never retains
+  a Doxa arena pointer across calls: values crossing in are borrowed for the
+  call, copied with an owned allocation if they must outlive it, and every owned
+  buffer is released explicitly, since arena scopes do not cover Zig-owned
+  memory.
 
 ### Error model
 

@@ -49,16 +49,17 @@ else {
 - `Request.new()` creates request settings with an empty `headers` array and
   defaults of a 30-second response-read timeout and three followed redirects.
   Each header entry is a `"Name: value"` string. Set `body`, `timeout_ms`, or
-  `max_redirects` on the request before calling `request(method, url, req)`.
-  `post(url, req)`, `put(url, req)`, `delete(url, req)`, and `head(url, req)` are
-  thin method-specific wrappers; `request` also accepts `"GET"`.
+  `max_redirects` on the request before calling `request(method, url, ^req)`.
+  `post(url, ^req)`, `put(url, ^req)`, `delete(url, ^req)`, and `head(url, ^req)`
+  are thin method-specific wrappers; `request` also accepts `"GET"`. The request
+  is borrowed with `^` so its `headers` array is not deep-copied per call.
 
   ```doxa
   var req is std.http.Request.new()
   req.body is "hello"
   @push(req.headers, "Content-Type: text/plain")
   @push(req.headers, "X-Trace: demo")
-  const response is std.http.post("https://example.com/submit", req)
+  const response is std.http.post("https://example.com/submit", ^req)
   ```
 - `Response.statusCode()`, `body()`, `header(name)`, and `hasHeader(name)` are
   accessors. `header` returns every matching value in order and compares names
@@ -102,11 +103,13 @@ else {
 
 - `poll(listener, timeout_ms)` waits across the listener and every live
   connection at once and returns `Event[]`. Each `Event` carries a connection
-  `handle` and a `kind`: `1` a freshly accepted connection, `2` readable data,
-  and `3` a peer that closed or errored. `timeout_ms == 0` polls immediately
-  and a negative value blocks until an event; closing the listener is the way
-  to stop a loop. A server serves many keep-alive clients without blocking on
-  any one connection by polling instead of calling `accept` directly:
+  `handle` and a `kind :: EventKind`: `Accepted` for a freshly accepted
+  connection, `Readable` for data to read, and `Closed` for a peer that closed
+  or errored. `timeout_ms == 0` polls immediately and a negative value blocks
+  until an event; closing the listener is the way to stop a loop. There is no
+  fixed connection ceiling. A server serves many keep-alive clients without
+  blocking on any one connection by polling instead of calling `accept`
+  directly:
 
   ```doxa
   const listener is std.http.listen(0) as int else 0
@@ -114,7 +117,7 @@ else {
       const events is std.http.poll(listener, 1000)
       for i while i < @length(events) do i += 1 {
           const event is events[i]
-          if event.kind == 3 then {
+          if event.kind == std.http.EventKind.Closed then {
               std.http.close(event.handle)
           } else {
               const request is std.http.readRequest(event.handle)
@@ -131,7 +134,7 @@ else {
 
 - `Router` matches request paths to integer route ids as data:
   `Router.new()`, `add(verb, pattern, id)`, and
-  `route(router, verb, path) → Route | nothing`. A pattern segment written
+  `route(^router, verb, path) → Route | nothing`. A pattern segment written
   `:name` captures the matching path segment, and `Route.param(name)` reads the
   capture. Matching is exact per segment and verb, so `/users/:id` matches
   `/users/42` with `param("id") == "42"`, but not `/users/42/posts` or a
@@ -142,7 +145,7 @@ else {
   var router is std.http.Router.new()
   router.add("GET", "/users/:id", 1)
 
-  const matched is std.http.route(router, "GET", "/users/42")
+  const matched is std.http.route(^router, "GET", "/users/42")
   matched as Route then {
       const id is matched.param("id") as string else ""
       @print("user {id}\n")
