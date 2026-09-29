@@ -3,13 +3,13 @@ module std from "std/std.doxa"
 zig Fixture {
     const std = @import("std");
 
+    // Room for the >64-connection phase, which exists to pin the removal of the
+    // old fixed 64-slot poll cap.
     fn fixtureStateType() type {
         return struct {
-            var threads: [3]?std.Thread = .{ null, null, null };
+            var threads: [70]?std.Thread = undefined;
             var count: usize = 0;
-            var results: [3]std.atomic.Value(i64) = .{
-                .init(0), .init(0), .init(0),
-            };
+            var results: [70]std.atomic.Value(i64) = undefined;
         };
     }
 
@@ -64,13 +64,64 @@ zig Fixture {
     pub fn startClients(port: i64, count: i64) void {
         const state = fixtureStateType();
         state.count = @intCast(count);
-        for (0..3) |i| {
+        for (0..state.threads.len) |i| {
             state.threads[i] = null;
             state.results[i].store(0, .release);
         }
         for (0..state.count) |i| {
             state.threads[i] = std.Thread.spawn(.{}, clientMain, .{ i, port }) catch null;
         }
+    }
+
+    // A raw-client probe for `Expect: 100-continue`. The server must answer the
+    // interim `100 Continue` and still read the body instead of aborting on the
+    // old `readerExpectNone` assertion. The request asks to close so the read
+    // reaches EOF once the server has responded.
+    fn expectClientMain(port: i64) void {
+        const state = fixtureStateType();
+        const io = std.Io.Threaded.global_single_threaded.io();
+        const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(@intCast(port)) };
+        const stream = address.connect(io, .{ .mode = .stream }) catch {
+            state.results[0].store(-1, .release);
+            return;
+        };
+        defer stream.close(io);
+        const request =
+            "POST /echo HTTP/1.1\r\n" ++
+            "Host: 127.0.0.1\r\n" ++
+            "Content-Length: 5\r\n" ++
+            "Connection: close\r\n" ++
+            "Expect: 100-continue\r\n" ++
+            "\r\n" ++
+            "hello";
+        var write_buffer: [1024]u8 = undefined;
+        var writer = stream.writer(io, &write_buffer);
+        writer.interface.writeAll(request) catch {
+            state.results[0].store(-2, .release);
+            return;
+        };
+        writer.interface.flush() catch {
+            state.results[0].store(-3, .release);
+            return;
+        };
+        var read_buffer: [1024]u8 = undefined;
+        var reader = stream.reader(io, &read_buffer);
+        var collected: std.array_list.Aligned(u8, .of(u8)) = .empty;
+        defer collected.deinit(std.heap.page_allocator);
+        reader.interface.appendRemaining(std.heap.page_allocator, &collected, .limited(4096)) catch {};
+        const text = collected.items;
+        const has_continue = std.mem.indexOf(u8, text, "100 Continue") != null;
+        const has_ok = std.mem.indexOf(u8, text, "200 OK") != null;
+        const has_body = std.mem.indexOf(u8, text, "hello") != null;
+        state.results[0].store(if (has_continue and has_ok and has_body) 1 else -4, .release);
+    }
+
+    pub fn startExpectClient(port: i64) void {
+        const state = fixtureStateType();
+        state.threads[0] = null;
+        state.count = 1;
+        state.results[0].store(0, .release);
+        state.threads[0] = std.Thread.spawn(.{}, expectClientMain, .{port}) catch null;
     }
 
     pub fn finishClients() i64 {
@@ -97,16 +148,16 @@ function serve(listener :: int, total :: int) returns int {
     var served is 0
     var accepts is 0
     var guard is 0
-    while served < total and guard < 60 do guard += 1 {
+    while served < total and guard < total * 4 + 200 do guard += 1 {
         const events is std.http.poll(listener, 500)
         for i while i < @length(events) do i += 1 {
             const event is events[i]
-            if event.kind == 1 or event.kind == 2 then {
-                if event.kind == 1 then accepts += 1
+            if event.kind == std.http.EventKind.Accepted or event.kind == std.http.EventKind.Readable then {
+                if event.kind == std.http.EventKind.Accepted then accepts += 1
                 const request is std.http.readRequest(event.handle)
                 request as ServerRequest then {
                     const incoming is request
-                    const matched is std.http.route(router, incoming.verb, incoming.target)
+                    const matched is std.http.route(^router, incoming.verb, incoming.target)
                     matched as Route then {
                         const route is matched
                         if route.id == 1 then {
@@ -130,6 +181,32 @@ function serve(listener :: int, total :: int) returns int {
     return served
 }
 
+/* Serve one request that carries `Expect: 100-continue`, echoing its body, then
+   close the connection so the raw client's read reaches EOF. */
+function serveExpect(listener :: int) returns int {
+    var served is 0
+    var guard is 0
+    while served < 1 and guard < 60 do guard += 1 {
+        const events is std.http.poll(listener, 500)
+        for i while i < @length(events) do i += 1 {
+            const event is events[i]
+            if event.kind == std.http.EventKind.Accepted or event.kind == std.http.EventKind.Readable then {
+                const request is std.http.readRequest(event.handle)
+                request as ServerRequest then {
+                    const incoming is request
+                    std.http.respond(event.handle, 200, "Content-Type: text/plain\u{d}\u{a}", incoming.body_text)
+                    served += 1
+                } else {
+                }
+                std.http.close(event.handle)
+            } else {
+                std.http.close(event.handle)
+            }
+        }
+    }
+    return served
+}
+
 const first_listener is std.http.listen(0) as int else 0
 const first_port is std.http.localAddr(first_listener) as int else 0
 Fixture.startClients(first_port, 1)
@@ -147,3 +224,23 @@ const second_clients is Fixture.finishClients()
 std.http.close(second_listener)
 if second_served == 9 and second_clients == 3 then @print("multiplex ok\n")
 else @print("multiplex failed served={second_served} clients={second_clients}\n")
+
+const expect_listener is std.http.listen(0) as int else 0
+const expect_port is std.http.localAddr(expect_listener) as int else 0
+Fixture.startExpectClient(expect_port)
+const expect_served is serveExpect(expect_listener)
+const expect_clients is Fixture.finishClients()
+std.http.close(expect_listener)
+if expect_served == 1 and expect_clients == 1 then @print("expect continue ok\n")
+else @print("expect continue failed served={expect_served} clients={expect_clients}\n")
+
+/* More than the old fixed 64-slot poll cap: 70 concurrent clients, three
+   keep-alive requests each. */
+const many_listener is std.http.listen(0) as int else 0
+const many_port is std.http.localAddr(many_listener) as int else 0
+Fixture.startClients(many_port, 70)
+const many_served is serve(many_listener, 210)
+const many_clients is Fixture.finishClients()
+std.http.close(many_listener)
+if many_served == 210 and many_clients == 70 then @print("many connections ok\n")
+else @print("many connections failed served={many_served} clients={many_clients}\n")

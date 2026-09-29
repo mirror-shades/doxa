@@ -310,8 +310,10 @@ zig HTTP {
         if (std.mem.eql(u8, err_name, "Timeout")) return 115;
         if (std.mem.eql(u8, err_name, "InvalidAddress") or
             std.mem.eql(u8, err_name, "InvalidPort") or
-            std.mem.eql(u8, err_name, "AddressFamilyUnsupported")) return 1;
+            std.mem.eql(u8, err_name, "AddressFamilyUnsupported") or
+            std.mem.eql(u8, err_name, "HttpExpectationFailed")) return 1;
         if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
+        if (std.mem.eql(u8, err_name, "WriteFailed")) return 107;
         return 114;
     }
 
@@ -453,7 +455,14 @@ zig HTTP {
         };
         freeOwned(&state.body);
         var transfer_buffer: [16 * 1024]u8 = undefined;
-        const body_reader = request.readerExpectNone(&transfer_buffer);
+        // `readerExpectContinue` answers `Expect: 100-continue` (writing the
+        // interim response) and is a no-op when the header is absent. Using
+        // `readerExpectNone` here asserted `head.expect == null`, so any client
+        // that sent the header aborted the process under runtime safety.
+        const body_reader = request.readerExpectContinue(&transfer_buffer) catch |err| {
+            setLastError(mapNetworkError(@errorName(err)));
+            return "";
+        };
         var collected: std.array_list.Aligned(u8, .of(u8)) = .empty;
         defer collected.deinit(std.heap.page_allocator);
         body_reader.appendRemaining(std.heap.page_allocator, &collected, .limited(1024 * 1024)) catch |err| {
@@ -475,14 +484,27 @@ zig HTTP {
     // Route-pattern matching. The Router itself is Doxa data (verbs, patterns,
     // ids); only the pattern/path segmentation lives here, where splitting a
     // string is a library call rather than a hand-rolled scan. Captures are
-    // stashed in process-lifetime cells and drained by the Doxa matcher before
-    // the next call, mirroring the take-and-clear idiom used elsewhere.
+    // copied into process-lifetime cells and drained by the Doxa matcher before
+    // the next call, mirroring the take-and-clear idiom used elsewhere. The
+    // copies are load-bearing: the cells must never alias the caller's arena
+    // strings, which the memory model forbids for process-lifetime state.
     fn routeStateType() type {
         return struct {
-            var param_names: [32][]const u8 = undefined;
-            var param_values: [32][]const u8 = undefined;
-            var param_count: usize = 0;
+            var param_names: std.ArrayList([]const u8) = .empty;
+            var param_values: std.ArrayList([]const u8) = .empty;
         };
+    }
+
+    fn freeCapture(bytes: []const u8) void {
+        if (bytes.len != 0) std.heap.page_allocator.free(@constCast(bytes));
+    }
+
+    fn clearRouteCaptures() void {
+        const state = routeStateType();
+        for (state.param_names.items) |name| freeCapture(name);
+        for (state.param_values.items) |value| freeCapture(value);
+        state.param_names.clearRetainingCapacity();
+        state.param_values.clearRetainingCapacity();
     }
 
     fn segmentEnd(text: []const u8, start: usize) usize {
@@ -494,9 +516,10 @@ zig HTTP {
     // A `:name` segment captures the corresponding path segment as `name`.
     // `{}` is deliberately avoided: Doxa string literals interpolate on `{`,
     // so a brace-delimited placeholder could never be written literally.
+    // Returns 1 on match, 0 on mismatch, and -1 on OOM.
     pub fn matchPattern(pattern: []const u8, path: []const u8) i64 {
+        clearRouteCaptures();
         const state = routeStateType();
-        state.param_count = 0;
         var p: usize = 0;
         var q: usize = 0;
         while (true) {
@@ -505,10 +528,22 @@ zig HTTP {
             const p_segment = pattern[p..p_end];
             const q_segment = path[q..q_end];
             if (p_segment.len >= 2 and p_segment[0] == ':') {
-                if (state.param_count >= state.param_names.len) return 0;
-                state.param_names[state.param_count] = p_segment[1..];
-                state.param_values[state.param_count] = q_segment;
-                state.param_count += 1;
+                const name = copyToPage(p_segment[1..]) orelse return -1;
+                const value = copyToPage(q_segment) orelse {
+                    freeCapture(name);
+                    return -1;
+                };
+                state.param_names.append(std.heap.page_allocator, name) catch {
+                    freeCapture(name);
+                    freeCapture(value);
+                    return -1;
+                };
+                state.param_values.append(std.heap.page_allocator, value) catch {
+                    _ = state.param_names.pop();
+                    freeCapture(name);
+                    freeCapture(value);
+                    return -1;
+                };
             } else if (!std.mem.eql(u8, p_segment, q_segment)) {
                 return 0;
             }
@@ -521,23 +556,23 @@ zig HTTP {
     }
 
     pub fn paramCount() i64 {
-        return @intCast(routeStateType().param_count);
+        return @intCast(routeStateType().param_names.items.len);
     }
 
     pub fn paramNameAt(index: i64) []const u8 {
         if (index < 0) return "";
         const state = routeStateType();
         const i: usize = @intCast(index);
-        if (i >= state.param_count) return "";
-        return state.param_names[i];
+        if (i >= state.param_names.items.len) return "";
+        return state.param_names.items[i];
     }
 
     pub fn paramValueAt(index: i64) []const u8 {
         if (index < 0) return "";
         const state = routeStateType();
         const i: usize = @intCast(index);
-        if (i >= state.param_count) return "";
-        return state.param_values[i];
+        if (i >= state.param_values.items.len) return "";
+        return state.param_values.items[i];
     }
 
 
@@ -606,6 +641,29 @@ zig HTTP {
         for (payload, 0..) |*byte, i| byte.* ^= mask_bytes[i % 4];
     }
 
+    // Append a frame's `len` payload bytes to `dest`, unmasking in place. Reading
+    // chunk-by-chunk keeps every `take` within the reader's buffer capacity, so a
+    // frame (or fragment) larger than the 16 KiB read buffer no longer trips the
+    // `Reader.take` assertion the way a single `take(len)` did.
+    fn wsAppendPayload(
+        in: *std.Io.Reader,
+        dest: *std.ArrayList(u8),
+        len: usize,
+        mask: u32,
+    ) (std.Io.Reader.Error || std.mem.Allocator.Error)!void {
+        const mask_bytes: [4]u8 = @bitCast(mask);
+        var remaining = len;
+        var offset: usize = 0;
+        while (remaining > 0) {
+            const chunk_len = @min(remaining, 4096);
+            const chunk = try in.take(chunk_len);
+            for (chunk, 0..) |*byte, i| byte.* ^= mask_bytes[(offset + i) % 4];
+            try dest.appendSlice(std.heap.page_allocator, chunk);
+            offset += chunk_len;
+            remaining -= chunk_len;
+        }
+    }
+
     fn wsOpcodeFromCode(code: i64) ?std.http.Server.WebSocket.Opcode {
         return switch (code) {
             1 => .text,
@@ -650,11 +708,10 @@ zig HTTP {
         state.ws_closed = true;
     }
 
-    // The error set is spelled `anyerror` because the inline-Zig extractor only
-    // accepts scalar signatures on exported functions and its brace scanner
-    // cannot see an `error{...}` literal in a private signature; `wsNext` maps
-    // the concrete errors it expects and treats the rest as transport failures.
-    fn wsDecode(state: *connectionStateType()) anyerror!std.http.Server.WebSocket.Opcode {
+    // A concrete error set: the reader/allocator errors the frame read can
+    // produce, plus the two protocol failures `wsNext` reports. The extractor
+    // handles the `error{...}` literal in a private signature.
+    fn wsDecode(state: *connectionStateType()) (std.Io.Reader.Error || std.mem.Allocator.Error || error{ WsProtocol, WsOversize })!std.http.Server.WebSocket.Opcode {
         const in = state.server.reader.in;
         const max_message_size: usize = 16 * 1024 * 1024;
         while (true) {
@@ -685,13 +742,11 @@ zig HTTP {
             if (pending > max_message_size) return error.WsOversize;
 
             const mask: u32 = @bitCast((try in.takeArray(4)).*);
-            const payload = try in.take(len);
-            wsUnmask(payload, mask);
 
             switch (h0.opcode) {
                 .continuation => {
                     if (state.ws_frag_opcode == 0) return error.WsProtocol;
-                    try state.ws_frag.appendSlice(std.heap.page_allocator, payload);
+                    try wsAppendPayload(in, &state.ws_frag, len, mask);
                     if (h0.fin) {
                         state.ws_msg_data = state.ws_frag.items;
                         const op: std.http.Server.WebSocket.Opcode =
@@ -702,15 +757,17 @@ zig HTTP {
                 },
                 .text, .binary => {
                     if (state.ws_frag_opcode != 0) return error.WsProtocol;
+                    state.ws_frag.clearRetainingCapacity();
+                    try wsAppendPayload(in, &state.ws_frag, len, mask);
                     if (h0.fin) {
-                        state.ws_msg_data = payload;
+                        state.ws_msg_data = state.ws_frag.items;
                         return h0.opcode;
                     }
-                    state.ws_frag.clearRetainingCapacity();
-                    try state.ws_frag.appendSlice(std.heap.page_allocator, payload);
                     state.ws_frag_opcode = @intFromEnum(h0.opcode);
                 },
                 .ping, .pong, .connection_close => {
+                    const payload = try in.take(len);
+                    wsUnmask(payload, mask);
                     state.ws_msg_data = payload;
                     if (h0.opcode == .connection_close) state.ws_peer_closed = true;
                     return h0.opcode;
@@ -820,10 +877,6 @@ zig HTTP {
                 }
                 return -1;
             },
-            else => {
-                setLastError(114);
-                return -1;
-            },
         };
         state.ws_msg_op = wsCodeFromOpcode(opcode);
         return 1;
@@ -869,32 +922,29 @@ zig HTTP {
     // closed or errored. The loop owns the wait; Doxa only drains `Event[]`.
     fn eventStateType() type {
         return struct {
-            var handles: [64]i64 = undefined;
-            var kinds: [64]i64 = undefined;
-            var count: usize = 0;
+            var handles: std.ArrayList(i64) = .empty;
+            var kinds: std.ArrayList(i64) = .empty;
         };
     }
 
     pub fn eventCount() i64 {
-        return @intCast(eventStateType().count);
+        return @intCast(eventStateType().handles.items.len);
     }
 
     pub fn eventHandle(index: i64) i64 {
         if (index < 0 or index >= eventCount()) return 0;
-        return eventStateType().handles[@intCast(index)];
+        return eventStateType().handles.items[@intCast(index)];
     }
 
     pub fn eventKind(index: i64) i64 {
         if (index < 0 or index >= eventCount()) return 0;
-        return eventStateType().kinds[@intCast(index)];
+        return eventStateType().kinds.items[@intCast(index)];
     }
 
     fn pushEvent(handle: i64, kind: i64) void {
         const state = eventStateType();
-        if (state.count >= state.handles.len) return;
-        state.handles[state.count] = handle;
-        state.kinds[state.count] = kind;
-        state.count += 1;
+        state.handles.append(std.heap.page_allocator, handle) catch return;
+        state.kinds.append(std.heap.page_allocator, kind) catch return;
     }
 
     // Each socket is polled through the Threaded backend's own APC batch, one
@@ -918,17 +968,22 @@ zig HTTP {
                 padding: [3]u8,
                 handles: [1]AfdPollHandle,
             };
-            const n = @min(handles.len, 64);
+            const n = handles.len;
             if (n == 0) return;
             const io = httpIo();
+            const allocator = std.heap.page_allocator;
+            // Sized to the live handle count: one AFD_POLL per socket. The old
+            // fixed 64-slot stack buffers silently dropped connections beyond 64.
+            const polls = allocator.alloc(AfdPoll, n) catch return;
+            defer allocator.free(polls);
+            const storage = allocator.alloc(std.Io.Operation.Storage, n) catch return;
+            defer allocator.free(storage);
             const tick_ms: i64 = 10;
             const immediate = timeout_ms == 0;
             const tick_100ns: i64 = if (immediate) 1 else tick_ms * std.time.ns_per_ms / 100;
             var waited_ms: i64 = 0;
             while (true) {
-                var polls: [64]AfdPoll = undefined;
-                var storage: [64]std.Io.Operation.Storage = undefined;
-                var batch = std.Io.Batch.init(storage[0..n]);
+                var batch = std.Io.Batch.init(storage);
                 for (handles[0..n], 0..) |native, i| {
                     polls[i] = .{
                         .timeout = -tick_100ns,
@@ -999,7 +1054,9 @@ zig HTTP {
         if (comptime builtin.os.tag == .wasi or builtin.os.tag == .uefi or builtin.os.tag == .freestanding) return;
 
 
-        var fds: [64]std.posix.pollfd = undefined;
+        const allocator = std.heap.page_allocator;
+        const fds = allocator.alloc(std.posix.pollfd, handles.len) catch return;
+        defer allocator.free(fds);
         for (handles, 0..) |native, i| {
             fds[i] = .{ .fd = native, .events = std.posix.POLL.IN, .revents = 0 };
         }
@@ -1007,7 +1064,7 @@ zig HTTP {
             -1
         else
             @intCast(@min(timeout_ms, std.math.maxInt(i32)));
-        const waited = std.posix.poll(fds[0..handles.len], timeout_i32) catch return;
+        const waited = std.posix.poll(fds, timeout_i32) catch return;
         if (waited == 0) return;
         for (handles, 0..) |_, i| {
             const revents = fds[i].revents;
@@ -1022,46 +1079,62 @@ zig HTTP {
     pub fn poll(listener_handle: i64, timeout_ms: i64) i64 {
         clearLastError();
         const state = eventStateType();
-        state.count = 0;
+        state.handles.clearRetainingCapacity();
+        state.kinds.clearRetainingCapacity();
         const listener = serverStateType().listeners.get(listener_handle) orelse {
             setLastError(1);
             return -1;
         };
-        var handles: [64]std.Io.net.Socket.Handle = undefined;
-        var ids: [64]i64 = undefined;
-        var is_listener: [64]bool = undefined;
-        var n: usize = 0;
+        // One slot for the listener plus every live connection; sized to the
+        // live count so there is no arbitrary connection ceiling.
+        const total = 1 + serverStateType().connections.count();
+        const allocator = std.heap.page_allocator;
+        const handles = allocator.alloc(std.Io.net.Socket.Handle, total) catch {
+            setLastError(2);
+            return -1;
+        };
+        defer allocator.free(handles);
+        const ids = allocator.alloc(i64, total) catch {
+            setLastError(2);
+            return -1;
+        };
+        defer allocator.free(ids);
+        const ready = allocator.alloc(bool, total) catch {
+            setLastError(2);
+            return -1;
+        };
+        defer allocator.free(ready);
+        const closed = allocator.alloc(bool, total) catch {
+            setLastError(2);
+            return -1;
+        };
+        defer allocator.free(closed);
         handles[0] = listener.socket_handle;
         ids[0] = listener_handle;
-        is_listener[0] = true;
-        n = 1;
+        var n: usize = 1;
         var it = serverStateType().connections.iterator();
         while (it.next()) |entry| {
-            if (n >= handles.len) break;
             handles[n] = entry.value_ptr.*.stream.socket.handle;
             ids[n] = entry.key_ptr.*;
-            is_listener[n] = false;
             n += 1;
         }
-        var ready: [64]bool = [_]bool{false} ** 64;
-        var closed: [64]bool = [_]bool{false} ** 64;
+        @memset(ready[0..n], false);
+        @memset(closed[0..n], false);
         waitSet(handles[0..n], 0, timeout_ms, ready[0..n], closed[0..n]);
-        var i: usize = 0;
+        // Slot 0 is always the listener.
+        if (ready[0]) {
+            const connection = acceptConnection(listener);
+            if (connection != 0) pushEvent(connection, 1);
+        }
+        var i: usize = 1;
         while (i < n) : (i += 1) {
-            if (is_listener[i]) {
-                if (ready[i]) {
-                    const connection = acceptConnection(listener);
-                    if (connection != 0) pushEvent(connection, 1);
-                }
-                continue;
-            }
             if (ready[i]) {
                 pushEvent(ids[i], 2);
             } else if (closed[i]) {
                 pushEvent(ids[i], 3);
             }
         }
-        return @intCast(state.count);
+        return @intCast(state.handles.items.len);
     }
 
     fn clientStateType() type {
@@ -1106,6 +1179,25 @@ zig HTTP {
         };
     }
 
+    // Free the page-owned response buffers. `takeResponseHeaders` and the body
+    // return cross the ABI with a fresh clone into the call-site arena, so once
+    // a Doxa wrapper has drained them the Zig copies are unreachable and must be
+    // released: the take-and-clear cells own page memory, not arena memory, and
+    // "nothing survives the call" (plan/http.md decision 3) is the contract.
+    // Idempotent; `requestCore` also calls it on entry as a backstop.
+    pub fn releaseResponse() void {
+        if (clientStateType().owned_raw_headers.len != 0) {
+            std.heap.page_allocator.free(@constCast(clientStateType().owned_raw_headers));
+        }
+        if (requestResultType().body.len != 0) {
+            std.heap.page_allocator.free(@constCast(requestResultType().body));
+        }
+        clientStateType().owned_raw_headers = "";
+        requestResultType().body = "";
+        clientStateType().raw_headers = "";
+        clientStateType().status_code = 0;
+    }
+
     fn requestCore(
         method_name: []const u8,
         url: []const u8,
@@ -1116,14 +1208,7 @@ zig HTTP {
         response_writer: ?*std.Io.Writer,
     ) bool {
         clearLastError();
-        if (clientStateType().owned_raw_headers.len != 0) {
-            std.heap.page_allocator.free(@constCast(clientStateType().owned_raw_headers));
-        }
-        if (requestResultType().body.len != 0) std.heap.page_allocator.free(@constCast(requestResultType().body));
-        clientStateType().owned_raw_headers = "";
-        requestResultType().body = "";
-        clientStateType().status_code = 0;
-        clientStateType().raw_headers = "";
+        releaseResponse();
         if (url.len == 0 or timeout_ms < 0 or max_redirects < 0 or max_redirects >= std.math.maxInt(u16)) {
             setLastError(1);
             return false;
@@ -1295,14 +1380,19 @@ zig HTTP {
         defer file.close(io);
         var file_buffer: [16 * 1024]u8 = undefined;
         var file_writer = file.writer(io, &file_buffer);
-        if (!requestCore(method, url, headers, body, timeout_ms, max_redirects, &file_writer.interface)) return;
+        if (!requestCore(method, url, headers, body, timeout_ms, max_redirects, &file_writer.interface)) {
+            releaseResponse();
+            return;
+        }
         file_writer.interface.flush() catch |err| {
             const common = mapCommon(@errorName(err));
             setLastError(if (common >= 0) common else 107);
+            releaseResponse();
             return;
         };
         const status = clientStateType().status_code;
         if (status < 200 or status >= 300) setLastError(116);
+        releaseResponse();
     }
 
     pub fn getText(url: []const u8, timeout_ms: i64) []const u8 {
@@ -1368,7 +1458,7 @@ zig HTTP {
         return if (name.len == 0) "downloaded.bin" else name;
     }
 
-    public fn downloadUrl(url: []const u8, destination: []const u8) void {
+    pub fn downloadUrl(url: []const u8, destination: []const u8) void {
         if (url.len == 0 or destination.len == 0) {
             clearLastError();
             setLastError(1);
@@ -1391,7 +1481,6 @@ function mapIOError(code :: int) returns error.StdError {
         2 then error.Common.OutOfMemory,
         3 then error.Common.PermissionDenied,
         4 then error.Common.NotSupported,
-        5 then error.Common.Unexpected,
         100 then error.IO.NotFound,
         101 then error.IO.AlreadyExists,
         102 then error.IO.NotDirectory,
@@ -1466,6 +1555,7 @@ function performGet(url :: string, timeout_ms :: int) returns Response | error.S
     const status is HTTP.takeStatusCode()
     const headers is HTTP.takeResponseHeaders()
     const err is HTTP.takeLastErrorCode()
+    HTTP.releaseResponse()
     if err == 0 then return $Response {
         status_code is status,
         raw_headers is headers,
@@ -1626,12 +1716,27 @@ public function wsBuffered(connection :: int) returns tetra {
     return HTTP.wsBuffered(connection)
 }
 
-/* One readiness event from `poll`. `kind` is 1 for a freshly accepted
-   connection, 2 for a connection with bytes to read, and 3 for a peer that
-   closed or errored. `handle` is the connection (or listener) handle. */
+/* Why a `poll` event fired. `Accepted` is a fresh connection, `Readable` is a
+   connection with bytes to read, and `Closed` is a peer that closed or errored.
+   The inline-Zig boundary only carries scalars, so the codes crossing it are
+   mapped by `eventKindFromCode`. */
+public enum EventKind {
+    Accepted,
+    Readable,
+    Closed,
+}
+
+function eventKindFromCode(code :: int) returns EventKind {
+    if code == 1 then return EventKind.Accepted
+    if code == 2 then return EventKind.Readable
+    return EventKind.Closed
+}
+
+/* One readiness event from `poll`. `handle` is the connection (or listener)
+   handle. */
 public struct Event {
     public handle :: int,
-    public kind :: int,
+    public kind :: EventKind,
 }
 
 /* Wait for readiness across the listener and every live connection. Blocks up
@@ -1644,7 +1749,7 @@ public function poll(listener :: int, timeout_ms :: int) returns Event[] {
     for i while i < count do i += 1 {
         @push(events, $Event {
             handle is HTTP.eventHandle(i),
-            kind is HTTP.eventKind(i),
+            kind is eventKindFromCode(HTTP.eventKind(i)),
         })
     }
     return events
@@ -1687,7 +1792,10 @@ public struct Router {
     }
 }
 
-public function route(router :: Router, verb :: string, path :: string) returns Route | nothing {
+/* `^router` borrows the caller's Router instead of snapshotting its three
+   arrays on every call, which the arena model would otherwise deep-copy per
+   request (docs/memory.md by-value parameters snapshot). */
+public function route(^router :: Router, verb :: string, path :: string) returns Route | nothing {
     for i while i < @length(router.patterns) do i += 1 {
         if router.verbs[i] == verb then {
             if HTTP.matchPattern(router.patterns[i], path) == 1 then {
@@ -1748,7 +1856,8 @@ public struct Request {
     }
 }
 
-public function request(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+/* `^req` borrows the caller's Request so `req.headers` is not deep-copied. */
+public function request(verb :: string, url :: string, ^req :: Request) returns Response | error.StdError {
     var header_blob is ""
     for i while i < @length(req.headers) do i += 1 {
         header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
@@ -1757,6 +1866,7 @@ public function request(verb :: string, url :: string, req :: Request) returns R
     const status is HTTP.takeStatusCode()
     const headers is HTTP.takeResponseHeaders()
     const err is HTTP.takeLastErrorCode()
+    HTTP.releaseResponse()
     if err == 0 then return $Response {
         status_code is status,
         raw_headers is headers,
@@ -1765,20 +1875,20 @@ public function request(verb :: string, url :: string, req :: Request) returns R
     return mapIOError(err)
 }
 
-public function post(url :: string, req :: Request) returns Response | error.StdError {
-    return request("POST", url, req)
+public function post(url :: string, ^req :: Request) returns Response | error.StdError {
+    return request("POST", url, ^req)
 }
 
-public function put(url :: string, req :: Request) returns Response | error.StdError {
-    return request("PUT", url, req)
+public function put(url :: string, ^req :: Request) returns Response | error.StdError {
+    return request("PUT", url, ^req)
 }
 
-public function delete(url :: string, req :: Request) returns Response | error.StdError {
-    return request("DELETE", url, req)
+public function delete(url :: string, ^req :: Request) returns Response | error.StdError {
+    return request("DELETE", url, ^req)
 }
 
-public function head(url :: string, req :: Request) returns Response | error.StdError {
-    return request("HEAD", url, req)
+public function head(url :: string, ^req :: Request) returns Response | error.StdError {
+    return request("HEAD", url, ^req)
 }
 
 public function getText(url :: string) returns string | error.StdError {
@@ -1786,6 +1896,7 @@ public function getText(url :: string) returns string | error.StdError {
     const _status is HTTP.takeStatusCode()
     const _headers is HTTP.takeResponseHeaders()
     const err is HTTP.takeLastErrorCode()
+    HTTP.releaseResponse()
     if err == 0 then return value
     return mapIOError(err)
 }

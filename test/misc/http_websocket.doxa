@@ -7,6 +7,10 @@ const codec_listener is std.http.listen(0) as int else 0
 const codec_port is std.http.localAddr(codec_listener) as int else 0
 const oversize_listener is std.http.listen(0) as int else 0
 const oversize_port is std.http.localAddr(oversize_listener) as int else 0
+const large_listener is std.http.listen(0) as int else 0
+const large_port is std.http.localAddr(large_listener) as int else 0
+const fragseq_listener is std.http.listen(0) as int else 0
+const fragseq_port is std.http.localAddr(fragseq_listener) as int else 0
 
 zig WsFixture {
     const std = @import("std");
@@ -75,13 +79,19 @@ zig WsFixture {
         const mask: [4]u8 = .{ 0x11, 0x22, 0x33, 0x44 };
         @memcpy(header[header_len..][0..4], &mask);
         header_len += 4;
-        var masked: [256]u8 = undefined;
-        if (len > masked.len) return false;
-        for (payload, 0..) |byte, i| masked[i] = byte ^ mask[i % 4];
         var buffer: [1024]u8 = undefined;
         var writer = stream.writer(io, &buffer);
         writer.interface.writeAll(header[0..header_len]) catch return false;
-        writer.interface.writeAll(masked[0..len]) catch return false;
+        var masked: [256]u8 = undefined;
+        var offset: usize = 0;
+        while (offset < len) {
+            const chunk_len = @min(len - offset, masked.len);
+            for (payload[offset..][0..chunk_len], 0..) |byte, i| {
+                masked[i] = byte ^ mask[(offset + i) % 4];
+            }
+            writer.interface.writeAll(masked[0..chunk_len]) catch return false;
+            offset += chunk_len;
+        }
         writer.interface.flush() catch return false;
         return true;
     }
@@ -116,11 +126,15 @@ zig WsFixture {
             mask = m.*;
         }
         if (len > out.len) return null;
-        const payload = iface.take(len) catch return null;
-        if (masked) {
-            for (payload, 0..) |*byte, i| byte.* ^= mask[i % 4];
+        var offset: usize = 0;
+        while (offset < len) {
+            const chunk_len = @min(len - offset, 4096);
+            const payload = iface.take(chunk_len) catch return null;
+            for (payload, 0..) |byte, i| {
+                out[offset + i] = if (masked) byte ^ mask[(offset + i) % 4] else byte;
+            }
+            offset += chunk_len;
         }
-        @memcpy(out[0..len], payload);
         var close_code: u16 = 0;
         if (opcode == 8 and len >= 2) close_code = std.mem.readInt(u16, out[0..2], .big);
         return .{ .opcode = opcode, .len = len, .close_code = close_code };
@@ -143,6 +157,67 @@ zig WsFixture {
         }
         if (!readHandshake(&reader)) {
             state.results[0].store(-3, .release);
+            return;
+        }
+
+        // Large single frame: exceeds the server's 16 KiB read buffer, so the
+        // codec must chunk instead of taking the whole payload at once.
+        if (mode == 3) {
+            var big: [20 * 1024]u8 = undefined;
+            for (0..big.len) |i| big[i] = @intCast('A' + (i % 26));
+            if (!sendFrame(stream, 0x1, true, &big)) {
+                state.results[0].store(-4, .release);
+                return;
+            }
+            var outbuf: [32 * 1024]u8 = undefined;
+            if (readFrame(&reader, &outbuf)) |frame| {
+                const ok = frame.opcode == 0x1 and frame.len == big.len and std.mem.eql(u8, outbuf[0..frame.len], &big);
+                state.results[0].store(if (ok) 1 else -1, .release);
+            } else {
+                state.results[0].store(-5, .release);
+            }
+            const close_payload = [2]u8{ 0x03, 0xE8 };
+            _ = sendFrame(stream, 0x8, true, &close_payload);
+            _ = readFrame(&reader, &outbuf);
+            return;
+        }
+        // Large fragment: the first continuation fragment alone exceeds the
+        // server's read buffer; reassembly is still one surfaced message.
+        if (mode == 4) {
+            var first: [20 * 1024]u8 = undefined;
+            for (0..first.len) |i| first[i] = @intCast('a' + (i % 26));
+            const tail = "TAIL!";
+            if (!sendFrame(stream, 0x1, false, &first) or !sendFrame(stream, 0x0, true, tail)) {
+                state.results[1].store(-4, .release);
+                return;
+            }
+            var outbuf: [32 * 1024]u8 = undefined;
+            if (readFrame(&reader, &outbuf)) |frame| {
+                const total = first.len + tail.len;
+                var ok = frame.opcode == 0x1 and frame.len == total;
+                if (ok) {
+                    for (first, 0..) |b, i| {
+                        if (outbuf[i] != b) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                if (ok) {
+                    for (tail, 0..) |b, i| {
+                        if (outbuf[first.len + i] != b) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                }
+                state.results[1].store(if (ok) 1 else -1, .release);
+            } else {
+                state.results[1].store(-5, .release);
+            }
+            const close_payload = [2]u8{ 0x03, 0xE8 };
+            _ = sendFrame(stream, 0x8, true, &close_payload);
+            _ = readFrame(&reader, &outbuf);
             return;
         }
 
@@ -252,10 +327,10 @@ function serve(listener :: int) returns int {
         const events is std.http.poll(listener, 500)
         for i while i < @length(events) do i += 1 {
             const event is events[i]
-            if event.kind == 3 then {
+            if event.kind == std.http.EventKind.Closed then {
                 std.http.close(event.handle)
             } else {
-                if event.kind == 1 then {
+                if event.kind == std.http.EventKind.Accepted then {
                     const request is std.http.readRequest(event.handle)
                     request as ServerRequest then {
                         std.http.upgradeWebSocket(event.handle)
@@ -263,7 +338,7 @@ function serve(listener :: int) returns int {
                         std.http.close(event.handle)
                     }
                 }
-                var more is event.kind == 2
+                var more is event.kind == std.http.EventKind.Readable
                 if std.http.wsBuffered(event.handle) then more is true
                 while more and not done {
                     more is false
@@ -300,3 +375,17 @@ WsFixture.finish()
 std.http.close(oversize_listener)
 @print("oversize {WsFixture.resultAt(4)}\n")
 @print("oversize served {oversize_served}\n")
+
+WsFixture.start(large_port, 3)
+const large_served is serve(large_listener)
+WsFixture.finish()
+std.http.close(large_listener)
+@print("large frame {WsFixture.resultAt(0)}\n")
+@print("large served {large_served}\n")
+
+WsFixture.start(fragseq_port, 4)
+const fragseq_served is serve(fragseq_listener)
+WsFixture.finish()
+std.http.close(fragseq_listener)
+@print("large fragment {WsFixture.resultAt(1)}\n")
+@print("fragseq served {fragseq_served}\n")
