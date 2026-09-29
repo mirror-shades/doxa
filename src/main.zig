@@ -374,7 +374,17 @@ fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []A
 fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8, toolchain: []const u8, profiler: *Profiler) ![]const []const u8 {
     const zig_exe_path = try resolveBundledZigExecutable(io, memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
-    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target.triple, target.os, include_dirs, toolchain, profiler);
+    // Match the runtime object and final link exactly: native builds also pass
+    // an explicit host triple so glibc-version-dependent std declarations (e.g.
+    // `arc4random_buf` at 2.36) agree across every object. Without this the
+    // shim uses host detection while the link resolves Zig's default glibc, and
+    // a shim that pulls `std.Io.Threaded.randomSecure` fails to link.
+    const target_triple = try target.targetArgAlloc(memoryManager.getAllocator());
+    defer memoryManager.getAllocator().free(target_triple);
+    // An explicit `-target` stops auto-detecting the host CPU, so the native
+    // shim must ask for it explicitly, exactly as the runtime object does.
+    const cpu_arg: []const u8 = if (target.isCross()) "" else "-mcpu=native";
+    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target_triple, target.os, cpu_arg, include_dirs, toolchain, profiler);
 }
 
 fn openDirMaybeAbs(io: std.Io, path: []const u8, opts: std.Io.Dir.OpenOptions) !std.Io.Dir {
