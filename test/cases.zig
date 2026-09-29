@@ -368,6 +368,9 @@ const shared_cases = [_]Case{
             .{ .value = "keep-alive requests ok" },
             .{ .value = "accepts 3" },
             .{ .value = "multiplex ok" },
+            .{ .value = "expect continue ok" },
+            .{ .value = "accepts 70" },
+            .{ .value = "many connections ok" },
         },
     },
     .{
@@ -381,6 +384,10 @@ const shared_cases = [_]Case{
             .{ .value = "served 4" },
             .{ .value = "oversize 1" },
             .{ .value = "oversize served 0" },
+            .{ .value = "large frame 1" },
+            .{ .value = "large served 2" },
+            .{ .value = "large fragment 1" },
+            .{ .value = "fragseq served 2" },
         },
     },
     .{

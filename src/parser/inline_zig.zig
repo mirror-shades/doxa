@@ -356,10 +356,27 @@ fn skipTopLevelFnHeader(ts: *Tokenizer) ErrorList!void {
         }
     }
 
-    // consume return type tokens and opening {
+    // Consume return-type tokens up to the function body's `{`. An error-set
+    // return type (`error{A,B}!T`) carries its own braces, which must not be
+    // mistaken for the body opening, or the header skip desyncs and the block
+    // fails validation with `InlineZigNotValid`.
+    var prev_is_error = false;
     while (true) {
         const t = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (tokenIs(t, .symbol, "{")) break;
+        if (tokenIs(t, .symbol, "{")) {
+            if (prev_is_error) {
+                var inner: usize = 1;
+                while (inner > 0) {
+                    const it = (try ts.next()) orelse return error.InlineZigNotValid;
+                    if (tokenIs(it, .symbol, "{")) inner += 1;
+                    if (tokenIs(it, .symbol, "}")) inner -= 1;
+                }
+                prev_is_error = false;
+                continue;
+            }
+            break;
+        }
+        prev_is_error = tokenIs(t, .ident, "error");
     }
 }
 
@@ -392,10 +409,24 @@ fn classifyTopLevel(ts: *Tokenizer) ErrorList!TopLevelKind {
 fn skipDeclLenient(ts: *Tokenizer) ErrorList!void {
     var brace: usize = 0;
     var saw_brace = false;
+    var prev_is_error = false;
     while (try ts.next()) |t| {
         if (t.kind == .symbol and t.lexeme.len == 1) {
             switch (t.lexeme[0]) {
                 '{' => {
+                    // An `error{A,B}` set in a return type is a brace group that is
+                    // not the declaration's body; skip it rather than treating its
+                    // close as the end of the declaration.
+                    if (prev_is_error) {
+                        var inner: usize = 1;
+                        while (inner > 0) {
+                            const it = (try ts.next()) orelse return error.InlineZigNotValid;
+                            if (it.kind == .symbol and std.mem.eql(u8, it.lexeme, "{")) inner += 1;
+                            if (it.kind == .symbol and std.mem.eql(u8, it.lexeme, "}")) inner -= 1;
+                        }
+                        prev_is_error = false;
+                        continue;
+                    }
                     brace += 1;
                     saw_brace = true;
                 },
@@ -409,6 +440,7 @@ fn skipDeclLenient(ts: *Tokenizer) ErrorList!void {
                 else => {},
             }
         }
+        prev_is_error = t.kind == .ident and std.mem.eql(u8, t.lexeme, "error");
     }
 }
 

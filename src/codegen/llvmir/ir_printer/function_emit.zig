@@ -765,16 +765,36 @@ pub fn Methods(comptime Ctx: type) type {
                         const ptr_val = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         var struct_fields: ?[]HIR.HIRType = ptr_val.struct_field_types;
+                        var struct_field_names: ?[]const []const u8 = ptr_val.struct_field_names;
+                        var struct_type_name: ?[]const u8 = ptr_val.struct_type_name;
                         if (struct_fields == null and ba.target_type == .Struct) {
-                            if (std.mem.eql(u8, ba.alias_name, "this")) {
-                                if (std.mem.indexOfScalar(u8, func.qualified_name, '.')) |dot_idx| {
-                                    const struct_name = func.qualified_name[0..dot_idx];
-                                    if (self.global_struct_field_types.get(struct_name)) |fts| {
-                                        struct_fields = fts;
-                                    }
+                            // An alias parameter's pointee carries the struct id
+                            // directly, so resolve the layout from it. The alias
+                            // name is the parameter name (e.g. `req`), not a struct
+                            // type name, so the name-based lookups below cannot
+                            // find a plain `^param :: Struct` alias.
+                            const sid = ba.target_type.Struct;
+                            struct_fields = self.struct_fields_by_id.get(sid);
+                            if (struct_type_name == null) {
+                                struct_type_name = self.struct_type_names_by_id.get(sid);
+                            }
+                            if (struct_field_names == null) {
+                                if (struct_type_name) |tn| {
+                                    struct_field_names = self.struct_field_names_by_type.get(tn);
                                 }
-                            } else if (self.global_struct_field_types.get(ba.alias_name)) |fts| {
-                                struct_fields = fts;
+                            }
+                            // Legacy name-based fallbacks for receivers/`this`.
+                            if (struct_fields == null) {
+                                if (std.mem.eql(u8, ba.alias_name, "this")) {
+                                    if (std.mem.indexOfScalar(u8, func.qualified_name, '.')) |dot_idx| {
+                                        const struct_name = func.qualified_name[0..dot_idx];
+                                        if (self.global_struct_field_types.get(struct_name)) |fts| {
+                                            struct_fields = fts;
+                                        }
+                                    }
+                                } else if (self.global_struct_field_types.get(ba.alias_name)) |fts| {
+                                    struct_fields = fts;
+                                }
                             }
                         }
                         const array_hint: ?HIR.HIRType = switch (ba.target_type) {
@@ -786,8 +806,8 @@ pub fn Methods(comptime Ctx: type) type {
                             .pointee_type = ba.target_type,
                             .array_type = array_hint,
                             .struct_field_types = struct_fields,
-                            .struct_field_names = ptr_val.struct_field_names,
-                            .struct_type_name = ptr_val.struct_type_name,
+                            .struct_field_names = struct_field_names,
+                            .struct_type_name = struct_type_name,
                             .enum_type_name = ptr_val.enum_type_name,
                         };
                         try alias_slots.put(ba.alias_slot, alias_info);

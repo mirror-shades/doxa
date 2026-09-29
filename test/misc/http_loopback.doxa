@@ -385,7 +385,7 @@ const timeout_port is Fixture.startTimeoutServer()
 const timeout_started is std.time.monotonic()
 var timeout_request is std.http.Request.new()
 timeout_request.timeout_ms is 50
-const timeout_result is std.http.request("GET", "http://127.0.0.1:{timeout_port}/slow", timeout_request)
+const timeout_result is std.http.request("GET", "http://127.0.0.1:{timeout_port}/slow", ^timeout_request)
 const timeout_elapsed_ms is (std.time.monotonic() - timeout_started) // 1000000
 const server_finished_before_join is Fixture.serverFinished()
 const timeout_server_error is Fixture.finishServer()
@@ -424,7 +424,7 @@ const post_port is Fixture.startMethodServer(3)
 var post_request is std.http.Request.new()
 post_request.body is "payload"
 @push(post_request.headers, "X-Preserve: yes")
-const post_result is std.http.post("http://127.0.0.1:{post_port}/post", post_request)
+const post_result is std.http.post("http://127.0.0.1:{post_port}/post", ^post_request)
 const post_server_error is Fixture.finishServer()
 var post_ok is responseMatches(post_result, 201, "verb result")
 if Fixture.requestMatched() != 1 or post_server_error != 0 then post_ok is false
@@ -433,7 +433,7 @@ const put_port is Fixture.startMethodServer(4)
 var put_request is std.http.Request.new()
 put_request.body is "payload"
 @push(put_request.headers, "X-Preserve: yes")
-const put_result is std.http.put("http://127.0.0.1:{put_port}/put", put_request)
+const put_result is std.http.put("http://127.0.0.1:{put_port}/put", ^put_request)
 const put_server_error is Fixture.finishServer()
 var put_ok is responseMatches(put_result, 201, "verb result")
 if Fixture.requestMatched() != 1 or put_server_error != 0 then put_ok is false
@@ -441,7 +441,7 @@ if Fixture.requestMatched() != 1 or put_server_error != 0 then put_ok is false
 const delete_port is Fixture.startMethodServer(5)
 var delete_request is std.http.Request.new()
 @push(delete_request.headers, "X-Preserve: yes")
-const delete_result is std.http.delete("http://127.0.0.1:{delete_port}/delete", delete_request)
+const delete_result is std.http.delete("http://127.0.0.1:{delete_port}/delete", ^delete_request)
 const delete_server_error is Fixture.finishServer()
 var delete_ok is responseMatches(delete_result, 201, "verb result")
 if Fixture.requestMatched() != 1 or delete_server_error != 0 then delete_ok is false
@@ -449,7 +449,7 @@ if Fixture.requestMatched() != 1 or delete_server_error != 0 then delete_ok is f
 const head_port is Fixture.startMethodServer(6)
 var head_request is std.http.Request.new()
 @push(head_request.headers, "X-Preserve: yes")
-const head_result is std.http.head("http://127.0.0.1:{head_port}/head", head_request)
+const head_result is std.http.head("http://127.0.0.1:{head_port}/head", ^head_request)
 const head_server_error is Fixture.finishServer()
 var head_ok is responseMatches(head_result, 201, "")
 if Fixture.requestMatched() != 1 or head_server_error != 0 then head_ok is false
@@ -461,7 +461,7 @@ var credential_request is std.http.Request.new()
 @push(credential_request.headers, "Authorization: secret")
 @push(credential_request.headers, "X-Preserve: yes")
 credential_request.max_redirects is 1
-const credential_result is std.http.request("GET", "http://127.0.0.1:{credential_port}/start", credential_request)
+const credential_result is std.http.request("GET", "http://127.0.0.1:{credential_port}/start", ^credential_request)
 const credential_server_error is Fixture.finishServer()
 var credential_ok is responseStatusBody(credential_result, 200, "secure")
 if Fixture.requestMatched() != 1 or credential_server_error != 0 then credential_ok is false
@@ -471,7 +471,7 @@ else @print("redirect credentials failed server={credential_server_error}\n")
 const limit_port is Fixture.startLimitServer()
 var limit_request is std.http.Request.new()
 limit_request.max_redirects is 0
-const limit_result is std.http.request("GET", "http://127.0.0.1:{limit_port}/start", limit_request)
+const limit_result is std.http.request("GET", "http://127.0.0.1:{limit_port}/start", ^limit_request)
 const limit_server_error is Fixture.finishServer()
 var limit_ok is true
 limit_result as Response then {

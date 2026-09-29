@@ -1501,22 +1501,17 @@ pub const ControlFlowHandler = struct {
         // Generate the value to cast
         try self.generator.generateExpression(cast_data.value, true, false);
 
-        // If this cast initializes a declaration, store the subject value into the
-        // declared binding so it is readable (narrowed) inside the then/else
-        // branches. Consume the target so nested casts in the branches don't inherit it.
-        if (self.generator.cast_decl_var_index) |target_idx| {
-            const decl_name = self.generator.cast_decl_var_name.?;
+        // If this cast initializes a declaration, consume the target so nested
+        // casts in the branches don't inherit it. The declared binding is written
+        // once, after the cast resolves, by the declaration's own `StoreDecl`
+        // (which narrows the subject to the declared type). An earlier attempt to
+        // also store the raw subject here, so the name was readable inside the
+        // then/else branches, emitted a full `DoxaValue` store into the
+        // scalar-typed global slot and corrupted adjacent globals; see
+        // TODO(branch-binding): reintroduce a correctly narrowed branch store.
+        if (self.generator.cast_decl_var_index != null) {
             self.generator.cast_decl_var_index = null;
             self.generator.cast_decl_var_name = null;
-            try self.generator.instructions.append(.Dup);
-            const decl_scope = self.generator.symbol_table.determineVariableScope(decl_name);
-            try self.generator.instructions.append(.{ .StoreVar = .{
-                .var_index = target_idx,
-                .var_name = decl_name,
-                .scope_kind = decl_scope,
-                .module_context = null,
-                .expected_type = .Unknown,
-            } });
         }
 
         // Duplicate it so we can keep original value on success path
