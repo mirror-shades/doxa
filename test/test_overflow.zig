@@ -38,33 +38,6 @@ test "overflow: the extreme exact values are not proved safe" {
 // End to end: the policy reaches the emitted IR
 // ---------------------------------------------------------------------------
 
-/// Compiles a snippet and returns the emitted (unoptimized) IR. `opt` selects
-/// the overflow policy through the mode axis: `--opt=0` is `debug` (trap) and
-/// `--opt=2` is `fast` (wrap).
-fn emitIrFor(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir, source: []const u8, opt: []const u8) ![]u8 {
-    const doxa = try harness.doxaExePath(allocator);
-    defer allocator.free(doxa);
-
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "probe.doxa", .data = source });
-    try tmp.dir.createDirPath(testing.io, "cache");
-
-    var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd = cwd_buffer[0..try tmp.dir.realPath(testing.io, &cwd_buffer)];
-
-    const argv = [_][]const u8{
-        doxa, "compile", "probe.doxa", "-o", "probe", opt, "--cache-dir=cache",
-    };
-    const result = try harness.runCommandCapture(allocator, &argv, cwd, null);
-    if (result.exit_code != 0) {
-        std.debug.print("doxa compile failed ({d}):\n{s}\n{s}\n", .{ result.exit_code, result.stdout, result.stderr });
-        return error.CommandFailed;
-    }
-    allocator.free(result.stdout);
-    allocator.free(result.stderr);
-
-    return tmp.dir.readFileAlloc(testing.io, "cache/probe.ll", allocator, .unlimited);
-}
-
 /// An `int + int` whose operands arrive as parameters, so neither the sign nor
 /// the magnitude is known and the check cannot be discharged.
 const uncheckedAddSource =
@@ -82,7 +55,7 @@ test "emit: a checked build traps on signed overflow" {
     defer tmp.cleanup();
     const allocator = testing.allocator;
 
-    const ir_text = try emitIrFor(allocator, &tmp, uncheckedAddSource, "--opt=0");
+    const ir_text = try harness.emitIrFor(allocator, &tmp, uncheckedAddSource, "--opt=0");
     defer allocator.free(ir_text);
 
     try testing.expect(std.mem.indexOf(u8, ir_text, "call { i64, i1 } @llvm.sadd.with.overflow.i64") != null);
@@ -96,7 +69,7 @@ test "emit: a fast build wraps and carries no trap" {
     defer tmp.cleanup();
     const allocator = testing.allocator;
 
-    const ir_text = try emitIrFor(allocator, &tmp, uncheckedAddSource, "--opt=2");
+    const ir_text = try harness.emitIrFor(allocator, &tmp, uncheckedAddSource, "--opt=2");
     defer allocator.free(ir_text);
 
     try testing.expect(std.mem.indexOf(u8, ir_text, "with.overflow") == null);
@@ -131,7 +104,7 @@ test "emit: a loop-carried accumulator through a call reaches the bare urem" {
         \\    std.io.println("{accumulate(10)}")
         \\}
     ;
-    const ir_text = try emitIrFor(allocator, &tmp, source, "--opt=0");
+    const ir_text = try harness.emitIrFor(allocator, &tmp, source, "--opt=0");
     defer allocator.free(ir_text);
 
     try testing.expect(std.mem.indexOf(u8, ir_text, "urem i64") != null);
@@ -157,7 +130,7 @@ test "emit: bounded operands discharge the check even in a checked build" {
         \\    std.io.println("{bounded(100, 200)}")
         \\}
     ;
-    const ir_text = try emitIrFor(allocator, &tmp, source, "--opt=0");
+    const ir_text = try harness.emitIrFor(allocator, &tmp, source, "--opt=0");
     defer allocator.free(ir_text);
 
     // The probe reached codegen: the modulo shape is there.
