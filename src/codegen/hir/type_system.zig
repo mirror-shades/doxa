@@ -725,6 +725,14 @@ pub const TypeSystem = struct {
                     };
                 }
 
+                // An active `as`/match narrowing lives only in the symbol
+                // table; it narrows the variable for the branch and must win
+                // over the semantic scope's declared type. Outside a narrowing
+                // this map is empty and the declared type is used below.
+                if (symbol_table.getVariableNarrowing(var_token.lexeme)) |narrowed| {
+                    return narrowed;
+                }
+
                 if (symbol_table.current_function != null) {
                     const var_type = symbol_table.getTrackedVariableType(var_token.lexeme);
                     if (var_type != null and var_type.? != .Unknown) {

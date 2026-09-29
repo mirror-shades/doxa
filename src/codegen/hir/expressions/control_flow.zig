@@ -1077,10 +1077,13 @@ pub const ControlFlowHandler = struct {
             // unwraps the box on load. Both are torn down with the arm.
             const arm_view = try self.armNarrowingView(match_expr.value, case);
             var arm_saved_type: ?HIRType = null;
+            var arm_saved_narrowing: ?HIRType = null;
             if (arm_view) |view| {
                 const subject_name = match_expr.value.data.Variable.lexeme;
                 arm_saved_type = self.generator.getTrackedVariableType(subject_name);
+                arm_saved_narrowing = self.generator.symbol_table.getVariableNarrowing(subject_name);
                 try self.generator.trackVariableType(subject_name, TypeSystem.memberView(view));
+                try self.generator.symbol_table.trackVariableNarrowing(subject_name, TypeSystem.memberView(view));
                 try self.generator.instructions.append(.{ .NarrowVar = .{ .var_name = subject_name, .narrowed_type = view } });
             }
 
@@ -1090,6 +1093,7 @@ pub const ControlFlowHandler = struct {
                 const subject_name = match_expr.value.data.Variable.lexeme;
                 try self.generator.instructions.append(.{ .RestoreVar = .{ .var_name = subject_name } });
                 try self.generator.trackVariableType(subject_name, arm_saved_type.?);
+                try self.generator.symbol_table.restoreVariableNarrowing(subject_name, arm_saved_narrowing);
             }
 
             // Restore previous enum context
@@ -1292,6 +1296,7 @@ pub const ControlFlowHandler = struct {
         is_local: bool,
         saved_type: HIRType,
         saved_index_members: ?[][]const u8,
+        saved_narrowing: ?HIRType,
         then_type: HIRType,
         then_members: [][]const u8,
         else_type: HIRType,
@@ -1304,6 +1309,7 @@ pub const ControlFlowHandler = struct {
         // because that is what the value structurally is inside the branch —
         // `u + 1` is an int operation and a call argument is the member type.
         try self.generator.trackVariableType(nw.var_name, TypeSystem.memberView(ty));
+        try self.generator.symbol_table.trackVariableNarrowing(nw.var_name, TypeSystem.memberView(ty));
         try self.generator.symbol_table.trackVariableUnionMembers(nw.is_local, nw.var_index, members);
         // Tell the native backend that the variable's boxed value now denotes a
         // narrower member view, so loads inside the branch unwrap it.
@@ -1312,6 +1318,7 @@ pub const ControlFlowHandler = struct {
 
     fn restoreCastNarrowing(self: *ControlFlowHandler, nw: CastNarrowing) !void {
         try self.generator.trackVariableType(nw.var_name, nw.saved_type);
+        try self.generator.symbol_table.restoreVariableNarrowing(nw.var_name, nw.saved_narrowing);
         if (nw.saved_index_members) |members| {
             try self.generator.symbol_table.trackVariableUnionMembers(nw.is_local, nw.var_index, members);
         } else {
@@ -1377,6 +1384,7 @@ pub const ControlFlowHandler = struct {
             .is_local = is_local,
             .saved_type = saved_type,
             .saved_index_members = self.generator.symbol_table.getVariableUnionMembers(is_local, var_index),
+            .saved_narrowing = self.generator.symbol_table.getVariableNarrowing(var_name),
             .then_type = HIRType{ .Union = .{ .id = group_id, .members = then_member_ptrs } },
             .then_members = then_members,
             .else_type = saved_type,
@@ -1454,6 +1462,7 @@ pub const ControlFlowHandler = struct {
             .is_local = is_local,
             .saved_type = saved_type,
             .saved_index_members = self.generator.symbol_table.getVariableUnionMembers(is_local, var_index),
+            .saved_narrowing = self.generator.symbol_table.getVariableNarrowing(var_name),
             .then_type = then_type,
             .then_members = then_members,
             .else_type = else_type,

@@ -54,10 +54,13 @@ function runSuite(runs :: int, ^results :: Result[]) {
     std.io.println("Compiling benchmarks...")
 
     # Compile C with `zig cc` — the exact toolchain Doxa uses internally for
-    # .ll -> .o (see main.zig). This shares the same LLVM version and default
-    # native -mcpu (e.g. AVX2) as Doxa, avoiding compiler/SIMD-target confounds.
-    # -ffp-contract=off stops C from forming FMAs that Doxa's codegen never
-    # forms, so floating-point results stay bit-identical between the two.
+    # .ll -> .o (see main.zig). Both sides are given the host CPU explicitly
+    # (`-mcpu=native`): Doxa's native path passes an explicit `-target`, which
+    # makes `zig cc` stop auto-detecting the host CPU, so the compiler adds
+    # `-mcpu=native` for native builds itself. Naming it on the C side too keeps
+    # the target-feature set identical (no SSE2-vs-AVX2 confound).
+    # -ffp-contract=off is passed to both so neither forms FMAs the other
+    # cannot, keeping floating-point results bit-identical.
     # zig cc does not auto-append .exe on Windows, so add it explicitly there.
     var exe_suffix is ""
     if std.host.isWindows() then {
@@ -66,7 +69,7 @@ function runSuite(runs :: int, ^results :: Result[]) {
 
     const warmup is tests[0]
     std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{warmup}.doxa -o test/benchmark/d-bin/{warmup} --opt=2")
-    std.process.exec("zig cc test/benchmark/c-src/{warmup}.c -o test/benchmark/c-bin/{warmup}{exe_suffix} -O2 -ffp-contract=off")
+    std.process.exec("zig cc test/benchmark/c-src/{warmup}.c -o test/benchmark/c-bin/{warmup}{exe_suffix} -O2 -mcpu=native -ffp-contract=off")
 
     each test in tests {
         const d_compile_start_time is std.time.monotonic()
@@ -74,7 +77,7 @@ function runSuite(runs :: int, ^results :: Result[]) {
         const d_compile_end_time is std.time.monotonic()
         @push(compile_stats.d_compile_time, d_compile_end_time - d_compile_start_time)
         const c_compile_start_time is std.time.monotonic()
-        std.process.exec("zig cc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2 -ffp-contract=off")
+            std.process.exec("zig cc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2 -mcpu=native -ffp-contract=off")
         const c_compile_end_time is std.time.monotonic()
         @push(compile_stats.c_compile_time, c_compile_end_time - c_compile_start_time)
     }

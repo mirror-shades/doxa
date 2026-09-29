@@ -22,6 +22,11 @@ pub const SymbolTable = struct {
     variable_types: std.StringHashMap(HIRType),
     variable_custom_types: std.StringHashMap([]const u8),
 
+    /// Variables currently narrowed by an active `as`/`match` branch. A
+    /// narrowing is lexical state, distinct from the declared `variable_types`
+    /// entry, and is consulted before the declared type by inference.
+    variable_narrowings: std.StringHashMap(HIRType),
+
     variable_array_element_types: std.StringHashMap(HIRType),
     variable_array_storage: std.StringHashMap(ArrayStorageKind),
 
@@ -41,6 +46,7 @@ pub const SymbolTable = struct {
             .local_variable_count = 0,
             .variable_types = std.StringHashMap(HIRType).init(allocator),
             .variable_custom_types = std.StringHashMap([]const u8).init(allocator),
+            .variable_narrowings = std.StringHashMap(HIRType).init(allocator),
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
             .variable_array_storage = std.StringHashMap(ArrayStorageKind).init(allocator),
             .variable_union_members = std.AutoHashMap(UnionMemberKey, [][]const u8).init(allocator),
@@ -59,6 +65,7 @@ pub const SymbolTable = struct {
         self.local_scopes.deinit();
         self.variable_types.deinit();
         self.variable_custom_types.deinit();
+        self.variable_narrowings.deinit();
         self.variable_array_element_types.deinit();
         self.variable_array_storage.deinit();
         self.variable_union_members.deinit();
@@ -274,6 +281,26 @@ pub const SymbolTable = struct {
     /// Get tracked variable type
     pub fn getTrackedVariableType(self: *SymbolTable, var_name: []const u8) ?HIRType {
         return self.variable_types.get(var_name);
+    }
+
+    /// Record that `var_name` is narrowed to `var_type` for the active branch.
+    /// The caller saves the previous entry so nesting restores correctly.
+    pub fn trackVariableNarrowing(self: *SymbolTable, var_name: []const u8, var_type: HIRType) !void {
+        try self.variable_narrowings.put(var_name, var_type);
+    }
+
+    /// The active narrowing view for `var_name`, or null when it is not narrowed.
+    pub fn getVariableNarrowing(self: *SymbolTable, var_name: []const u8) ?HIRType {
+        return self.variable_narrowings.get(var_name);
+    }
+
+    /// Restore `var_name` to `saved` (null clears the narrowing).
+    pub fn restoreVariableNarrowing(self: *SymbolTable, var_name: []const u8, saved: ?HIRType) !void {
+        if (saved) |t| {
+            try self.variable_narrowings.put(var_name, t);
+        } else {
+            _ = self.variable_narrowings.remove(var_name);
+        }
     }
 
     /// Track a variable's custom type name (for enums/structs)
