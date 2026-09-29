@@ -154,23 +154,31 @@ function serve(listener :: int, total :: int) returns int {
             const event is events[i]
             if event.kind == std.http.EventKind.Accepted or event.kind == std.http.EventKind.Readable then {
                 if event.kind == std.http.EventKind.Accepted then accepts += 1
-                const request is std.http.readRequest(event.handle)
-                request as ServerRequest then {
-                    const incoming is request
-                    const matched is std.http.route(^router, incoming.verb, incoming.target)
-                    matched as Route then {
-                        const route is matched
-                        if route.id == 1 then {
-                            std.http.respond(event.handle, 200, "Content-Type: text/plain\u{d}\u{a}", "hello")
+                # Decoding is non-blocking: status 1 means a complete request is
+                # buffered, 0 means wait for more bytes, -1 is a connection error.
+                var processing is true
+                while processing {
+                    const status is std.http.readRequest(event.handle)
+                    if status == 1 then {
+                        const request is std.http.takeRequest(event.handle)
+                        const matched is std.http.route(^router, request.verb, request.target)
+                        matched as Route then {
+                            const route is matched
+                            if route.id == 1 then {
+                                std.http.respond(event.handle, 200, "Content-Type: text/plain\u{d}\u{a}", "hello")
+                            } else {
+                                std.http.respond(event.handle, 200, "Set-Cookie: a=1\u{d}\u{a}Set-Cookie: b=2\u{d}\u{a}Content-Type: text/plain\u{d}\u{a}", "cookies")
+                            }
                         } else {
-                            std.http.respond(event.handle, 200, "Set-Cookie: a=1\u{d}\u{a}Set-Cookie: b=2\u{d}\u{a}Content-Type: text/plain\u{d}\u{a}", "cookies")
+                            std.http.respond(event.handle, 404, "Content-Type: text/plain\u{d}\u{a}", "nope")
                         }
+                        served += 1
+                    } else if status == 0 then {
+                        processing is false
                     } else {
-                        std.http.respond(event.handle, 404, "Content-Type: text/plain\u{d}\u{a}", "nope")
+                        std.http.close(event.handle)
+                        processing is false
                     }
-                    served += 1
-                } else {
-                    std.http.close(event.handle)
                 }
             } else {
                 std.http.close(event.handle)
@@ -191,14 +199,15 @@ function serveExpect(listener :: int) returns int {
         for i while i < @length(events) do i += 1 {
             const event is events[i]
             if event.kind == std.http.EventKind.Accepted or event.kind == std.http.EventKind.Readable then {
-                const request is std.http.readRequest(event.handle)
-                request as ServerRequest then {
-                    const incoming is request
-                    std.http.respond(event.handle, 200, "Content-Type: text/plain\u{d}\u{a}", incoming.body_text)
+                const status is std.http.readRequest(event.handle)
+                if status == 1 then {
+                    const request is std.http.takeRequest(event.handle)
+                    std.http.respond(event.handle, 200, "Content-Type: text/plain\u{d}\u{a}", request.body_text)
                     served += 1
-                } else {
+                    std.http.close(event.handle)
+                } else if status == -1 then {
+                    std.http.close(event.handle)
                 }
-                std.http.close(event.handle)
             } else {
                 std.http.close(event.handle)
             }

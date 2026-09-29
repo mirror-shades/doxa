@@ -1,0 +1,11 @@
+module a from "./moddata/method_mod_a.doxa"
+module b from "./moddata/method_mod_b.doxa"
+
+# Regression: a struct method (or static struct function) defined in an imported
+# module must resolve a bare callee against its own module namespace. `Alpha.go`
+# and `Beta.go` both call `helper`; each must bind to its own module's `helper`.
+entry function main() {
+    const alpha is $Alpha { x is 1 }
+    const beta is $Beta { x is 1 }
+    @print("{alpha.go()} {alpha.goStatic()} {beta.go()}\n")
+}

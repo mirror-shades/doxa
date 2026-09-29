@@ -1,0 +1,6 @@
+function helper() returns int { return 7 }
+
+public struct Beta {
+    public x :: int,
+    public method go() returns int { return helper() }
+}

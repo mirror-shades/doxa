@@ -202,6 +202,10 @@ pub const expected_module_string_interp_results = [_]print_result{
     .{ .value = "x=42 sum=43 greet=hello world" },
 };
 
+pub const expected_module_method_calls_results = [_]print_result{
+    .{ .value = "42 42 7" },
+};
+
 pub const expected_inline_zig_test_results = [_]print_result{
     .{ .value = "42" },
     .{ .value = "49" },

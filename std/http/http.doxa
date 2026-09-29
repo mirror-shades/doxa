@@ -247,10 +247,18 @@ zig HTTP {
     fn connectionStateType() type {
         return struct {
             stream: std.Io.net.Stream,
-            read_buffer: [16 * 1024]u8 = undefined,
             write_buffer: [8 * 1024]u8 = undefined,
-            reader: std.Io.net.Stream.Reader = undefined,
             writer: std.Io.net.Stream.Writer = undefined,
+            // Socket bytes are drained here by `poll` (the sole reader of the
+            // socket). Request/frame decoding consumes from the front and never
+            // touches the socket, so a partial head or frame cannot stall the
+            // loop.
+            input: std.ArrayList(u8) = .empty,
+            // In-memory reader over the current complete request, kept in the
+            // connection so the parsed `Request` borrows state that outlives the
+            // parse call.
+            request_reader: std.Io.Reader = undefined,
+            consumed: usize = 0,
             server: std.http.Server = undefined,
             request: ?std.http.Server.Request = null,
             method: []const u8 = "",
@@ -263,6 +271,7 @@ zig HTTP {
             ws_peer_closed: bool = false,
             ws_frag_opcode: u4 = 0,
             ws_frag: std.ArrayList(u8) = .empty,
+            ws_control: [125]u8 = undefined,
             ws_msg_op: i64 = 0,
             ws_msg_data: []const u8 = "",
         };
@@ -299,10 +308,57 @@ zig HTTP {
         freeOwned(&state.head);
         freeOwned(&state.body);
         state.ws_frag.deinit(std.heap.page_allocator);
+        state.input.deinit(std.heap.page_allocator);
         state.stream.close(httpIo());
         std.heap.page_allocator.destroy(state);
     }
 
+
+    // Shifts the consumed prefix off the input buffer.
+    fn consumeInput(state: *connectionStateType(), n: usize) void {
+        const len = state.input.items.len;
+        if (n >= len) {
+            state.input.clearRetainingCapacity();
+            return;
+        }
+        std.mem.copyForwards(u8, state.input.items[0 .. len - n], state.input.items[n..]);
+        state.input.shrinkRetainingCapacity(len - n);
+    }
+
+    // One read from the socket into the connection's input buffer, called by
+    // `poll` after readiness reports bytes available. Returns false on EOF or a
+    // read error, which the caller reports as a closed connection.
+    fn drainInput(state: *connectionStateType()) bool {
+        var scratch: [16 * 1024]u8 = undefined;
+        var bufs: [1][]u8 = .{scratch[0..]};
+        const base = httpIoStateType().base_io;
+        const n = base.vtable.netRead(base.userdata, state.stream.socket.handle, bufs[0..]) catch return false;
+        if (n == 0) return false;
+        state.input.appendSlice(std.heap.page_allocator, scratch[0..n]) catch return false;
+        return true;
+    }
+
+    // Total length of the request whose head ends at `\r\n\r\n`: the head plus a
+    // Content-Length body. A chunked body is rejected because the buffered
+    // reactor needs the whole request length before it can parse.
+    fn requestBodyLength(head: []const u8) !usize {
+        var lines = std.mem.splitSequence(u8, head, "\r\n");
+        _ = lines.next(); // request line
+        var content_length: usize = 0;
+        while (lines.next()) |line| {
+            if (line.len == 0) break;
+            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+            const name = std.mem.trim(u8, line[0..colon], " \t");
+            const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
+            if (std.ascii.eqlIgnoreCase(name, "content-length")) {
+                content_length = std.fmt.parseInt(usize, value, 10) catch return error.InvalidArgument;
+                if (content_length > 1024 * 1024) return error.InvalidArgument;
+            } else if (std.ascii.eqlIgnoreCase(name, "transfer-encoding")) {
+                if (!std.ascii.eqlIgnoreCase(value, "identity")) return error.InvalidArgument;
+            }
+        }
+        return content_length;
+    }
 
     fn mapNetworkError(err_name: []const u8) i64 {
         const common = mapCommon(err_name);
@@ -365,9 +421,9 @@ zig HTTP {
             return 0;
         };
         state.stream = stream;
-        state.reader = stream.reader(httpIo(), &state.read_buffer);
         state.writer = stream.writer(httpIo(), &state.write_buffer);
-        state.server = std.http.Server.init(&state.reader.interface, &state.writer.interface);
+        state.input = .empty;
+        state.consumed = 0;
         state.request = null;
         state.method = "";
         state.target = "";
@@ -401,31 +457,77 @@ zig HTTP {
     }
 
 
+    // 1 = a complete request is parsed and buffered (use `takeRequest`),
+    // 0 = not enough bytes yet (retry on the next Readable event), -1 = error.
+    // Never reads the socket: `poll` fills `input`.
     pub fn readRequest(handle: i64) i64 {
         clearLastError();
         const state = connectionOf(handle) orelse {
             setLastError(1);
-            return 1;
+            return -1;
         };
+        // A parsed request not yet responded to is still ready (idempotent).
+        if (state.request != null) return 1;
+
+        const buf = state.input.items;
+        const head_end = std.mem.indexOf(u8, buf, "\r\n\r\n") orelse return 0;
+        const head_len = head_end + 4;
+        const body_len = requestBodyLength(buf[0..head_len]) catch {
+            setLastError(1);
+            return -1;
+        };
+        const total = head_len + body_len;
+        if (buf.len < total) return 0;
+
         freeOwned(&state.target);
         freeOwned(&state.head);
         freeOwned(&state.body);
+        state.request_reader = std.Io.Reader.fixed(buf[0..total]);
+        state.server = std.http.Server.init(&state.request_reader, &state.writer.interface);
+        state.consumed = total;
         state.request = state.server.receiveHead() catch |err| {
             setLastError(mapNetworkError(@errorName(err)));
-            return 1;
+            state.request = null;
+            return -1;
         };
         const request = &state.request.?;
         state.method = @tagName(request.head.method);
         state.target = copyToPage(request.head.target) orelse {
             setLastError(2);
-            return 1;
+            return -1;
         };
         state.head = copyToPage(request.head_buffer) orelse {
             setLastError(2);
-            return 1;
+            return -1;
         };
         state.keep_alive = request.head.keep_alive;
-        return 0;
+        if (request.head.method.requestHasBody()) {
+            var transfer_buffer: [16 * 1024]u8 = undefined;
+            // `readerExpectContinue` answers `Expect: 100-continue` (writing the
+            // interim response) and is a no-op when the header is absent.
+            const body_reader = request.readerExpectContinue(&transfer_buffer) catch |err| {
+                setLastError(mapNetworkError(@errorName(err)));
+                return -1;
+            };
+            var collected: std.array_list.Aligned(u8, .of(u8)) = .empty;
+            defer collected.deinit(std.heap.page_allocator);
+            body_reader.appendRemaining(std.heap.page_allocator, &collected, .limited(1024 * 1024)) catch |err| {
+                setLastError(mapNetworkError(@errorName(err)));
+                return -1;
+            };
+            state.body = copyToPage(collected.items) orelse {
+                setLastError(2);
+                return -1;
+            };
+        } else {
+            state.body = "";
+        }
+        return 1;
+    }
+
+    pub fn isWebSocket(handle: i64) bool {
+        const state = connectionOf(handle) orelse return false;
+        return state.is_websocket;
     }
 
     pub fn requestMethod(handle: i64) []const u8 {
@@ -443,36 +545,9 @@ zig HTTP {
         return state.head;
     }
 
+    // The body captured by the last successful `readRequest`.
     pub fn requestBody(handle: i64) []const u8 {
-        clearLastError();
-        const state = connectionOf(handle) orelse {
-            setLastError(1);
-            return "";
-        };
-        const request = if (state.request) |*request| request else {
-            setLastError(1);
-            return "";
-        };
-        freeOwned(&state.body);
-        var transfer_buffer: [16 * 1024]u8 = undefined;
-        // `readerExpectContinue` answers `Expect: 100-continue` (writing the
-        // interim response) and is a no-op when the header is absent. Using
-        // `readerExpectNone` here asserted `head.expect == null`, so any client
-        // that sent the header aborted the process under runtime safety.
-        const body_reader = request.readerExpectContinue(&transfer_buffer) catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return "";
-        };
-        var collected: std.array_list.Aligned(u8, .of(u8)) = .empty;
-        defer collected.deinit(std.heap.page_allocator);
-        body_reader.appendRemaining(std.heap.page_allocator, &collected, .limited(1024 * 1024)) catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return "";
-        };
-        state.body = copyToPage(collected.items) orelse {
-            setLastError(2);
-            return "";
-        };
+        const state = connectionOf(handle) orelse return "";
         return state.body;
     }
 
@@ -627,41 +702,21 @@ zig HTTP {
             return;
         };
         state.request = null;
+        consumeInput(state, state.consumed);
+        state.consumed = 0;
     }
 
     // Server-side WebSockets. Zig ships the handshake (`respondWebSocket`) and
     // the write half (`WebSocket.writeMessage`) but its `readSmallMessage` is
     // single-frame, input-buffer-bounded, rejects fragmentation, and silently
-    // drops pongs, so the read path is a real frame codec here. Decoding draws
-    // from the connection's buffered reader, one message (or control frame) at
-    // a time; a fragmented message is reassembled in `ws_frag` up to the size
-    // cap before it is surfaced.
-    fn wsUnmask(payload: []u8, mask: u32) void {
-        const mask_bytes: [4]u8 = @bitCast(mask);
-        for (payload, 0..) |*byte, i| byte.* ^= mask_bytes[i % 4];
-    }
-
-    // Append a frame's `len` payload bytes to `dest`, unmasking in place. Reading
-    // chunk-by-chunk keeps every `take` within the reader's buffer capacity, so a
-    // frame (or fragment) larger than the 16 KiB read buffer no longer trips the
-    // `Reader.take` assertion the way a single `take(len)` did.
-    fn wsAppendPayload(
-        in: *std.Io.Reader,
-        dest: *std.ArrayList(u8),
-        len: usize,
-        mask: u32,
-    ) (std.Io.Reader.Error || std.mem.Allocator.Error)!void {
-        const mask_bytes: [4]u8 = @bitCast(mask);
-        var remaining = len;
-        var offset: usize = 0;
-        while (remaining > 0) {
-            const chunk_len = @min(remaining, 4096);
-            const chunk = try in.take(chunk_len);
-            for (chunk, 0..) |*byte, i| byte.* ^= mask_bytes[(offset + i) % 4];
-            try dest.appendSlice(std.heap.page_allocator, chunk);
-            offset += chunk_len;
-            remaining -= chunk_len;
-        }
+    // drops pongs, so the read path is a real frame codec here. Decoding consumes
+    // complete frames from the connection's input buffer (filled by `poll`) and
+    // returns `WsPending` when a frame is incomplete, so a slow sender never
+    // stalls the loop. A fragmented message is reassembled in `ws_frag` up to the
+    // size cap before it is surfaced.
+    fn appendUnmasked(dest: *std.ArrayList(u8), payload: []const u8, mask: [4]u8) std.mem.Allocator.Error!void {
+        try dest.ensureUnusedCapacity(std.heap.page_allocator, payload.len);
+        for (payload, 0..) |byte, i| dest.appendAssumeCapacity(byte ^ mask[i % 4]);
     }
 
     fn wsOpcodeFromCode(code: i64) ?std.http.Server.WebSocket.Opcode {
@@ -689,8 +744,10 @@ zig HTTP {
     fn wsOf(state: *connectionStateType()) std.http.Server.WebSocket {
         return .{
             .key = "",
-            .input = state.server.reader.in,
-            .output = state.server.out,
+            // Only `output` is used by `writeMessage`; `input` must merely be a
+            // live pointer.
+            .input = &state.request_reader,
+            .output = &state.writer.interface,
         };
     }
 
@@ -708,16 +765,31 @@ zig HTTP {
         state.ws_closed = true;
     }
 
-    // A concrete error set: the reader/allocator errors the frame read can
-    // produce, plus the two protocol failures `wsNext` reports. The extractor
-    // handles the `error{...}` literal in a private signature.
-    fn wsDecode(state: *connectionStateType()) (std.Io.Reader.Error || std.mem.Allocator.Error || error{ WsProtocol, WsOversize })!std.http.Server.WebSocket.Opcode {
-        const in = state.server.reader.in;
+    // RFC 6455 §5.5.1/§7.4.1: a close payload is either empty, or a 2-byte
+    // status code followed by a UTF-8 reason. A 1-byte payload, an illegal
+    // status code, or a non-UTF-8 reason is a protocol failure.
+    fn validateClosePayload(payload: []const u8) (error{ WsProtocol, WsInvalidData })!void {
+        if (payload.len == 0) return;
+        if (payload.len == 1) return error.WsProtocol;
+        const code = std.mem.readInt(u16, payload[0..2], .big);
+        const code_ok = switch (code) {
+            1000...1003, 1007...1014, 3000...4999 => true,
+            else => false,
+        };
+        if (!code_ok) return error.WsProtocol;
+        if (!std.unicode.utf8ValidateSlice(payload[2..])) return error.WsInvalidData;
+    }
+
+    // Decodes and consumes one WebSocket frame (reassembling continuations) from
+    // the connection's input buffer. Returns `WsPending` when the buffer does not
+    // hold a complete frame yet; never touches the socket.
+    fn wsDecode(state: *connectionStateType()) (std.mem.Allocator.Error || error{ WsProtocol, WsOversize, WsInvalidData, WsPending })!std.http.Server.WebSocket.Opcode {
         const max_message_size: usize = 16 * 1024 * 1024;
         while (true) {
-            const header = try in.takeArray(2);
-            const h0: std.http.Server.WebSocket.Header0 = @bitCast(header[0]);
-            const h1: std.http.Server.WebSocket.Header1 = @bitCast(header[1]);
+            const buf = state.input.items;
+            if (buf.len < 2) return error.WsPending;
+            const h0: std.http.Server.WebSocket.Header0 = @bitCast(buf[0]);
+            const h1: std.http.Server.WebSocket.Header1 = @bitCast(buf[1]);
 
             const is_control = switch (h0.opcode) {
                 .connection_close, .ping, .pong => true,
@@ -728,48 +800,78 @@ zig HTTP {
             if (!h1.mask) return error.WsProtocol;
             if (is_control and !h0.fin) return error.WsProtocol;
 
+            var pos: usize = undefined;
             const len: usize = switch (h1.payload_len) {
-                .len16 => try in.takeInt(u16, .big),
-                .len64 => std.math.cast(usize, try in.takeInt(u64, .big)) orelse return error.WsOversize,
-                else => @intFromEnum(h1.payload_len),
+                .len16 => blk: {
+                    if (buf.len < 4) return error.WsPending;
+                    pos = 4;
+                    break :blk std.mem.readInt(u16, buf[2..4], .big);
+                },
+                .len64 => blk: {
+                    if (buf.len < 10) return error.WsPending;
+                    pos = 10;
+                    const wide = std.mem.readInt(u64, buf[2..10], .big);
+                    break :blk std.math.cast(usize, wide) orelse return error.WsOversize;
+                },
+                else => blk: {
+                    pos = 2;
+                    break :blk @intFromEnum(h1.payload_len);
+                },
             };
             if (is_control and len > 125) return error.WsProtocol;
 
-            const pending: usize = if (h0.opcode == .continuation)
-                state.ws_frag.items.len + len
-            else
-                len;
-            if (pending > max_message_size) return error.WsOversize;
+            // Reject on the declared length before any addition: `len` is a
+            // client-controlled 64-bit value, so `ws_frag.items.len + len` could
+            // overflow before the cap check. `max_message_size - ws_frag.items.len`
+            // cannot underflow (the cap keeps the accumulated length at or below
+            // `max_message_size`).
+            if (h0.opcode == .continuation) {
+                if (len > max_message_size - state.ws_frag.items.len) return error.WsOversize;
+            } else if (len > max_message_size) {
+                return error.WsOversize;
+            }
 
-            const mask: u32 = @bitCast((try in.takeArray(4)).*);
+            const frame_len = pos + 4 + len; // masking key (4) + payload
+            if (buf.len < frame_len) return error.WsPending;
+            const mask: [4]u8 = buf[pos..][0..4].*;
 
             switch (h0.opcode) {
                 .continuation => {
                     if (state.ws_frag_opcode == 0) return error.WsProtocol;
-                    try wsAppendPayload(in, &state.ws_frag, len, mask);
+                    try appendUnmasked(&state.ws_frag, buf[pos + 4 .. frame_len], mask);
+                    consumeInput(state, frame_len);
                     if (h0.fin) {
-                        state.ws_msg_data = state.ws_frag.items;
-                        const op: std.http.Server.WebSocket.Opcode =
-                            if (state.ws_frag_opcode == 1) .text else .binary;
+                        const is_text = state.ws_frag_opcode == 1;
                         state.ws_frag_opcode = 0;
-                        return op;
+                        if (is_text and !std.unicode.utf8ValidateSlice(state.ws_frag.items)) return error.WsInvalidData;
+                        state.ws_msg_data = state.ws_frag.items;
+                        return if (is_text) .text else .binary;
                     }
                 },
                 .text, .binary => {
                     if (state.ws_frag_opcode != 0) return error.WsProtocol;
                     state.ws_frag.clearRetainingCapacity();
-                    try wsAppendPayload(in, &state.ws_frag, len, mask);
+                    try appendUnmasked(&state.ws_frag, buf[pos + 4 .. frame_len], mask);
+                    consumeInput(state, frame_len);
                     if (h0.fin) {
+                        // RFC 6455 §5.6: a text message must be valid UTF-8 (Doxa
+                        // strings are UTF-8, so surfacing non-UTF-8 would violate
+                        // the language's own invariant too).
+                        if (h0.opcode == .text and !std.unicode.utf8ValidateSlice(state.ws_frag.items)) return error.WsInvalidData;
                         state.ws_msg_data = state.ws_frag.items;
                         return h0.opcode;
                     }
                     state.ws_frag_opcode = @intFromEnum(h0.opcode);
                 },
                 .ping, .pong, .connection_close => {
-                    const payload = try in.take(len);
-                    wsUnmask(payload, mask);
-                    state.ws_msg_data = payload;
-                    if (h0.opcode == .connection_close) state.ws_peer_closed = true;
+                    const payload = buf[pos + 4 .. frame_len];
+                    for (payload, 0..) |byte, i| state.ws_control[i] = byte ^ mask[i % 4];
+                    consumeInput(state, frame_len);
+                    if (h0.opcode == .connection_close) {
+                        try validateClosePayload(state.ws_control[0..len]);
+                        state.ws_peer_closed = true;
+                    }
+                    state.ws_msg_data = state.ws_control[0..len];
                     return h0.opcode;
                 },
                 else => return error.WsProtocol,
@@ -813,6 +915,9 @@ zig HTTP {
         };
         state.is_websocket = true;
         state.request = null;
+        // Drop the handshake bytes; any pipelined frames remain in `input`.
+        consumeInput(state, state.consumed);
+        state.consumed = 0;
         return 0;
     }
 
@@ -836,9 +941,9 @@ zig HTTP {
         };
     }
 
-    // Returns 1 when a message is ready (`wsMessageOp`/`wsMessageData`), 0 when
-    // the connection is finished (clean EOF or a peer close already reported),
-    // and -1 on protocol/transport failure with `takeLastErrorCode` set.
+    // 1 = message ready (`wsMessageOp`/`wsMessageData`), 0 = need more bytes
+    // (retry on the next Readable event), 2 = peer closed, -1 = error with
+    // `takeLastErrorCode` set.
     pub fn wsNext(handle: i64) i64 {
         clearLastError();
         const state = connectionOf(handle) orelse {
@@ -849,12 +954,9 @@ zig HTTP {
             setLastError(1);
             return -1;
         }
-        if (state.ws_closed or state.ws_peer_closed) return 0;
+        if (state.ws_closed or state.ws_peer_closed) return 2;
         const opcode = wsDecode(state) catch |err| switch (err) {
-            error.EndOfStream => {
-                state.ws_closed = true;
-                return 0;
-            },
+            error.WsPending => return 0,
             error.WsOversize => {
                 wsFail(state, 1009);
                 setLastError(113);
@@ -865,16 +967,13 @@ zig HTTP {
                 setLastError(113);
                 return -1;
             },
-            error.OutOfMemory => {
-                setLastError(2);
+            error.WsInvalidData => {
+                wsFail(state, 1007);
+                setLastError(113);
                 return -1;
             },
-            error.ReadFailed => {
-                if (state.reader.err) |read_err| {
-                    setLastError(mapNetworkError(@errorName(read_err)));
-                } else {
-                    setLastError(114);
-                }
+            error.OutOfMemory => {
+                setLastError(2);
                 return -1;
             },
         };
@@ -892,12 +991,10 @@ zig HTTP {
         return state.ws_msg_data;
     }
 
-    // Whether the connection's reader already holds undecoded bytes. A poll loop
-    // drains with this because a frame that arrived with (or pipelined behind)
-    // the handshake is already off the socket and invisible to `poll`.
+    // Whether undecoded bytes are already buffered for the connection.
     pub fn wsBuffered(handle: i64) bool {
         const state = connectionOf(handle) orelse return false;
-        return state.server.reader.in.bufferedLen() > 0;
+        return state.input.items.len > 0;
     }
 
     pub fn close(handle: i64) void {
@@ -1129,7 +1226,15 @@ zig HTTP {
         var i: usize = 1;
         while (i < n) : (i += 1) {
             if (ready[i]) {
-                pushEvent(ids[i], 2);
+                // `poll` is the only reader of a socket's bytes: pull what is
+                // available into the connection buffer, then report readiness.
+                // A zero-length read is EOF, reported as closed.
+                const connection = connectionOf(ids[i]) orelse continue;
+                if (drainInput(connection)) {
+                    pushEvent(ids[i], 2);
+                } else {
+                    pushEvent(ids[i], 3);
+                }
             } else if (closed[i]) {
                 pushEvent(ids[i], 3);
             }
@@ -1475,7 +1580,7 @@ zig HTTP {
 
 }
 
-function mapIOError(code :: int) returns error.StdError {
+public function mapIOError(code :: int) returns error.StdError {
     return match code {
         1 then error.Common.InvalidArgument,
         2 then error.Common.OutOfMemory,
@@ -1619,21 +1724,28 @@ public struct ServerRequest {
     }
 }
 
-public function readRequest(connection :: int) returns ServerRequest | error.StdError {
-    const code is HTTP.readRequest(connection)
-    if code != 0 then return mapIOError(HTTP.takeLastErrorCode())
-    const verb is HTTP.requestMethod(connection)
-    const target is HTTP.requestTarget(connection)
-    const raw_headers is HTTP.requestHead(connection)
-    const body is HTTP.requestBody(connection)
-    const err is HTTP.takeLastErrorCode()
-    if err != 0 then return mapIOError(err)
+/* Parse the next request from the connection's buffer. Returns `1` when a
+   request is ready (read it with `takeRequest`), `0` when more bytes are needed
+   (retry on the next `Readable` event), and a negative status on a connection
+   error. Decoding is non-blocking, so a slow or partial sender cannot stall the
+   loop. */
+public function readRequest(connection :: int) returns int {
+    return HTTP.readRequest(connection)
+}
+
+/* The request parsed by the last successful `readRequest`. */
+public function takeRequest(connection :: int) returns ServerRequest {
     return $ServerRequest {
-        verb is verb,
-        target is target,
-        body_text is body,
-        raw_headers is raw_headers,
+        verb is HTTP.requestMethod(connection),
+        target is HTTP.requestTarget(connection),
+        body_text is HTTP.requestBody(connection),
+        raw_headers is HTTP.requestHead(connection),
     }
+}
+
+/* Whether the connection has completed the WebSocket handshake. */
+public function isWebSocket(connection :: int) returns tetra {
+    return HTTP.isWebSocket(connection)
 }
 
 public function keepAlive(connection :: int) returns tetra {
@@ -1691,20 +1803,20 @@ public function wsSend(connection :: int, op :: WsOp, data :: string) returns er
     return mapIOError(err)
 }
 
-/* Read the next complete message. Fragmented messages are reassembled before
-   they are returned. `nothing` means the connection is finished (the peer
-   closed cleanly or a close frame was already reported); an error means the
-   connection failed. */
-public function wsNext(connection :: int) returns Message | nothing | error.StdError {
-    const status is HTTP.wsNext(connection)
-    const err is HTTP.takeLastErrorCode()
-    if err != 0 then return mapIOError(err)
-    if status == 0 then return nothing
-    const code is HTTP.wsMessageOp(connection)
-    const data is HTTP.wsMessageData(connection)
+/* Advance the connection's frame decoder. Returns `1` when a message is ready
+   (read it with `wsMessage`), `0` when more bytes are needed (retry on the next
+   `Readable` event), `2` when the peer closed, and a negative status on a
+   protocol or transport error. Fragmented messages are reassembled before they
+   are surfaced. Decoding is non-blocking. */
+public function wsNext(connection :: int) returns int {
+    return HTTP.wsNext(connection)
+}
+
+/* The message decoded by the last successful `wsNext`. */
+public function wsMessage(connection :: int) returns Message {
     return $Message {
-        op is wsOpFromCode(code),
-        data is data,
+        op is wsOpFromCode(HTTP.wsMessageOp(connection)),
+        data is HTTP.wsMessageData(connection),
     }
 }
 
@@ -1714,6 +1826,11 @@ public function wsNext(connection :: int) returns Message | nothing | error.StdE
    another readiness event. */
 public function wsBuffered(connection :: int) returns tetra {
     return HTTP.wsBuffered(connection)
+}
+
+/* The last error code left by `readRequest`/`ws*`, taken and cleared. */
+public function takeLastErrorCode() returns int {
+    return HTTP.takeLastErrorCode()
 }
 
 /* Why a `poll` event fired. `Accepted` is a fresh connection, `Readable` is a
@@ -1905,4 +2022,61 @@ public function checkStatus(response :: Response) returns Response | error.StdEr
     const status is response.statusCode()
     if status < 200 or status >= 300 then return error.IO.HttpStatus
     return response
+}
+
+/* --- Go-flavoured WebSocket sugar over the `ws*` primitives above ---
+   These fold the handshake and status/message boilerplate; the primitives stay
+   public for full control. Decoding is non-blocking, so `wsRead` returns
+   `nothing` when no complete message is buffered: call it once per readable
+   event (or after `wsAccept`) and stop on `nothing`, then wait for the next
+   event. A peer close arrives as a `Closed` poll event or a `Close` message, so
+   `nothing` alone does not mean the connection is finished. */
+
+/* Complete the handshake if `connection`'s buffered request is a WebSocket
+   upgrade. Returns `true` once it is a WebSocket; while it is still `false`,
+   call again after the next readable event. */
+public function wsAccept(connection :: int) returns tetra {
+    if isWebSocket(connection) then return true
+    const status is readRequest(connection)
+    if status != 1 then return false
+    upgradeWebSocket(connection)
+    return takeLastErrorCode() == 0
+}
+
+/* The next complete message, `nothing` when none is buffered yet or the peer
+   closed, or an error on a protocol/transport failure. Fragmented messages are
+   reassembled before they are surfaced. */
+public function wsRead(connection :: int) returns Message | nothing | error.StdError {
+    const status is wsNext(connection)
+    if status == 1 then return wsMessage(connection)
+    const err is takeLastErrorCode()
+    if err != 0 then return mapIOError(err)
+    return nothing
+}
+
+/* Send one frame with an explicit opcode. */
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+    return wsSend(connection, op, data)
+}
+
+public function wsText(connection :: int, data :: string) returns error.StdError {
+    return wsSend(connection, WsOp.Text, data)
+}
+
+public function wsBinary(connection :: int, data :: string) returns error.StdError {
+    return wsSend(connection, WsOp.Binary, data)
+}
+
+public function wsPing(connection :: int, data :: string) returns error.StdError {
+    return wsSend(connection, WsOp.Ping, data)
+}
+
+public function wsPong(connection :: int, data :: string) returns error.StdError {
+    return wsSend(connection, WsOp.Pong, data)
+}
+
+/* Send a Close frame (empty payload) and drop the connection. */
+public function wsClose(connection :: int) returns error.StdError {
+    wsSend(connection, WsOp.Close, "")
+    return close(connection)
 }

@@ -332,18 +332,23 @@ const listener is std.http.listen(0) as int else 0
 const port is std.http.localAddr(listener) as int else 0
 Fixture.startPrimitiveClient(port)
 const connection is std.http.accept(listener) as int else 0
-const incoming is std.http.readRequest(connection)
+# `accept` bypasses the poll loop, so pump the socket through `poll` (which
+# includes every live connection) until the request is buffered, then read it.
+var request_status is 0
+var request_guard is 0
+while request_status == 0 and request_guard < 100 do request_guard += 1 {
+    std.http.poll(listener, 500)
+    request_status is std.http.readRequest(connection)
+}
+var primitive_ok is false
+if request_status == 1 then {
+    const request is std.http.takeRequest(connection)
+    if request.verb == "GET" and request.target == "/" then primitive_ok is true
+}
 std.http.respond(connection, 200, "Content-Type: text/plain\u{d}\u{a}", "primitive")
 std.http.close(connection)
 std.http.close(listener)
 const primitive_result is Fixture.finishPrimitiveClient()
-var primitive_ok is false
-incoming as ServerRequest then {
-    const request is incoming
-    if request.verb == "GET" and request.target == "/" then primitive_ok is true
-} else {
-    primitive_ok is false
-}
 if listener > 0 and port > 0 and connection > 0 and primitive_ok and primitive_result == 1 then {
     @print("primitives ok\n")
 } else {
