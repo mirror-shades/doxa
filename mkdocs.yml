@@ -54,6 +54,7 @@ nav:
   - Methods: methods.md
   - Sets: sets.md
   - Standard Library: stdlib.md
+  - Standard Library API: stdlib-api.md
   - Structs: struct.md
   - Tetras: tetras.md
   - Unions: unions.md
