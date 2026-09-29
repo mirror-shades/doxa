@@ -1,0 +1,53 @@
+module std from @std()
+
+/* Minimal WebSocket echo server.
+
+   Run it with `doxa run demo/ws/echo.doxa`, open demo/ws/index.html in a
+   browser, and every text or binary message you send comes back as an echo.
+   The server binds a fixed loopback port so the page can hard-code the URL. */
+
+const port is 8765
+
+const listener is std.http.listen(port) as int else 0
+if listener == 0 then {
+    @print("could not bind ws://127.0.0.1:{port} (is another server using it?)\n")
+} else {
+    @print("echo server listening on ws://127.0.0.1:{port}\n")
+}
+
+while listener != 0 {
+    const events is std.http.poll(listener, 1000)
+    for i while i < @length(events) do i += 1 {
+        const event is events[i]
+        if event.kind == std.http.EventKind.Closed then {
+            std.http.close(event.handle)
+        } else {
+            if not std.http.isWebSocket(event.handle) then {
+                if std.http.wsAccept(event.handle) then {
+                    @print("client connected\n")
+                }
+            }
+            if std.http.isWebSocket(event.handle) then {
+                var reading is true
+                while reading {
+                    const m is std.http.wsRead(event.handle)
+                    m as Message then {
+                        const message is m
+                        if message.op == std.http.WsOp.Text or message.op == std.http.WsOp.Binary then {
+                            @print("echo: {message.data}\n")
+                            std.http.wsWrite(event.handle, message.op, message.data)
+                        } else if message.op == std.http.WsOp.Ping then {
+                            std.http.wsPong(event.handle, message.data)
+                        } else if message.op == std.http.WsOp.Close then {
+                            @print("client disconnected\n")
+                            std.http.wsClose(event.handle)
+                            reading is false
+                        }
+                    } else {
+                        reading is false
+                    }
+                }
+            }
+        }
+    }
+}
