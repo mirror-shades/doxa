@@ -844,7 +844,12 @@ pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
         if (parser.imported_symbols) |imported_symbols| {
             if (imported_symbols.getPtr(name)) |imported_symbol| {
                 imported_symbol.used = true;
-                return createImportedSymbolVariable(self, name, imported_symbol.*);
+                const variable = createImportedSymbolVariable(self, name, imported_symbol.*);
+                // The binding is created lazily on an actual reference, so it is
+                // used by construction; without this an imported type referenced
+                // only from a type position would warn as an unused variable.
+                if (variable) |v| v.used = true;
+                return variable;
             }
         }
         _ = parser_mut.ensureModuleNamespace(name) catch |err| {

@@ -71,11 +71,84 @@ else {
   `Cookie`, and `Cookie2` are stripped when the redirect changes the strict
   origin (scheme, host, or effective port). Other custom headers continue to
   the destination.
-- The sequential server primitives bind only to loopback: `listen(port)` (use
-  `0` for an ephemeral port), `localAddr(listener)`, `accept(listener)`,
-  `respond(connection, status, headers, body)`, and `close(handle)`. The
-  `respond` header argument is a CRLF-separated blob; `Content-Length`,
-  `Transfer-Encoding`, and `Connection` are supplied by the library.
+- The server primitives bind only to loopback: `listen(port)` (use `0` for an
+  ephemeral port), `localAddr(listener)`, `accept(listener)`, `close(handle)`,
+  and the request/response pair `readRequest(connection)` →
+  `ServerRequest | error.StdError` and `respond(connection, status, headers,
+  body)`. `readRequest` reads the next request's head and body on the accepted
+  connection; `ServerRequest.verb`, `.target`, and `.body_text` hold the parsed
+  fields, and `header(name)` / `hasHeader(name)` read repeated request headers
+  case-insensitively. `respond` must follow a `readRequest`; its `headers`
+  argument is a CRLF-separated blob, and the library supplies `Content-Length`
+  and connection framing. A client that asks for `Connection: close` gets it
+  back, and `keepAlive(connection)` reports whether the request may reuse the
+  connection.
+
+  ```doxa
+  module std from @std()
+
+  const listener is std.http.listen(8080) as int else 0
+  const connection is std.http.accept(listener) as int else 0
+  const request is std.http.readRequest(connection)
+  request as ServerRequest then {
+      const value is request
+      std.http.respond(connection, 200, "Content-Type: text/plain\r\n", "hello {value.verb}")
+  } else {
+      std.http.respond(connection, 400, "", "bad request")
+  }
+  std.http.close(connection)
+  std.http.close(listener)
+  ```
+
+- `poll(listener, timeout_ms)` waits across the listener and every live
+  connection at once and returns `Event[]`. Each `Event` carries a connection
+  `handle` and a `kind`: `1` a freshly accepted connection, `2` readable data,
+  and `3` a peer that closed or errored. `timeout_ms == 0` polls immediately
+  and a negative value blocks until an event; closing the listener is the way
+  to stop a loop. A server serves many keep-alive clients without blocking on
+  any one connection by polling instead of calling `accept` directly:
+
+  ```doxa
+  const listener is std.http.listen(0) as int else 0
+  while true {
+      const events is std.http.poll(listener, 1000)
+      for i while i < @length(events) do i += 1 {
+          const event is events[i]
+          if event.kind == 3 then {
+              std.http.close(event.handle)
+          } else {
+              const request is std.http.readRequest(event.handle)
+              request as ServerRequest then {
+                  const value is request
+                  std.http.respond(event.handle, 200, "Content-Type: text/plain\r\n", "hello {value.target}")
+              } else {
+                  std.http.close(event.handle)
+              }
+          }
+      }
+  }
+  ```
+
+- `Router` matches request paths to integer route ids as data:
+  `Router.new()`, `add(verb, pattern, id)`, and
+  `route(router, verb, path) → Route | nothing`. A pattern segment written
+  `:name` captures the matching path segment, and `Route.param(name)` reads the
+  capture. Matching is exact per segment and verb, so `/users/:id` matches
+  `/users/42` with `param("id") == "42"`, but not `/users/42/posts` or a
+  different verb. (`{}` placeholders are not usable: Doxa string literals
+  interpolate on `{`.)
+
+  ```doxa
+  var router is std.http.Router.new()
+  router.add("GET", "/users/:id", 1)
+
+  const matched is std.http.route(router, "GET", "/users/42")
+  matched as Route then {
+      const id is matched.param("id") as string else ""
+      @print("user {id}\n")
+  }
+  ```
+
 - `download(url)` / `downloadUrl(url, destination)` use the same redirect,
   timeout, and status handling as requests, but stream response bytes directly
   to the destination file. Non-2xx responses still write their body and then
@@ -84,7 +157,55 @@ else {
 ## IO
 
 
+## JSON
+
+`std.json` parses a document into a handle-based tree and writes one back out.
+A `Node` is a small generation-checked handle into a single document slot, so
+retaining one past the next `parse` is safe: it reads as `Kind.Invalid` rather
+than a dangling value.
+
+```doxa
+module std from @std()
+
+const result is std.json.parse("{\"name\":\"doxa\",\"stars\":5}")
+match result {
+    std.json.Node then {
+        const name is result.field("name")
+        match name {
+            std.json.Node then @print("{name.text()}\n")
+            else @print("no name\n")
+        }
+    }
+    else {
+        @print("malformed\n")
+    }
+}
+```
+
+- `parse(text)` returns `Node | error.StdError`. Objects keep their key order.
+  Duplicate keys are rejected. A malformed document, invalid UTF-8, and a
+  `number_string` that is not finite all surface as `error.IO.InvalidData`;
+  the writer returns `error.Common.InvalidArgument` for misuse (a value where a
+  key was expected, an unbalanced end, a second root value, and so on).
+- `kind()` never fails and returns a `Kind`: `Invalid`, `Null`, `Boolean`,
+  `Integer`, `Number`, `Text`, `Array`, or `Object`. An integer that the runtime
+  could not fit in `i64` or an exponent beyond the float range arrives as
+  `Number` (`1e400` reads as infinity from `floatValue()`).
+- `count()`, `element(index)`, `field(name)`, `key()`, `text()`, `intValue()`,
+  `floatValue()`, and `booleanValue()` are strict: a wrong kind, a missing
+  field, or an out-of-range index yields `nothing`. `count` works on arrays and
+  objects; `field` only on objects; the value accessors only on the matching
+  scalar kind.
+- Writing mirrors the document shape: `beginObject()` / `beginArray()` open a
+  container, `writeKey(name)` precedes a member value, and `end()` closes it.
+  `finish()` returns the escaped text as `string | error.StdError` and releases
+  the writer; the next writer call starts a fresh document.
+- The writer emits `\b`, `\f`, `\n`, `\r`, `\t` as their two-character escapes
+  and any other control byte below `0x20` as a lowercase `\u00xx` sequence. It
+  validates UTF-8 before quoting and refuses NaN or infinity.
+
 ## Methods
+
 
 
 ## Process

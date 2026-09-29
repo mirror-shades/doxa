@@ -1,4 +1,6 @@
 const std = @import("std");
+const ArithOp = @import("../../hir/soxa_instructions.zig").ArithOp;
+const HIRType = @import("../../hir/soxa_types.zig").HIRType;
 
 // ---------------------------------------------------------------------------
 // Phase D — value range facts, and the floored-arithmetic lowerings they pick
@@ -66,6 +68,16 @@ pub const IntRange = struct {
 
     pub fn exactConst(self: IntRange) ?i64 {
         return self.konst;
+    }
+
+    /// Structural equality, treating an exact constant as authoritative (its
+    /// bounds are redundant). Used by the range fixpoint to detect stability.
+    pub fn eql(a: IntRange, b: IntRange) bool {
+        if (a.konst != null or b.konst != null) {
+            return a.konst != null and b.konst != null and a.konst.? == b.konst.?;
+        }
+        return a.lo_known == b.lo_known and a.hi_known == b.hi_known and
+            (!a.lo_known or a.lo == b.lo) and (!a.hi_known or a.hi == b.hi);
     }
 
     /// True when the value provably cannot be negative.
@@ -209,6 +221,40 @@ pub fn signFacts(lhs: IntRange, rhs: IntRange) SignFacts {
         .lhs_nonneg = lhs.isNonNegative(),
         .rhs_nonneg = rhs.isNonNegative(),
     };
+}
+
+/// The value range of an integer `Arith` result, for the operand type the HIR
+/// carries. This is the single source of truth for both the emitter (which
+/// attaches it to the result `StackVal`) and the range dataflow (`range_flow.zig`,
+/// which must reproduce the emitter's transfer exactly). Division and modulo
+/// are only compressed when the divisor is a known positive constant, matching
+/// the floored lowerings the emitter selects on.
+pub fn arithRange(op: ArithOp, operand_type: HIRType, lhs: IntRange, rhs: IntRange) IntRange {
+    switch (operand_type) {
+        .Int => switch (op) {
+            .Add => return IntRange.add(lhs, rhs),
+            .Sub => return IntRange.sub(lhs, rhs),
+            .Mul => return IntRange.mul(lhs, rhs),
+            .Div, .IntDiv => {
+                if (rhs.konst) |c| {
+                    if (c > 0) return IntRange.flooredDivByConst(lhs, c);
+                }
+                return .unknown();
+            },
+            .Mod => {
+                if (rhs.konst) |c| {
+                    if (c > 0) return IntRange.flooredModByConst(lhs, c);
+                }
+                return .unknown();
+            },
+            .Pow => return .unknown(),
+        },
+        .Byte => switch (op) {
+            .Add, .Sub, .Mul => return IntRange.below(256),
+            else => return .unknown(),
+        },
+        else => return .unknown(),
+    }
 }
 
 /// How floored `%` is lowered. Every shape is exact; they differ in cost.

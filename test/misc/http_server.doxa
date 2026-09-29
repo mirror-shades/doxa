@@ -1,0 +1,149 @@
+module std from "std/std.doxa"
+
+zig Fixture {
+    const std = @import("std");
+
+    fn fixtureStateType() type {
+        return struct {
+            var threads: [3]?std.Thread = .{ null, null, null };
+            var count: usize = 0;
+            var results: [3]std.atomic.Value(i64) = .{
+                .init(0), .init(0), .init(0),
+            };
+        };
+    }
+
+    fn fetch(client: *std.http.Client, url: []const u8, expected_status: u16, expected_body: []const u8, expect_cookies: bool) bool {
+        const allocator = std.heap.page_allocator;
+        const uri = std.Uri.parse(url) catch return false;
+        var request = client.request(.GET, uri, .{
+            .redirect_behavior = .unhandled,
+            .headers = .{ .accept_encoding = .omit },
+        }) catch return false;
+        defer request.deinit();
+        request.sendBodiless() catch return false;
+        var response = request.receiveHead(&.{}) catch return false;
+        if (@intFromEnum(response.head.status) != expected_status) return false;
+        if (expect_cookies) {
+            if (std.mem.indexOf(u8, response.head.bytes, "Set-Cookie: a=1") == null) return false;
+            if (std.mem.indexOf(u8, response.head.bytes, "Set-Cookie: b=2") == null) return false;
+        }
+        var transfer_buffer: [1024]u8 = undefined;
+        var body: std.array_list.Aligned(u8, .of(u8)) = .empty;
+        defer body.deinit(allocator);
+        response.reader(&transfer_buffer).appendRemaining(allocator, &body, .limited(1024)) catch return false;
+        return std.mem.eql(u8, body.items, expected_body);
+    }
+
+    fn clientMain(index: usize, port: i64) void {
+        const allocator = std.heap.page_allocator;
+        const io = std.Io.Threaded.global_single_threaded.io();
+        var client: std.http.Client = .{ .allocator = allocator, .io = io };
+        defer client.deinit();
+        const hello = std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}/hello", .{port}) catch return;
+        defer allocator.free(hello);
+        const missing = std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}/missing", .{port}) catch return;
+        defer allocator.free(missing);
+        const cookies = std.fmt.allocPrint(allocator, "http://127.0.0.1:{d}/cookies", .{port}) catch return;
+        defer allocator.free(cookies);
+        if (!fetch(&client, hello, 200, "hello", false)) {
+            fixtureStateType().results[index].store(-1, .release);
+            return;
+        }
+        if (!fetch(&client, missing, 404, "nope", false)) {
+            fixtureStateType().results[index].store(-2, .release);
+            return;
+        }
+        if (!fetch(&client, cookies, 200, "cookies", true)) {
+            fixtureStateType().results[index].store(-3, .release);
+            return;
+        }
+        fixtureStateType().results[index].store(1, .release);
+    }
+
+    pub fn startClients(port: i64, count: i64) void {
+        const state = fixtureStateType();
+        state.count = @intCast(count);
+        for (0..3) |i| {
+            state.threads[i] = null;
+            state.results[i].store(0, .release);
+        }
+        for (0..state.count) |i| {
+            state.threads[i] = std.Thread.spawn(.{}, clientMain, .{ i, port }) catch null;
+        }
+    }
+
+    pub fn finishClients() i64 {
+        const state = fixtureStateType();
+        var total: i64 = 0;
+        for (0..state.count) |i| {
+            if (state.threads[i]) |thread| {
+                thread.join();
+                state.threads[i] = null;
+            }
+            total += state.results[i].load(.acquire);
+        }
+        return total;
+    }
+}
+
+/* One router, served over the multiplexed poll loop. A request on a fresh
+   connection (kind 1) and one reusing a kept-alive connection (kind 2) take
+   the same dispatch path; only the accept count distinguishes them. */
+function serve(listener :: int, total :: int) returns int {
+    var router is std.http.Router.new()
+    router.add("GET", "/hello", 1)
+    router.add("GET", "/cookies", 2)
+    var served is 0
+    var accepts is 0
+    var guard is 0
+    while served < total and guard < 60 do guard += 1 {
+        const events is std.http.poll(listener, 500)
+        for i while i < @length(events) do i += 1 {
+            const event is events[i]
+            if event.kind == 1 or event.kind == 2 then {
+                if event.kind == 1 then accepts += 1
+                const request is std.http.readRequest(event.handle)
+                request as ServerRequest then {
+                    const incoming is request
+                    const matched is std.http.route(router, incoming.verb, incoming.target)
+                    matched as Route then {
+                        const route is matched
+                        if route.id == 1 then {
+                            std.http.respond(event.handle, 200, "Content-Type: text/plain\u{d}\u{a}", "hello")
+                        } else {
+                            std.http.respond(event.handle, 200, "Set-Cookie: a=1\u{d}\u{a}Set-Cookie: b=2\u{d}\u{a}Content-Type: text/plain\u{d}\u{a}", "cookies")
+                        }
+                    } else {
+                        std.http.respond(event.handle, 404, "Content-Type: text/plain\u{d}\u{a}", "nope")
+                    }
+                    served += 1
+                } else {
+                    std.http.close(event.handle)
+                }
+            } else {
+                std.http.close(event.handle)
+            }
+        }
+    }
+    @print("accepts {accepts}\n")
+    return served
+}
+
+const first_listener is std.http.listen(0) as int else 0
+const first_port is std.http.localAddr(first_listener) as int else 0
+Fixture.startClients(first_port, 1)
+const first_served is serve(first_listener, 3)
+const first_clients is Fixture.finishClients()
+std.http.close(first_listener)
+if first_served == 3 and first_clients == 1 then @print("keep-alive requests ok\n")
+else @print("keep-alive requests failed served={first_served} clients={first_clients}\n")
+
+const second_listener is std.http.listen(0) as int else 0
+const second_port is std.http.localAddr(second_listener) as int else 0
+Fixture.startClients(second_port, 3)
+const second_served is serve(second_listener, 9)
+const second_clients is Fixture.finishClients()
+std.http.close(second_listener)
+if second_served == 9 and second_clients == 3 then @print("multiplex ok\n")
+else @print("multiplex failed served={second_served} clients={second_clients}\n")

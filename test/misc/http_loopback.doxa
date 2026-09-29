@@ -210,6 +210,10 @@ zig Fixture {
             return;
         };
         defer stream.close(io);
+        if (!send(stream, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")) {
+            fixtureStateType().client_result.store(-2, .release);
+            return;
+        }
         var read_buffer: [512]u8 = undefined;
         var reader = stream.reader(io, &read_buffer);
         var received: std.array_list.Aligned(u8, .of(u8)) = .empty;
@@ -328,11 +332,19 @@ const listener is std.http.listen(0) as int else 0
 const port is std.http.localAddr(listener) as int else 0
 Fixture.startPrimitiveClient(port)
 const connection is std.http.accept(listener) as int else 0
+const incoming is std.http.readRequest(connection)
 std.http.respond(connection, 200, "Content-Type: text/plain\u{d}\u{a}", "primitive")
 std.http.close(connection)
 std.http.close(listener)
 const primitive_result is Fixture.finishPrimitiveClient()
-if listener > 0 and port > 0 and connection > 0 and primitive_result == 1 then {
+var primitive_ok is false
+incoming as ServerRequest then {
+    const request is incoming
+    if request.verb == "GET" and request.target == "/" then primitive_ok is true
+} else {
+    primitive_ok is false
+}
+if listener > 0 and port > 0 and connection > 0 and primitive_ok and primitive_result == 1 then {
     @print("primitives ok\n")
 } else {
     @print("primitives failed\n")

@@ -164,6 +164,39 @@ pub fn runCommandCapture(
     };
 }
 
+/// Compiles `source` through the installed `doxa compile` with `opt` and
+/// returns the emitted (unoptimized) `<stem>.ll`, read from the cache. The
+/// unoptimized artifact is what shows the shape the emitter chose rather than
+/// what LLVM made of it, so IR-shape probes assert on this.
+pub fn emitIrFor(
+    allocator: std.mem.Allocator,
+    tmp: *std.testing.TmpDir,
+    source: []const u8,
+    opt: []const u8,
+) ![]u8 {
+    const doxa = try doxaExePath(allocator);
+    defer allocator.free(doxa);
+
+    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "probe.doxa", .data = source });
+    try tmp.dir.createDirPath(std.testing.io, "cache");
+
+    var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const cwd = cwd_buffer[0..try tmp.dir.realPath(std.testing.io, &cwd_buffer)];
+
+    const argv = [_][]const u8{
+        doxa, "compile", "probe.doxa", "-o", "probe", opt, "--cache-dir=cache",
+    };
+    const result = try runCommandCapture(allocator, &argv, cwd, null);
+    if (result.exit_code != 0) {
+        std.debug.print("doxa compile failed ({d}):\n{s}\n{s}\n", .{ result.exit_code, result.stdout, result.stderr });
+        return error.CommandFailed;
+    }
+    allocator.free(result.stdout);
+    allocator.free(result.stderr);
+
+    return tmp.dir.readFileAlloc(std.testing.io, "cache/probe.ll", allocator, .unlimited);
+}
+
 pub fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed(PeekRow) {
     var outputs = std.array_list.Managed(PeekRow).init(allocator);
 

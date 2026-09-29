@@ -8,6 +8,7 @@ pub fn Methods(comptime Ctx: type) type {
     const CompareInstruction = Ctx.CompareInstruction;
     const StackVal = Ctx.StackVal;
     const FlooredArith = @import("./int_range.zig").Methods(Ctx);
+    const OverflowArith = @import("./overflow.zig").Methods(Ctx);
 
     return struct {
         /// LLVM type of one element in a dynamic array's packed backing buffer,
@@ -1031,6 +1032,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
             op: ArithOp,
+            current_block: *[]const u8,
         ) !void {
             if (stack.items.len < 3) return;
             const value = stack.items[stack.items.len - 1];
@@ -1179,14 +1181,29 @@ pub fn Methods(comptime Ctx: type) type {
                     defer self.allocator.free(no_line);
                     const arith_line = switch (op) {
                         .Add => blk: {
+                            // D-1: signed `int` elements trap on overflow in the
+                            // checked modes; other element types (enum, tetra)
+                            // keep the bare wrapping op.
+                            if (element_type == .Int) {
+                                result_bits_reg = try OverflowArith.emitIntArith(self, w, id, .Add, current_bits.name, value_bits.name, .{}, .{}, current_block);
+                                break :blk no_line;
+                            }
                             result_bits_reg = try self.nextTemp(id);
                             break :blk try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ result_bits_reg, current_bits.name, value_bits.name });
                         },
                         .Sub => blk: {
+                            if (element_type == .Int) {
+                                result_bits_reg = try OverflowArith.emitIntArith(self, w, id, .Sub, current_bits.name, value_bits.name, .{}, .{}, current_block);
+                                break :blk no_line;
+                            }
                             result_bits_reg = try self.nextTemp(id);
                             break :blk try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ result_bits_reg, current_bits.name, value_bits.name });
                         },
                         .Mul => blk: {
+                            if (element_type == .Int) {
+                                result_bits_reg = try OverflowArith.emitIntArith(self, w, id, .Mul, current_bits.name, value_bits.name, .{}, .{}, current_block);
+                                break :blk no_line;
+                            }
                             result_bits_reg = try self.nextTemp(id);
                             break :blk try std.fmt.allocPrint(self.allocator, "  {s} = mul i64 {s}, {s}\n", .{ result_bits_reg, current_bits.name, value_bits.name });
                         },
