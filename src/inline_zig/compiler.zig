@@ -268,6 +268,7 @@ pub fn compileInlineZigObjects(
     zig_opt_flag: []const u8,
     target_triple: []const u8,
     target_os: []const u8,
+    cpu_arg: []const u8,
     include_dirs: []const []const u8,
     toolchain: []const u8,
     profiler: *Profiler,
@@ -297,13 +298,14 @@ pub fn compileInlineZigObjects(
         const zig_stem = std.fs.path.stem(gen.zig_path);
 
         // Content-addressed cache key: wrapper source (already hashed into the
-        // wrapper path) + toolchain + target triple + opt mode. Distinct
-        // targets, opt modes, or compilers therefore produce distinct objects,
-        // and unchanged source+target skips the `build-obj` spawn.
+        // wrapper path) + toolchain + target triple + cpu + opt mode. Distinct
+        // targets, cpus, opt modes, or compilers therefore produce distinct
+        // objects, and unchanged source+target skips the `build-obj` spawn.
         var kb = hashing.KeyBuilder.init(cacheSeed());
         kb.addBytes(toolchain);
         kb.addBytes(gen.zig_path);
         kb.addBytes(target_triple);
+        kb.addBytes(cpu_arg);
         kb.addBytes(zig_opt_flag);
         for (include_dirs) |dir| {
             kb.addBytes(dir);
@@ -337,6 +339,9 @@ pub fn compileInlineZigObjects(
             if (target_triple.len > 0) {
                 try args_list.append("-target");
                 try args_list.append(target_triple);
+            }
+            if (cpu_arg.len > 0) {
+                try args_list.append(cpu_arg);
             }
 
             var dir_arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
