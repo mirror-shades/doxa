@@ -153,6 +153,48 @@ else {
   timeout, and status handling as requests, but stream response bytes directly
   to the destination file. Non-2xx responses still write their body and then
   return `error.IO.HttpStatus`.
+- WebSockets upgrade an accepted connection after a `readRequest`:
+  `upgradeWebSocket(connection)` completes the RFC 6455 handshake on a request
+  that asked to switch protocols. `wsSend(connection, op, data)` sends one
+  frame; `wsNext(connection)` returns the next `Message | nothing |
+  error.StdError`, where a `Message` has an `op` (`WsOp.Text`, `Binary`, `Ping`,
+  `Pong`, or `Close`) and its `data`. Fragmented messages are reassembled before
+  they are returned, and control frames are surfaced rather than handled
+  silently, so the caller owns ping/pong/close policy. `nothing` means the
+  connection is finished. A frame larger than 16 MiB fails the connection with a
+  Close `1009` and returns an error.
+
+  A `poll` loop must call `wsNext` on a readable event even when nothing is
+  buffered yet, then drain any pipelined frames the reader already holds with
+  `wsBuffered(connection)`:
+
+  ```doxa
+  const listener is std.http.listen(0) as int else 0
+  const connection is std.http.accept(listener) as int else 0
+  const request is std.http.readRequest(connection)
+  request as ServerRequest then {
+      std.http.upgradeWebSocket(connection)
+      var more is true
+      while more {
+          const next is std.http.wsNext(connection)
+          next as Message then {
+              const message is next
+              if message.op == std.http.WsOp.Text then {
+                  std.http.wsSend(connection, std.http.WsOp.Text, message.data)
+              } else if message.op == std.http.WsOp.Close then {
+                  std.http.wsSend(connection, std.http.WsOp.Close, message.data)
+                  more is false
+              }
+              if not std.http.wsBuffered(connection) then more is false
+          } else {
+              more is false
+          }
+      }
+  }
+  std.http.close(connection)
+  std.http.close(listener)
+  ```
+
 
 ## IO
 
