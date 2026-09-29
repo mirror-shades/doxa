@@ -237,6 +237,11 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_module_string_interp_results[0..],
     },
     .{
+        .name = "module method calls",
+        .path = "./test/misc/module_method_calls.doxa",
+        .expected_print = answers.expected_module_method_calls_results[0..],
+    },
+    .{
         .name = "inline zig string",
         .path = "./test/misc/inline_zig_string.doxa",
         .expected_print = &[_]print_result{
@@ -388,6 +393,19 @@ const shared_cases = [_]Case{
             .{ .value = "large served 2" },
             .{ .value = "large fragment 1" },
             .{ .value = "fragseq served 2" },
+            .{ .value = "overflow 1 0" },
+            .{ .value = "bad utf8 1 0" },
+            .{ .value = "close len1 1 0" },
+            .{ .value = "close code 1 0" },
+            .{ .value = "close reason 1 0" },
+            .{ .value = "partial stalled 1" },
+            .{ .value = "partial fast 1" },
+            .{ .value = "partial served 4" },
+            .{ .value = "sugar echo 1" },
+            .{ .value = "sugar fragmented 1" },
+            .{ .value = "sugar ping 1" },
+            .{ .value = "sugar close 1" },
+            .{ .value = "sugar served 4" },
         },
     },
     .{

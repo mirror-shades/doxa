@@ -230,6 +230,11 @@ pub const HIRGenerator = struct {
     semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo) = null,
     semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
     current_function: ?[]const u8,
+    /// Alias of the imported module whose body is currently being generated
+    /// (null for main-file functions). Lets a bare callee inside an imported
+    /// struct method resolve against that module's namespace, e.g. `helper`
+    /// inside `S.go` from `module a` resolves to `a.helper`.
+    current_function_module: ?[]const u8,
     current_function_return_type: HIRType,
     is_global_init_phase: bool,
 
@@ -275,6 +280,9 @@ pub const HIRGenerator = struct {
         function_name: []const u8,
         function_params: []ast.FunctionParam,
         return_type_info: ast.TypeInfo,
+        /// Imported-module alias this body was defined in, or null for the main
+        /// file. Drives bare-callee resolution in `resolveQualifiedModuleLocalFunction`.
+        module_alias: ?[]const u8 = null,
     };
 
     pub const FunctionCallSite = struct {
@@ -352,6 +360,7 @@ pub const HIRGenerator = struct {
             .semantic_function_return_types = semantic_function_return_types,
             .semantic_analyzer = semantic_analyzer,
             .current_function = null,
+            .current_function_module = null,
             .current_function_return_type = .Nothing,
             .is_global_init_phase = false,
             .function_calls = std.array_list.Managed(FunctionCallSite).init(allocator),
@@ -569,7 +578,7 @@ pub const HIRGenerator = struct {
                 .Expression => |maybe_expr| {
                     if (maybe_expr) |expr| {
                         if (expr.data == .StructDecl) {
-                            try self.registerStructMethodSignatures(expr.data.StructDecl);
+                            try self.registerStructMethodSignatures(expr.data.StructDecl, null);
                         }
                     }
                 },
@@ -627,12 +636,13 @@ pub const HIRGenerator = struct {
                                     .function_name = qualified_name,
                                     .function_params = func.params,
                                     .return_type_info = eff_rti,
+                                    .module_alias = alias,
                                 });
                             },
                             .Expression => |maybe_expr| {
                                 if (maybe_expr) |mod_expr| {
                                     if (mod_expr.data == .StructDecl) {
-                                        try self.registerStructMethodSignatures(mod_expr.data.StructDecl);
+                                        try self.registerStructMethodSignatures(mod_expr.data.StructDecl, alias);
                                     }
                                 }
                             },
@@ -715,6 +725,7 @@ pub const HIRGenerator = struct {
                                     .function_name = sym_name,
                                     .function_params = func_params,
                                     .return_type_info = eff_sym_rti,
+                                    .module_alias = mod_alias,
                                 });
                             }
 
@@ -730,6 +741,7 @@ pub const HIRGenerator = struct {
     fn generateFunctionBodies(self: *HIRGenerator) !void {
         for (self.function_bodies.items) |*function_body| {
             self.current_function = function_body.function_info.name;
+            self.current_function_module = function_body.module_alias;
             self.current_function_return_type = function_body.function_info.return_type;
             self.is_global_init_phase = false;
             try self.symbol_table.enterFunctionScope(function_body.function_info.name);
@@ -920,6 +932,7 @@ pub const HIRGenerator = struct {
             }
 
             self.current_function = null;
+            self.current_function_module = null;
             self.current_function_return_type = .Nothing;
             self.current_function_scope_id = null;
             self.symbol_table.exitFunctionScope();
@@ -1148,10 +1161,22 @@ pub const HIRGenerator = struct {
 
     /// Resolve `simple_name` to `Module.simple_name` when compiling a body nested under that
     /// module (e.g. inside `Lexer.lex`, callee `makeAlpha` -> existing body `Lexer.makeAlpha`).
+    ///
+    /// The module an imported function body lives in is tracked explicitly
+    /// (`current_function_module`): a struct method's name is `Struct.method`
+    /// with no module qualifier, so deriving the prefix from `current_function`
+    /// alone would look for `Struct.simple_name` instead of `Module.simple_name`.
     pub fn resolveQualifiedModuleLocalFunction(self: *HIRGenerator, simple_name: []const u8) ?[]const u8 {
+        if (self.current_function_module) |module_prefix| {
+            if (self.findModuleLocalFunction(module_prefix, simple_name)) |name| return name;
+        }
+
         const cf = self.current_function orelse return null;
         const last_dot = std.mem.lastIndexOfScalar(u8, cf, '.') orelse return null;
-        const module_prefix = cf[0..last_dot];
+        return self.findModuleLocalFunction(cf[0..last_dot], simple_name);
+    }
+
+    fn findModuleLocalFunction(self: *HIRGenerator, module_prefix: []const u8, simple_name: []const u8) ?[]const u8 {
         for (self.function_bodies.items) |fb| {
             const name = fb.function_info.name;
             if (!std.mem.startsWith(u8, name, module_prefix)) continue;
@@ -1389,7 +1414,7 @@ pub const HIRGenerator = struct {
         return id;
     }
 
-    fn registerStructMethodSignatures(self: *HIRGenerator, s: ast.StructDecl) !void {
+    fn registerStructMethodSignatures(self: *HIRGenerator, s: ast.StructDecl, module_alias: ?[]const u8) !void {
         for (s.methods) |method| {
             const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name.lexeme, method.name.lexeme });
             var eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method.return_type_info, method.body, &self.type_system);
@@ -1454,6 +1479,7 @@ pub const HIRGenerator = struct {
                     .function_name = qualified,
                     .function_params = method.params,
                     .return_type_info = eff_method_rti,
+                    .module_alias = module_alias,
                 });
             }
         }

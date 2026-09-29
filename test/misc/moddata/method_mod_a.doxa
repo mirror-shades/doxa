@@ -1,0 +1,8 @@
+function helper() returns int { return 42 }
+
+public struct Alpha {
+    public x :: int,
+    public method go() returns int { return helper() }
+    public method goStatic() returns int { return Alpha.make() }
+    function make() returns int { return helper() }
+}
