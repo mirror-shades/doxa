@@ -388,6 +388,50 @@
   
   
     <li class="md-nav__item">
+      <a href="../groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../memory/" class="md-nav__link">
         
   
@@ -543,32 +587,19 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#standard-library-wrappers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Standard-library wrappers
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
       
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../sets.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Sets
-    
-  </span>
-  
-
-      </a>
     </li>
   
 
@@ -816,7 +847,7 @@ are the only bridge between the two. String positions (an index, <code>@slice</c
 <li>Fails at runtime for invalid parse, non-finite values, overflow, or unsupported source type.</li>
 <li><code>@float(value)</code></li>
 <li>Fails at runtime for invalid parse, non-finite values, or unsupported source type.</li>
-<li>Required for any non-literal <code>int</code> or <code>byte</code> value used where a <code>float</code> is expected; literals widen implicitly. See <a href="../getstarted/3-types.md#numeric-conversions">Types</a>.</li>
+<li>Required for any non-literal <code>int</code> or <code>byte</code> value used where a <code>float</code> is expected; literals widen implicitly.</li>
 <li><code>@byte(value)</code></li>
 <li>String conversion path fails at runtime for invalid parse or out-of-range values.</li>
 <li>Numeric conversion path can clamp/zero out some invalid values (for example, <code>@byte(999)</code> currently yields <code>0x00</code>).</li>
@@ -834,6 +865,23 @@ are the only bridge between the two. String positions (an index, <code>@slice</c
 <li><code>@exit(code)</code></li>
 <li>Terminates the process with the provided status code (<code>int | byte</code>).</li>
 </ul>
+<h2 id="standard-library-wrappers">Standard-library wrappers</h2>
+<p><code>std.methods</code> (from <code>std/methods/methods.doxa</code>) wraps the collection intrinsics
+with bounds and empty-collection checks. Families whose return type does not
+depend on the collection's own type collapse to a single union-typed entry
+point:</p>
+<ul>
+<li><code>methods.push(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], value)</code> -&gt; <code>nothing</code></li>
+<li><code>methods.insert(^collection :: …, index, value)</code> -&gt; <code>error.Method</code></li>
+<li><code>methods.clear(^collection :: …)</code> -&gt; <code>nothing</code></li>
+<li><code>methods.find(collection :: …, value)</code> -&gt; <code>int</code></li>
+</ul>
+<p>The element type is checked at run time: a <code>methods.push</code> value that does not
+match the collection's element type panics, and a <code>methods.insert</code> value that
+does not match returns <code>error.Method.Unexpected</code>. <code>methods.pop</code>,
+<code>methods.remove</code>, and <code>methods.slice</code> stay split per element type because their
+return type <em>is</em> the element type (or the collection's own type). See
+<a href="../stdlib-api/">stdlib-api.md</a> for the generated signatures.</p>
 
 
 

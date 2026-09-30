@@ -386,6 +386,50 @@
   
   
     <li class="md-nav__item">
+      <a href="../groups/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../memory/" class="md-nav__link">
         
   
@@ -414,28 +458,6 @@
   
   <span class="md-ellipsis">
     Methods
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../sets.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Sets
     
   </span>
   
@@ -672,6 +694,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#array-parameters-and-returns" class="md-nav__link">
+    <span class="md-ellipsis">
+      Array parameters and returns
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#error-model" class="md-nav__link">
     <span class="md-ellipsis">
       Error model
@@ -737,19 +768,27 @@ const n is Math.double(21)
 <p><code>fn ... { ... }</code></p>
 </li>
 <li>
-<p>Function signatures are restricted to Doxa-compatible scalar types:</p>
+<p>Function signatures are restricted to Doxa-compatible types:</p>
 </li>
 <li>Doxa <code>int</code> &lt;-&gt; Zig <code>i64</code></li>
 <li>Doxa <code>float</code> &lt;-&gt; Zig <code>f64</code></li>
 <li>Doxa <code>byte</code> &lt;-&gt; Zig <code>u8</code></li>
 <li>Doxa <code>tetra</code> &lt;-&gt; Zig <code>bool</code> (lossy at boundary)</li>
 <li>Doxa <code>nothing</code> &lt;-&gt; Zig <code>void</code></li>
-<li>
-<p>Doxa <code>string</code> &lt;-&gt; Zig <code>[]const u8</code></p>
-</li>
-<li>
-<p>The compiler validates these rules before invoking Zig.</p>
-</li>
+<li>Doxa <code>string</code> &lt;-&gt; Zig <code>[]const u8</code></li>
+<li>Doxa <code>int[]</code> &lt;-&gt; Zig <code>[]const i64</code></li>
+<li>Doxa <code>float[]</code> &lt;-&gt; Zig <code>[]const f64</code></li>
+<li>Doxa <code>byte[]</code> &lt;-&gt; Zig <code>[]const DoxaByte</code> (<code>DoxaByte</code> is an injected alias for <code>u8</code>)</li>
+<li>Doxa <code>string[]</code> &lt;-&gt; Zig <code>[]const []const u8</code></li>
+<li>Doxa <code>T[][]</code> &lt;-&gt; additional <code>[]const</code> levels (nesting is unlimited)</li>
+</ol>
+<p>Arrays of scalars and strings cross in both directions at any depth; the
+<code>[]const</code> element slices a Zig function receives are borrowed for the call. A
+bare <code>[]const u8</code> is always a <code>string</code>, so byte arrays use the <code>DoxaByte</code>
+marker. See <a href="#array-parameters-and-returns">Array parameters and returns</a> for
+the ownership rules.</p>
+<ol>
+<li>The compiler validates these rules before invoking Zig.</li>
 </ol>
 <h2 id="inline-zig-abi">Inline Zig ABI</h2>
 <p>Each module compiles to an object file exporting one symbol per signature,
@@ -805,12 +844,25 @@ that meets a 64-bit length slot is widened or narrowed with <code>@intCast</code
   buffer is released explicitly, since arena scopes do not cover Zig-owned
   memory.</li>
 </ul>
+<h3 id="array-parameters-and-returns">Array parameters and returns</h3>
+<ul>
+<li>An array crosses as an opaque <code>*ArrayHeader</code> pointer. The compile-time
+  element type in the signature fixes the runtime <code>elem_size</code> / <code>elem_tag</code>; the
+  two must agree.</li>
+<li>An array parameter is borrowed for the call. The wrapper presents it to Zig as
+  a <code>[]const T</code> — scalar and <code>byte[]</code> arrays alias the array's backing buffer,
+  <code>string[]</code> is copied into a temporary per-call arena, and nested arrays recurse
+  through that arena. The callee must not retain or store it.</li>
+<li>A returned <code>[]const T</code> is copied into a fresh <code>ArrayHeader</code> in the call-site
+  arena (<code>doxa_array_new</code> runs with that scope active), so it follows the same
+  arena rules as a returned string. Nested levels are deep-cloned as they are
+  stored.</li>
+</ul>
 <h3 id="error-model">Error model</h3>
 <p>There is no runtime ABI error channel to translate into a Doxa error — the
 shape of the call is settled at compile time. Parameter or return types that
-cannot cross the boundary (arrays, structs, maps, enums, functions, unions)
-fail the compile with <code>E8002</code> while the wrapper is generated, before Zig is
-invoked.</p>
+cannot cross the boundary (structs, maps, enums, functions, unions) fail the
+compile with <code>E8002</code> while the wrapper is generated, before Zig is invoked.</p>
 
 
 

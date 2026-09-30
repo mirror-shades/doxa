@@ -9,6 +9,10 @@
       
       
       
+        <link rel="prev" href="../maps/">
+      
+      
+        <link rel="next" href="../math/">
       
       
       <link rel="icon" href="../assets/images/favicon.png">
@@ -381,6 +385,299 @@
       
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Groups
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-design-invariants" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Design invariants
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-syntax" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Syntax
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="2. Syntax">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#21-group-declaration" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.1 Group declaration
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#22-transitive-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.2 Transitive groups
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#23-qualified-access" class="md-nav__link">
+    <span class="md-ellipsis">
+      2.3 Qualified access
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-type-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Type system
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="3. Type system">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#31-nominal-identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.1 Nominal identity
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#32-member-identity-preserved" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.2 Member identity preserved
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#33-widening-and-narrowing" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.3 Widening and narrowing
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#34-equality" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.4 Equality
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#35-unions" class="md-nav__link">
+    <span class="md-ellipsis">
+      3.5 Unions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-pattern-matching" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Pattern matching
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="4. Pattern matching">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#41-exhaustiveness" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.1 Exhaustiveness
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#42-enum-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.2 Enum patterns
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#43-struct-patterns" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.3 Struct patterns
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#44-matching-on-unions-containing-groups" class="md-nav__link">
+    <span class="md-ellipsis">
+      4.4 Matching on unions containing groups
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-collisions-and-ill-formed-programs" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Collisions and ill-formed programs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-runtime-representation" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Runtime representation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#7-grammar-sketch" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Grammar sketch
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#8-differences-from-the-prior-set-design" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Differences from the prior set design
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#9-implementation-checklist" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Implementation checklist
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../math/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Math
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
   
   
     <li class="md-nav__item">
@@ -412,28 +709,6 @@
   
   <span class="md-ellipsis">
     Methods
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-    
-      
-      
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../sets.md" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Sets
     
   </span>
   
