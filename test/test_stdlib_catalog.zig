@@ -111,3 +111,29 @@ test "signatureDetail renders a compact signature" {
     const request_detail = try catalog.signatureDetail(allocator, request);
     try testing.expectEqualStrings("request(verb: string, url: string, ^req: Request) -> Response | error.StdError", request_detail);
 }
+
+test "parameterLabel and callSnippet render editor metadata" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const decls = try catalog.parseSource(allocator, SAMPLE);
+    const get = findDecl(decls, "get") orelse return error.MissingDecl;
+
+    const first = try catalog.parameterLabel(allocator, &get.params[0]);
+    try testing.expectEqualStrings("url: string", first);
+
+    const snippet = try catalog.callSnippet(allocator, get);
+    try testing.expectEqualStrings("get($1, $2)", snippet);
+
+    const request = findDecl(decls, "request") orelse return error.MissingDecl;
+    const alias = try catalog.parameterLabel(allocator, &request.params[2]);
+    try testing.expectEqualStrings("^req: Request", alias);
+
+    const request_snippet = try catalog.callSnippet(allocator, request);
+    try testing.expectEqualStrings("request($1, $2, $3)", request_snippet);
+
+    const kind = findDecl(decls, "Kind") orelse return error.MissingDecl;
+    const no_args = try catalog.callSnippet(allocator, kind);
+    try testing.expectEqualStrings("Kind()", no_args);
+}

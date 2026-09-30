@@ -43,10 +43,10 @@ pub const expected_alias_string_mutation_results = [_]print_result{
 };
 
 pub const expected_stdlib_methods_results = [_]print_result{
-    .{ .value = "push hello! [1, 2, 3, 4]" },
+    .{ .value = "push hello! [1, 2, 3, 4] [\"a\", \"b\", \"c\"]" },
     .{ .value = "insert >hello! [0, 1, 2, 3, 4]" },
-    .{ .value = "find 6 4" },
-    .{ .value = "clear [] []" },
+    .{ .value = "find 6 4 1" },
+    .{ .value = "clear [] [] []" },
 };
 
 pub const expected_union_narrow_results = [_]print_result{
@@ -54,6 +54,7 @@ pub const expected_union_narrow_results = [_]print_result{
     .{ .value = "a" },
     .{ .value = "b" },
     .{ .value = "c" },
+    .{ .value = "strings ints" },
 };
 
 pub const expected_union_stringify_results = [_]print_result{

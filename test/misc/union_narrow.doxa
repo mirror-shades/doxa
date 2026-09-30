@@ -20,6 +20,17 @@ public struct Box {
     }
 }
 
+# Regression: every array element type shares the `array` runtime tag, so
+# `string[] | int[]` must be discriminated by the array's element tag. Before
+# the fix `match` always selected the first array arm, so a `string[]` would
+# narrow to `int[]` (and vice versa).
+public function arrayKind(x :: string[] | int[]) returns string {
+    return match x {
+        string[] then "strings",
+        int[] then "ints",
+    }
+}
+
 public entry function main() {
     const b is Box.new()
     b.include("single")
@@ -29,4 +40,5 @@ public entry function main() {
         @print(b.includes[i] + "\n")
         i is i + 1
     }
+    @print(arrayKind(["p", "q"]) + " " + arrayKind([7, 8]) + "\n")
 }

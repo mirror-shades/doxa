@@ -3,13 +3,19 @@ module std from @std()
 # The unified method entry points take a union collection (and value). A plain
 # `string`/`int[]` variable is boxed at the call site and written back, so the
 # wrappers work on ordinary locals.
+#
+# `string[]` shares the `array` runtime tag with `int[]`, so the wrapper's
+# `match` must discriminate on the array's element tag; otherwise every array
+# narrows to the first array arm (`int[]`) and string elements fail the cast.
 entry function main() {
     var s is "hello"
     var a :: int[] is [1, 2, 3]
+    var names :: string[] is ["a", "b"]
 
     std.methods.push(^s, "!")
     std.methods.push(^a, 4)
-    @print("push {s} {a}\n")
+    std.methods.push(^names, "c")
+    @print("push {s} {a} {names}\n")
 
     std.methods.insert(^s, 0, ">")
     std.methods.insert(^a, 0, 0)
@@ -17,9 +23,11 @@ entry function main() {
 
     var needle is "!"
     var four is 4
-    @print("find {std.methods.find(s, needle)} {std.methods.find(a, four)}\n")
+    var b is "b"
+    @print("find {std.methods.find(s, needle)} {std.methods.find(a, four)} {std.methods.find(names, b)}\n")
 
     std.methods.clear(^s)
     std.methods.clear(^a)
-    @print("clear [{s}] {a}\n")
+    std.methods.clear(^names)
+    @print("clear [{s}] {a} {names}\n")
 }
