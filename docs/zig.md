@@ -38,12 +38,18 @@ const n is Math.double(21)
 - Doxa `byte[]` <-> Zig `[]const DoxaByte` (`DoxaByte` is an injected alias for `u8`)
 - Doxa `string[]` <-> Zig `[]const []const u8`
 - Doxa `T[][]` <-> additional `[]const` levels (nesting is unlimited)
+- Doxa `enum` <-> Zig `DoxaEnum_<name>` (an injected alias for `i64`; the value is the variant's discriminant)
+- Doxa `enum[]` <-> Zig `[]const DoxaEnum_<name>`
 
-Arrays of scalars and strings cross in both directions at any depth; the
+Arrays of scalars, strings, and enums cross in both directions at any depth; the
 `[]const` element slices a Zig function receives are borrowed for the call. A
 bare `[]const u8` is always a `string`, so byte arrays use the `DoxaByte`
-marker. See [Array parameters and returns](#array-parameters-and-returns) for
-the ownership rules.
+marker. A Doxa enum crosses as its `i64` variant discriminant, spelled
+`DoxaEnum_<name>` where `<name>` is the enum's bare name (so a module-qualified
+`std.error.Method` is spelled `DoxaEnum_Method`); the wrapper injects a matching
+`const DoxaEnum_<name> = i64;` so the Zig author compares against integers. See
+[Array parameters and returns](#array-parameters-and-returns) for the ownership
+rules.
 
 3. The compiler validates these rules before invoking Zig.
 
@@ -126,6 +132,8 @@ that meets a 64-bit length slot is widened or narrowed with `@intCast` /
 ### Error model
 
 There is no runtime ABI error channel to translate into a Doxa error — the
-shape of the call is settled at compile time. Parameter or return types that
-cannot cross the boundary (structs, maps, enums, functions, unions) fail the
-compile with `E8002` while the wrapper is generated, before Zig is invoked.
+shape of the call is settled at compile time. Only scalars, `string`, `enum`,
+and (nested) arrays of those cross the boundary; structs, maps, unions, and
+functions are rejected with `E8002` while the wrapper is generated, before Zig
+is invoked. A Zig function is not a value Doxa can hold or pass — Doxa only
+*calls* the exported functions.
