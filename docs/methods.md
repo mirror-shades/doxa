@@ -115,7 +115,7 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
   - Fails at runtime for invalid parse, non-finite values, overflow, or unsupported source type.
 - `@float(value)`
   - Fails at runtime for invalid parse, non-finite values, or unsupported source type.
-  - Required for any non-literal `int` or `byte` value used where a `float` is expected; literals widen implicitly. See [Types](../getstarted/3-types.md#numeric-conversions).
+  - Required for any non-literal `int` or `byte` value used where a `float` is expected; literals widen implicitly.
 - `@byte(value)`
   - String conversion path fails at runtime for invalid parse or out-of-range values.
   - Numeric conversion path can clamp/zero out some invalid values (for example, `@byte(999)` currently yields `0x00`).
@@ -132,3 +132,22 @@ Core intrinsics are intentionally unsafe. Out-of-bounds and invalid-argument fai
   - Writes the message to stderr and always terminates execution with exit code 1.
 - `@exit(code)`
   - Terminates the process with the provided status code (`int | byte`).
+
+## Standard-library wrappers
+
+`std.methods` (from `std/methods/methods.doxa`) wraps the collection intrinsics
+with bounds and empty-collection checks. Families whose return type does not
+depend on the collection's own type collapse to a single union-typed entry
+point:
+
+- `methods.push(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], value)` -> `nothing`
+- `methods.insert(^collection :: …, index, value)` -> `error.Method`
+- `methods.clear(^collection :: …)` -> `nothing`
+- `methods.find(collection :: …, value)` -> `int`
+
+The element type is checked at run time: a `methods.push` value that does not
+match the collection's element type panics, and a `methods.insert` value that
+does not match returns `error.Method.Unexpected`. `methods.pop`,
+`methods.remove`, and `methods.slice` stay split per element type because their
+return type *is* the element type (or the collection's own type). See
+[stdlib-api.md](stdlib-api.md) for the generated signatures.

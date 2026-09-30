@@ -50,9 +50,10 @@ nav:
   - Control: control.md
   - Loops: loops.md
   - Maps: maps.md
+  - Groups: groups.md
+  - Math: math.md
   - Memory: memory.md
   - Methods: methods.md
-  - Sets: sets.md
   - Standard Library: stdlib.md
   - Standard Library API: stdlib-api.md
   - Structs: struct.md
