@@ -196,6 +196,9 @@ pub fn build(b: *std.Build) void {
 
     // Regenerate the standard-library API reference from `std/`. Kept as its
     // own step so it never runs implicitly; the generated page is committed.
+    const catalog_module = b.createModule(.{
+        .root_source_file = b.path("src/stdlib/catalog.zig"),
+    });
     const docs_tool = b.addExecutable(.{
         .name = "gen_stdlib_docs",
         .root_module = b.createModule(.{
@@ -204,6 +207,7 @@ pub fn build(b: *std.Build) void {
             .optimize = .ReleaseSafe,
         }),
     });
+    docs_tool.root_module.addImport("catalog", catalog_module);
     const gen_docs = b.addRunArtifact(docs_tool);
     gen_docs.setCwd(b.path("."));
     const docs_step = b.step("docs", "Regenerate docs/stdlib-api.md from std/");
