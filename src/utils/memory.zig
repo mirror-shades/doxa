@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../ast/ast.zig");
 const TypeInfo = ast.TypeInfo;
 const TokenImport = @import("../types/token.zig");
+const Token = TokenImport.Token;
 const TokenType = TokenImport.TokenType;
 const TypesImport = @import("../types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
@@ -22,6 +23,12 @@ pub const Variable = struct {
     is_alias: bool,
     is_param: bool = false,
     used: bool = false,
+    /// 1-based source position of the declaring name, recorded only for
+    /// inferred variable declarations. Lets tooling (the language server's
+    /// type inlay hints) place a hint after the name without re-parsing.
+    /// Zero when not applicable.
+    decl_line: usize = 0,
+    decl_column: usize = 0,
 };
 
 pub const ScopeKind = enum {
@@ -141,6 +148,24 @@ pub const Scope = struct {
         try self.variables.put(variable_id, variable);
         try self.name_map.put(name, variable);
 
+        return variable;
+    }
+
+    /// Like `createValueBinding`, but records the source position of the
+    /// declaring name. Used for inferred variable declarations so tooling can
+    /// surface a type hint at the declaration site.
+    pub fn createValueBindingAt(
+        self: *Scope,
+        name: []const u8,
+        value: TokenLiteral,
+        vtype: TokenType,
+        type_info: *TypeInfo,
+        constant: bool,
+        decl_token: Token,
+    ) !*Variable {
+        const variable = try self.createValueBinding(name, value, vtype, type_info, constant);
+        variable.decl_line = decl_token.line;
+        variable.decl_column = decl_token.column;
         return variable;
     }
 

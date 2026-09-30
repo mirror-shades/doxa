@@ -600,7 +600,7 @@ pub fn Methods(comptime Ctx: type) type {
             else
                 functions_start_idx;
 
-            try self.writeMainProgram(hir, w, top_level_end_idx, &peek_state, entry_mangled_name);
+            try self.writeMainProgram(hir, w, top_level_end_idx, &peek_state, entry_mangled_name, if (entry_function) |ef| ef.return_type else null);
 
             if (self.defined_globals.count() > 0) {
                 try w.writeAll("\n");
@@ -667,6 +667,7 @@ pub fn Methods(comptime Ctx: type) type {
             top_level_end_idx: usize,
             peek_state: *PeekEmitState,
             entry_mangled_name: ?[]const u8,
+            entry_return_type: ?HIR.HIRType,
         ) !void {
             try outer_w.writeAll("define void @doxa_program_main()" ++ Ctx.function_attr_group ++ " {\n");
             try outer_w.writeAll("entry:\n");
@@ -1098,7 +1099,14 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             if (entry_mangled_name) |mangled| {
-                const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}()\n", .{mangled});
+                // The call must carry the entry's real return type. Emitting a
+                // hardcoded `void` call for an entry that returns a by-value
+                // aggregate (union/group -> `%DoxaValue`, string ->
+                // `%DoxaString`) leaves the hidden sret pointer uninitialised,
+                // so the callee writes the result through garbage and the
+                // process dies at exit.
+                const entry_ret = if (entry_return_type) |rt| self.hirTypeToLLVMType(rt, false) else "void";
+                const call_line = try std.fmt.allocPrint(self.allocator, "  call {s} @{s}()\n", .{ entry_ret, mangled });
                 defer self.allocator.free(call_line);
                 try w.writeAll(call_line);
             }

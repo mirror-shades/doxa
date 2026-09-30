@@ -2222,9 +2222,10 @@ pub export fn doxa_print_value(val: *const DoxaValue) callconv(.c) void {
 /// ABI used by generated LLVM IR:
 ///   - `value_type` : type tag (0=int, 1=float, 2=byte, 3=string, 4=array,
 ///                    5=struct, 6=enum, 7=tetra, 8=nothing)
+///   - `value`      : payload bits; for arrays it is the `*ArrayHeader`, whose
+///                    `elem_tag` discriminates `int[]` from `string[]` and so on
 ///   - `target_type`: C string with a type name like "int", "string", "int[]", …
 pub export fn doxa_type_check(value: i64, value_type: i64, target_type: ?[*:0]const u8) callconv(.c) i64 {
-    _ = value;
     if (target_type == null) return 0;
 
     const target = std.mem.span(target_type.?);
@@ -2258,9 +2259,54 @@ pub export fn doxa_type_check(value: i64, value_type: i64, target_type: ?[*:0]co
 
     if (std.mem.eql(u8, actual_type, target)) return 1;
 
+    // An array target must match the element kind, not merely "is an array":
+    // otherwise `match` on a `string | int[] | float[] | ...` union would pick
+    // the first array case for every array. The element tag is authoritative
+    // (set by `arrayNewIn`); `value` carries the `*ArrayHeader` for arrays.
     if (std.mem.endsWith(u8, target, "[]")) {
-        if (tag == .Array) return 1;
+        if (tag != .Array or value == 0) return 0;
+        const element_name = target[0 .. target.len - 2];
+        const expected = elementTagFromName(element_name) orelse return 1;
+        const hdr: *const ArrayHeader = @ptrFromInt(@as(usize, @intCast(value)));
+        // A real `ArrayHeader` keeps `elem_size` and `elem_tag` in agreement.
+        // When they disagree the payload is not a dynamic array header.
+        // TODO: `var dyn :: T[] is fixedArr` currently stores the fixed array's
+        // raw stack pointer without materializing a dynamic header (its pushes
+        // already no-op), which is what reaches here. Fix that conversion, then
+        // this guard and the permissive fallback can go.
+        if (hdr.elem_tag > 8 or hdr.elem_size != elementSizeForTag(hdr.elem_tag)) return 1;
+        return if (hdr.elem_tag == expected) 1 else 0;
     }
 
     return 0;
+}
+
+/// Word size of an `ArrayHeader` element for each runtime element tag. Mirrors
+/// `arrayElementSize`/`arrayElementTag` in the IR printer.
+fn elementSizeForTag(tag: u64) u64 {
+    return switch (tag) {
+        0, 2 => 8, // int, float
+        1, 4 => 1, // byte, tetra
+        3 => 16, // string
+        5 => 0, // nothing
+        6, 7, 8 => 8, // nested array, struct, enum
+        else => 0,
+    };
+}
+
+/// Maps a source-level element type name to the runtime element tag stored in
+/// `ArrayHeader.elem_tag` (see `arrayElementTag` in the IR printer). Returns
+/// null for named types the runtime cannot discriminate (structs, enums at the
+/// bare-name level) and for element names it does not recognize.
+fn elementTagFromName(name: []const u8) ?u64 {
+    if (std.mem.eql(u8, name, "int")) return 0;
+    if (std.mem.eql(u8, name, "byte")) return 1;
+    if (std.mem.eql(u8, name, "float")) return 2;
+    if (std.mem.eql(u8, name, "string")) return 3;
+    if (std.mem.eql(u8, name, "tetra")) return 4;
+    if (std.mem.eql(u8, name, "nothing")) return 5;
+    if (std.mem.endsWith(u8, name, "[]")) return 6;
+    if (std.mem.eql(u8, name, "struct")) return 7;
+    if (std.mem.eql(u8, name, "enum")) return 8;
+    return null;
 }

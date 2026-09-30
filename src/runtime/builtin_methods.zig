@@ -18,6 +18,11 @@ pub const BuiltinMethodInfo = struct {
     /// (the read-only analysis in `param_mutation.zig` relies on this).
     mutates_arg: bool = true,
     name: []const u8,
+    /// Display names for the parameters, positionally aligned with
+    /// `input_types`. Purely presentational (editor signature help and
+    /// snippets); the compiler never reads these. Builtins with no inputs
+    /// leave this empty.
+    param_names: []const []const u8 = &.{},
 };
 
 pub const InputTypeSpec = union(enum) {
@@ -117,9 +122,23 @@ const float_byte_string = [_]ast.Type{ T.Float, T.Byte, T.String };
 const int_byte_string = [_]ast.Type{ T.Int, T.Byte, T.String };
 const int_float_string = [_]ast.Type{ T.Int, T.Float, T.String };
 
+const value_names = [_][]const u8{"value"};
+const collection_names = [_][]const u8{"collection"};
+const collection_value_names = [_][]const u8{ "collection", "value" };
+const collection_index_names = [_][]const u8{ "collection", "index" };
+const collection_index_value_names = [_][]const u8{ "collection", "index", "value" };
+const collection_start_length_names = [_][]const u8{ "collection", "start", "length" };
+const format_names = [_][]const u8{"format"};
+const condition_message_names = [_][]const u8{ "condition", "message" };
+const message_names = [_][]const u8{"message"};
+const code_names = [_][]const u8{"code"};
+const bytes_names = [_][]const u8{"bytes"};
+const word_names = [_][]const u8{"word"};
+
 const METHODS = [_]BuiltinMethodInfo{
     .{
         .name = "length",
+        .param_names = &value_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -129,6 +148,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "push",
+        .param_names = &collection_value_names,
         .arg_count_min = 2,
         .arg_count_max = 2,
         .input_types = &[_]InputTypeSpec{
@@ -140,6 +160,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "pop",
+        .param_names = &collection_names,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Union = &array_string }},
@@ -148,6 +169,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "insert",
+        .param_names = &collection_index_value_names,
         .arg_count_min = 3,
         .arg_count_max = 3,
         .input_types = &[_]InputTypeSpec{
@@ -160,6 +182,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "remove",
+        .param_names = &collection_index_names,
         .arg_count_min = 2,
         .arg_count_max = 2,
         .input_types = &[_]InputTypeSpec{
@@ -171,6 +194,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "clear",
+        .param_names = &collection_names,
         .arg_count_min = 1,
         .arg_count_max = 1,
         .input_types = &[_]InputTypeSpec{Input{ .Union = &array_string }},
@@ -179,6 +203,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "find",
+        .param_names = &collection_value_names,
         .mutates_arg = false,
         .arg_count_min = 2,
         .arg_count_max = 2,
@@ -191,6 +216,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "slice",
+        .param_names = &collection_start_length_names,
         .mutates_arg = false,
         .arg_count_min = 3,
         .arg_count_max = 3,
@@ -204,6 +230,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "string",
+        .param_names = &value_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -213,6 +240,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "int",
+        .param_names = &value_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -222,6 +250,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "float",
+        .param_names = &value_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -231,6 +260,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "byte",
+        .param_names = &value_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -240,6 +270,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "type",
+        .param_names = &value_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -249,6 +280,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "print",
+        .param_names = &format_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = null,
@@ -258,6 +290,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "assert",
+        .param_names = &condition_message_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 2,
@@ -270,6 +303,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "panic",
+        .param_names = &message_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -279,6 +313,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "exit",
+        .param_names = &code_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -297,6 +332,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "pack",
+        .param_names = &bytes_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -306,6 +342,7 @@ const METHODS = [_]BuiltinMethodInfo{
     },
     .{
         .name = "unpack",
+        .param_names = &word_names,
         .mutates_arg = false,
         .arg_count_min = 1,
         .arg_count_max = 1,
@@ -315,3 +352,9 @@ const METHODS = [_]BuiltinMethodInfo{
         .can_panic = false,
     },
 };
+
+/// Every builtin in declaration order. The single source of truth shared by
+/// the compiler and the language server's completion/signature help.
+pub fn all() []const BuiltinMethodInfo {
+    return &METHODS;
+}
