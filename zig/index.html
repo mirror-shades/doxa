@@ -781,12 +781,18 @@ const n is Math.double(21)
 <li>Doxa <code>byte[]</code> &lt;-&gt; Zig <code>[]const DoxaByte</code> (<code>DoxaByte</code> is an injected alias for <code>u8</code>)</li>
 <li>Doxa <code>string[]</code> &lt;-&gt; Zig <code>[]const []const u8</code></li>
 <li>Doxa <code>T[][]</code> &lt;-&gt; additional <code>[]const</code> levels (nesting is unlimited)</li>
+<li>Doxa <code>enum</code> &lt;-&gt; Zig <code>DoxaEnum_&lt;name&gt;</code> (an injected alias for <code>i64</code>; the value is the variant's discriminant)</li>
+<li>Doxa <code>enum[]</code> &lt;-&gt; Zig <code>[]const DoxaEnum_&lt;name&gt;</code></li>
 </ol>
-<p>Arrays of scalars and strings cross in both directions at any depth; the
+<p>Arrays of scalars, strings, and enums cross in both directions at any depth; the
 <code>[]const</code> element slices a Zig function receives are borrowed for the call. A
 bare <code>[]const u8</code> is always a <code>string</code>, so byte arrays use the <code>DoxaByte</code>
-marker. See <a href="#array-parameters-and-returns">Array parameters and returns</a> for
-the ownership rules.</p>
+marker. A Doxa enum crosses as its <code>i64</code> variant discriminant, spelled
+<code>DoxaEnum_&lt;name&gt;</code> where <code>&lt;name&gt;</code> is the enum's bare name (so a module-qualified
+<code>std.error.Method</code> is spelled <code>DoxaEnum_Method</code>); the wrapper injects a matching
+<code>const DoxaEnum_&lt;name&gt; = i64;</code> so the Zig author compares against integers. See
+<a href="#array-parameters-and-returns">Array parameters and returns</a> for the ownership
+rules.</p>
 <ol>
 <li>The compiler validates these rules before invoking Zig.</li>
 </ol>
@@ -860,9 +866,11 @@ that meets a 64-bit length slot is widened or narrowed with <code>@intCast</code
 </ul>
 <h3 id="error-model">Error model</h3>
 <p>There is no runtime ABI error channel to translate into a Doxa error — the
-shape of the call is settled at compile time. Parameter or return types that
-cannot cross the boundary (structs, maps, enums, functions, unions) fail the
-compile with <code>E8002</code> while the wrapper is generated, before Zig is invoked.</p>
+shape of the call is settled at compile time. Only scalars, <code>string</code>, <code>enum</code>,
+and (nested) arrays of those cross the boundary; structs, maps, unions, and
+functions are rejected with <code>E8002</code> while the wrapper is generated, before Zig
+is invoked. A Zig function is not a value Doxa can hold or pass — Doxa only
+<em>calls</em> the exported functions.</p>
 
 
 
