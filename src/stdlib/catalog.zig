@@ -138,6 +138,35 @@ pub fn load(allocator: Allocator, io: std.Io, std_dir: []const u8) !Catalog {
     return .{ .modules = try modules.toOwnedSlice() };
 }
 
+/// Renders one parameter as the editor shows it: `^name: type` for an alias
+/// parameter, `name: type` otherwise, and the bare type when it is unnamed.
+pub fn parameterLabel(allocator: Allocator, param: *const Param) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(allocator);
+    errdefer out.deinit();
+    const w = &out.writer;
+
+    if (param.alias) try w.writeAll("^");
+    if (param.name.len > 0) try w.print("{s}: ", .{param.name});
+    try w.writeAll(param.type_text);
+    return out.toOwnedSlice();
+}
+
+/// A snippet body that inserts the callable's name and a tab stop per
+/// parameter: `get($1, $2)`. Intended for `function`/`method` declarations.
+pub fn callSnippet(allocator: Allocator, decl: *const Decl) ![]u8 {
+    var out = std.Io.Writer.Allocating.init(allocator);
+    errdefer out.deinit();
+    const w = &out.writer;
+
+    try w.print("{s}(", .{decl.short_name});
+    for (decl.params, 0..) |_, i| {
+        if (i > 0) try w.writeAll(", ");
+        try w.print("${d}", .{i + 1});
+    }
+    try w.writeAll(")");
+    return out.toOwnedSlice();
+}
+
 /// A one-line human signature: `get(url: string, timeout: int) -> Response | StdError`.
 pub fn signatureDetail(allocator: Allocator, decl: *const Decl) ![]u8 {
     var out = std.Io.Writer.Allocating.init(allocator);

@@ -1000,13 +1000,11 @@ pub const SemanticAnalyzer = struct {
                         continue;
                     }
 
-                    _ = scope.createValueBinding(
-                        decl.name.lexeme,
-                        value,
-                        token_type,
-                        type_info,
-                        !type_info.is_mutable,
-                    ) catch |err| {
+                    const binding = if (decl.type_expr == null)
+                        scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
+                    else
+                        scope.createValueBinding(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable);
+                    _ = binding catch |err| {
                         if (err == error.DuplicateVariableName) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(stmt.base),
@@ -1348,13 +1346,11 @@ pub const SemanticAnalyzer = struct {
                                 else => return err,
                             };
 
-                            _ = scope.createValueBinding(
-                                decl.name.lexeme,
-                                value,
-                                token_type,
-                                type_info,
-                                !type_info.is_mutable,
-                            ) catch |err| {
+                            const binding = if (decl.type_expr == null)
+                                scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
+                            else
+                                scope.createValueBinding(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable);
+                            _ = binding catch |err| {
                                 if (err == error.DuplicateVariableName) {
                                     self.reporter.reportCompileError(
                                         getLocationFromBase(stmt.base),
