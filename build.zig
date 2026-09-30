@@ -53,14 +53,12 @@ fn addUnpackZigDependencyStep(
     archive_tool: *std.Build.Step.Compile,
     archive_path: []const u8,
     destination_lib_dir: []const u8,
-    extracted_folder_name: []const u8,
 ) *std.Build.Step.Run {
     const cmd = b.addRunArtifact(archive_tool);
     cmd.addArg("unpack-zig-dep");
     cmd.addArgs(&[_][]const u8{
         archive_path,
         destination_lib_dir,
-        extracted_folder_name,
     });
     return cmd;
 }
@@ -121,7 +119,6 @@ pub fn build(b: *std.Build) void {
             archive_tool,
             archive_path,
             destination_lib_dir,
-            zig_dep.folder_name,
         );
         b.getInstallStep().dependOn(&unpack_zig_dep.step);
     }
@@ -173,7 +170,6 @@ pub fn build(b: *std.Build) void {
                 archive_tool,
                 archive_path,
                 destination_lib_dir,
-                zig_dep.folder_name,
             );
             release_step.dependOn(&unpack_zig_dep.step);
         }
