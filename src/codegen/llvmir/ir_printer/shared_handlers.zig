@@ -2391,6 +2391,13 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                     }
                 }
+                // An inline-Zig enum return carries its id in the HIR type; the
+                // enum table names it so printing/narrowing can render variants.
+                if (actual_return_type == .Enum) {
+                    if (self.enumTypeNameFor(actual_return_type, false)) |enum_name| {
+                        pushed.enum_type_name = enum_name;
+                    }
+                }
                 try stack.append(pushed);
             } else {
                 const call_line = try std.fmt.allocPrint(self.allocator, "  call void @{s}({s})\n", .{ runtime_name, args_str });

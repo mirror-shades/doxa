@@ -1,0 +1,18 @@
+module std from @std()
+
+# A module-qualified enum is spelled by its bare name: `std.error.Method` is
+# `DoxaEnum_Method`, matching Doxa's bare-name type identity everywhere.
+zig Z {
+    pub fn is_oob(m: DoxaEnum_Method) i64 {
+        return if (m == 0) 1 else 0;
+    }
+}
+
+entry function main() {
+    @print("{@string(Z.is_oob(std.error.Method.OutOfBounds))}\n")
+    # Converting the literal directly (not through a call argument) must still
+    # resolve the qualified name; a conversion builtin analyzes its operand.
+    @print("{@string(std.error.Method.OutOfBounds)}\n")
+    const m is std.error.Method.EmptyCollection
+    @print("{m}\n")
+}

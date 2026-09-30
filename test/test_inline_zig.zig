@@ -159,6 +159,39 @@ test "inline zig: parses byte and nested array signatures" {
     try testing.expectEqual(ast.Type.String, ret.array_type.?.array_type.?.base);
 }
 
+test "inline zig: parses enum mirror signatures" {
+    const src =
+        \\pub fn is_dog(s: DoxaEnum_Species) i64 { _ = s; return 0; }
+        \\pub fn total(xs: []const DoxaEnum_Species) DoxaEnum_Species { _ = xs; return 0; }
+    ;
+
+    const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src, false);
+    defer {
+        for (sigs) |*sig| {
+            testing.allocator.free(sig.name);
+            for (sig.param_types) |*pt| pt.deinit(testing.allocator);
+            sig.return_type.deinit(testing.allocator);
+            testing.allocator.free(sig.param_types);
+        }
+        testing.allocator.free(sigs);
+    }
+
+    try testing.expectEqual(@as(usize, 2), sigs.len);
+
+    // Scalar enum: `.Enum` carries the name; it lowers to the enum id.
+    try testing.expectEqual(ast.Type.Enum, sigs[0].param_types[0].base);
+    try testing.expectEqualStrings("Species", sigs[0].param_types[0].custom_type.?);
+    try testing.expectEqual(ast.Type.Int, sigs[0].return_type.base);
+
+    // enum[] param and enum return.
+    const param = sigs[1].param_types[0];
+    try testing.expectEqual(ast.Type.Array, param.base);
+    try testing.expectEqual(ast.Type.Enum, param.array_type.?.base);
+    try testing.expectEqualStrings("Species", param.array_type.?.custom_type.?);
+    try testing.expectEqual(ast.Type.Enum, sigs[1].return_type.base);
+    try testing.expectEqualStrings("Species", sigs[1].return_type.custom_type.?);
+}
+
 test "inline zig: lenient mode tolerates arbitrary top-level and extracts only Doxa-compatible pub fns" {
     const src =
         \\const std = @import("std");

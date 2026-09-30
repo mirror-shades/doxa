@@ -749,11 +749,14 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
             return;
         }
 
-        if (expected.base == .Enum and actual.base == .Enum) {
-            if (expected.custom_type != null and actual.custom_type != null and
-                std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?)) return;
-        }
-        if ((expected.base == .Custom and actual.base == .Custom) and
+        // A named type is the same type however it is spelled: an enum
+        // reference or value can arrive as `.Enum` or `.Custom` with the same
+        // `custom_type`, and the inline-Zig signature parser spells enums as
+        // `.Enum`. Names are unique across the custom-type table, so a matching
+        // name means a matching type.
+        const expected_named = expected.base == .Enum or expected.base == .Custom;
+        const actual_named = actual.base == .Enum or actual.base == .Custom;
+        if (expected_named and actual_named and
             expected.custom_type != null and actual.custom_type != null and
             std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?))
         {
@@ -1112,7 +1115,11 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                         }
                     },
                     .Struct => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try self.allocator.dupe(u8, field_name) },
-                    .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+                    // Carry the bare enum name so the type unifies with the same
+                    // enum spelled anywhere else (a local declaration, an
+                    // inline-Zig `.Enum{custom}` parameter, ...). Without it the
+                    // type is anonymous `.Enum` and cannot meet its parameter.
+                    .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false, .custom_type = if (imported_symbol.enum_type_name) |n| try self.allocator.dupe(u8, n) else null },
                     .Group => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
                     .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try self.allocator.dupe(u8, field_name) },
                     .Import => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
@@ -1216,7 +1223,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
         },
         .Variable => ast.TypeInfo{ .base = .Nothing, .is_mutable = false },
         .Struct => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-        .Enum => ast.TypeInfo{ .base = .Enum, .is_mutable = false },
+        .Enum => ast.TypeInfo{ .base = .Enum, .is_mutable = false, .custom_type = if (imported_symbol.enum_type_name) |n| (self.allocator.dupe(u8, n) catch null) else null },
         .Group => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
         .Type => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
         .Import => ast.TypeInfo{ .base = .Custom, .is_mutable = false },

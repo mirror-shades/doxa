@@ -218,6 +218,10 @@ fn parseSliceAfterOpen(allocator: std.mem.Allocator, ts: *Tokenizer, which: Type
         if (std.mem.eql(u8, elem.lexeme, "DoxaByte")) return makeArrayType(allocator, .{ .base = .Byte, .is_mutable = false });
         if (std.mem.eql(u8, elem.lexeme, "i64")) return makeArrayType(allocator, .{ .base = .Int, .is_mutable = false });
         if (std.mem.eql(u8, elem.lexeme, "f64")) return makeArrayType(allocator, .{ .base = .Float, .is_mutable = false });
+        // `[]const DoxaEnum_<name>` is a Doxa `enum[]`; the discriminant is i64.
+        if (std.mem.startsWith(u8, elem.lexeme, "DoxaEnum_")) {
+            return makeArrayType(allocator, .{ .base = .Enum, .is_mutable = false, .custom_type = elem.lexeme["DoxaEnum_".len..] });
+        }
     }
     if (elem.kind == .symbol and std.mem.eql(u8, elem.lexeme, "[")) {
         const inner = try parseSliceAfterOpen(allocator, ts, which);
@@ -244,6 +248,14 @@ fn parseAllowedType(allocator: std.mem.Allocator, ts: *Tokenizer, which: TypeWhi
         if (std.mem.eql(u8, tok.lexeme, "u8")) return .{ .base = .Byte, .is_mutable = false };
         if (std.mem.eql(u8, tok.lexeme, "bool")) return .{ .base = .Tetra, .is_mutable = false };
         if (std.mem.eql(u8, tok.lexeme, "void")) return .{ .base = .Nothing, .is_mutable = false };
+        // A Doxa enum crosses as its `i64` discriminant. The spelling
+        // `DoxaEnum_<name>` carries the enum identity; the wrapper injects a
+        // matching `const DoxaEnum_<name> = i64;`. The type is `.Enum` (not
+        // `.Custom`) so the wrapper can tell it apart from a struct spelling,
+        // which would otherwise be lowered as an `i64` discriminant.
+        if (std.mem.startsWith(u8, tok.lexeme, "DoxaEnum_")) {
+            return .{ .base = .Enum, .is_mutable = false, .custom_type = tok.lexeme["DoxaEnum_".len..] };
+        }
     }
 
     // Slice types: `string` (`[]const u8`), `byte[]` (`[]const DoxaByte`),

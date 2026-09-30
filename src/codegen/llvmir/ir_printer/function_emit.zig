@@ -1346,6 +1346,21 @@ pub fn Methods(comptime Ctx: type) type {
                     }
                 }
             }
+
+            // Seed every declared enum's variants under its own name, not just
+            // those that appeared as a literal in the constant pool. A value
+            // produced across the inline-Zig boundary (a discriminant) has no
+            // literal, so without this `@print` renders `<enum:N>`. Populating
+            // the in-memory map costs nothing until `emitEnumPrint` interns the
+            // names it actually needs.
+            if (self.enum_table) |et_opaque| {
+                const et: *const EnumTable = @ptrCast(@alignCast(et_opaque));
+                for (et.entries.items) |entry| {
+                    for (entry.variants) |variant| {
+                        try registerVariant.add(self, entry.qualified_name, variant.index, variant.name);
+                    }
+                }
+            }
         }
 
         pub fn emitEnumPrint(

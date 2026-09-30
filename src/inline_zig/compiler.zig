@@ -8,6 +8,7 @@ const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
 const Profiler = @import("../utils/profiler.zig").Profiler;
 const hashing = @import("../utils/hashing.zig");
+const EnumTable = @import("../common/enum_table.zig").EnumTable;
 const generator_source = @embedFile("compiler.zig");
 
 fn cacheSeed() []const u8 {
@@ -116,6 +117,10 @@ fn arrayInfoFor(t: ast.TypeInfo) ?ArrayInfo {
         .Float => .{ .zig_type = "f64", .depth = 0, .elem_size = 8, .elem_tag = 2 },
         .Byte => .{ .zig_type = "u8", .depth = 0, .elem_size = 1, .elem_tag = 1 },
         .String => .{ .zig_type = "[]const u8", .depth = 0, .elem_size = 16, .elem_tag = 3 },
+        // A Doxa enum is a single `i64` discriminant; tag 8 matches the runtime
+        // and LLVM `arrayElementTag`/`arrayElementSize` tables. The wrapper
+        // validates the name is a registered enum before using this.
+        .Enum => .{ .zig_type = "i64", .depth = 0, .elem_size = 8, .elem_tag = 8 },
         .Array => blk: {
             const inner = arrayInfoFor(t.array_type.?.*) orelse break :blk null;
             break :blk .{
@@ -138,6 +143,7 @@ fn nativeParamType(t: ast.TypeInfo) ?[]const u8 {
         .Nothing => "void",
         .String => "?[*]const u8",
         .Array => "?*__DoxaArrayHeader",
+        .Enum => "i64",
         else => null,
     };
 }
@@ -152,6 +158,7 @@ fn nativeReturnType(t: ast.TypeInfo) ?[]const u8 {
         // String returns cross through the (out_ptr, out_len) pair instead.
         .String => "void",
         .Array => "?*__DoxaArrayHeader",
+        .Enum => "i64",
         else => null,
     };
 }
@@ -237,11 +244,24 @@ fn arrayReturnPostlude(allocator: std.mem.Allocator, info: ArrayInfo) ![]u8 {
         "    return __doxa_arr;\n", .{ info.zig_type, info.depth, info.elem_tag, info.elem_size });
 }
 
+/// Collect every enum name a type references, recursing through array element
+/// types. Enums cross as `i64`, so the wrapper only needs the names to inject
+/// one `const DoxaEnum_<name> = i64;` alias per name the user's Zig source
+/// spells.
+fn collectEnumNames(t: ast.TypeInfo, names: *std.array_list.Managed([]const u8)) !void {
+    switch (t.base) {
+        .Enum => if (t.custom_type) |n| try names.append(n),
+        .Array => if (t.array_type) |inner| try collectEnumNames(inner.*, names),
+        else => {},
+    }
+}
+
 fn generateWrapperZigFile(
     io: std.Io,
     allocator: std.mem.Allocator,
     reporter: *Reporter,
     cache_dir: []const u8,
+    enum_table: *const EnumTable,
     decl: ZigDeclInfo,
 ) !GeneratedModule {
     const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -287,6 +307,31 @@ fn generateWrapperZigFile(
         "extern fn doxa_array_set_i64(hdr: *__DoxaArrayHeader, idx: u64, value: i64) callconv(.c) void;\n" ++
         "extern fn doxa_array_set_str(hdr: *__DoxaArrayHeader, idx: u64, str_ptr: ?[*]const u8, str_len: u64) callconv(.c) void;\n\n");
     try appendArrayAdapters(&file_buf);
+
+    // A Doxa enum crosses as its `i64` discriminant. Inject one
+    // `const DoxaEnum_<name> = i64;` per referenced enum so the user's Zig
+    // source can name the type, and reject a name the analyzer never registered.
+    {
+        var enum_names = std.array_list.Managed([]const u8).init(allocator);
+        defer enum_names.deinit();
+        for (sigs) |sig| {
+            for (sig.param_types) |pt| try collectEnumNames(pt, &enum_names);
+            try collectEnumNames(sig.return_type, &enum_names);
+        }
+        var seen_enums = std.StringHashMap(void).init(allocator);
+        defer seen_enums.deinit();
+        for (enum_names.items) |name| {
+            if (seen_enums.contains(name)) continue;
+            try seen_enums.put(name, {});
+            if (enum_table.getIdByName(name) == null) {
+                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unknown enum 'DoxaEnum_{s}' in module '{s}'", .{ name, decl.module_name });
+                return error.NotImplemented;
+            }
+            try file_buf.appendSlice("const DoxaEnum_");
+            try file_buf.appendSlice(name);
+            try file_buf.appendSlice(" = i64;\n");
+        }
+    }
 
     for (sigs) |sig| {
         const native_ident = try std.fmt.allocPrint(allocator, "__doxa_native__{s}_{s}", .{ decl.module_name, sig.name });
@@ -423,6 +468,7 @@ pub fn compileInlineZigObjects(
     cpu_arg: []const u8,
     include_dirs: []const []const u8,
     toolchain: []const u8,
+    enum_table: *const EnumTable,
     profiler: *Profiler,
 ) ![]const []const u8 {
     const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
@@ -440,7 +486,7 @@ pub fn compileInlineZigObjects(
 
     for (zig_decls) |decl| {
         profiler.begin("wrapper-gen");
-        var gen = try generateWrapperZigFile(io, memoryManager.getAllocator(), reporter, zig_cache_path, decl);
+        var gen = try generateWrapperZigFile(io, memoryManager.getAllocator(), reporter, zig_cache_path, enum_table, decl);
         profiler.end();
         defer gen.deinit(memoryManager.getAllocator());
 
