@@ -32,6 +32,7 @@ pub const CallsHandler = struct {
                         .slot_index = alias_slot,
                         .var_name = var_name,
                         .expected_type = expected_type,
+                        .heap_copy = heap_copy,
                     },
                 });
                 return;
@@ -150,6 +151,25 @@ pub const CallsHandler = struct {
         const function_index: ?u32 = resolved.function_index;
 
         var arg_emitted_count: u32 = 0;
+
+        // A concrete member variable passed to a union/group `^` parameter is
+        // boxed into a temporary at the call site, the temporary is aliased,
+        // and the member is written back after the call. Alias binding is by
+        // reference, and a plain variable's storage is not a `%DoxaValue` box,
+        // so the callee cannot read or write the union layout directly.
+        const finfo_opt = switch (call_kind) {
+            .LocalFunction, .ModuleFunction => self.generator.function_signatures.get(function_name),
+            .BuiltinFunction => null,
+        };
+        const AliasWriteback = struct {
+            box_name: []const u8,
+            var_name: []const u8,
+            scope_kind: ScopeKind,
+            member_type: HIRType,
+        };
+        var alias_writebacks = std.array_list.Managed(AliasWriteback).init(self.generator.allocator);
+        defer alias_writebacks.deinit();
+
         for (call_data.arguments, 0..) |arg, arg_index| {
             if (arg.expr.data == .DefaultArgPlaceholder) {
                 if (self.generator.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
@@ -167,37 +187,57 @@ pub const CallsHandler = struct {
                 if (arg.is_alias) {
                     if (arg.expr.data == .Variable) {
                         const var_token = arg.expr.data.Variable;
-                        if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
-                            if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
+                        if (!self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
+                            if (self.generator.symbol_table.getVariable(var_token.lexeme)) |var_idx| {
+                                if (finfo_opt) |info| {
+                                    if (arg_index < info.param_types.len) {
+                                        const param_type = info.param_types[arg_index];
+                                        if (isBoxedAliasType(param_type)) {
+                                            if (self.generator.getTrackedVariableType(var_token.lexeme)) |member_type| {
+                                                if (!sameBoxedAliasType(param_type, member_type)) {
+                                                    const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+                                                    const box_name = try std.fmt.allocPrint(self.generator.allocator, "__doxa_alias_box_{d}", .{self.generator.instructions.items.len});
+                                                    const box_idx = try self.generator.getOrCreateVariable(box_name);
+                                                    try self.generator.instructions.append(.{ .LoadVar = .{ .var_index = var_idx, .var_name = var_token.lexeme, .scope_kind = scope_kind, .module_context = null } });
+                                                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = box_idx, .var_name = box_name, .scope_kind = .Local, .module_context = null, .expected_type = param_type, .heap_copy = .keep } });
+                                                    try self.generator.instructions.append(.{ .PushStorageId = .{ .var_index = box_idx, .var_name = box_name, .scope_kind = .Local } });
+                                                    try alias_writebacks.append(.{ .box_name = box_name, .var_name = var_token.lexeme, .scope_kind = scope_kind, .member_type = member_type });
+                                                    arg_emitted_count += 1;
+                                                    continue;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
                                 try self.generator.instructions.append(.{
                                     .PushStorageId = .{
-                                        .var_index = alias_slot,
+                                        .var_index = var_idx,
                                         .var_name = var_token.lexeme,
-                                        .scope_kind = .Local,
+                                        .scope_kind = scope_kind,
                                     },
                                 });
                                 arg_emitted_count += 1;
                             } else {
-                                return ErrorList.InvalidAliasArgument;
+                                self.generator.reporter.reportCompileError(
+                                    arg.expr.base.location(),
+                                    ErrorCode.UNDEFINED_VARIABLE,
+                                    "Undefined variable used as alias argument: {s}",
+                                    .{var_token.lexeme},
+                                );
+                                return ErrorList.UndefinedVariable;
                             }
-                        } else if (self.generator.symbol_table.getVariable(var_token.lexeme)) |var_idx| {
-                            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
+                        } else if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
                             try self.generator.instructions.append(.{
                                 .PushStorageId = .{
-                                    .var_index = var_idx,
+                                    .var_index = alias_slot,
                                     .var_name = var_token.lexeme,
-                                    .scope_kind = scope_kind,
+                                    .scope_kind = .Local,
                                 },
                             });
                             arg_emitted_count += 1;
                         } else {
-                            self.generator.reporter.reportCompileError(
-                                arg.expr.base.location(),
-                                ErrorCode.UNDEFINED_VARIABLE,
-                                "Undefined variable used as alias argument: {s}",
-                                .{var_token.lexeme},
-                            );
-                            return ErrorList.UndefinedVariable;
+                            return ErrorList.InvalidAliasArgument;
                         }
                     } else {
                         self.generator.reporter.reportCompileError(
@@ -248,9 +288,40 @@ pub const CallsHandler = struct {
                 .return_type = return_type,
             },
         });
+        // Unbox each call-site temporary and store the member back into the
+        // caller's plain variable. The call result (if any) stays on the stack
+        // across these stores.
+        for (alias_writebacks.items) |wb| {
+            const box_idx = try self.generator.getOrCreateVariable(wb.box_name);
+            try self.generator.instructions.append(.{ .LoadVar = .{ .var_index = box_idx, .var_name = wb.box_name, .scope_kind = .Local, .module_context = null } });
+            const var_idx = try self.generator.getOrCreateVariable(wb.var_name);
+            try self.generator.instructions.append(.{ .StoreVar = .{
+                .var_index = var_idx,
+                .var_name = wb.var_name,
+                .scope_kind = wb.scope_kind,
+                .module_context = null,
+                .expected_type = wb.member_type,
+                .heap_copy = .keep,
+            } });
+        }
         if (!preserve_result) {
             try self.generator.instructions.append(.Pop);
         }
+    }
+
+    fn isBoxedAliasType(t: HIRType) bool {
+        return switch (t) {
+            .Union, .Group => true,
+            else => false,
+        };
+    }
+
+    fn sameBoxedAliasType(a: HIRType, b: HIRType) bool {
+        return switch (a) {
+            .Union => |u| b == .Union and b.Union.id == u.id,
+            .Group => |g| b == .Group and b.Group == g,
+            else => false,
+        };
     }
 
     fn expectedEnumTypeForArg(self: *CallsHandler, function_name: []const u8, call_kind: CallKind, arg_index: usize) !?[]const u8 {
@@ -641,6 +712,7 @@ pub const CallsHandler = struct {
             }
         } else if (std.mem.eql(u8, name, "insert")) {
             try self.validateBuiltinArgCount(name, args.len);
+            const target_type = self.generator.inferTypeFromExpression(args[0]);
             try self.generator.generateExpression(args[0], true, false);
             try self.generator.generateExpression(args[1], true, false);
             try self.generator.generateExpression(args[2], true, false);
@@ -648,7 +720,11 @@ pub const CallsHandler = struct {
             if (args[0].data == .Variable) {
                 const var_name = args[0].data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                try self.storeVariableOrAlias(var_name, expected_type, .keep);
+                // A string insert produces a fresh immutable buffer, so an alias
+                // store must re-home it into the caller's arena. An array insert
+                // mutates in place and must keep identity.
+                const heap_copy: HeapCopyKind = if (target_type == .String) .rehome else .keep;
+                try self.storeVariableOrAlias(var_name, expected_type, heap_copy);
             } else {
                 try self.generator.instructions.append(.Pop);
             }
@@ -657,6 +733,7 @@ pub const CallsHandler = struct {
             if (!preserve_result) try self.generator.instructions.append(.Pop);
         } else if (std.mem.eql(u8, name, "remove")) {
             try self.validateBuiltinArgCount(name, args.len);
+            const target_type = self.generator.inferTypeFromExpression(args[0]);
             try self.generator.generateExpression(args[0], true, false);
             try self.generator.generateExpression(args[1], true, false);
             try self.generator.instructions.append(.ArrayRemove);
@@ -664,8 +741,9 @@ pub const CallsHandler = struct {
                 const var_name = args[0].data.Variable.lexeme;
                 const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
 
+                const heap_copy: HeapCopyKind = if (target_type == .String) .rehome else .keep;
                 try self.generator.instructions.append(.Swap);
-                try self.storeVariableOrAlias(var_name, expected_type, .keep);
+                try self.storeVariableOrAlias(var_name, expected_type, heap_copy);
             } else {
                 try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.Pop);
@@ -941,6 +1019,16 @@ pub const CallsHandler = struct {
 
     fn shouldInlineFunction(self: *CallsHandler, func_body: *const HIRGenerator.FunctionBody) bool {
         if (func_body.statements.len > 3) return false; // Too complex
+
+        // A `^` parameter is bound by reference. The inliner re-generates the
+        // body from the AST at the call site, but the symbol table's alias
+        // tracking is flat, not scoped, so it cannot register the parameter as
+        // an alias for the inlined body without leaking into the enclosing
+        // function. Call functions that take one instead of inlining them.
+        // TODO: scope alias/type tracking so alias-parameter bodies can inline.
+        for (func_body.function_info.param_is_alias) |is_alias| {
+            if (is_alias) return false;
+        }
 
         // 1. Single return statement (like "return a + b")
         if (func_body.statements.len == 1 and func_body.statements[0].data == .Return) {

@@ -300,8 +300,10 @@ pub const Stmt = struct {
             },
             .ZigDecl => |z| {
                 allocator.free(z.source);
-                for (z.sigs) |sig| {
+                for (z.sigs) |*sig| {
                     allocator.free(sig.name);
+                    for (sig.param_types) |*pt| pt.deinit(allocator);
+                    sig.return_type.deinit(allocator);
                     allocator.free(sig.param_types);
                 }
                 allocator.free(z.sigs);
@@ -1058,10 +1060,6 @@ pub const TypeInfo = struct {
         }
         if (self.variants) |variants| {
             allocator.free(variants);
-        }
-        if (self.referenced_type) |ref_type| {
-            ref_type.deinit(allocator);
-            allocator.destroy(ref_type);
         }
         if (self.union_type) |union_type| {
             for (union_type.types) |type_info| {

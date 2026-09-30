@@ -46,28 +46,37 @@ function sliceOutOfBounds(start :: int, length :: int, total :: int) returns tet
 }
 
 
-public function pushString(^collection :: string, value :: string) {
-    @push(collection, value)
-}
-
-public function pushInt(^collection :: int[], value :: int) {
-    @push(collection, value)
-}
-
-public function pushFloat(^collection :: float[], value :: float) {
-    @push(collection, value)
-}
-
-public function pushByte(^collection :: byte[], value :: byte) {
-    @push(collection, value)
-}
-
-public function pushTetra(^collection :: tetra[], value :: tetra) {
-    @push(collection, value)
-}
-
-public function pushStringArray(^collection :: string[], value :: string) {
-    @push(collection, value)
+# The collection families that do not return the collection's own type collapse
+# to one union-typed entry point. The element type is checked at run time: a
+# value that does not match the collection's element type panics rather than
+# silently doing nothing.
+public function push(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra) {
+    match collection {
+        string then {
+            const element is value as string else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        int[] then {
+            const element is value as int else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        float[] then {
+            const element is value as float else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        byte[] then {
+            const element is value as byte else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        tetra[] then {
+            const element is value as tetra else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        string[] then {
+            const element is value as string else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+    }
 }
 
 public function popString(^collection :: string) returns string | error.Method {
@@ -100,46 +109,45 @@ public function popStringArray(^collection :: string[]) returns string | error.M
     return @pop(collection)
 }
 
-public function insertString(^collection :: string, index :: int, value :: string) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-
-public function insertInt(^collection :: int[], index :: int, value :: int) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-
-public function insertFloat(^collection :: float[], index :: int, value :: float) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-
-public function insertByte(^collection :: byte[], index :: int, value :: byte) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-
-public function insertTetra(^collection :: tetra[], index :: int, value :: tetra) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-
-public function insertStringArray(^collection :: string[], index :: int, value :: string) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
+public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns error.Method {
+    match collection {
+        string then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as string else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        int[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as int else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        float[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as float else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        byte[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as byte else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        tetra[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as tetra else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        string[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as string else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+    }
 }
 
 public function removeString(^collection :: string, index :: int) returns string | error.Method {
@@ -178,52 +186,45 @@ public function removeStringArray(^collection :: string[], index :: int) returns
     return @remove(collection, index)
 }
 
-public function clearString(^collection :: string) {
-    @clear(collection)
+public function clear(^collection :: string | int[] | float[] | byte[] | tetra[] | string[]) {
+    match collection {
+        string then { @clear(collection) }
+        int[] then { @clear(collection) }
+        float[] then { @clear(collection) }
+        byte[] then { @clear(collection) }
+        tetra[] then { @clear(collection) }
+        string[] then { @clear(collection) }
+    }
 }
 
-public function clearInt(^collection :: int[]) {
-    @clear(collection)
-}
-
-public function clearFloat(^collection :: float[]) {
-    @clear(collection)
-}
-
-public function clearByte(^collection :: byte[]) {
-    @clear(collection)
-}
-
-public function clearTetra(^collection :: tetra[]) {
-    @clear(collection)
-}
-
-public function clearStringArray(^collection :: string[]) {
-    @clear(collection)
-}
-
-public function findString(collection :: string, value :: string) returns int {
-    return @find(collection, value)
-}
-
-public function findInt(collection :: int[], value :: int) returns int {
-    return @find(collection, value)
-}
-
-public function findFloat(collection :: float[], value :: float) returns int {
-    return @find(collection, value)
-}
-
-public function findByte(collection :: byte[], value :: byte) returns int {
-    return @find(collection, value)
-}
-
-public function findTetra(collection :: tetra[], value :: tetra) returns int {
-    return @find(collection, value)
-}
-
-public function findStringArray(collection :: string[], value :: string) returns int {
-    return @find(collection, value)
+public function find(collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra) returns int {
+    match collection {
+        string then {
+            const needle is value as string else { return -1 }
+            return @find(collection, needle)
+        }
+        int[] then {
+            const needle is value as int else { return -1 }
+            return @find(collection, needle)
+        }
+        float[] then {
+            const needle is value as float else { return -1 }
+            return @find(collection, needle)
+        }
+        byte[] then {
+            const needle is value as byte else { return -1 }
+            return @find(collection, needle)
+        }
+        tetra[] then {
+            const needle is value as tetra else { return -1 }
+            return @find(collection, needle)
+        }
+        string[] then {
+            const needle is value as string else { return -1 }
+            return @find(collection, needle)
+        }
+    }
+    return -1
 }
 
 public function sliceString(collection :: string, start :: int, length :: int) returns string | error.Method {

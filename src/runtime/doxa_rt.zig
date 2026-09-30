@@ -1501,6 +1501,15 @@ pub export fn doxa_array_len(hdr: *ArrayHeader) callconv(.c) u64 {
     return hdr.len;
 }
 
+/// Borrowed view of an array's backing buffer, for inline-Zig boundary adapters
+/// that must present a contiguous slice. The buffer belongs to the array's
+/// scope arena; the caller must not free it and must not use it past the
+/// array's lifetime. Returns null when the array has no backing buffer.
+pub export fn doxa_array_data(hdr: ?*ArrayHeader) callconv(.c) ?[*]u8 {
+    const h = hdr orelse return null;
+    return if (h.data) |d| @ptrCast(d) else null;
+}
+
 pub export fn doxa_array_get_i64(hdr: *ArrayHeader, idx: u64) callconv(.c) i64 {
     if (hdr.data == null or idx >= hdr.len) return 0;
 

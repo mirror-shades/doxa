@@ -12,6 +12,8 @@ test {
     _ = @import("test/test_overflow.zig");
     _ = @import("test/test_descriptor_skip.zig");
     _ = @import("test/test_target_tuning.zig");
+    _ = @import("test/test_stdlib_catalog.zig");
+    _ = @import("src/lsp/server.zig");
 }
 
 // `zig build test` only runs tests reachable from this root, so a
@@ -29,6 +31,7 @@ test "suite wiring: every test file is reachable" {
         "test_overflow.zig",
         "test_descriptor_skip.zig",
         "test_target_tuning.zig",
+        "test_stdlib_catalog.zig",
     };
     // Intentionally outside this root: shared helpers, the LSP suite (its own
     // executable), and the program suites, which drive the installed `doxa`

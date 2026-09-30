@@ -98,6 +98,16 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_alias_arrays_results[0..],
     },
     .{
+        .name = "alias string mutation",
+        .path = "./test/misc/alias_string_mutation.doxa",
+        .expected_print = answers.expected_alias_string_mutation_results[0..],
+    },
+    .{
+        .name = "stdlib methods",
+        .path = "./test/misc/stdlib_methods.doxa",
+        .expected_print = answers.expected_stdlib_methods_results[0..],
+    },
+    .{
         .name = "union narrow",
         .path = "./test/misc/union_narrow.doxa",
         .expected_print = answers.expected_union_narrow_results[0..],
@@ -253,6 +263,21 @@ const shared_cases = [_]Case{
         .name = "inline zig test",
         .path = "./test/misc/inline_zig_test.doxa",
         .expected_print = answers.expected_inline_zig_test_results[0..],
+    },
+    .{
+        .name = "inline zig arrays",
+        .path = "./test/misc/inline_zig_arrays.doxa",
+        .expected_print = answers.expected_inline_zig_arrays_results[0..],
+    },
+    .{
+        .name = "inline zig nested arrays",
+        .path = "./test/misc/inline_zig_nested_arrays.doxa",
+        .expected_print = answers.expected_inline_zig_nested_arrays_results[0..],
+    },
+    .{
+        .name = "std file list",
+        .path = "./test/misc/std_file_list.doxa",
+        .expected_print = answers.expected_std_file_list_results[0..],
     },
     .{
         .name = "inline zig string escape",

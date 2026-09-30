@@ -824,15 +824,7 @@ fn compileToNative(
                 if (sym.param_types) |pt| {
                     const hir_params = try memoryManager.getExecutionAllocator().alloc(HIRType, pt.len);
                     for (pt, 0..) |ti, i| {
-                        hir_params[i] = switch (ti.base) {
-                            .Int => HIRType.Int,
-                            .Float => HIRType.Float,
-                            .Byte => HIRType.Byte,
-                            .Tetra => HIRType.Tetra,
-                            .Nothing => HIRType.Nothing,
-                            .String => HIRType.String,
-                            else => HIRType.Nothing,
-                        };
+                        hir_params[i] = try astTypeInfoToHir(memoryManager.getExecutionAllocator(), ti);
                     }
                     const key = try memoryManager.getExecutionAllocator().dupe(u8, entry.key_ptr.*);
                     try zig_fn_param_types.put(key, hir_params);
@@ -1510,6 +1502,26 @@ fn isDoxaFile(path: []const u8, path_uri: []const u8, reporter: *Reporter) void 
         reporter.reportCompileError(loc, null, "Error: '{s}' is not a doxa file\n", .{path});
         std.process.exit(EXIT_CODE_USAGE);
     }
+}
+
+/// Lower a parse-time type (as it appears in an inline-Zig signature) to HIR.
+/// Only the shapes the inline-Zig ABI accepts need to be meaningful; anything
+/// else becomes `.Nothing` / `.Unknown`.
+fn astTypeInfoToHir(allocator: std.mem.Allocator, ti: AST.TypeInfo) error{OutOfMemory}!HIRType {
+    return switch (ti.base) {
+        .Int => .Int,
+        .Float => .Float,
+        .Byte => .Byte,
+        .Tetra => .Tetra,
+        .Nothing => .Nothing,
+        .String => .String,
+        .Array => blk: {
+            const elem = try allocator.create(HIRType);
+            elem.* = if (ti.array_type) |inner| try astTypeInfoToHir(allocator, inner.*) else .Unknown;
+            break :blk HIRType{ .Array = elem };
+        },
+        else => .Nothing,
+    };
 }
 
 pub fn main(init: std.process.Init) !void {

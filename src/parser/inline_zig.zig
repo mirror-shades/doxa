@@ -191,7 +191,46 @@ fn tokenIs(tok: Token, kind: TokenKind, lexeme: []const u8) bool {
     return tok.kind == kind and std.mem.eql(u8, tok.lexeme, lexeme);
 }
 
-fn parseAllowedType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.TypeInfo {
+fn makeArrayType(allocator: std.mem.Allocator, element: ast.TypeInfo) ErrorList!ast.TypeInfo {
+    const element_ptr = try allocator.create(ast.TypeInfo);
+    element_ptr.* = element;
+    return .{ .base = .Array, .is_mutable = false, .array_type = element_ptr };
+}
+
+/// Which side of an inline-Zig signature a type is being parsed for. Named so
+/// the slice parser and the top-level type parser share one enum type.
+const TypeWhich = enum { param, ret };
+
+/// Parse the remainder of a `[]const <element>` type. The opening `[` has
+/// already been consumed by the caller (or by a recursive invocation for a
+/// nested level). `string` stays the spelling for `[]const u8`; `byte[]` uses
+/// the injected `DoxaByte` marker so the two are unambiguous, and nesting is
+/// unbounded (`int[][]` is `[]const []const i64`).
+fn parseSliceAfterOpen(allocator: std.mem.Allocator, ts: *Tokenizer, which: TypeWhich) ErrorList!ast.TypeInfo {
+    const close = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (!tokenIs(close, .symbol, "]")) return error.InlineZigNotValid;
+    const kw_const = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (!tokenIs(kw_const, .ident, "const")) return error.InlineZigNotValid;
+
+    const elem = (try ts.next()) orelse return error.InlineZigNotValid;
+    if (elem.kind == .ident) {
+        if (std.mem.eql(u8, elem.lexeme, "u8")) return .{ .base = .String, .is_mutable = false };
+        if (std.mem.eql(u8, elem.lexeme, "DoxaByte")) return makeArrayType(allocator, .{ .base = .Byte, .is_mutable = false });
+        if (std.mem.eql(u8, elem.lexeme, "i64")) return makeArrayType(allocator, .{ .base = .Int, .is_mutable = false });
+        if (std.mem.eql(u8, elem.lexeme, "f64")) return makeArrayType(allocator, .{ .base = .Float, .is_mutable = false });
+    }
+    if (elem.kind == .symbol and std.mem.eql(u8, elem.lexeme, "[")) {
+        const inner = try parseSliceAfterOpen(allocator, ts, which);
+        return makeArrayType(allocator, inner);
+    }
+
+    return switch (which) {
+        .param => error.InvalidParamType,
+        .ret => error.InvalidReturnType,
+    };
+}
+
+fn parseAllowedType(allocator: std.mem.Allocator, ts: *Tokenizer, which: TypeWhich) ErrorList!ast.TypeInfo {
     const tok_opt = try ts.next();
     if (tok_opt == null) switch (which) {
         .param => return error.InvalidParamType,
@@ -207,15 +246,10 @@ fn parseAllowedType(ts: *Tokenizer, which: enum { param, ret }) ErrorList!ast.Ty
         if (std.mem.eql(u8, tok.lexeme, "void")) return .{ .base = .Nothing, .is_mutable = false };
     }
 
-    // `string` in Doxa is represented as `[]const u8` in Zig.
+    // Slice types: `string` (`[]const u8`), `byte[]` (`[]const DoxaByte`),
+    // `int[]`/`float[]`/`string[]`, and nested forms like `int[][]`.
     if (tok.kind == .symbol and std.mem.eql(u8, tok.lexeme, "[")) {
-        const close = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(close, .symbol, "]")) return error.InlineZigNotValid;
-        const kw_const = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(kw_const, .ident, "const")) return error.InlineZigNotValid;
-        const u8_tok = (try ts.next()) orelse return error.InlineZigNotValid;
-        if (!tokenIs(u8_tok, .ident, "u8")) return error.InlineZigNotValid;
-        return .{ .base = .String, .is_mutable = false };
+        return parseSliceAfterOpen(allocator, ts, which);
     }
 
     return switch (which) {
@@ -281,7 +315,10 @@ fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!as
     if (!tokenIs(lparen, .symbol, "(")) return error.InlineZigNotValid;
 
     var param_types = std.array_list.Managed(ast.TypeInfo).init(allocator);
-    errdefer param_types.deinit();
+    errdefer {
+        for (param_types.items) |*pt| pt.deinit(allocator);
+        param_types.deinit();
+    }
 
     while (true) {
         const t = (try ts.peek()) orelse return error.InlineZigNotValid;
@@ -296,7 +333,7 @@ fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!as
         const colon = (try ts.next()) orelse return error.InlineZigNotValid;
         if (!tokenIs(colon, .symbol, ":")) return error.InlineZigNotValid;
 
-        const ti = try parseAllowedType(ts, .param);
+        const ti = try parseAllowedType(allocator, ts, .param);
         try param_types.append(ti);
 
         // TODO: support defaults and extra param modifiers
@@ -314,7 +351,8 @@ fn parseTopLevelFnSig(allocator: std.mem.Allocator, ts: *Tokenizer) ErrorList!as
         return error.InlineZigNotValid;
     }
 
-    const ret_ti = try parseAllowedType(ts, .ret);
+    var ret_ti = try parseAllowedType(allocator, ts, .ret);
+    errdefer ret_ti.deinit(allocator);
 
     // Require function body
     const body = (try ts.next()) orelse return error.InlineZigNotValid;
@@ -462,8 +500,10 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8, lenient: 
 
     var out = std.array_list.Managed(ast.ZigFnSig).init(allocator);
     errdefer {
-        for (out.items) |sig| {
+        for (out.items) |*sig| {
             allocator.free(sig.name);
+            for (sig.param_types) |*pt| pt.deinit(allocator);
+            sig.return_type.deinit(allocator);
             allocator.free(sig.param_types);
         }
         out.deinit();

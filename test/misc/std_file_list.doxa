@@ -1,0 +1,23 @@
+module std from @std()
+
+public entry function main() {
+    const entries is std.file.list("test/fixtures/dirlist") as string[] else {
+        std.io.println("error")
+        return
+    }
+
+    var one is false
+    var two is false
+    var three is false
+    each name in entries {
+        if name == "one.txt" then one is true
+        if name == "two.txt" then two is true
+        if name == "three.txt" then three is true
+    }
+
+    var summary is ""
+    if one then summary += "1"
+    if two then summary += "2"
+    if three then summary += "3"
+    std.io.println(summary)
+}

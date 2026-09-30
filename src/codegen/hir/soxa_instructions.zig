@@ -113,6 +113,7 @@ pub const HIRInstruction = union(enum) {
         var_name: []const u8,
         slot_index: u32,
         expected_type: HIRType,
+        heap_copy: SoxaTypes.HeapCopyKind = .rehome,
     },
 
     /// Bind an alias to its target variable (unified from StoreParamAlias)

@@ -57,6 +57,7 @@ pub const IRPrinter = struct {
     pub const cloneHeapForSnapshot = CoreMethods.cloneHeapForSnapshot;
     pub const cloneHeapForReturn = CoreMethods.cloneHeapForReturn;
     pub const cloneHeapForGlobalStore = CoreMethods.cloneHeapForGlobalStore;
+    pub const cloneHeapForAliasStore = CoreMethods.cloneHeapForAliasStore;
     pub const cloneHeapValue = CoreMethods.cloneHeapValue;
     pub const currentRegionTag = CoreMethods.currentRegionTag;
     pub const callerLevels = CoreMethods.callerLevels;
@@ -351,6 +352,12 @@ pub const IRPrinter = struct {
         /// re-pack the member index from the source type instead of silently
         /// keeping the first box's index.
         boxed_type: ?HIR.HIRType = null,
+        /// For a value pushed by `PushStorageId`: how many alias re-passes lie
+        /// between the frame that owns the storage and the frame taking the
+        /// alias. 0 is a variable owned by the immediate caller; each re-pass
+        /// of an existing alias adds one. A heap store through the alias
+        /// re-homes into the owning frame's arena at that depth.
+        alias_extra: u8 = 0,
     };
 
     pub const VariableInfo = struct {

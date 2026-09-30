@@ -1,0 +1,25 @@
+module std from @std()
+
+# The unified method entry points take a union collection (and value). A plain
+# `string`/`int[]` variable is boxed at the call site and written back, so the
+# wrappers work on ordinary locals.
+entry function main() {
+    var s is "hello"
+    var a :: int[] is [1, 2, 3]
+
+    std.methods.push(^s, "!")
+    std.methods.push(^a, 4)
+    @print("push {s} {a}\n")
+
+    std.methods.insert(^s, 0, ">")
+    std.methods.insert(^a, 0, 0)
+    @print("insert {s} {a}\n")
+
+    var needle is "!"
+    var four is 4
+    @print("find {std.methods.find(s, needle)} {std.methods.find(a, four)}\n")
+
+    std.methods.clear(^s)
+    std.methods.clear(^a)
+    @print("clear [{s}] {a}\n")
+}

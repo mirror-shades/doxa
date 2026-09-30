@@ -95,6 +95,148 @@ pub fn collectInlineZigDecls(
     return try out.toOwnedSlice();
 }
 
+/// Compile-time description of an inline-Zig array: its innermost Zig type, how
+/// many `[]const` levels wrap it, and the runtime tag/size of the innermost
+/// element. Mirrors `arrayElementTag` / `arrayElementSize` in the LLVM backend
+/// and the tags in `src/runtime/doxa_rt.zig` — they must stay in sync.
+const ArrayInfo = struct {
+    zig_type: []const u8,
+    depth: usize,
+    elem_size: u64,
+    elem_tag: u64,
+};
+
+/// Resolve a Doxa type as it crosses the boundary. Scalars and `string` are
+/// depth 0; every `Array` level adds one, so `int[]` is depth 1 and `int[][]`
+/// depth 2. Returns null for anything unsupported, which the wrapper generator
+/// reports as `E8002`.
+fn arrayInfoFor(t: ast.TypeInfo) ?ArrayInfo {
+    return switch (t.base) {
+        .Int => .{ .zig_type = "i64", .depth = 0, .elem_size = 8, .elem_tag = 0 },
+        .Float => .{ .zig_type = "f64", .depth = 0, .elem_size = 8, .elem_tag = 2 },
+        .Byte => .{ .zig_type = "u8", .depth = 0, .elem_size = 1, .elem_tag = 1 },
+        .String => .{ .zig_type = "[]const u8", .depth = 0, .elem_size = 16, .elem_tag = 3 },
+        .Array => blk: {
+            const inner = arrayInfoFor(t.array_type.?.*) orelse break :blk null;
+            break :blk .{
+                .zig_type = inner.zig_type,
+                .depth = inner.depth + 1,
+                .elem_size = inner.elem_size,
+                .elem_tag = inner.elem_tag,
+            };
+        },
+        else => null,
+    };
+}
+
+fn nativeParamType(t: ast.TypeInfo) ?[]const u8 {
+    return switch (t.base) {
+        .Int => "i64",
+        .Float => "f64",
+        .Byte => "u8",
+        .Tetra => "bool",
+        .Nothing => "void",
+        .String => "?[*]const u8",
+        .Array => "?*__DoxaArrayHeader",
+        else => null,
+    };
+}
+
+fn nativeReturnType(t: ast.TypeInfo) ?[]const u8 {
+    return switch (t.base) {
+        .Int => "i64",
+        .Float => "f64",
+        .Byte => "u8",
+        .Tetra => "bool",
+        .Nothing => "void",
+        // String returns cross through the (out_ptr, out_len) pair instead.
+        .String => "void",
+        .Array => "?*__DoxaArrayHeader",
+        else => null,
+    };
+}
+
+/// Generic adapters, emitted once per wrapper. `__DoxaArrayType` names the Zig
+/// slice type for `depth` nested levels; `__doxa_view` materializes a borrowed
+/// view of an incoming `ArrayHeader` (aliasing scalar buffers, copying string
+/// elements into the call arena); `__doxa_build` copies a returned slice into a
+/// fresh `ArrayHeader` in the call-site arena.
+fn appendArrayAdapters(buf: *std.array_list.Managed(u8)) !void {
+    try buf.appendSlice(
+        "fn __DoxaArrayType(comptime __T: type, comptime __depth: usize) type {\n" ++
+        "    if (__depth == 0) return __T;\n" ++
+        "    return []const __DoxaArrayType(__T, __depth - 1);\n" ++
+        "}\n\n" ++
+        "fn __doxa_view(comptime __T: type, comptime __depth: usize, comptime __tag: u64, __h: *__DoxaArrayHeader, __a: __doxa_std.mem.Allocator) __DoxaArrayType(__T, __depth) {\n" ++
+        "    const __n: usize = @intCast(doxa_array_len(__h));\n" ++
+        "    if (__depth == 1) {\n" ++
+        "        if (__tag == 3) {\n" ++
+        "            const __buf = __a.alloc([]const u8, __n) catch return &.{};\n" ++
+        "            var __i: usize = 0;\n" ++
+        "            while (__i < __n) : (__i += 1) {\n" ++
+        "                var __sp: ?[*]u8 = undefined;\n" ++
+        "                var __sl: u64 = undefined;\n" ++
+        "                doxa_array_get_str(__h, @intCast(__i), &__sp, &__sl);\n" ++
+        "                __buf[__i] = if (__sp) |__p| __p[0..@intCast(__sl)] else \"\";\n" ++
+        "            }\n" ++
+        "            return __buf;\n" ++
+        "        }\n" ++
+        "        if (__n == 0) return &.{};\n" ++
+        "        const __raw: [*]const __T = @ptrCast(@alignCast(doxa_array_data(__h) orelse return &.{}));\n" ++
+        "        return __raw[0..__n];\n" ++
+        "    }\n" ++
+        "    const __out = __a.alloc(__DoxaArrayType(__T, __depth - 1), __n) catch return &.{};\n" ++
+        "    var __i: usize = 0;\n" ++
+        "    while (__i < __n) : (__i += 1) {\n" ++
+        "        const __addr: usize = @intCast(doxa_array_get_i64(__h, @intCast(__i)));\n" ++
+        "        __out[__i] = if (__addr == 0) &.{} else __doxa_view(__T, __depth - 1, __tag, @ptrFromInt(__addr), __a);\n" ++
+        "    }\n" ++
+        "    return __out;\n" ++
+        "}\n\n" ++
+        "fn __doxa_scalar_bits(comptime __T: type, __v: __T) i64 {\n" ++
+        "    return switch (__T) {\n" ++
+        "        i64 => __v,\n" ++
+        "        f64 => @bitCast(__v),\n" ++
+        "        u8 => @intCast(__v),\n" ++
+        "        else => @compileError(\"unsupported inline-zig array element\"),\n" ++
+        "    };\n" ++
+        "}\n\n" ++
+        "fn __doxa_build(comptime __T: type, comptime __depth: usize, comptime __tag: u64, comptime __esize: u64, __value: __DoxaArrayType(__T, __depth)) *__DoxaArrayHeader {\n" ++
+        "    const __h = if (__depth == 1) doxa_array_new(__esize, __tag, __value.len) else doxa_array_new(8, 6, __value.len);\n" ++
+        "    var __i: usize = 0;\n" ++
+        "    while (__i < __value.len) : (__i += 1) {\n" ++
+        "        if (__depth == 1) {\n" ++
+        "            if (__tag == 3) {\n" ++
+        "                doxa_array_set_str(__h, @intCast(__i), __value[__i].ptr, __value[__i].len);\n" ++
+        "            } else {\n" ++
+        "                doxa_array_set_i64(__h, @intCast(__i), __doxa_scalar_bits(__T, __value[__i]));\n" ++
+        "            }\n" ++
+        "        } else {\n" ++
+        "            const __inner = __doxa_build(__T, __depth - 1, __tag, __esize, __value[__i]);\n" ++
+        "            doxa_array_set_i64(__h, @intCast(__i), @intCast(@intFromPtr(__inner)));\n" ++
+        "        }\n" ++
+        "    }\n" ++
+        "    return __h;\n" ++
+        "}\n\n");
+}
+
+/// Borrow an incoming `ArrayHeader` as a Zig slice of type
+/// `__DoxaArrayType(element, depth)`. Fresh allocations come from a per-call
+/// arena the wrapper deinitializes after the user function returns.
+fn arrayParamPrelude(allocator: std.mem.Allocator, i: usize, arg_name: []const u8, info: ArrayInfo) ![]u8 {
+    return std.fmt.allocPrint(allocator, "    var __doxa_arena{d} = __doxa_std.heap.ArenaAllocator.init(__doxa_std.heap.page_allocator);\n" ++
+        "    defer __doxa_arena{d}.deinit();\n" ++
+        "    const __doxa_s{d}: __DoxaArrayType({s}, {d}) = if ({s}) |__h| __doxa_view({s}, {d}, {d}, __h, __doxa_arena{d}.allocator()) else &.{{}};\n", .{ i, i, i, info.zig_type, info.depth, arg_name, info.zig_type, info.depth, info.elem_tag, i });
+}
+
+/// Copy the user function's returned slice into a fresh `ArrayHeader` in the
+/// call-site arena; string elements are cloned into that arena by
+/// `doxa_array_set_str`.
+fn arrayReturnPostlude(allocator: std.mem.Allocator, info: ArrayInfo) ![]u8 {
+    return std.fmt.allocPrint(allocator, "    const __doxa_arr = __doxa_build({s}, {d}, {d}, {d}, __doxa_out);\n" ++
+        "    return __doxa_arr;\n", .{ info.zig_type, info.depth, info.elem_tag, info.elem_size });
+}
+
 fn generateWrapperZigFile(
     io: std.Io,
     allocator: std.mem.Allocator,
@@ -126,37 +268,25 @@ fn generateWrapperZigFile(
     try appendZigSourceSanitized(&file_buf, decl.zig_source);
     try file_buf.appendSlice("\n\n");
 
-    const zigTypeName = struct {
-        const TypeMeta = struct {
-            native_param: ?[]const u8,
-            native_ret: ?[]const u8,
-        };
-
-        fn metaFor(t: ast.TypeInfo) TypeMeta {
-            return switch (t.base) {
-                .Int => .{ .native_param = "i64", .native_ret = "i64" },
-                .Float => .{ .native_param = "f64", .native_ret = "f64" },
-                .Byte => .{ .native_param = "u8", .native_ret = "u8" },
-                .Tetra => .{ .native_param = "bool", .native_ret = "bool" },
-                .Nothing => .{ .native_param = "void", .native_ret = "void" },
-                .String => .{ .native_param = "?[*]const u8", .native_ret = "void" },
-                else => .{ .native_param = null, .native_ret = null },
-            };
-        }
-
-        fn fromNativeParamTypeInfo(t: ast.TypeInfo) ?[]const u8 {
-            return metaFor(t).native_param;
-        }
-
-        fn fromNativeReturnTypeInfo(t: ast.TypeInfo) ?[]const u8 {
-            return metaFor(t).native_ret;
-        }
-    };
-
-    // String returns cross the boundary already owned by the call site's scope
-    // arena (the runtime clones on the wrapper's behalf), so the arena rules in
-    // docs/memory.md apply and no separate free hook exists.
-    try file_buf.appendSlice("extern fn doxa_str_clone_current(ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void;\n\n");
+    // Inline-Zig ABI prologue. String returns are cloned into the call-site
+    // scope arena by the runtime; array returns are materialized as a fresh
+    // `ArrayHeader` in that same arena by `doxa_array_new`, so both follow the
+    // ordinary arena ownership rules in docs/memory.md with no free hook.
+    // `DoxaByte` is the marker a signature uses to spell `byte[]`: a bare
+    // `[]const u8` is unambiguously a `string`, so bytes need their own name.
+    try file_buf.appendSlice(
+        "const __doxa_std = @import(\"std\");\n\n" ++
+        "const DoxaByte = u8;\n\n" ++
+        "const __DoxaArrayHeader = opaque {};\n\n" ++
+        "extern fn doxa_str_clone_current(ptr: ?[*]const u8, len: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void;\n" ++
+        "extern fn doxa_array_new(elem_size: u64, elem_tag: u64, init_len: u64) callconv(.c) *__DoxaArrayHeader;\n" ++
+        "extern fn doxa_array_len(hdr: *__DoxaArrayHeader) callconv(.c) u64;\n" ++
+        "extern fn doxa_array_data(hdr: ?*__DoxaArrayHeader) callconv(.c) ?[*]u8;\n" ++
+        "extern fn doxa_array_get_i64(hdr: *__DoxaArrayHeader, idx: u64) callconv(.c) i64;\n" ++
+        "extern fn doxa_array_get_str(hdr: *__DoxaArrayHeader, idx: u64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void;\n" ++
+        "extern fn doxa_array_set_i64(hdr: *__DoxaArrayHeader, idx: u64, value: i64) callconv(.c) void;\n" ++
+        "extern fn doxa_array_set_str(hdr: *__DoxaArrayHeader, idx: u64, str_ptr: ?[*]const u8, str_len: u64) callconv(.c) void;\n\n");
+    try appendArrayAdapters(&file_buf);
 
     for (sigs) |sig| {
         const native_ident = try std.fmt.allocPrint(allocator, "__doxa_native__{s}_{s}", .{ decl.module_name, sig.name });
@@ -164,7 +294,7 @@ fn generateWrapperZigFile(
         const native_sym = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ decl.module_name, sig.name });
         defer allocator.free(native_sym);
 
-        const native_ret_zig = zigTypeName.fromNativeReturnTypeInfo(sig.return_type) orelse {
+        const native_ret_zig = nativeReturnType(sig.return_type) orelse {
             reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in native bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
             return error.NotImplemented;
         };
@@ -183,7 +313,7 @@ fn generateWrapperZigFile(
         try native_call.appendSlice("(");
 
         for (sig.param_types, 0..) |pt, i| {
-            const pt_zig = zigTypeName.fromNativeParamTypeInfo(pt) orelse {
+            const pt_zig = nativeParamType(pt) orelse {
                 reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in native bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
                 return error.NotImplemented;
             };
@@ -211,6 +341,17 @@ fn generateWrapperZigFile(
                 try native_buf.appendSlice(", ");
                 try native_buf.appendSlice(arg_name);
                 try native_buf.appendSlice("_len: u64");
+            } else if (pt.base == .Array) {
+                const elem = arrayInfoFor(pt) orelse {
+                    reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported array element type in native bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                    return error.NotImplemented;
+                };
+                const s_name = try std.fmt.allocPrint(allocator, "__doxa_s{}", .{i});
+                defer allocator.free(s_name);
+                const prelude = try arrayParamPrelude(allocator, i, arg_name, elem);
+                defer allocator.free(prelude);
+                try native_prelude.appendSlice(prelude);
+                try native_call.appendSlice(s_name);
             } else {
                 try native_call.appendSlice(arg_name);
             }
@@ -232,6 +373,17 @@ fn generateWrapperZigFile(
             try native_buf.appendSlice(";\n");
             try native_buf.appendSlice("    if (__doxa_out.len == 0) { out_ptr.* = null; out_len.* = 0; return; }\n");
             try native_buf.appendSlice("    doxa_str_clone_current(__doxa_out.ptr, __doxa_out.len, out_ptr, out_len);\n");
+        } else if (sig.return_type.base == .Array) {
+            const elem = arrayInfoFor(sig.return_type) orelse {
+                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported array element type in native bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                return error.NotImplemented;
+            };
+            try native_buf.appendSlice("    const __doxa_out = ");
+            try native_buf.appendSlice(native_call.items);
+            try native_buf.appendSlice(";\n");
+            const postlude = try arrayReturnPostlude(allocator, elem);
+            defer allocator.free(postlude);
+            try native_buf.appendSlice(postlude);
         } else if (std.mem.eql(u8, native_ret_zig, "void")) {
             try native_buf.appendSlice("    ");
             try native_buf.appendSlice(native_call.items);
