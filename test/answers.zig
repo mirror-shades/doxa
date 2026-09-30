@@ -258,6 +258,18 @@ pub const expected_inline_zig_nested_arrays_results = [_]print_result{
     .{ .value = "42" },
 };
 
+pub const expected_inline_zig_enums_results = [_]print_result{
+    .{ .value = "1 0" },
+    .{ .value = ".CAT" },
+    .{ .value = "3" },
+};
+
+pub const expected_inline_zig_qualified_enum_results = [_]print_result{
+    .{ .value = "1" },
+    .{ .value = ".OutOfBounds" },
+    .{ .value = ".EmptyCollection" },
+};
+
 pub const expected_std_file_list_results = [_]print_result{
     .{ .value = "123" },
 };

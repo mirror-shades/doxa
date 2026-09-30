@@ -274,24 +274,30 @@ fn inferBuiltinCallInner(
     {
         // Simple builtins: validate args and return type from centralized data
         if (!validateBuiltinArgs.check(self, expr, fname, args.len)) return type_info;
+        // Analyze the operand even though the result type comes from the table.
+        // Inference is what walks the operand expression, and that walk is what
+        // lazily resolves and registers module-qualified custom types
+        // (`std.error.Method.OutOfBounds`). Skipping it leaves a qualified enum
+        // literal unresolved in HIR, where it lowers to field loads on a bogus
+        // pointer instead of a constant.
+        const operand_type = try inferTypeFromExpr(self, args[0]);
         if (builtin_methods.getMethodInfoByName(fname)) |info| {
             // `@pack` consumes a `byte[]`: the bridge from byte data into a
             // string is one-way and explicit. The element goes through the same
             // coercion rule as `@push`, so comptime int literals narrow to `byte`
             // while a runtime `int[]` is rejected.
             if (std.mem.eql(u8, fname, "pack")) {
-                const arg_t = try inferTypeFromExpr(self, args[0]);
-                if (arg_t.base != .Array) {
+                if (operand_type.base != .Array) {
                     self.reporter.reportCompileError(
                         getLocationFromBase(args[0].base),
                         ErrorCode.TYPE_MISMATCH,
                         "@pack requires a byte[] argument, got {s}",
-                        .{@tagName(arg_t.base)},
+                        .{@tagName(operand_type.base)},
                     );
                     self.fatal_error = true;
                     return type_info;
                 }
-                if (arg_t.array_type) |elem| {
+                if (operand_type.array_type) |elem| {
                     const byte_elem = try ast.TypeInfo.createDefault(self.allocator);
                     byte_elem.* = .{ .base = .Byte };
                     try helpers.unifyTypes(self, byte_elem, elem, .{ .location = getLocationFromBase(args[0].base) });

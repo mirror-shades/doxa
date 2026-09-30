@@ -448,6 +448,9 @@ pub const TypeSystem = struct {
                 return .Nothing;
             },
             .Custom => self.customTypeFromOptional(type_info.custom_type),
+            // A resolved enum may arrive as `.Enum{custom}`; resolve by name.
+            // `.Enum` with no name keeps the prior `.Nothing` answer.
+            .Enum => if (type_info.custom_type != null) self.customTypeFromOptional(type_info.custom_type) else .Nothing,
             else => .Nothing,
         };
     }

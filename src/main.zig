@@ -17,6 +17,7 @@ const AST = @import("./ast/ast.zig");
 const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
 const HIRProgram = @import("./codegen/hir/soxa_types.zig").HIRProgram;
 const HIRType = @import("./codegen/hir/soxa_types.zig").HIRType;
+const EnumTable = @import("./common/enum_table.zig").EnumTable;
 
 const ConstantFolder = @import("./analysis/constant_folder.zig").ConstantFolder;
 const Errors = @import("./utils/errors.zig");
@@ -371,7 +372,7 @@ fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []A
     return hir_program;
 }
 
-fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8, toolchain: []const u8, profiler: *Profiler) ![]const []const u8 {
+fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8, toolchain: []const u8, enum_table: *const EnumTable, profiler: *Profiler) ![]const []const u8 {
     const zig_exe_path = try resolveBundledZigExecutable(io, memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
     // Match the runtime object and final link exactly: native builds also pass
@@ -384,7 +385,7 @@ fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, statements
     // An explicit `-target` stops auto-detecting the host CPU, so the native
     // shim must ask for it explicitly, exactly as the runtime object does.
     const cpu_arg: []const u8 = if (target.isCross()) "" else "-mcpu=native";
-    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target_triple, target.os, cpu_arg, include_dirs, toolchain, profiler);
+    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target_triple, target.os, cpu_arg, include_dirs, toolchain, enum_table, profiler);
 }
 
 fn openDirMaybeAbs(io: std.Io, path: []const u8, opts: std.Io.Dir.OpenOptions) !std.Io.Dir {
@@ -824,14 +825,15 @@ fn compileToNative(
                 if (sym.param_types) |pt| {
                     const hir_params = try memoryManager.getExecutionAllocator().alloc(HIRType, pt.len);
                     for (pt, 0..) |ti, i| {
-                        hir_params[i] = try astTypeInfoToHir(memoryManager.getExecutionAllocator(), ti);
+                        hir_params[i] = try astTypeInfoToHir(memoryManager.getExecutionAllocator(), ti, semantic_analyzer.getEnumTable());
                     }
                     const key = try memoryManager.getExecutionAllocator().dupe(u8, entry.key_ptr.*);
                     try zig_fn_param_types.put(key, hir_params);
                 }
             }
         }
-        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getStructTable())), zig_fn_param_types, hir_program.reflected_structs, hir_program.force_struct_descriptors, cli_options.opt.arithOverflow());
+        const reflected_structs_ptr: ?*const std.StringHashMap(void) = if (hir_program.reflected_structs) |*reflected| reflected else null;
+        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getStructTable())), zig_fn_param_types, reflected_structs_ptr, hir_program.force_struct_descriptors, cli_options.opt.arithOverflow());
         try printer.emitToFile(hir_program, ir_path);
     }
 
@@ -894,7 +896,7 @@ fn compileToNative(
     }
 
     profiler.begin("inline-zig");
-    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, parsed_statements, parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items, toolchain, profiler);
+    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, parsed_statements, parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items, toolchain, semantic_analyzer.getEnumTable(), profiler);
     profiler.end();
     defer {
         for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
@@ -1507,7 +1509,7 @@ fn isDoxaFile(path: []const u8, path_uri: []const u8, reporter: *Reporter) void 
 /// Lower a parse-time type (as it appears in an inline-Zig signature) to HIR.
 /// Only the shapes the inline-Zig ABI accepts need to be meaningful; anything
 /// else becomes `.Nothing` / `.Unknown`.
-fn astTypeInfoToHir(allocator: std.mem.Allocator, ti: AST.TypeInfo) error{OutOfMemory}!HIRType {
+fn astTypeInfoToHir(allocator: std.mem.Allocator, ti: AST.TypeInfo, enum_table: *const EnumTable) error{OutOfMemory}!HIRType {
     return switch (ti.base) {
         .Int => .Int,
         .Float => .Float,
@@ -1517,9 +1519,13 @@ fn astTypeInfoToHir(allocator: std.mem.Allocator, ti: AST.TypeInfo) error{OutOfM
         .String => .String,
         .Array => blk: {
             const elem = try allocator.create(HIRType);
-            elem.* = if (ti.array_type) |inner| try astTypeInfoToHir(allocator, inner.*) else .Unknown;
+            elem.* = if (ti.array_type) |inner| try astTypeInfoToHir(allocator, inner.*, enum_table) else .Unknown;
             break :blk HIRType{ .Array = elem };
         },
+        // An enum crosses as its `i64` discriminant; resolve the spelling to the
+        // analyzer's enum id. An unknown name is reported by the wrapper
+        // generator (E8002) before Zig is invoked.
+        .Enum => HIRType{ .Enum = if (ti.custom_type) |name| (enum_table.getIdByName(name) orelse 0) else 0 },
         else => .Nothing,
     };
 }

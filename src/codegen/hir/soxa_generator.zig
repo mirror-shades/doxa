@@ -496,9 +496,22 @@ pub const HIRGenerator = struct {
             .function_table = function_table,
             .module_map = try self.buildModuleMap(),
             .allocator = self.allocator,
-            .reflected_structs = &self.reflected_structs,
+            .reflected_structs = try self.cloneReflectedStructs(),
             .force_struct_descriptors = self.force_struct_descriptors,
         };
+    }
+
+    /// Copy the reflected-struct name set into an owned map for the returned
+    /// `HIRProgram`. The generator (and its map) is deinited as soon as
+    /// `generateProgram` returns, so the program cannot borrow it. The keys are
+    /// borrowed struct-table names, which outlive the program.
+    fn cloneReflectedStructs(self: *HIRGenerator) !std.StringHashMap(void) {
+        var copy = std.StringHashMap(void).init(self.allocator);
+        errdefer copy.deinit();
+        try copy.ensureTotalCapacity(@intCast(self.reflected_structs.count()));
+        var it = self.reflected_structs.keyIterator();
+        while (it.next()) |key| copy.putAssumeCapacity(key.*, {});
+        return copy;
     }
 
     fn buildModuleMap(self: *HIRGenerator) !std.StringHashMap(HIRProgram.ModuleInfo) {

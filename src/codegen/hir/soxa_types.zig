@@ -139,9 +139,11 @@ pub const HIRProgram = struct {
     function_table: []HIRProgram.HIRFunction,
     module_map: std.StringHashMap(ModuleInfo),
     allocator: std.mem.Allocator,
-    /// B2: struct type names reaching a reflection site (borrowed from the
-    /// generator; owned by the analysis arena, not freed here).
-    reflected_structs: ?*const std.StringHashMap(void) = null,
+    /// B2: struct type names reaching a reflection site. Owned by the program
+    /// (a copy of the generator's set) so it stays valid after the generator is
+    /// deinited; the inner name slices are borrowed from the struct table, which
+    /// outlives the program.
+    reflected_structs: ?std.StringHashMap(void) = null,
     /// B2: a group/unknown reflection target disables per-type descriptor skips.
     force_struct_descriptors: bool = false,
 
@@ -156,6 +158,7 @@ pub const HIRProgram = struct {
 
         self.allocator.free(self.function_table);
         self.module_map.deinit();
+        if (self.reflected_structs) |*reflected| reflected.deinit();
     }
 
     pub const HIRFunction = struct {

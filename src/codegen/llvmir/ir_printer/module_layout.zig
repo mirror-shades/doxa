@@ -207,13 +207,10 @@ pub fn Methods(comptime Ctx: type) type {
             for (table.entries.items) |entry| {
                 const field_types = try self.allocator.alloc(HIR.HIRType, entry.fields.len);
                 defer self.allocator.free(field_types);
-                const field_names = try self.allocator.alloc([]const u8, entry.fields.len);
-                defer self.allocator.free(field_names);
 
                 var resolved = true;
                 for (entry.fields, 0..) |field, i| {
                     field_types[i] = field.hir_type;
-                    field_names[i] = field.name;
                     if (field.hir_type == .Unknown) resolved = false;
                 }
                 if (!resolved) continue;
@@ -221,14 +218,28 @@ pub fn Methods(comptime Ctx: type) type {
                 if (!self.global_struct_field_types.contains(entry.qualified_name)) {
                     _ = try self.global_struct_field_types.put(entry.qualified_name, try self.allocator.dupe(HIR.HIRType, field_types));
                 }
-                if (!self.struct_field_names_by_type.contains(entry.qualified_name)) {
-                    _ = try self.struct_field_names_by_type.put(entry.qualified_name, try self.allocator.dupe([]const u8, field_names));
-                }
                 if (!self.struct_fields_by_id.contains(entry.id)) {
                     _ = try self.struct_fields_by_id.put(entry.id, try self.allocator.dupe(HIR.HIRType, field_types));
                 }
                 if (!self.struct_type_names_by_id.contains(entry.id)) {
                     _ = try self.struct_type_names_by_id.put(entry.id, entry.qualified_name);
+                }
+                // `IRPrinter.deinit` frees every inner string of
+                // `struct_field_names_by_type` unconditionally, so each one must
+                // be printer-owned. The table's names belong to the analysis
+                // arena — copying here (rather than borrowing `field.name`)
+                // keeps that free from releasing the table's storage.
+                if (!self.struct_field_names_by_type.contains(entry.qualified_name)) {
+                    const owned_names = try self.allocator.alloc([]const u8, entry.fields.len);
+                    var built: usize = 0;
+                    errdefer {
+                        for (owned_names[0..built]) |name| self.allocator.free(name);
+                        self.allocator.free(owned_names);
+                    }
+                    while (built < entry.fields.len) : (built += 1) {
+                        owned_names[built] = try self.allocator.dupe(u8, entry.fields[built].name);
+                    }
+                    _ = try self.struct_field_names_by_type.put(entry.qualified_name, owned_names);
                 }
             }
         }
@@ -380,6 +391,9 @@ pub fn Methods(comptime Ctx: type) type {
                             .Byte => try params_buf.appendSlice("i8"),
                             .Tetra => try params_buf.appendSlice("i1"),
                             .Nothing => try params_buf.appendSlice("void"),
+                            // Arrays cross the inline-Zig ABI as a single opaque
+                            // pointer, matching the generated wrapper's signature.
+                            .Array => try params_buf.appendSlice("ptr"),
                             else => try params_buf.appendSlice("i64"),
                         }
                     }

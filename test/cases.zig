@@ -275,6 +275,16 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_inline_zig_nested_arrays_results[0..],
     },
     .{
+        .name = "inline zig enums",
+        .path = "./test/misc/inline_zig_enums.doxa",
+        .expected_print = answers.expected_inline_zig_enums_results[0..],
+    },
+    .{
+        .name = "inline zig qualified enum",
+        .path = "./test/misc/inline_zig_qualified_enum.doxa",
+        .expected_print = answers.expected_inline_zig_qualified_enum_results[0..],
+    },
+    .{
         .name = "std file list",
         .path = "./test/misc/std_file_list.doxa",
         .expected_print = answers.expected_std_file_list_results[0..],

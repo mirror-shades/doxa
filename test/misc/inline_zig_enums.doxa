@@ -1,0 +1,31 @@
+enum Species {
+    DOG,
+    CAT,
+    FISH,
+}
+
+zig Z {
+    pub fn is_dog(s: DoxaEnum_Species) i64 {
+        return if (s == 0) 1 else 0;
+    }
+
+    pub fn next(s: DoxaEnum_Species) DoxaEnum_Species {
+        return @intCast(@mod(@as(i64, s) + 1, 3));
+    }
+
+    pub fn total(ss: []const DoxaEnum_Species) i64 {
+        var t: i64 = 0;
+        for (ss) |x| t += x;
+        return t;
+    }
+}
+
+entry function main() {
+    @print("{@string(Z.is_dog(Species.DOG))} {@string(Z.is_dog(Species.CAT))}\n")
+
+    const n is Z.next(Species.DOG)
+    @print("{n}\n")
+
+    var arr :: Species[] is [Species.DOG, Species.CAT, Species.FISH]
+    @print("{@string(Z.total(arr))}\n")
+}
