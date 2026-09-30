@@ -2,9 +2,14 @@ const std = @import("std");
 
 const usage_text =
     \\Usage:
-    \\  archive_tool unpack-zig-dep <archive> <dest-lib-dir> <extracted-folder-name>
+    \\  archive_tool unpack-zig-dep <archive> <dest-lib-dir>
     \\  archive_tool compress-releases --cwd <prefix-dir> <target-dir> [<target-dir> ...]
 ;
+
+/// Marks a `lib/zig` tree as fully extracted. Written only after the extractor
+/// exits successfully, so an extraction interrupted mid-run is detected and
+/// redone rather than silently trusted.
+const extraction_sentinel = ".doxa-zig-extracted";
 
 fn fatal(comptime fmt: []const u8, args: anytype) noreturn {
     std.debug.print("archive_tool: " ++ fmt ++ "\n", args);
@@ -50,68 +55,77 @@ fn runAnyCommand(
     return error.FileNotFound;
 }
 
-fn unpackZigDependency(io: std.Io, allocator: std.mem.Allocator, archive_path: []const u8, destination_lib_dir: []const u8, extracted_folder_name: []const u8) !void {
+fn unpackZigDependency(io: std.Io, allocator: std.mem.Allocator, archive_path: []const u8, destination_lib_dir: []const u8) !void {
     const cwd = std.Io.Dir.cwd();
     cwd.createDir(io, destination_lib_dir, .default_dir) catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
-    var destination_dir = try std.Io.Dir.cwd().openDir(
+    var destination_dir = try cwd.openDir(
         io,
         destination_lib_dir,
         .{},
     );
     defer destination_dir.close(io);
 
-    if (destination_dir.access(io, "zig", .{})) |_| {
-        return;
+    // Unpack straight into the final `zig` name rather than extracting to the
+    // archive's versioned folder and renaming it afterwards. On Windows the
+    // rename of a freshly written ~20k-file tree is transiently denied by
+    // antivirus/indexers, which made repeated builds fail until the lock
+    // cleared. The sentinel tells a complete tree from one interrupted
+    // mid-extraction, so only the latter is cleaned up and redone.
+    if (destination_dir.openDir(io, "zig", .{})) |zig_dir_handle| {
+        var zig_dir = zig_dir_handle;
+        defer zig_dir.close(io);
+        if (zig_dir.access(io, extraction_sentinel, .{})) |_| {
+            return;
+        } else |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        }
     } else |err| switch (err) {
         error.FileNotFound => {},
         else => return err,
     }
 
-    if (destination_dir.access(io, extracted_folder_name, .{})) |_| {
-        try destination_dir.rename(
-            extracted_folder_name,
-            destination_dir,
-            "zig",
-            io,
-        );
-        return;
-    } else |err| switch (err) {
-        error.FileNotFound => {},
-        else => return err,
-    }
-
-    if (std.mem.endsWith(u8, archive_path, ".zip")) {
-        const output_arg = try std.fmt.allocPrint(allocator, "-o{s}", .{destination_lib_dir});
-        defer allocator.free(output_arg);
-        const tar_cmd = [_][]const u8{ "tar", "-xf", archive_path, "-C", destination_lib_dir };
-        const bsdtar_cmd = [_][]const u8{ "bsdtar", "-xf", archive_path, "-C", destination_lib_dir };
-        const unzip_cmd = [_][]const u8{ "unzip", "-q", archive_path, "-d", destination_lib_dir };
-        const seven_zip_cmd = [_][]const u8{ "7z", "x", archive_path, output_arg, "-y" };
-        try runAnyCommand(io, &[_][]const []const u8{
-            &tar_cmd,
-            &bsdtar_cmd,
-            &unzip_cmd,
-            &seven_zip_cmd,
-        }, null);
-    } else if (std.mem.endsWith(u8, archive_path, ".tar.xz")) {
-        const tar_cmd = [_][]const u8{ "tar", "-xf", archive_path, "-C", destination_lib_dir };
-        const bsdtar_cmd = [_][]const u8{ "bsdtar", "-xf", archive_path, "-C", destination_lib_dir };
-        try runAnyCommand(io, &[_][]const []const u8{
-            &tar_cmd,
-            &bsdtar_cmd,
-        }, null);
-    } else {
-        return error.UnsupportedArchiveFormat;
-    }
-
-    destination_dir.access(io, extracted_folder_name, .{}) catch |err| switch (err) {
-        error.FileNotFound => return error.ExtractedFolderMissing,
+    try destination_dir.deleteTree(io, "zig");
+    destination_dir.createDir(io, "zig", .default_dir) catch |err| switch (err) {
+        error.PathAlreadyExists => {},
         else => return err,
     };
-    try destination_dir.rename(extracted_folder_name, destination_dir, "zig", io);
+
+    const is_zip = std.mem.endsWith(u8, archive_path, ".zip");
+    const is_tar_xz = std.mem.endsWith(u8, archive_path, ".tar.xz");
+    if (!is_zip and !is_tar_xz) return error.UnsupportedArchiveFormat;
+
+    const zig_dir_path = try std.fs.path.join(allocator, &.{ destination_lib_dir, "zig" });
+    defer allocator.free(zig_dir_path);
+
+    const tar_cmd = [_][]const u8{ "tar", "--strip-components=1", "-xf", archive_path, "-C", zig_dir_path };
+    const bsdtar_cmd = [_][]const u8{ "bsdtar", "--strip-components=1", "-xf", archive_path, "-C", zig_dir_path };
+    try runAnyCommand(io, &[_][]const []const u8{
+        &tar_cmd,
+        &bsdtar_cmd,
+    }, null);
+
+    var zig_dir = try destination_dir.openDir(io, "zig", .{});
+    defer zig_dir.close(io);
+
+    // The sentinel must mean "the toolchain is actually here", so refuse to
+    // write it unless the extractor produced the compiler binary.
+    if (!try containsZigBinary(io, zig_dir)) return error.MissingZigBinary;
+    var sentinel = try zig_dir.createFile(io, extraction_sentinel, .{});
+    sentinel.close(io);
+}
+
+fn containsZigBinary(io: std.Io, zig_dir: std.Io.Dir) !bool {
+    for ([_][]const u8{ "zig", "zig.exe" }) |name| {
+        if (zig_dir.access(io, name, .{})) |_| return true else |err| switch (err) {
+            error.FileNotFound => {},
+            else => return err,
+        }
+    }
+    return false;
 }
 
 fn compressReleaseDir(
@@ -161,8 +175,8 @@ pub fn main(init: std.process.Init) !void {
     }
 
     if (std.mem.eql(u8, args[1], "unpack-zig-dep")) {
-        if (args.len != 5) fatal("{s}", .{usage_text});
-        unpackZigDependency(init.io, allocator, args[2], args[3], args[4]) catch |err| {
+        if (args.len != 4) fatal("{s}", .{usage_text});
+        unpackZigDependency(init.io, allocator, args[2], args[3]) catch |err| {
             fatal("unpack-zig-dep failed: {s}", .{@errorName(err)});
         };
         return;
