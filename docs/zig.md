@@ -26,13 +26,24 @@ const n is Math.double(21)
 - `const X = @import("...");`
 - `fn ... { ... }`
 
-2. Function signatures are restricted to Doxa-compatible scalar types:
+2. Function signatures are restricted to Doxa-compatible types:
 - Doxa `int` <-> Zig `i64`
 - Doxa `float` <-> Zig `f64`
 - Doxa `byte` <-> Zig `u8`
 - Doxa `tetra` <-> Zig `bool` (lossy at boundary)
 - Doxa `nothing` <-> Zig `void`
 - Doxa `string` <-> Zig `[]const u8`
+- Doxa `int[]` <-> Zig `[]const i64`
+- Doxa `float[]` <-> Zig `[]const f64`
+- Doxa `byte[]` <-> Zig `[]const DoxaByte` (`DoxaByte` is an injected alias for `u8`)
+- Doxa `string[]` <-> Zig `[]const []const u8`
+- Doxa `T[][]` <-> additional `[]const` levels (nesting is unlimited)
+
+Arrays of scalars and strings cross in both directions at any depth; the
+`[]const` element slices a Zig function receives are borrowed for the call. A
+bare `[]const u8` is always a `string`, so byte arrays use the `DoxaByte`
+marker. See [Array parameters and returns](#array-parameters-and-returns) for
+the ownership rules.
 
 3. The compiler validates these rules before invoking Zig.
 
@@ -98,10 +109,23 @@ that meets a 64-bit length slot is widened or narrowed with `@intCast` /
   buffer is released explicitly, since arena scopes do not cover Zig-owned
   memory.
 
+### Array parameters and returns
+
+- An array crosses as an opaque `*ArrayHeader` pointer. The compile-time
+  element type in the signature fixes the runtime `elem_size` / `elem_tag`; the
+  two must agree.
+- An array parameter is borrowed for the call. The wrapper presents it to Zig as
+  a `[]const T` — scalar and `byte[]` arrays alias the array's backing buffer,
+  `string[]` is copied into a temporary per-call arena, and nested arrays recurse
+  through that arena. The callee must not retain or store it.
+- A returned `[]const T` is copied into a fresh `ArrayHeader` in the call-site
+  arena (`doxa_array_new` runs with that scope active), so it follows the same
+  arena rules as a returned string. Nested levels are deep-cloned as they are
+  stored.
+
 ### Error model
 
 There is no runtime ABI error channel to translate into a Doxa error — the
 shape of the call is settled at compile time. Parameter or return types that
-cannot cross the boundary (arrays, structs, maps, enums, functions, unions)
-fail the compile with `E8002` while the wrapper is generated, before Zig is
-invoked.
+cannot cross the boundary (structs, maps, enums, functions, unions) fail the
+compile with `E8002` while the wrapper is generated, before Zig is invoked.

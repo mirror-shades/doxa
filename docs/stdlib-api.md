@@ -489,17 +489,17 @@ public function unzipFile(zip_path :: string, unzip_path :: string) returns noth
 
 </details>
 
-### `IsDir`
+### `isDir`
 
 ```doxa
-public function IsDir(path :: string) returns tetra
+public function isDir(path :: string) returns tetra
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function IsDir(path :: string) returns tetra {
+public function isDir(path :: string) returns tetra {
     return File.IsDir(path)
 }
 ```
@@ -640,18 +640,18 @@ public function isFile(path :: string) returns tetra {
 
 </details>
 
-### `cwd`
+### `list`
 
 ```doxa
-public function cwd() returns string | error.StdError
+public function list(path :: string) returns string[] | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function cwd() returns string | error.StdError {
-    const value is File.cwd()
+public function list(path :: string) returns string[] | error.StdError {
+    const value is File.list(path)
     const err is File.takeLastErrorCode()
     if err == 0 then return value
     return mapFileError(err)
@@ -2979,103 +2979,48 @@ public group StdError {
 
 ## `std.methods`
 
-### `pushString`
+### `push`
 
 ```doxa
-public function pushString(^collection :: string, value :: string)
+public function push(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra)
 ```
+
+The collection families that do not return the collection's own type collapse
+to one union-typed entry point. The element type is checked at run time: a
+value that does not match the collection's element type panics rather than
+silently doing nothing.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function pushString(^collection :: string, value :: string) {
-    @push(collection, value)
-}
-```
-
-</details>
-
-### `pushInt`
-
-```doxa
-public function pushInt(^collection :: int[], value :: int)
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function pushInt(^collection :: int[], value :: int) {
-    @push(collection, value)
-}
-```
-
-</details>
-
-### `pushFloat`
-
-```doxa
-public function pushFloat(^collection :: float[], value :: float)
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function pushFloat(^collection :: float[], value :: float) {
-    @push(collection, value)
-}
-```
-
-</details>
-
-### `pushByte`
-
-```doxa
-public function pushByte(^collection :: byte[], value :: byte)
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function pushByte(^collection :: byte[], value :: byte) {
-    @push(collection, value)
-}
-```
-
-</details>
-
-### `pushTetra`
-
-```doxa
-public function pushTetra(^collection :: tetra[], value :: tetra)
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function pushTetra(^collection :: tetra[], value :: tetra) {
-    @push(collection, value)
-}
-```
-
-</details>
-
-### `pushStringArray`
-
-```doxa
-public function pushStringArray(^collection :: string[], value :: string)
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function pushStringArray(^collection :: string[], value :: string) {
-    @push(collection, value)
+public function push(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra) {
+    match collection {
+        string then {
+            const element is value as string else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        int[] then {
+            const element is value as int else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        float[] then {
+            const element is value as float else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        byte[] then {
+            const element is value as byte else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        tetra[] then {
+            const element is value as tetra else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+        string[] then {
+            const element is value as string else { @panic("methods.push: value type does not match the collection element type") }
+            @push(collection, element)
+        }
+    }
 }
 ```
 
@@ -3189,121 +3134,55 @@ public function popStringArray(^collection :: string[]) returns string | error.M
 
 </details>
 
-### `insertString`
+### `insert`
 
 ```doxa
-public function insertString(^collection :: string, index :: int, value :: string) returns error.Method
+public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns error.Method
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function insertString(^collection :: string, index :: int, value :: string) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-```
-
-</details>
-
-### `insertInt`
-
-```doxa
-public function insertInt(^collection :: int[], index :: int, value :: int) returns error.Method
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function insertInt(^collection :: int[], index :: int, value :: int) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-```
-
-</details>
-
-### `insertFloat`
-
-```doxa
-public function insertFloat(^collection :: float[], index :: int, value :: float) returns error.Method
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function insertFloat(^collection :: float[], index :: int, value :: float) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-```
-
-</details>
-
-### `insertByte`
-
-```doxa
-public function insertByte(^collection :: byte[], index :: int, value :: byte) returns error.Method
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function insertByte(^collection :: byte[], index :: int, value :: byte) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-```
-
-</details>
-
-### `insertTetra`
-
-```doxa
-public function insertTetra(^collection :: tetra[], index :: int, value :: tetra) returns error.Method
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function insertTetra(^collection :: tetra[], index :: int, value :: tetra) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
-}
-```
-
-</details>
-
-### `insertStringArray`
-
-```doxa
-public function insertStringArray(^collection :: string[], index :: int, value :: string) returns error.Method
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function insertStringArray(^collection :: string[], index :: int, value :: string) returns error.Method {
-    const len is @length(collection)
-    if index < 0 then return error.Method.OutOfBounds
-    if index > len then return error.Method.OutOfBounds
-    @insert(collection, index, value)
+public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns error.Method {
+    match collection {
+        string then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as string else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        int[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as int else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        float[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as float else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        byte[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as byte else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        tetra[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as tetra else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+        string[] then {
+            if index < 0 then return error.Method.OutOfBounds
+            if index > @length(collection) then return error.Method.OutOfBounds
+            const element is value as string else { return error.Method.Unexpected }
+            @insert(collection, index, element)
+        }
+    }
 }
 ```
 
@@ -3423,205 +3302,68 @@ public function removeStringArray(^collection :: string[], index :: int) returns
 
 </details>
 
-### `clearString`
+### `clear`
 
 ```doxa
-public function clearString(^collection :: string)
+public function clear(^collection :: string | int[] | float[] | byte[] | tetra[] | string[])
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function clearString(^collection :: string) {
-    @clear(collection)
+public function clear(^collection :: string | int[] | float[] | byte[] | tetra[] | string[]) {
+    match collection {
+        string then { @clear(collection) }
+        int[] then { @clear(collection) }
+        float[] then { @clear(collection) }
+        byte[] then { @clear(collection) }
+        tetra[] then { @clear(collection) }
+        string[] then { @clear(collection) }
+    }
 }
 ```
 
 </details>
 
-### `clearInt`
+### `find`
 
 ```doxa
-public function clearInt(^collection :: int[])
+public function find(collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra) returns int
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function clearInt(^collection :: int[]) {
-    @clear(collection)
-}
-```
-
-</details>
-
-### `clearFloat`
-
-```doxa
-public function clearFloat(^collection :: float[])
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function clearFloat(^collection :: float[]) {
-    @clear(collection)
-}
-```
-
-</details>
-
-### `clearByte`
-
-```doxa
-public function clearByte(^collection :: byte[])
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function clearByte(^collection :: byte[]) {
-    @clear(collection)
-}
-```
-
-</details>
-
-### `clearTetra`
-
-```doxa
-public function clearTetra(^collection :: tetra[])
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function clearTetra(^collection :: tetra[]) {
-    @clear(collection)
-}
-```
-
-</details>
-
-### `clearStringArray`
-
-```doxa
-public function clearStringArray(^collection :: string[])
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function clearStringArray(^collection :: string[]) {
-    @clear(collection)
-}
-```
-
-</details>
-
-### `findString`
-
-```doxa
-public function findString(collection :: string, value :: string) returns int
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function findString(collection :: string, value :: string) returns int {
-    return @find(collection, value)
-}
-```
-
-</details>
-
-### `findInt`
-
-```doxa
-public function findInt(collection :: int[], value :: int) returns int
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function findInt(collection :: int[], value :: int) returns int {
-    return @find(collection, value)
-}
-```
-
-</details>
-
-### `findFloat`
-
-```doxa
-public function findFloat(collection :: float[], value :: float) returns int
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function findFloat(collection :: float[], value :: float) returns int {
-    return @find(collection, value)
-}
-```
-
-</details>
-
-### `findByte`
-
-```doxa
-public function findByte(collection :: byte[], value :: byte) returns int
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function findByte(collection :: byte[], value :: byte) returns int {
-    return @find(collection, value)
-}
-```
-
-</details>
-
-### `findTetra`
-
-```doxa
-public function findTetra(collection :: tetra[], value :: tetra) returns int
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function findTetra(collection :: tetra[], value :: tetra) returns int {
-    return @find(collection, value)
-}
-```
-
-</details>
-
-### `findStringArray`
-
-```doxa
-public function findStringArray(collection :: string[], value :: string) returns int
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function findStringArray(collection :: string[], value :: string) returns int {
-    return @find(collection, value)
+public function find(collection :: string | int[] | float[] | byte[] | tetra[] | string[], value :: string | int | float | byte | tetra) returns int {
+    match collection {
+        string then {
+            const needle is value as string else { return -1 }
+            return @find(collection, needle)
+        }
+        int[] then {
+            const needle is value as int else { return -1 }
+            return @find(collection, needle)
+        }
+        float[] then {
+            const needle is value as float else { return -1 }
+            return @find(collection, needle)
+        }
+        byte[] then {
+            const needle is value as byte else { return -1 }
+            return @find(collection, needle)
+        }
+        tetra[] then {
+            const needle is value as tetra else { return -1 }
+            return @find(collection, needle)
+        }
+        string[] then {
+            const needle is value as string else { return -1 }
+            return @find(collection, needle)
+        }
+    }
+    return -1
 }
 ```
 
