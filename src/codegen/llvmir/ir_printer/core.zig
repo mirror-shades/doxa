@@ -973,7 +973,7 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn rehomeForLocalStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
             if (self.plainStoreProven(value, declared_type)) return value;
             if (value.region == .Deep or rehomeUnknownToClone(declared_type))
-                return self.cloneHeapValue(w, id, value, declared_type, .persistent, true);
+                return self.cloneHeapValue(w, id, value, declared_type, .persistent, true, 0);
             return self.cloneHeapForStore(w, id, value, declared_type);
         }
 
@@ -988,7 +988,7 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn rehomeForGlobalStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
             if (self.plainGlobalStoreProven(value, declared_type)) return value;
             if (value.region == .Func or value.region == .Deep or rehomeUnknownToClone(declared_type))
-                return self.cloneHeapValue(w, id, value, declared_type, .program_root, true);
+                return self.cloneHeapValue(w, id, value, declared_type, .program_root, true, 0);
             return self.cloneHeapForGlobalStore(w, id, value, declared_type);
         }
 
@@ -1014,30 +1014,39 @@ pub fn Methods(comptime Ctx: type) type {
         /// that destination (or an ancestor of it). Arrays are always copied on
         /// assignment. Scalars are returned unchanged.
         pub fn cloneHeapForStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
-            return self.cloneHeapValue(w, id, value, declared_type, .persistent, false);
+            return self.cloneHeapValue(w, id, value, declared_type, .persistent, false, 0);
         }
 
         /// Always clone into the function's persistent scope. Used for by-value
         /// parameters so the callee cannot mutate the caller's heap object.
         pub fn cloneHeapForSnapshot(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
-            return self.cloneHeapValue(w, id, value, declared_type, .persistent, true);
+            return self.cloneHeapValue(w, id, value, declared_type, .persistent, true, 0);
         }
 
         /// Deep-copy a return value into the caller's scope (one level above the
         /// current function scope) so it survives the function scope being freed.
         pub fn cloneHeapForReturn(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
-            return self.cloneHeapValue(w, id, value, declared_type, .caller, true);
+            return self.cloneHeapValue(w, id, value, declared_type, .caller, true, 0);
         }
 
         /// Deep-copy a heap value into the program-root arena. Used when storing
         /// into a global: cloning into the current function would leave the
         /// global dangling after that function's `doxa_scope_exit()`.
         pub fn cloneHeapForGlobalStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
-            return self.cloneHeapValue(w, id, value, declared_type, .program_root, false);
+            return self.cloneHeapValue(w, id, value, declared_type, .program_root, false, 0);
         }
 
-        pub fn cloneHeapValue(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType, dest: HeapCloneDest, snapshot: bool) !StackVal {
-            const levels_up: usize = (self.scope_depth -| @as(usize, @intFromBool(self.in_function_context))) + @intFromBool(dest == .caller);
+        /// Re-home a heap value stored through a `^` alias into the arena that
+        /// owns the aliased variable. `alias_extra` counts the re-pass frames
+        /// between this function and that owner, so the clone lands where the
+        /// caller's variable lives and not in a callee scope that is about to
+        /// be freed.
+        pub fn cloneHeapForAliasStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType, alias_extra: u8) !StackVal {
+            return self.cloneHeapValue(w, id, value, declared_type, .caller, false, alias_extra);
+        }
+
+        pub fn cloneHeapValue(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType, dest: HeapCloneDest, snapshot: bool, extra_levels: u8) !StackVal {
+            const levels_up: usize = (self.scope_depth -| @as(usize, @intFromBool(self.in_function_context))) + @intFromBool(dest == .caller) + extra_levels;
 
             switch (declared_type) {
                 .String => {

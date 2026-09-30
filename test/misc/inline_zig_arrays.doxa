@@ -1,0 +1,55 @@
+zig ArrUtils {
+    pub fn make_ints() []const i64 {
+        return &[_]i64{ 1, 2, 3, 4 };
+    }
+
+    pub fn sum(xs: []const i64) i64 {
+        var total: i64 = 0;
+        for (xs) |x| total += x;
+        return total;
+    }
+
+    pub fn make_floats() []const f64 {
+        return &[_]f64{ 1.5, 2.5, 3.0 };
+    }
+
+    pub fn make_strings() []const []const u8 {
+        return &[_][]const u8{ "alpha", "beta", "gamma" };
+    }
+
+    pub fn join_len(xs: []const []const u8) i64 {
+        var total: i64 = 0;
+        for (xs) |x| total += @intCast(x.len);
+        return total;
+    }
+}
+
+const ints is ArrUtils.make_ints()
+var int_sum is 0
+each n in ints {
+    int_sum += n
+}
+@print("{@string(int_sum)}\n")
+@print("{@string(ArrUtils.sum(ints))}\n")
+
+const floats is ArrUtils.make_floats()
+var float_sum is 0.0
+each f in floats {
+    float_sum += f
+}
+@print("{@string(float_sum)}\n")
+
+const names is ArrUtils.make_strings()
+var joined is ""
+each n in names {
+    joined += n
+    joined += ","
+}
+@print("{joined}\n")
+@print("{@string(ArrUtils.join_len(names))}\n")
+
+var local :: int[3]
+local[0] is 10
+local[1] is 20
+local[2] is 12
+@print("{@string(ArrUtils.sum(local))}\n")

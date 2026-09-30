@@ -2365,8 +2365,12 @@ pub fn Methods(comptime Ctx: type) type {
                 }
                 // A defined Doxa function deep-copies its heap return value into
                 // the arena active at this call site (clone-on-return), so the
-                // result lives in the current region (A1).
-                if (c.function_index != null and (stack_ty == .STRING or stack_ty == .PTR)) {
+                // result lives in the current region (A1). An inline-Zig array
+                // return is likewise built in the call-site arena by its wrapper
+                // (`doxa_array_new` targets the current scope), so it too belongs
+                // to the current region.
+                const inline_zig_array_return = c.call_kind == .ModuleFunction and c.function_index == null and actual_return_type == .Array;
+                if (inline_zig_array_return or (c.function_index != null and (stack_ty == .STRING or stack_ty == .PTR))) {
                     pushed.region = self.currentRegionTag();
                 }
                 if (stack_ty == .PTR) {
@@ -2486,7 +2490,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
             value = switch (sv.heap_copy) {
                 .keep => value,
-                .snapshot => try self.cloneHeapValue(w, id, value, sv.expected_type, .program_root, true),
+                .snapshot => try self.cloneHeapValue(w, id, value, sv.expected_type, .program_root, true, 0),
                 .rehome => try self.rehomeForGlobalStore(w, id, value, sv.expected_type),
             };
             // The slot is a %DoxaValue but the value carried here is the member

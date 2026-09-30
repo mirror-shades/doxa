@@ -31,6 +31,24 @@ pub const expected_alias_arrays_results = [_]print_result{
     .{ .value = "k0k1k2" },
 };
 
+pub const expected_alias_string_mutation_results = [_]print_result{
+    .{ .value = "push hello world" },
+    .{ .value = "insert >>hello world" },
+    .{ .value = "remove > >hello world" },
+    .{ .value = "pop d >hello worl" },
+    .{ .value = "pop2 l >hello wor" },
+    .{ .value = "clear []" },
+    .{ .value = "union int 42" },
+    .{ .value = "union str again" },
+};
+
+pub const expected_stdlib_methods_results = [_]print_result{
+    .{ .value = "push hello! [1, 2, 3, 4]" },
+    .{ .value = "insert >hello! [0, 1, 2, 3, 4]" },
+    .{ .value = "find 6 4" },
+    .{ .value = "clear [] []" },
+};
+
 pub const expected_union_narrow_results = [_]print_result{
     .{ .value = "single" },
     .{ .value = "a" },
@@ -220,6 +238,28 @@ pub const expected_inline_zig_test_results = [_]print_result{
     .{ .value = "100" },
     .{ .value = "0" },
     .{ .value = "10" },
+};
+
+pub const expected_inline_zig_arrays_results = [_]print_result{
+    .{ .value = "10" },
+    .{ .value = "10" },
+    .{ .value = "7.0" },
+    .{ .value = "alpha,beta,gamma," },
+    .{ .value = "14" },
+    .{ .value = "42" },
+};
+
+pub const expected_inline_zig_nested_arrays_results = [_]print_result{
+    .{ .value = "10" },
+    .{ .value = "2 5" },
+    .{ .value = "15" },
+    .{ .value = "bb ccc" },
+    .{ .value = "6" },
+    .{ .value = "42" },
+};
+
+pub const expected_std_file_list_results = [_]print_result{
+    .{ .value = "123" },
 };
 
 pub const expected_zig_import_test_results = [_]print_result{

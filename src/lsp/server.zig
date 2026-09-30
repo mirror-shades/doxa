@@ -11,6 +11,7 @@ const SemanticAnalyzer = @import("../analysis/semantic/semantic.zig").SemanticAn
 const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
 const Errors = @import("../utils/errors.zig");
 const InternalMethods = @import("internal_methods.zig");
+const stdlib = @import("../stdlib/catalog.zig");
 const Types = @import("../types/types.zig");
 const CustomTypeInfo = Types.CustomTypeInfo;
 const ast = @import("../ast/ast.zig");
@@ -300,6 +301,11 @@ const Server = struct {
     reporter: *Reporter,
     documents: std.StringHashMap(Document),
     symbol_index: SymbolIndex,
+    stdlib_arena: std.heap.ArenaAllocator,
+    /// The loaded standard-library catalog; `null` until the first completion
+    /// or hover. On load failure it is set to an empty catalog so the (failed)
+    /// filesystem lookup happens at most once per session.
+    stdlib: ?stdlib.Catalog,
     shutdown_requested: bool,
     should_exit: bool,
     sink: ResponseSink,
@@ -311,6 +317,8 @@ const Server = struct {
             .reporter = reporter,
             .documents = std.StringHashMap(Document).init(allocator),
             .symbol_index = SymbolIndex.init(allocator),
+            .stdlib_arena = std.heap.ArenaAllocator.init(allocator),
+            .stdlib = null,
             .shutdown_requested = false,
             .should_exit = false,
             .sink = sink,
@@ -325,6 +333,37 @@ const Server = struct {
         }
         self.documents.deinit();
         self.symbol_index.deinit();
+        self.stdlib_arena.deinit();
+    }
+
+    /// Loads `std/` once. Candidates mirror the runtime search in `main.zig`:
+    /// the installed `<exe_dir>/../lib/std`, then the dev tree
+    /// `<exe_dir>/../../std` (binary under `<repo>/doxa/bin`), then `./std`.
+    /// Failure is non-fatal — completion degrades to imported symbols.
+    fn ensureStdlib(self: *Server, io: std.Io) void {
+        if (self.stdlib != null) return;
+
+        const allocator = self.stdlib_arena.allocator();
+        var candidates = std.array_list.Managed([]const u8).init(allocator);
+        if (std.process.executableDirPathAlloc(io, allocator)) |exe_dir| {
+            if (std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "std" })) |p| {
+                candidates.append(p) catch {};
+            } else |_| {}
+            if (std.fs.path.join(allocator, &.{ exe_dir, "..", "..", "std" })) |p| {
+                candidates.append(p) catch {};
+            } else |_| {}
+        } else |_| {}
+        candidates.append("std") catch {};
+
+        for (candidates.items) |std_dir| {
+            if (stdlib.load(allocator, io, std_dir)) |loaded| {
+                self.stdlib = loaded;
+                return;
+            } else |_| {}
+        }
+
+        std.debug.print("doxa-lsp: standard library catalog not found; std completion disabled\n", .{});
+        self.stdlib = .{ .modules = &.{} };
     }
 
     fn loop(self: *Server, io: std.Io) !void {
@@ -477,13 +516,13 @@ const Server = struct {
                     try self.sendErrorResponse(null, -32600, "Invalid request");
                     return;
                 }
-                try self.handleCompletion(id.?, params);
+                try self.handleCompletion(io, id.?, params);
             } else if (std.mem.eql(u8, method, "textDocument/hover")) {
                 if (id == null) {
                     try self.sendErrorResponse(null, -32600, "Invalid request");
                     return;
                 }
-                try self.handleHover(id.?, params);
+                try self.handleHover(io, id.?, params);
             } else if (std.mem.eql(u8, method, "textDocument/documentSymbol")) {
                 if (id == null) {
                     try self.sendErrorResponse(null, -32600, "Invalid request");
@@ -603,14 +642,16 @@ const Server = struct {
         try self.publishDiagnostics(io, uri_value.string);
     }
 
-    fn handleCompletion(self: *Server, id: JsonValue, params: ?JsonValue) !void {
+    fn handleCompletion(self: *Server, io: std.Io, id: JsonValue, params: ?JsonValue) !void {
+        self.ensureStdlib(io);
         const ctx = computeCompletionContext(self, params);
         const payload = try buildCompletionPayload(self, id, ctx);
         defer self.allocator.free(payload);
         try self.sendMessage(payload);
     }
 
-    fn handleHover(self: *Server, id: JsonValue, params: ?JsonValue) !void {
+    fn handleHover(self: *Server, io: std.Io, id: JsonValue, params: ?JsonValue) !void {
+        self.ensureStdlib(io);
         const payload = try buildHoverPayload(self, id, params);
         defer self.allocator.free(payload);
         try self.sendMessage(payload);
@@ -958,8 +999,17 @@ fn computeCompletionAtOffset(text: []const u8, offset: usize) CompletionContext 
         const obj_end: usize = pos - 1;
         if (obj_end == 0) return CompletionContext{ .prefix = member_prefix, .kind = .Dot, .object_name = "" };
 
+        // Walk back over a dotted path so `std.io.` yields `std.io` rather than
+        // just `io`, which is what standard-library completion keys on.
         var obj_start = obj_end;
-        while (obj_start > 0 and isIdentChar(text[obj_start - 1])) : (obj_start -= 1) {}
+        while (obj_start > 0) {
+            const prev = text[obj_start - 1];
+            if (isIdentChar(prev)) {
+                obj_start -= 1;
+            } else if (prev == '.' and obj_start >= 2 and isIdentChar(text[obj_start - 2])) {
+                obj_start -= 1;
+            } else break;
+        }
 
         return CompletionContext{
             .prefix = member_prefix,
@@ -982,7 +1032,7 @@ fn buildCompletionPayload(self: *Server, id: JsonValue, ctx: CompletionContext) 
 
     switch (ctx.kind) {
         .Intrinsic => try writeIntrinsicCompletions(writer, ctx.prefix),
-        .Dot => try writeMemberCompletions(&self.symbol_index, writer, ctx),
+        .Dot => try writeMemberCompletions(self, writer, ctx),
         .None => {},
     }
 
@@ -1007,10 +1057,17 @@ fn writeIntrinsicCompletions(writer: *std.Io.Writer, prefix: []const u8) !void {
     }
 }
 
-fn writeMemberCompletions(index: *const SymbolIndex, writer: *std.Io.Writer, ctx: CompletionContext) !void {
+fn writeMemberCompletions(self: *Server, writer: *std.Io.Writer, ctx: CompletionContext) !void {
     const obj_name = ctx.object_name orelse return;
     if (obj_name.len == 0) return;
 
+    // The standard-library catalog takes precedence: it knows the whole public
+    // surface, not just what the open document happens to import.
+    if (self.stdlib) |*cat| {
+        if (try writeStdlibCompletions(cat, self.allocator, writer, obj_name, ctx.prefix)) return;
+    }
+
+    const index = &self.symbol_index;
     if (index.module_members.get(obj_name)) |members| {
         var first = true;
         for (members.items) |member| {
@@ -1026,6 +1083,128 @@ fn writeMemberCompletions(index: *const SymbolIndex, writer: *std.Io.Writer, ctx
     if (type_name) |tn| {
         try writeTypeMembers(index, writer, tn, ctx.prefix);
     }
+}
+
+/// Emits completions for a standard-library object path (`std`, `std.io`,
+/// `std.io.print`, `std.json.Node`, ...). Returns true when the path resolved
+/// to a catalog entity, even if the prefix filtered every item — the caller
+/// must not then fall through to unrelated imported symbols.
+fn writeStdlibCompletions(
+    cat: *const stdlib.Catalog,
+    allocator: std.mem.Allocator,
+    writer: *std.Io.Writer,
+    obj_name: []const u8,
+    prefix: []const u8,
+) !bool {
+    if (std.mem.eql(u8, obj_name, "std")) {
+        var first = true;
+        for (cat.modules) |*module| {
+            if (!isMemberMatch(module.name, prefix)) continue;
+            if (!first) try writer.writeAll(",");
+            first = false;
+            try writeStdlibModuleItem(writer, module);
+        }
+        return true;
+    }
+
+    var segments: [8][]const u8 = undefined;
+    var count: usize = 0;
+    var it = std.mem.splitScalar(u8, obj_name, '.');
+    while (it.next()) |segment| {
+        if (count >= segments.len) return false;
+        segments[count] = segment;
+        count += 1;
+    }
+
+    var start: usize = 0;
+    if (count > 0 and std.mem.eql(u8, segments[0], "std")) start = 1;
+    if (start >= count) return false;
+
+    const module = cat.findModule(segments[start]) orelse return false;
+    const remaining = count - start;
+
+    if (remaining == 1) {
+        var first = true;
+        for (module.decls) |*decl| {
+            if (!isMemberMatch(decl.short_name, prefix)) continue;
+            if (!first) try writer.writeAll(",");
+            first = false;
+            try writeStdlibDeclItem(allocator, writer, decl);
+        }
+        return true;
+    }
+
+    // `std.<module>.<Type>` — complete the type's members.
+    const owner = module.find(segments[start + 1]) orelse return false;
+    if (remaining == 2) {
+        var first = true;
+        for (owner.members) |*member| {
+            if (!isMemberMatch(member.short_name, prefix)) continue;
+            if (!first) try writer.writeAll(",");
+            first = false;
+            try writeStdlibDeclItem(allocator, writer, member);
+        }
+        for (owner.variants) |variant| {
+            if (!isMemberMatch(variant, prefix)) continue;
+            if (!first) try writer.writeAll(",");
+            first = false;
+            try writeStdlibVariantItem(writer, owner.short_name, variant);
+        }
+        return true;
+    }
+
+    return true;
+}
+
+fn writeStdlibModuleItem(writer: *std.Io.Writer, module: *const stdlib.Module) !void {
+    try writer.writeAll("{\"label\":");
+    try writeJsonValue(writer, module.name);
+    try writer.writeAll(",\"kind\":9,\"detail\":");
+    var buf: [128]u8 = undefined;
+    const detail = std.fmt.bufPrint(&buf, "module std.{s}", .{module.name}) catch "module";
+    try writeJsonValue(writer, detail);
+    try writer.writeAll("}");
+}
+
+fn writeStdlibDeclItem(allocator: std.mem.Allocator, writer: *std.Io.Writer, decl: *const stdlib.Decl) !void {
+    const detail = try stdlib.signatureDetail(allocator, decl);
+    defer allocator.free(detail);
+
+    try writer.writeAll("{\"label\":");
+    try writeJsonValue(writer, decl.short_name);
+    try writer.print(",\"kind\":{d},\"detail\":", .{completionKindFor(decl.kind)});
+    try writeJsonValue(writer, detail);
+    if (decl.doc) |doc| {
+        if (doc.len > 0) {
+            try writer.writeAll(",\"documentation\":");
+            try writeJsonValue(writer, doc);
+        }
+    }
+    try writer.writeAll("}");
+}
+
+fn writeStdlibVariantItem(writer: *std.Io.Writer, owner: []const u8, variant: []const u8) !void {
+    try writer.writeAll("{\"label\":");
+    try writeJsonValue(writer, variant);
+    try writer.writeAll(",\"kind\":20,\"detail\":");
+    var buf: [256]u8 = undefined;
+    const detail = std.fmt.bufPrint(&buf, "{s}.{s}", .{ owner, variant }) catch "enum member";
+    try writeJsonValue(writer, detail);
+    try writer.writeAll("}");
+}
+
+fn completionKindFor(kind: stdlib.Kind) u32 {
+    return switch (kind) {
+        .function => 3,
+        .method => 2,
+        .structure => 22,
+        .enumeration => 13,
+        .group => 22,
+        .map => 6,
+        .constant => 21,
+        .variable => 6,
+        .module => 9,
+    };
 }
 
 fn resolveObjectType(index: *const SymbolIndex, name: []const u8) ?[]const u8 {
@@ -1199,6 +1378,13 @@ fn buildHoverPayload(self: *Server, id: JsonValue, params: ?JsonValue) ![]u8 {
             }
         }
 
+        if (findDottedPathAtOffset(ctx.text, ctx.offset)) |path| {
+            if (try buildStdlibHover(self, writer, ctx, path)) {
+                const payload = try buffer.toOwnedSlice();
+                return payload;
+            }
+        }
+
         const dot_ctx = computeCompletionAtOffset(ctx.text, ctx.offset);
         if (dot_ctx.kind == .Dot and dot_ctx.object_name != null and dot_ctx.object_name.?.len > 0) {
             if (try buildDotHover(&self.symbol_index, writer, dot_ctx)) {
@@ -1252,6 +1438,125 @@ fn buildDotHover(index: *const SymbolIndex, writer: *std.Io.Writer, comp_ctx: Co
         }
     }
     return false;
+}
+
+const DottedPath = struct {
+    text: []const u8,
+    start: usize,
+    end: usize,
+};
+
+/// The dotted identifier (`std.http.get`) surrounding `offset`, expanded in
+/// both directions so hover works mid-symbol as well as at its end.
+fn findDottedPathAtOffset(text: []const u8, offset: usize) ?DottedPath {
+    if (text.len == 0) return null;
+    const clamped = @min(offset, text.len);
+
+    var start = clamped;
+    while (start > 0) {
+        const c = text[start - 1];
+        if (isIdentChar(c)) {
+            start -= 1;
+        } else if (c == '.' and start >= 2 and isIdentChar(text[start - 2])) {
+            start -= 1;
+        } else break;
+    }
+
+    var end = clamped;
+    while (end < text.len) {
+        const c = text[end];
+        if (isIdentChar(c)) {
+            end += 1;
+        } else if (c == '.' and end + 1 < text.len and isIdentChar(text[end + 1])) {
+            end += 1;
+        } else break;
+    }
+
+    while (start < end and text[start] == '.') start += 1;
+    while (end > start and text[end - 1] == '.') end -= 1;
+    if (start >= end) return null;
+
+    return .{ .text = text[start..end], .start = start, .end = end };
+}
+
+fn writeDocBlock(writer: *std.Io.Writer, decl: *const stdlib.Decl) !void {
+    try writer.writeAll("```doxa\n");
+    try writer.writeAll(decl.signature);
+    try writer.writeAll("\n```");
+    if (decl.doc) |doc| {
+        if (doc.len > 0) {
+            try writer.writeAll("\n\n");
+            try writer.writeAll(doc);
+        }
+    }
+}
+
+fn buildStdlibHover(self: *Server, writer: *std.Io.Writer, ctx: DocumentContext, path: DottedPath) !bool {
+    const cat = if (self.stdlib) |*c| c else return false;
+
+    var markdown = std.Io.Writer.Allocating.init(self.allocator);
+    defer markdown.deinit();
+    const md = &markdown.writer;
+
+    if (std.mem.eql(u8, path.text, "std")) {
+        try md.writeAll("The Doxa standard library. Complete a module, e.g. `std.io`.");
+    } else {
+        var segments: [8][]const u8 = undefined;
+        var count: usize = 0;
+        var it = std.mem.splitScalar(u8, path.text, '.');
+        while (it.next()) |segment| {
+            if (count >= segments.len) return false;
+            segments[count] = segment;
+            count += 1;
+        }
+
+        var start: usize = 0;
+        if (count > 0 and std.mem.eql(u8, segments[0], "std")) start = 1;
+        if (start >= count) return false;
+
+        const module = cat.findModule(segments[start]) orelse return false;
+        const remaining = count - start;
+
+        if (remaining == 1) {
+            try md.print("`module std.{s}`", .{module.name});
+        } else {
+            const owner = module.find(segments[start + 1]) orelse return false;
+            if (remaining == 2) {
+                try writeDocBlock(md, owner);
+            } else {
+                const member_name = segments[start + 2];
+                if (owner.findMember(member_name)) |member| {
+                    try writeDocBlock(md, member);
+                } else {
+                    var found = false;
+                    for (owner.variants) |variant| {
+                        if (std.mem.eql(u8, variant, member_name)) {
+                            try md.print("`{s}.{s}` — member of enum `{s}`", .{ module.name, owner.short_name, member_name });
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) return false;
+                }
+            }
+        }
+    }
+
+    const start_pos = offsetToPosition(ctx.text, path.start);
+    const end_pos = offsetToPosition(ctx.text, path.end);
+
+    try writer.writeAll("{\"contents\":{\"kind\":\"markdown\",\"value\":");
+    try writeJsonValue(writer, markdown.written());
+    try writer.writeAll("},\"range\":{\"start\":{\"line\":");
+    try writer.print("{d}", .{start_pos.line});
+    try writer.writeAll(",\"character\":");
+    try writer.print("{d}", .{start_pos.character});
+    try writer.writeAll("},\"end\":{\"line\":");
+    try writer.print("{d}", .{end_pos.line});
+    try writer.writeAll(",\"character\":");
+    try writer.print("{d}", .{end_pos.character});
+    try writer.writeAll("}}}");
+    return true;
 }
 
 fn extractDocumentContext(self: *Server, params: ?JsonValue) ?DocumentContext {
@@ -1489,4 +1794,64 @@ fn jsonStringifyAlloc(
     );
 
     return try aw.toOwnedSlice();
+}
+
+test "completion context captures a dotted object path" {
+    const ctx = computeCompletionAtOffset("std.http.ge", "std.http.ge".len);
+    try std.testing.expectEqualStrings("std.http", ctx.object_name.?);
+    try std.testing.expectEqualStrings("ge", ctx.prefix);
+
+    const plain = computeCompletionAtOffset("node.field", "node.field".len);
+    try std.testing.expectEqualStrings("node", plain.object_name.?);
+}
+
+test "findDottedPathAtOffset expands both directions" {
+    const text = "const r is std.http.get(\"x\")";
+    const mid = std.mem.indexOf(u8, text, "http").? + 1;
+    const path = findDottedPathAtOffset(text, mid).?;
+    try std.testing.expectEqualStrings("std.http.get", path.text);
+
+    const end = std.mem.indexOf(u8, text, "get").? + 3;
+    const at_end = findDottedPathAtOffset(text, end).?;
+    try std.testing.expectEqualStrings("std.http.get", at_end.text);
+}
+
+test "stdlib completions resolve modules, members, and methods" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const src =
+        \\public function get(url :: string) returns Response {
+        \\}
+        \\public struct Response {
+        \\    public method statusCode() returns int {
+        \\    }
+        \\}
+        \\public enum Kind {
+        \\    Ok,
+        \\    Err,
+        \\}
+    ;
+    const decls = try stdlib.parseSource(allocator, src);
+    const modules = [_]stdlib.Module{.{ .name = "http", .decls = decls }};
+    const cat = stdlib.Catalog{ .modules = &modules };
+
+    var members = std.Io.Writer.Allocating.init(allocator);
+    try std.testing.expect(try writeStdlibCompletions(&cat, allocator, &members.writer, "std.http", ""));
+    try std.testing.expect(std.mem.indexOf(u8, members.written(), "\"label\":\"get\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, members.written(), "get(url: string) -> Response") != null);
+    try std.testing.expect(std.mem.indexOf(u8, members.written(), "\"label\":\"Response\"") != null);
+
+    var roots = std.Io.Writer.Allocating.init(allocator);
+    try std.testing.expect(try writeStdlibCompletions(&cat, allocator, &roots.writer, "std", ""));
+    try std.testing.expect(std.mem.indexOf(u8, roots.written(), "\"label\":\"http\"") != null);
+
+    var methods = std.Io.Writer.Allocating.init(allocator);
+    try std.testing.expect(try writeStdlibCompletions(&cat, allocator, &methods.writer, "std.http.Response", ""));
+    try std.testing.expect(std.mem.indexOf(u8, methods.written(), "\"label\":\"statusCode\"") != null);
+
+    var variants = std.Io.Writer.Allocating.init(allocator);
+    try std.testing.expect(try writeStdlibCompletions(&cat, allocator, &variants.writer, "std.http.Kind", ""));
+    try std.testing.expect(std.mem.indexOf(u8, variants.written(), "\"label\":\"Ok\"") != null);
 }

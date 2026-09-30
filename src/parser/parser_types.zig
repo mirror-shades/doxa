@@ -1681,18 +1681,6 @@ pub const Parser = struct {
     }
 
     pub fn loadAndRegisterSpecificSymbol(self: *Parser, module_path: []const u8, symbol_name: []const u8) ErrorList!void {
-        const deriveAlias = struct {
-            fn fromPath(allocator: std.mem.Allocator, path: []const u8) []const u8 {
-                var it = std.mem.splitSequence(u8, path, "/");
-                var last: []const u8 = path;
-                while (it.next()) |part| last = part;
-                if (std.mem.endsWith(u8, last, ".doxa")) {
-                    return allocator.dupe(u8, last[0 .. last.len - 5]) catch last;
-                }
-                return allocator.dupe(u8, last) catch last;
-            }
-        };
-
         const module_info = if (self.module_cache.get(module_path)) |cached|
             cached
         else
@@ -1709,14 +1697,36 @@ pub const Parser = struct {
             return;
         }
 
-        const alias = deriveAlias.fromPath(self.allocator, module_path);
-        if (!self.module_namespaces.contains(alias)) {
-            try self.module_namespaces.put(alias, module_info);
+        // A specific import binds only the named symbols; it must not lay claim
+        // to a user-visible namespace for the imported file. The module still
+        // needs an entry in `module_namespaces` so `collectFunctionSignatures`
+        // gathers its full function set (calls between functions of the
+        // imported module) and so its imported functions can be located.
+        // Key that entry by a hash of the resolved path — never the filename
+        // stem — so it can neither shadow nor be shadowed by a real `module`
+        // namespace whose private dependency happens to share the basename.
+        if (!self.moduleAlreadyRegistered(module_info.file_path)) {
+            const key = try std.fmt.allocPrint(
+                self.allocator,
+                "$import_{x}",
+                .{std.hash.Wyhash.hash(0, module_info.file_path)},
+            );
+            try self.module_namespaces.put(key, module_info);
         }
 
         if (module_info.ast) |module_ast| {
             try self.registerSpecificSymbol(module_ast, module_path, symbol_name);
         }
+    }
+
+    /// Whether some module namespace already refers to `file_path`, so a
+    /// specific import of the same module does not register it twice.
+    fn moduleAlreadyRegistered(self: *Parser, file_path: []const u8) bool {
+        var it = self.module_namespaces.iterator();
+        while (it.next()) |entry| {
+            if (std.mem.eql(u8, entry.value_ptr.file_path, file_path)) return true;
+        }
+        return false;
     }
 
     fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, symbol_name: []const u8) !void {

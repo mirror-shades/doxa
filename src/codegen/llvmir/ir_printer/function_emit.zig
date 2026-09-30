@@ -92,6 +92,9 @@ pub fn Methods(comptime Ctx: type) type {
                 enum_type_name: ?[]const u8 = null,
                 struct_field_names: ?[]const []const u8 = null,
                 struct_type_name: ?[]const u8 = null,
+                /// Alias re-pass depth: frames between this frame and the one
+                /// owning the aliased storage (0 = immediate caller).
+                alias_extra: u8 = 0,
             };
             var alias_slots = std.AutoHashMap(u32, AliasInfo).init(self.allocator);
             defer alias_slots.deinit();
@@ -684,7 +687,9 @@ pub fn Methods(comptime Ctx: type) type {
                                 try stack.append(.{ .name = entry.ptr_name, .ty = .PTR, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name, .struct_field_types = entry.struct_field_types, .struct_field_names = entry.struct_field_names, .struct_type_name = entry.struct_type_name });
                             }
                         } else if (alias_slots.get(psid.var_index)) |info| {
-                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .enum_type_name = info.enum_type_name, .struct_field_types = info.struct_field_types, .struct_field_names = info.struct_field_names, .struct_type_name = info.struct_type_name });
+                            // Re-passing an existing alias: the storage owner is
+                            // one frame further up than it was for this alias.
+                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .enum_type_name = info.enum_type_name, .struct_field_types = info.struct_field_types, .struct_field_names = info.struct_field_names, .struct_type_name = info.struct_type_name, .alias_extra = info.alias_extra + 1 });
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
@@ -728,7 +733,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ result, llvm_ty, info.ptr_name });
                                 defer self.allocator.free(load_line);
                                 try w.writeAll(load_line);
-                                try stack.append(.{
+                                var loaded = StackVal{
                                     .name = result,
                                     .ty = stack_ty,
                                     .array_type = info.array_type,
@@ -736,7 +741,16 @@ pub fn Methods(comptime Ctx: type) type {
                                     .struct_field_names = info.struct_field_names,
                                     .struct_type_name = info.struct_type_name,
                                     .enum_type_name = info.enum_type_name,
-                                });
+                                };
+                                // A union alias narrowed by `match`/`as` must load
+                                // as the active member, the same way `LoadVar`
+                                // does, or in-place intrinsics see the raw box.
+                                if (stack_ty == .Value) {
+                                    if (try self.loadNarrowedUnion(w, loaded, la.var_name, &id)) |unwrapped| {
+                                        loaded = unwrapped;
+                                    }
+                                }
+                                try stack.append(loaded);
                             }
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -750,9 +764,29 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .StoreAlias => |sa| {
                         if (stack.items.len < 1) continue;
-                        const value = stack.items[stack.items.len - 1];
+                        var value = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         if (alias_slots.get(sa.slot_index)) |info| {
+                            // The alias points at the caller's storage. A heap
+                            // value produced here must be re-homed into the
+                            // arena that owns that variable, or it dangles once
+                            // this function's scope exits. `.keep` is the
+                            // in-place-mutation store-back (arrays), whose
+                            // identity must survive untouched.
+                            const boxed = self.hirTypeToStackType(info.pointee_type) == .Value;
+                            if (boxed) {
+                                // A union slot is a `%DoxaValue` box, so a
+                                // narrowed member produced by an in-place
+                                // mutation must be re-boxed before it lands
+                                // there. Without this the store writes the raw
+                                // member layout over the box.
+                                value = try self.buildDoxaValue(w, value, info.pointee_type, &id);
+                            }
+                            switch (sa.heap_copy) {
+                                .keep => {},
+                                .rehome => value = try self.cloneHeapForAliasStore(w, &id, value, info.pointee_type, info.alias_extra),
+                                .snapshot => value = try self.cloneHeapForSnapshot(w, &id, value, info.pointee_type),
+                            }
                             const llvm_ty = self.hirTypeToLLVMType(info.pointee_type, false);
                             const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ llvm_ty, value.name, info.ptr_name });
                             defer self.allocator.free(store_line);
@@ -809,6 +843,7 @@ pub fn Methods(comptime Ctx: type) type {
                             .struct_field_names = struct_field_names,
                             .struct_type_name = struct_type_name,
                             .enum_type_name = ptr_val.enum_type_name,
+                            .alias_extra = ptr_val.alias_extra,
                         };
                         try alias_slots.put(ba.alias_slot, alias_info);
                         last_instruction_was_terminator = false;

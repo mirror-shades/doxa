@@ -567,27 +567,60 @@ zig File {
         return true;
     }
 
-    pub fn cwd() []const u8 {
+    pub fn list(path: []const u8) []const []const u8 {
         clearLastError();
-        const content = std.process.currentPathAlloc(io(), std.heap.page_allocator) catch |err| {
+        if (path.len == 0) {
+            setLastError(1);
+            return &.{};
+        }
+
+        // The returned slice is borrowed by the inline-Zig wrapper, which copies
+        // every name into the call-site arena before returning, so the backing
+        // store only has to outlive this call. A retained process-lifetime arena
+        // re-used across calls keeps that bounded without a free hook (the ABI
+        // has none for foreign heap shapes).
+        const State = struct {
+            var arena: std.heap.ArenaAllocator = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+        };
+        _ = State.arena.reset(.retain_capacity);
+
+        var out = std.array_list.Managed([]const u8).init(State.arena.allocator());
+
+        var dir = std.Io.Dir.cwd().openDir(io(), path, .{ .iterate = true }) catch |err| {
             const mc = mapCommon(@errorName(err));
             if (mc >= 0) {
                 setLastError(mc);
-                return "";
+                return &.{};
             }
             setLastError(105);
-            return "";
+            return &.{};
         };
+        defer dir.close(io());
 
-        const State = struct {
-            var cache: ?[]u8 = null;
-        };
-
-        if (State.cache) |prev| {
-            std.heap.page_allocator.free(prev);
+        var it = dir.iterate();
+        while (true) {
+            const next_entry = it.next(io()) catch |err| {
+                const mc = mapCommon(@errorName(err));
+                if (mc >= 0) {
+                    setLastError(mc);
+                    return &.{};
+                }
+                setLastError(112);
+                return &.{};
+            };
+            const entry = next_entry orelse break;
+            if (std.mem.eql(u8, entry.name, ".") or std.mem.eql(u8, entry.name, "..")) continue;
+            const name = State.arena.allocator().dupe(u8, entry.name) catch {
+                setLastError(2);
+                return &.{};
+            };
+            out.append(name) catch {
+                setLastError(2);
+                return &.{};
+            };
         }
-        State.cache = content;
-        return content;
+
+        return out.toOwnedSlice() catch &.{};
     }
 
     pub fn touch(path: []const u8) void {
@@ -683,7 +716,7 @@ public function unzipFile(zip_path :: string, unzip_path :: string) returns noth
     return mapFileError(err)
 }
 
-public function IsDir(path :: string) returns tetra {
+public function isDir(path :: string) returns tetra {
     return File.IsDir(path)
 }
 
@@ -730,8 +763,8 @@ public function isFile(path :: string) returns tetra {
     return File.isFile(path)
 }
 
-public function cwd() returns string | error.StdError {
-    const value is File.cwd()
+public function list(path :: string) returns string[] | error.StdError {
+    const value is File.list(path)
     const err is File.takeLastErrorCode()
     if err == 0 then return value
     return mapFileError(err)

@@ -1,0 +1,63 @@
+zig ByteBox {
+    pub fn make() []const DoxaByte {
+        return &[_]DoxaByte{ 1, 2, 3, 4 };
+    }
+
+    pub fn sum(xs: []const DoxaByte) i64 {
+        var total: i64 = 0;
+        for (xs) |b| total += @intCast(b);
+        return total;
+    }
+}
+
+zig GridBox {
+    pub fn make() []const []const i64 {
+        return &[_][]const i64{
+            &[_]i64{ 1, 2 },
+            &[_]i64{ 3, 4, 5 },
+        };
+    }
+
+    pub fn total(xs: []const []const i64) i64 {
+        var sum: i64 = 0;
+        for (xs) |row| {
+            for (row) |v| sum += v;
+        }
+        return sum;
+    }
+
+    pub fn make_strings() []const []const []const u8 {
+        return &[_][]const []const u8{
+            &[_][]const u8{ "a", "bb" },
+            &[_][]const u8{"ccc"},
+        };
+    }
+
+    pub fn string_total(xs: []const []const []const u8) i64 {
+        var sum: i64 = 0;
+        for (xs) |row| {
+            for (row) |s| sum += @intCast(s.len);
+        }
+        return sum;
+    }
+}
+
+const bytes is ByteBox.make()
+const byte_sum is ByteBox.sum(bytes)
+@print("{@string(byte_sum)}\n")
+
+const grid is GridBox.make()
+@print("{@string(grid[0][1])} {@string(grid[1][2])}\n")
+const grid_sum is GridBox.total(grid)
+@print("{@string(grid_sum)}\n")
+
+const strs is GridBox.make_strings()
+@print("{strs[0][1]} {strs[1][0]}\n")
+const str_sum is GridBox.string_total(strs)
+@print("{@string(str_sum)}\n")
+
+var local_bytes :: byte[3]
+local_bytes[0] is 10
+local_bytes[1] is 20
+local_bytes[2] is 12
+@print("{@string(ByteBox.sum(local_bytes))}\n")

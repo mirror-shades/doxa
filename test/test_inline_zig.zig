@@ -90,6 +90,75 @@ test "inline zig: rejects extern declarations without bodies" {
     try testing.expectError(error.InlineZigNotValid, inline_zig.sanitizeAndExtract(testing.allocator, src, false));
 }
 
+test "inline zig: parses 1-D array parameter and return signatures" {
+    const src =
+        \\pub fn ints() []const i64 { return &[_]i64{}; }
+        \\pub fn strs(xs: []const []const u8) i64 { return @intCast(xs.len); }
+    ;
+
+    const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src, false);
+    defer {
+        for (sigs) |*sig| {
+            testing.allocator.free(sig.name);
+            for (sig.param_types) |*pt| pt.deinit(testing.allocator);
+            sig.return_type.deinit(testing.allocator);
+            testing.allocator.free(sig.param_types);
+        }
+        testing.allocator.free(sigs);
+    }
+
+    try testing.expectEqual(@as(usize, 2), sigs.len);
+
+    try testing.expectEqual(ast.Type.Array, sigs[0].return_type.base);
+    try testing.expectEqual(ast.Type.Int, sigs[0].return_type.array_type.?.base);
+
+    try testing.expectEqual(@as(usize, 1), sigs[1].param_types.len);
+    try testing.expectEqual(ast.Type.Array, sigs[1].param_types[0].base);
+    try testing.expectEqual(ast.Type.String, sigs[1].param_types[0].array_type.?.base);
+    try testing.expectEqual(ast.Type.Int, sigs[1].return_type.base);
+}
+
+test "inline zig: rejects unsupported array element types" {
+    const src = "pub fn bad(xs: []const i32) void { _ = xs; }";
+    try testing.expectError(error.InvalidParamType, inline_zig.sanitizeAndExtract(testing.allocator, src, false));
+}
+
+test "inline zig: parses byte and nested array signatures" {
+    const src =
+        \\pub fn bytes() []const DoxaByte { return &[_]DoxaByte{}; }
+        \\pub fn deep(xs: []const []const i64) []const []const []const u8 { return &[_][]const []const u8{}; }
+    ;
+
+    const sigs = try inline_zig.sanitizeAndExtract(testing.allocator, src, false);
+    defer {
+        for (sigs) |*sig| {
+            testing.allocator.free(sig.name);
+            for (sig.param_types) |*pt| pt.deinit(testing.allocator);
+            sig.return_type.deinit(testing.allocator);
+            testing.allocator.free(sig.param_types);
+        }
+        testing.allocator.free(sigs);
+    }
+
+    try testing.expectEqual(@as(usize, 2), sigs.len);
+
+    // byte[]
+    try testing.expectEqual(ast.Type.Array, sigs[0].return_type.base);
+    try testing.expectEqual(ast.Type.Byte, sigs[0].return_type.array_type.?.base);
+
+    // int[][]
+    const param = sigs[1].param_types[0];
+    try testing.expectEqual(ast.Type.Array, param.base);
+    try testing.expectEqual(ast.Type.Array, param.array_type.?.base);
+    try testing.expectEqual(ast.Type.Int, param.array_type.?.array_type.?.base);
+
+    // string[][]
+    const ret = sigs[1].return_type;
+    try testing.expectEqual(ast.Type.Array, ret.base);
+    try testing.expectEqual(ast.Type.Array, ret.array_type.?.base);
+    try testing.expectEqual(ast.Type.String, ret.array_type.?.array_type.?.base);
+}
+
 test "inline zig: lenient mode tolerates arbitrary top-level and extracts only Doxa-compatible pub fns" {
     const src =
         \\const std = @import("std");

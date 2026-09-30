@@ -1,0 +1,65 @@
+function pushStr(^c :: string, v :: string) {
+    @push(c, v)
+}
+
+function insertStr(^c :: string, i :: int, v :: string) returns tetra {
+    if i < 0 then return false
+    @insert(c, i, v)
+    return true
+}
+
+function removeStr(^c :: string, i :: int) returns string {
+    const n is @length(c)
+    if i < 0 then return ""
+    if i >= n then return ""
+    return @remove(c, i)
+}
+
+function popStr(^c :: string) returns string {
+    const n is @length(c)
+    if n == 0 then return ""
+    return @pop(c)
+}
+
+function clearStr(^c :: string) returns tetra {
+    @clear(c)
+    return true
+}
+
+# Single-return aliased function: this shape used to be inlined, which re-read
+# the alias as an uninitialized local. It must be a real call.
+function popOnce(^c :: string) returns string {
+    return @pop(c)
+}
+
+function assignUnion(^x :: int | string, v :: int | string) {
+    x is v
+}
+
+entry function main() {
+    var s is "hello"
+    pushStr(^s, " world")
+    @print("push {s}\n")
+
+    insertStr(^s, 0, ">>")
+    @print("insert {s}\n")
+
+    var removed is removeStr(^s, 0)
+    @print("remove {removed} {s}\n")
+
+    var popped is popStr(^s)
+    @print("pop {popped} {s}\n")
+
+    var popped2 is popOnce(^s)
+    @print("pop2 {popped2} {s}\n")
+
+    clearStr(^s)
+    @print("clear [{s}]\n")
+
+    var u :: int | string is 1
+    assignUnion(^u, 42)
+    @print("union int {u}\n")
+    var word is "again"
+    assignUnion(^u, word)
+    @print("union str {u}\n")
+}
