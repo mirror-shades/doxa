@@ -1,0 +1,10 @@
+# Regression: `std.*` referenced inside a struct method of an imported module
+# must be materialized. The nested-namespace walker only visited function
+# bodies, so a struct method calling `std.json.*` failed with E5001.
+
+module c from "./struct_method_std_helper.doxa"
+
+entry function main() {
+    const o is c.C.new("hi")
+    @print("dump={o.dump()}\n")
+}

@@ -1,0 +1,9 @@
+module std from @std()
+
+# A by-value parameter must not be passed with `^`. The imported module
+# function's alias metadata has to survive symbol registration for validation
+# to catch this before codegen (regression: it used to panic in handleCall).
+entry function main() {
+    const s is "hello"
+    std.methods.sliceString(^s, 0, 1)?
+}

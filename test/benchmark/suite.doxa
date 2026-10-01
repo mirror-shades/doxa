@@ -68,16 +68,16 @@ function runSuite(runs :: int, ^results :: Result[]) {
     }
 
     const warmup is tests[0]
-    std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{warmup}.doxa -o test/benchmark/d-bin/{warmup} --opt=2")
-    std.process.exec("zig cc test/benchmark/c-src/{warmup}.c -o test/benchmark/c-bin/{warmup}{exe_suffix} -O2 -mcpu=native -ffp-contract=off")
+    std.process.exec(nativeCommand("./doxa/bin/doxa compile test/benchmark/d-src/{warmup}.doxa -o test/benchmark/d-bin/{warmup} --opt=2"))
+    std.process.exec(nativeCommand("zig cc test/benchmark/c-src/{warmup}.c -o test/benchmark/c-bin/{warmup}{exe_suffix} -O2 -mcpu=native -ffp-contract=off"))
 
     each test in tests {
         const d_compile_start_time is std.time.monotonic()
-        std.process.exec("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test} --opt=2")
+        std.process.exec(nativeCommand("./doxa/bin/doxa compile test/benchmark/d-src/{test}.doxa -o test/benchmark/d-bin/{test} --opt=2"))
         const d_compile_end_time is std.time.monotonic()
         @push(compile_stats.d_compile_time, d_compile_end_time - d_compile_start_time)
         const c_compile_start_time is std.time.monotonic()
-            std.process.exec("zig cc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2 -mcpu=native -ffp-contract=off")
+            std.process.exec(nativeCommand("zig cc test/benchmark/c-src/{test}.c -o test/benchmark/c-bin/{test}{exe_suffix} -O2 -mcpu=native -ffp-contract=off"))
         const c_compile_end_time is std.time.monotonic()
         @push(compile_stats.c_compile_time, c_compile_end_time - c_compile_start_time)
     }
@@ -200,9 +200,22 @@ function matchOutput(c_output :: string, d_output :: string) returns tetra {
     return true
 }
 
+function nativeCommand(command :: string) returns string {
+    if not std.host.isWindows() then return command
+    var converted is ""
+    each c in command {
+        if c == "/" then {
+            converted += "\\"
+        } else {
+            converted += c
+        }
+    }
+    return converted
+}
+
 function timeExec(command :: string, ^time :: int) returns string {
     const startTime is std.time.tick()
-    const output is std.process.execCapture(command) as string else {
+    const output is std.process.execCapture(nativeCommand(command)) as string else {
         std.io.println("Error executing command: {command}")
         return ""
     }

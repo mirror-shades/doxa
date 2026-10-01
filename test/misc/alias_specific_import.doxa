@@ -1,0 +1,9 @@
+import take from "./alias_helper.doxa"
+
+# A specifically imported function's alias metadata must survive symbol binding
+# so `^` on a by-value parameter is rejected (regression: it used to reach
+# codegen and panic in handleCall).
+entry function main() {
+    const s is "hi"
+    take(^s)
+}

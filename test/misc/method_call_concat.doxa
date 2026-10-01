@@ -1,0 +1,21 @@
+# Regression: an instance method call used as a `+` operand must infer its
+# declared return type. Variables track their struct as the sentinel id 0, so
+# method lookup by struct id failed and the call was typed `Unknown`, which
+# rejected `string + method()`.
+
+public struct Foo {
+    public name :: string,
+    public function new(name :: string) returns Foo { return $Foo { name is name } }
+    public method greet() returns string { return "hi " + this.name }
+}
+
+entry function main() {
+    const f is Foo.new("world")
+    @print("greet=" + f.greet() + "\n")
+
+    var s is f.greet() + " suffix\n"
+    @print(s)
+
+    var gem is f.greet() + f.greet()
+    @print(gem + "\n")
+}

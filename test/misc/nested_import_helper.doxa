@@ -1,0 +1,5 @@
+module std from @std()
+
+public function hasClock() returns tetra {
+    return std.time.monotonic() > 0
+}

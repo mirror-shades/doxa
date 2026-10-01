@@ -1,0 +1,18 @@
+# Regression: a single-return function is inlined. When it returns a heap value
+# (here a string built by `+`), the inliner used to produce that value inside a
+# nested scope and then free the scope before the caller cloned the value out,
+# leaving a dangling pointer ("x=" + freeGreet(f) segfaulted in str_concat).
+
+public struct Foo {
+    public name :: string,
+    public function new(name :: string) returns Foo { return $Foo { name is name } }
+}
+
+public function freeGreet(f :: Foo) returns string { return "free " + f.name }
+
+entry function main() {
+    const f is Foo.new("world")
+    @print(freeGreet(f) + "\n")
+    var r is freeGreet(f)
+    @print("x=" + r + "\n")
+}

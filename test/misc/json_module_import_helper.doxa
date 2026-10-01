@@ -1,0 +1,28 @@
+module std from @std()
+
+public function read() returns string {
+    std.json.beginObject()
+    std.json.writeKey("models")
+    std.json.writeText("hello")
+    std.json.end()
+    const out is std.json.finish()
+    out as string then {
+        const doc is std.json.parse(out)
+        match doc {
+            std.json.Node then {
+                const node is doc.field("models")
+                match node {
+                    std.json.Node then {
+                        const t is node.text()
+                        t as string then { return t } else { return "no-text" }
+                    }
+                    else { return "no-node" }
+                }
+            }
+            else { return "parse-err" }
+        }
+    } else {
+        return "write-err"
+    }
+    return "end"
+}

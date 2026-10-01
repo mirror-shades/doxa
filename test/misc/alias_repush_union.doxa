@@ -1,0 +1,53 @@
+module std from @std()
+
+# Regression: re-passing a concrete `^` alias to a boxed (union/group) alias
+# parameter must box the member at the call site and write it back through the
+# alias. Forwarding the raw concrete storage handed the callee a pointer it
+# read as a `%DoxaValue`, clobbering the caller's value (observed as an empty
+# `string[]` once the helper returned).
+
+function boxPush(^c :: string | string[], v :: string) {
+    match c {
+        string then { @push(c, v) }
+        string[] then { @push(c, v) }
+    }
+}
+
+function collect(^names :: string[]) {
+    const entries is std.file.list("test/fixtures/dirlist") as string[] else {
+        return
+    }
+    each e in entries {
+        boxPush(^names, e)
+    }
+}
+
+function append(^s :: string) {
+    boxPush(^s, "hello ")
+    boxPush(^s, "world")
+}
+
+public entry function main() {
+    var names :: string[]
+    collect(^names)
+
+    var count is 0
+    var one is false
+    var two is false
+    var three is false
+    each n in names {
+        count += 1
+        if n == "one.txt" then one is true
+        if n == "two.txt" then two is true
+        if n == "three.txt" then three is true
+    }
+    var summary is ""
+    if one then summary += "1"
+    if two then summary += "2"
+    if three then summary += "3"
+    std.io.println(@string(count) + " " + summary)
+
+    var s is ""
+    append(^s)
+    std.io.println(s)
+}

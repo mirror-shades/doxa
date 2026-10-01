@@ -1,0 +1,3 @@
+public function take(s :: string) returns string {
+    return s
+}

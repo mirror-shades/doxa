@@ -103,9 +103,19 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_alias_string_mutation_results[0..],
     },
     .{
+        .name = "alias re-pass to boxed union parameter",
+        .path = "./test/misc/alias_repush_union.doxa",
+        .expected_print = answers.expected_alias_repush_union_results[0..],
+    },
+    .{
         .name = "stdlib methods",
         .path = "./test/misc/stdlib_methods.doxa",
         .expected_print = answers.expected_stdlib_methods_results[0..],
+    },
+    .{
+        .name = "slice heap string",
+        .path = "./test/misc/slice_heap_string.doxa",
+        .expected_print = answers.expected_slice_heap_string_results[0..],
     },
     .{
         .name = "union narrow",
@@ -304,6 +314,60 @@ const shared_cases = [_]Case{
         .name = "zig import test",
         .path = "./test/misc/zig_import_test.doxa",
         .expected_print = answers.expected_zig_import_test_results[0..],
+    },
+    .{
+        .name = "zig specific import",
+        .path = "./test/misc/zig_specific_import.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "42" },
+        },
+    },
+    .{
+        .name = "nested import",
+        .path = "./test/misc/nested_import.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "clock=true" },
+        },
+    },
+    .{
+        .name = "struct method std import",
+        .path = "./test/misc/struct_method_std.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "dump={\"k\":\"hi\"}" },
+        },
+    },
+    .{
+        .name = "json module import",
+        .path = "./test/misc/json_module_import.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "plan=hello" },
+        },
+    },
+    .{
+        .name = "match expression value",
+        .path = "./test/misc/match_expression_value.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "coord" },
+            .{ .value = "plan" },
+            .{ .value = "many" },
+        },
+    },
+    .{
+        .name = "method call concat",
+        .path = "./test/misc/method_call_concat.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "greet=hi world" },
+            .{ .value = "hi world suffix" },
+            .{ .value = "hi worldhi world" },
+        },
+    },
+    .{
+        .name = "inline heap return",
+        .path = "./test/misc/inline_heap_return.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "free world" },
+            .{ .value = "x=free world" },
+        },
     },
     .{
         .name = "peek escapes",

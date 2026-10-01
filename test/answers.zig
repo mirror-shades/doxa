@@ -42,11 +42,22 @@ pub const expected_alias_string_mutation_results = [_]print_result{
     .{ .value = "union str again" },
 };
 
+pub const expected_alias_repush_union_results = [_]print_result{
+    .{ .value = "3 123" },
+    .{ .value = "hello world" },
+};
+
 pub const expected_stdlib_methods_results = [_]print_result{
     .{ .value = "push hello! [1, 2, 3, 4] [\"a\", \"b\", \"c\"]" },
     .{ .value = "insert >hello! [0, 1, 2, 3, 4]" },
     .{ .value = "find 6 4 1" },
     .{ .value = "clear [] [] []" },
+};
+
+pub const expected_slice_heap_string_results = [_]print_result{
+    .{ .value = "asd" },
+    .{ .value = "asdf" },
+    .{ .value = "asdfgsdf" },
 };
 
 pub const expected_union_narrow_results = [_]print_result{
