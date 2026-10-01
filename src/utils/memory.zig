@@ -1,6 +1,8 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
 const TypeInfo = ast.TypeInfo;
+const Reporting = @import("reporting.zig");
+const Location = Reporting.Location;
 const TokenImport = @import("../types/token.zig");
 const Token = TokenImport.Token;
 const TokenType = TokenImport.TokenType;
@@ -29,6 +31,24 @@ pub const Variable = struct {
     /// Zero when not applicable.
     decl_line: usize = 0,
     decl_column: usize = 0,
+    /// Full source location of the declaring name, used to anchor diagnostics
+    /// (unused variable/parameter/function warnings) at the declaration.
+    decl_location: ?Location = null,
+
+    /// Records the source location of a declaration so later diagnostics (e.g.
+    /// unused-symbol warnings) can point at the name that introduced it.
+    pub fn recordDeclLocation(self: *Variable, decl_token: Token) void {
+        self.decl_location = .{
+            .file = decl_token.file,
+            .file_uri = decl_token.file_uri,
+            .range = .{
+                .start_line = decl_token.line,
+                .start_col = decl_token.column,
+                .end_line = decl_token.line,
+                .end_col = decl_token.column + decl_token.lexeme.len,
+            },
+        };
+    }
 };
 
 pub const ScopeKind = enum {
@@ -166,6 +186,7 @@ pub const Scope = struct {
         const variable = try self.createValueBinding(name, value, vtype, type_info, constant);
         variable.decl_line = decl_token.line;
         variable.decl_column = decl_token.column;
+        variable.recordDeclLocation(decl_token);
         return variable;
     }
 

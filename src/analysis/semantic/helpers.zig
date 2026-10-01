@@ -1013,7 +1013,7 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                             const ret_ptr = try ast.TypeInfo.createDefault(self.allocator);
                             ret_ptr.* = if (imported_symbol.return_type_info) |ri| ri else ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
                             const ft_ptr = try self.allocator.create(ast.FunctionType);
-                            ft_ptr.* = ast.FunctionType{ .params = params_buf, .return_type = ret_ptr };
+                            ft_ptr.* = ast.FunctionType{ .params = params_buf, .return_type = ret_ptr, .param_aliases = imported_symbol.param_aliases };
                             type_info.* = ast.TypeInfo{ .base = .Function, .is_mutable = false, .function_type = ft_ptr };
                             return type_info;
                         }
@@ -1047,11 +1047,17 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                                                 }
                                                 const params_slice = params_list.toOwnedSlice() catch break;
 
+                                                // Carry each parameter's `^` alias flag so call
+                                                // validation can enforce the opt-in rules
+                                                // (docs/alias.md) for imported module functions.
+                                                const aliases = self.allocator.alloc(bool, f.params.len) catch break;
+                                                for (f.params, 0..) |p, pi| aliases[pi] = p.is_alias;
+
                                                 // Use the actual return type from the function declaration
                                                 const ret_ptr = ast.TypeInfo.createDefault(self.allocator) catch break;
                                                 ret_ptr.* = f.return_type_info;
 
-                                                ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr };
+                                                ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr, .param_aliases = aliases };
                                                 found_func_type = ft;
                                                 break;
                                             },
@@ -1163,7 +1169,7 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
                     if (ast.TypeInfo.createDefault(self.allocator) catch null) |ret_ptr| {
                         ret_ptr.* = if (maybe_return_info) |ri| ri else ast.TypeInfo{ .base = .Nothing };
                         if (self.allocator.create(ast.FunctionType) catch null) |ft_ptr| {
-                            ft_ptr.* = ast.FunctionType{ .params = params_buf, .return_type = ret_ptr };
+                            ft_ptr.* = ast.FunctionType{ .params = params_buf, .return_type = ret_ptr, .param_aliases = imported_symbol.param_aliases };
                             built_func_type = ft_ptr;
                         }
                     }
@@ -1194,9 +1200,11 @@ pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, i
                                                 params_list.append(ti) catch break;
                                             }
                                             const params_slice = params_list.toOwnedSlice() catch break;
+                                            const aliases = self.allocator.alloc(bool, f.params.len) catch break;
+                                            for (f.params, 0..) |p, pi| aliases[pi] = p.is_alias;
                                             const ret_ptr = ast.TypeInfo.createDefault(self.allocator) catch break;
                                             ret_ptr.* = f.return_type_info;
-                                            ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr };
+                                            ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr, .param_aliases = aliases };
                                             built_func_type = ft;
                                             break;
                                         },

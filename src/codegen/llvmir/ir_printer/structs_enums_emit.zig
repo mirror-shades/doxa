@@ -886,6 +886,8 @@ pub fn Methods(comptime Ctx: type) type {
             // nested heap field, cloned into the struct's arena), so the field's
             // region is the struct operand's region (A2 container-read widening).
             pushed.region = struct_val.region;
+            pushed.alias_extra = struct_val.alias_extra;
+            pushed.alias_owned = struct_val.alias_owned;
             try stack.append(pushed);
         }
 
@@ -958,7 +960,29 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(init_zero);
                 try w.writeAll(init_null);
                 try w.writeAll(init_zero);
-                const clone_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_at(i64 0, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ s_ptr, s_len, out_ptr_slot, out_len_slot });
+                // A string stored into a field must live in the arena that owns
+                // the struct. For a local struct that is the current scope; for a
+                // struct reached through an alias (`this` or a `^` parameter) it is
+                // the owning caller's arena, or the callee's string is freed on
+                // return and the field dangles. The owner's distance is carried as
+                // a runtime depth so a re-passed alias resolves to its true frame.
+                const base_levels: usize = self.scope_depth -| @as(usize, @intFromBool(self.in_function_context));
+                var level_owned: ?[]const u8 = null;
+                defer if (level_owned) |l| self.allocator.free(l);
+                var level_ref: []const u8 = undefined;
+                if (struct_val.alias_owned) {
+                    const depth = struct_val.alias_depth_value orelse "0";
+                    const lvl = try self.nextTemp(id);
+                    const add_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {d}, {s}\n", .{ lvl, base_levels + 1, depth });
+                    defer self.allocator.free(add_line);
+                    try w.writeAll(add_line);
+                    level_ref = lvl;
+                } else {
+                    const lvl = try std.fmt.allocPrint(self.allocator, "{d}", .{base_levels});
+                    level_owned = lvl;
+                    level_ref = lvl;
+                }
+                const clone_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_at(i64 {s}, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ level_ref, s_ptr, s_len, out_ptr_slot, out_len_slot });
                 defer self.allocator.free(clone_line);
                 try w.writeAll(clone_line);
                 const cloned_ptr = try self.nextTemp(id);

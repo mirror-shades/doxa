@@ -30,6 +30,16 @@ pub const SymbolTable = struct {
     variable_array_element_types: std.StringHashMap(HIRType),
     variable_array_storage: std.StringHashMap(ArrayStorageKind),
 
+    /// Snapshot of the global/module array tracking, captured after global
+    /// initialization and before any function body is generated. Array tracking
+    /// is otherwise a flat, name-keyed map; without this baseline a parameter or
+    /// local named `collection` in one function would leak its element type into
+    /// a same-named string parameter in another (which miscompiles `@length` as
+    /// an array length). `enterFunctionScope` restores these maps to the
+    /// baseline so per-function declarations cannot cross function boundaries.
+    global_array_element_types: std.StringHashMap(HIRType),
+    global_array_storage: std.StringHashMap(ArrayStorageKind),
+
     variable_union_members: std.AutoHashMap(UnionMemberKey, [][]const u8),
 
     alias_parameters: std.StringHashMap(void),
@@ -49,6 +59,8 @@ pub const SymbolTable = struct {
             .variable_narrowings = std.StringHashMap(HIRType).init(allocator),
             .variable_array_element_types = std.StringHashMap(HIRType).init(allocator),
             .variable_array_storage = std.StringHashMap(ArrayStorageKind).init(allocator),
+            .global_array_element_types = std.StringHashMap(HIRType).init(allocator),
+            .global_array_storage = std.StringHashMap(ArrayStorageKind).init(allocator),
             .variable_union_members = std.AutoHashMap(UnionMemberKey, [][]const u8).init(allocator),
             .alias_parameters = std.StringHashMap(void).init(allocator),
             .current_function = null,
@@ -68,6 +80,8 @@ pub const SymbolTable = struct {
         self.variable_narrowings.deinit();
         self.variable_array_element_types.deinit();
         self.variable_array_storage.deinit();
+        self.global_array_element_types.deinit();
+        self.global_array_storage.deinit();
         self.variable_union_members.deinit();
         self.alias_parameters.deinit();
     }
@@ -103,6 +117,39 @@ pub const SymbolTable = struct {
         // Clear alias parameters for the new function scope
         self.alias_parameters.deinit();
         self.alias_parameters = std.StringHashMap(void).init(self.allocator);
+
+        // Restore array tracking to the global baseline so a parameter or local
+        // array in the previous function cannot leak its element/storage type
+        // onto a same-named variable here.
+        try self.resetArrayTrackingToGlobals();
+    }
+
+    /// Snapshot the current array tracking as the global/module baseline. Called
+    /// once after global initialization and before function bodies are lowered.
+    pub fn captureGlobalArrayTracking(self: *SymbolTable) !void {
+        self.global_array_element_types.clearRetainingCapacity();
+        var elem_it = self.variable_array_element_types.iterator();
+        while (elem_it.next()) |entry| {
+            try self.global_array_element_types.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
+        self.global_array_storage.clearRetainingCapacity();
+        var storage_it = self.variable_array_storage.iterator();
+        while (storage_it.next()) |entry| {
+            try self.global_array_storage.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
+    }
+
+    fn resetArrayTrackingToGlobals(self: *SymbolTable) !void {
+        self.variable_array_element_types.clearRetainingCapacity();
+        var elem_it = self.global_array_element_types.iterator();
+        while (elem_it.next()) |entry| {
+            try self.variable_array_element_types.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
+        self.variable_array_storage.clearRetainingCapacity();
+        var storage_it = self.global_array_storage.iterator();
+        while (storage_it.next()) |entry| {
+            try self.variable_array_storage.put(entry.key_ptr.*, entry.value_ptr.*);
+        }
     }
 
     /// Exit function scope

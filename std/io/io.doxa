@@ -121,11 +121,25 @@ zig IO {
         // TODO(wasi): read through `std.os.wasi.fd_read`; `std.Io.Threaded`'s
         // reader path is unusable under wasi preview1, so line input degrades to
         // the empty string on that target.
-        var stdin_buffer: [4096]u8 = undefined;
-        var stdin_reader = std.Io.File.stdin().reader(std.Io.Threaded.global_single_threaded.io(), &stdin_buffer);
-        const stdin = &stdin_reader.interface;
+        //
+        // The reader and its buffer must outlive a single call: a fresh reader
+        // per call starts with an empty buffer, so at end-of-stream it would
+        // read nothing and hand back stale stack contents instead of signalling
+        // `ReadFailed`/EOF.
+        const State = struct {
+            var buffer: [4096]u8 = undefined;
+            var reader: ?std.Io.File.Reader = null;
+        };
+        if (State.reader == null) {
+            State.reader = std.Io.File.stdin().reader(std.Io.Threaded.global_single_threaded.io(), &State.buffer);
+        }
+        const stdin = &State.reader.?.interface;
 
-        var line = stdin.takeDelimiterExclusive('\n') catch {
+        const maybe_line = stdin.takeDelimiter('\n') catch {
+            setLastError(106);
+            return "";
+        };
+        var line = maybe_line orelse {
             setLastError(106);
             return "";
         };
@@ -134,11 +148,11 @@ zig IO {
             line = line[0 .. line.len - 1];
         }
 
-        const State = struct {
+        const Cache = struct {
             var cache: ?[]u8 = null;
         };
 
-        if (State.cache) |prev| {
+        if (Cache.cache) |prev| {
             std.heap.page_allocator.free(prev);
         }
 
@@ -147,7 +161,7 @@ zig IO {
             return "";
         };
 
-        State.cache = duped;
+        Cache.cache = duped;
         return duped;
     }
 

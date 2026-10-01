@@ -166,6 +166,11 @@ pub const CallsHandler = struct {
             var_name: []const u8,
             scope_kind: ScopeKind,
             member_type: HIRType,
+            /// True when the aliased argument is itself a `^` parameter. The
+            /// member is then written back through the alias rather than into a
+            /// local slot.
+            is_alias: bool = false,
+            alias_slot: u32 = 0,
         };
         var alias_writebacks = std.array_list.Managed(AliasWriteback).init(self.generator.allocator);
         defer alias_writebacks.deinit();
@@ -228,14 +233,42 @@ pub const CallsHandler = struct {
                                 return ErrorList.UndefinedVariable;
                             }
                         } else if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
-                            try self.generator.instructions.append(.{
-                                .PushStorageId = .{
-                                    .var_index = alias_slot,
-                                    .var_name = var_token.lexeme,
-                                    .scope_kind = .Local,
-                                },
-                            });
-                            arg_emitted_count += 1;
+                            // Re-passing an alias. When the callee's parameter is a
+                            // boxed (union/group) alias but the aliased storage is a
+                            // concrete member, forwarding the alias pointer would hand
+                            // the callee a raw concrete layout it reads as a
+                            // `%DoxaValue`. Box the member at the call site and write
+                            // it back through the alias after the call; a matching
+                            // boxed alias forwards directly.
+                            var boxed_repass = false;
+                            if (finfo_opt) |info| {
+                                if (arg_index < info.param_types.len) {
+                                    const param_type = info.param_types[arg_index];
+                                    if (isBoxedAliasType(param_type)) {
+                                        const member_type: HIRType = if (self.generator.slot_manager.getSlotInfo(alias_slot)) |si| si.hir_type else .Unknown;
+                                        if (!sameBoxedAliasType(param_type, member_type)) {
+                                            const box_name = try std.fmt.allocPrint(self.generator.allocator, "__doxa_alias_box_{d}", .{self.generator.instructions.items.len});
+                                            const box_idx = try self.generator.getOrCreateVariable(box_name);
+                                            try self.generator.instructions.append(.{ .LoadAlias = .{ .var_name = var_token.lexeme, .slot_index = alias_slot } });
+                                            try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = box_idx, .var_name = box_name, .scope_kind = .Local, .module_context = null, .expected_type = param_type, .heap_copy = .keep } });
+                                            try self.generator.instructions.append(.{ .PushStorageId = .{ .var_index = box_idx, .var_name = box_name, .scope_kind = .Local } });
+                                            try alias_writebacks.append(.{ .box_name = box_name, .var_name = var_token.lexeme, .scope_kind = .Local, .member_type = member_type, .is_alias = true, .alias_slot = alias_slot });
+                                            arg_emitted_count += 1;
+                                            boxed_repass = true;
+                                        }
+                                    }
+                                }
+                            }
+                            if (!boxed_repass) {
+                                try self.generator.instructions.append(.{
+                                    .PushStorageId = .{
+                                        .var_index = alias_slot,
+                                        .var_name = var_token.lexeme,
+                                        .scope_kind = .Local,
+                                    },
+                                });
+                                arg_emitted_count += 1;
+                            }
                         } else {
                             return ErrorList.InvalidAliasArgument;
                         }
@@ -294,15 +327,28 @@ pub const CallsHandler = struct {
         for (alias_writebacks.items) |wb| {
             const box_idx = try self.generator.getOrCreateVariable(wb.box_name);
             try self.generator.instructions.append(.{ .LoadVar = .{ .var_index = box_idx, .var_name = wb.box_name, .scope_kind = .Local, .module_context = null } });
-            const var_idx = try self.generator.getOrCreateVariable(wb.var_name);
-            try self.generator.instructions.append(.{ .StoreVar = .{
-                .var_index = var_idx,
-                .var_name = wb.var_name,
-                .scope_kind = wb.scope_kind,
-                .module_context = null,
-                .expected_type = wb.member_type,
-                .heap_copy = .keep,
-            } });
+            if (wb.is_alias) {
+                // Write the boxed member back through the caller's alias. The
+                // value is re-homed into the arena that owns the aliased
+                // variable; `.rehome` preserves array identity and clones a
+                // fresh string out of the transient box arena.
+                try self.generator.instructions.append(.{ .StoreAlias = .{
+                    .var_name = wb.var_name,
+                    .slot_index = wb.alias_slot,
+                    .expected_type = wb.member_type,
+                    .heap_copy = .rehome,
+                } });
+            } else {
+                const var_idx = try self.generator.getOrCreateVariable(wb.var_name);
+                try self.generator.instructions.append(.{ .StoreVar = .{
+                    .var_index = var_idx,
+                    .var_name = wb.var_name,
+                    .scope_kind = wb.scope_kind,
+                    .module_context = null,
+                    .expected_type = wb.member_type,
+                    .heap_copy = .keep,
+                } });
+            }
         }
         if (!preserve_result) {
             try self.generator.instructions.append(.Pop);
@@ -951,6 +997,17 @@ pub const CallsHandler = struct {
         return true;
     }
 
+    /// Whether a value of `return_type` is heap-allocated and therefore cannot
+    /// be inlined (its result would be freed with the inline scope before the
+    /// caller takes it). `Unknown` is treated as heap so an unresolved return
+    /// type is never inlined into a dangling value.
+    fn isHeapReturnType(return_type: HIRType) bool {
+        return switch (return_type) {
+            .String, .Array, .Map, .Struct, .Union, .Group, .Unknown => true,
+            else => false,
+        };
+    }
+
     fn inlineBody(self: *CallsHandler, func_body: *const HIRGenerator.FunctionBody) !void {
         if (func_body.statements.len == 1 and func_body.statements[0].data == .Return) {
             if (func_body.statements[0].data.Return.value) |val| {
@@ -1029,6 +1086,13 @@ pub const CallsHandler = struct {
         for (func_body.function_info.param_is_alias) |is_alias| {
             if (is_alias) return false;
         }
+
+        // A heap-returning body constructs its result inside the inline scope,
+        // which is torn down before the caller clones the value out. Such a
+        // result must go through the ordinary call path, where clone-on-return
+        // copies it into the caller's arena before the callee scope is freed.
+        // Only scalar results can be inlined without a dangling value.
+        if (isHeapReturnType(func_body.function_info.return_type)) return false;
 
         // 1. Single return statement (like "return a + b")
         if (func_body.statements.len == 1 and func_body.statements[0].data == .Return) {

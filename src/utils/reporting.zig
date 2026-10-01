@@ -131,9 +131,17 @@ pub const Reporter = struct {
             .file_uri_cache = std.StringHashMap([]const u8).init(allocator),
             .published_state = std.StringHashMap(PublishedState).init(allocator),
             .source_cache = source_cache_ptr,
-            .use_ansi = checkAnsi(allocator),
+            .use_ansi = false,
             .io = io,
         };
+    }
+
+    /// Enables ANSI styling when stderr is a capable terminal and the
+    /// environment has not opted out (`NO_COLOR`, `TERM=dumb`). Called by the
+    /// CLI after `init`; the LSP leaves styling off so it never taints a
+    /// protocol stream.
+    pub fn detectAnsi(self: *Reporter, environ_map: ?*const std.process.Environ.Map) void {
+        self.use_ansi = shouldUseAnsi(self.io, environ_map);
     }
 
     pub fn deinit(self: *Reporter) void {
@@ -154,9 +162,19 @@ pub const Reporter = struct {
         self.file_uri_cache.deinit();
     }
 
-    fn checkAnsi(allocator: std.mem.Allocator) bool {
-        _ = allocator;
-        return false;
+    fn shouldUseAnsi(io: std.Io, environ_map: ?*const std.process.Environ.Map) bool {
+        if (environ_map) |env| {
+            if (env.get("NO_COLOR")) |value| {
+                if (value.len > 0) return false;
+            }
+            if (env.get("TERM")) |term| {
+                if (std.mem.eql(u8, term, "dumb")) return false;
+            }
+        }
+
+        const stderr_file = std.Io.File.stderr();
+        if (!(stderr_file.isTty(io) catch false)) return false;
+        return stderr_file.supportsAnsiEscapeCodes(io) catch false;
     }
 
     pub fn report(
@@ -320,7 +338,7 @@ pub const Reporter = struct {
             },
         };
 
-        self.report(.Debug, .Hint, loc, null, fmt, args);
+        self.report(.Internal, .Internal, loc, null, fmt, args);
     }
 
     pub fn hasErrors(self: *Reporter) bool {

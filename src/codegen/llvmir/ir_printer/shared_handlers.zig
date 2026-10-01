@@ -2083,6 +2083,20 @@ pub fn Methods(comptime Ctx: type) type {
             else
                 null;
 
+            // Pure-Doxa module functions carry no `function_index` at the call
+            // site, so resolve their signature by name. Alias parameters get
+            // trailing depth arguments in the callee signature; the call must
+            // supply them to keep the ABI aligned.
+            var alias_func_info: ?HIR.HIRProgram.HIRFunction = func_info;
+            if (alias_func_info == null) {
+                for (hir.function_table) |candidate| {
+                    if (std.mem.eql(u8, candidate.qualified_name, c.qualified_name)) {
+                        alias_func_info = candidate;
+                        break;
+                    }
+                }
+            }
+
             for (raw_args.items, 0..) |*arg_ptr, i| {
                 var arg = arg_ptr.*;
                 var declared_type: ?HIR.HIRType = null;
@@ -2247,6 +2261,19 @@ pub fn Methods(comptime Ctx: type) type {
                         arg = .{ .name = as_ptr, .ty = .PTR };
                         arg_ptr.* = arg;
                     }
+                    // A string arriving as a pointer is the address of a
+                    // `%DoxaString` (the same shape an alias slot holds, see
+                    // `StoreAlias`/`.LoadAlias` in `function_emit.zig`). A
+                    // by-value string parameter wants the value, so dereference
+                    // it rather than falling through to the type-mismatch trap.
+                    if (!is_alias and decl == .String and arg.ty == .PTR) {
+                        const loaded = try self.nextTemp(id);
+                        const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load %DoxaString, ptr {s}\n", .{ loaded, arg.name });
+                        defer self.allocator.free(load_line);
+                        try w.writeAll(load_line);
+                        arg = .{ .name = loaded, .ty = .STRING };
+                        arg_ptr.* = arg;
+                    }
                 }
 
                 const llvm_ty = blk: {
@@ -2272,6 +2299,30 @@ pub fn Methods(comptime Ctx: type) type {
                 };
                 const arg_str = try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ llvm_ty, arg.name });
                 try arg_strings.append(arg_str);
+            }
+
+            // Trailing alias-depth arguments: one `i64` per alias parameter, in
+            // parameter order, matching the callee signature. This carries the
+            // alias owner's frame distance across the call so a heap store
+            // through the alias targets the true owner's arena.
+            if (c.call_kind == .LocalFunction or c.call_kind == .ModuleFunction) {
+                if (alias_func_info) |info| {
+                    for (info.param_types, 0..) |_, i| {
+                        const is_alias = if (i < info.param_is_alias.len) info.param_is_alias[i] else false;
+                        if (!is_alias) continue;
+                        const raw = if (i < raw_args.items.len) raw_args.items[i] else StackVal{ .name = "0", .ty = .I64 };
+                        if (raw.alias_owned) {
+                            const base = raw.alias_depth_value orelse "0";
+                            const next = try self.nextTemp(id);
+                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, 1\n", .{ next, base });
+                            defer self.allocator.free(line);
+                            try w.writeAll(line);
+                            try arg_strings.append(try std.fmt.allocPrint(self.allocator, "i64 {s}", .{next}));
+                        } else {
+                            try arg_strings.append(try std.fmt.allocPrint(self.allocator, "i64 0", .{}));
+                        }
+                    }
+                }
             }
 
             const args_str = if (arg_strings.items.len == 0) "" else try std.mem.join(self.allocator, ", ", arg_strings.items);
@@ -2497,7 +2548,7 @@ pub fn Methods(comptime Ctx: type) type {
             }
             value = switch (sv.heap_copy) {
                 .keep => value,
-                .snapshot => try self.cloneHeapValue(w, id, value, sv.expected_type, .program_root, true, 0),
+                .snapshot => try self.cloneHeapValue(w, id, value, sv.expected_type, .program_root, true, 0, null),
                 .rehome => try self.rehomeForGlobalStore(w, id, value, sv.expected_type),
             };
             // The slot is a %DoxaValue but the value carried here is the member

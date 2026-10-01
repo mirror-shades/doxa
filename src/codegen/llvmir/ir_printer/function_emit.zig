@@ -95,6 +95,10 @@ pub fn Methods(comptime Ctx: type) type {
                 /// Alias re-pass depth: frames between this frame and the one
                 /// owning the aliased storage (0 = immediate caller).
                 alias_extra: u8 = 0,
+                /// Runtime depth value (an `i64` LLVM name) passed in by the
+                /// caller for this alias parameter. Null for aliases created by
+                /// re-passing within this frame (no cross-call boundary yet).
+                depth_value: ?[]const u8 = null,
             };
             var alias_slots = std.AutoHashMap(u32, AliasInfo).init(self.allocator);
             defer alias_slots.deinit();
@@ -203,6 +207,23 @@ pub fn Methods(comptime Ctx: type) type {
                 try param_strs.append(param_str);
             }
 
+            // Trailing alias-depth arguments: one `i64` per alias parameter, in
+            // parameter order. The caller supplies how many frames separate it
+            // from the alias's owning frame, so a heap store through the alias
+            // re-homes into the owner's arena and not an ancestor callee's.
+            var alias_param_count: usize = 0;
+            {
+                var alias_arg_at: usize = func.param_types.len;
+                for (func.param_types, 0..) |_, param_idx| {
+                    const is_alias = if (param_idx < func.param_is_alias.len) func.param_is_alias[param_idx] else false;
+                    if (!is_alias) continue;
+                    alias_param_count += 1;
+                    const arg_str = try std.fmt.allocPrint(self.allocator, "i64 %{d}", .{alias_arg_at});
+                    try param_strs.append(arg_str);
+                    alias_arg_at += 1;
+                }
+            }
+
             const params_str = if (param_strs.items.len == 0) "" else try std.mem.join(self.allocator, ", ", param_strs.items);
             defer if (param_strs.items.len > 0) self.allocator.free(params_str);
 
@@ -256,7 +277,7 @@ pub fn Methods(comptime Ctx: type) type {
             const w = &body_alloc.writer;
 
             // Process function body instructions
-            var id: usize = func.param_types.len; // Start after parameters
+            var id: usize = func.param_types.len + alias_param_count; // Start after parameters and their alias-depth args
             var stack = std.array_list.Managed(StackVal).init(self.allocator);
             defer stack.deinit();
             var merge_map = std.StringHashMap(StackMergeState).init(self.allocator);
@@ -278,6 +299,7 @@ pub fn Methods(comptime Ctx: type) type {
             var dead_block_counter: usize = 0;
 
             // Add parameters to stack
+            var alias_param_at: usize = 0;
             for (func.param_types, 0..) |param_type, param_idx| {
                 const param_name = try std.fmt.allocPrint(self.allocator, "%{d}", .{param_idx});
                 // Check if this is an alias parameter
@@ -287,7 +309,12 @@ pub fn Methods(comptime Ctx: type) type {
                     .Array => |inner| inner.*,
                     else => null,
                 };
-                try stack.append(.{ .name = param_name, .ty = stack_type, .array_type = array_hint });
+                var depth_value: ?[]const u8 = null;
+                if (is_alias) {
+                    depth_value = try std.fmt.allocPrint(self.allocator, "%{d}", .{func.param_types.len + alias_param_at});
+                    alias_param_at += 1;
+                }
+                try stack.append(.{ .name = param_name, .ty = stack_type, .array_type = array_hint, .alias_depth_value = depth_value });
             }
 
             // Process function body instructions
@@ -689,7 +716,10 @@ pub fn Methods(comptime Ctx: type) type {
                         } else if (alias_slots.get(psid.var_index)) |info| {
                             // Re-passing an existing alias: the storage owner is
                             // one frame further up than it was for this alias.
-                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .enum_type_name = info.enum_type_name, .struct_field_types = info.struct_field_types, .struct_field_names = info.struct_field_names, .struct_type_name = info.struct_type_name, .alias_extra = info.alias_extra + 1 });
+                            // Carry both the compile-time re-pass count and the
+                            // runtime owner depth so the callee can resolve the
+                            // true owner across the call boundary.
+                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .enum_type_name = info.enum_type_name, .struct_field_types = info.struct_field_types, .struct_field_names = info.struct_field_names, .struct_type_name = info.struct_type_name, .alias_extra = info.alias_extra + 1, .alias_owned = true, .alias_depth_value = info.depth_value });
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
@@ -725,6 +755,9 @@ pub fn Methods(comptime Ctx: type) type {
                                     // An alias points into the caller's arena, which
                                     // outlives this callee's function body (`Func`).
                                     .region = .Func,
+                                    .alias_extra = info.alias_extra,
+                                    .alias_owned = true,
+                                    .alias_depth_value = info.depth_value,
                                 });
                             } else {
                                 const result = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
@@ -750,6 +783,9 @@ pub fn Methods(comptime Ctx: type) type {
                                         loaded = unwrapped;
                                     }
                                 }
+                                loaded.alias_extra = info.alias_extra;
+                                loaded.alias_owned = true;
+                                loaded.alias_depth_value = info.depth_value;
                                 try stack.append(loaded);
                             }
                         } else {
@@ -773,18 +809,24 @@ pub fn Methods(comptime Ctx: type) type {
                             // this function's scope exits. `.keep` is the
                             // in-place-mutation store-back (arrays), whose
                             // identity must survive untouched.
-                            const boxed = self.hirTypeToStackType(info.pointee_type) == .Value;
-                            if (boxed) {
+                            const target_stack_ty = self.hirTypeToStackType(info.pointee_type);
+                            if (target_stack_ty == .Value) {
                                 // A union slot is a `%DoxaValue` box, so a
                                 // narrowed member produced by an in-place
                                 // mutation must be re-boxed before it lands
                                 // there. Without this the store writes the raw
                                 // member layout over the box.
                                 value = try self.buildDoxaValue(w, value, info.pointee_type, &id);
+                            } else if (value.ty == .Value) {
+                                // A member written back through a concrete alias
+                                // may arrive boxed: a re-passed alias is boxed at
+                                // its call site so a union-alias callee can read
+                                // it. Unwrap to the member layout before storing.
+                                value = try self.coerceForStore(value, target_stack_ty, &id, w);
                             }
                             switch (sa.heap_copy) {
                                 .keep => {},
-                                .rehome => value = try self.cloneHeapForAliasStore(w, &id, value, info.pointee_type, info.alias_extra),
+                                .rehome => value = try self.cloneHeapForAliasStore(w, &id, value, info.pointee_type, info.alias_extra, info.depth_value),
                                 .snapshot => value = try self.cloneHeapForSnapshot(w, &id, value, info.pointee_type),
                             }
                             const llvm_ty = self.hirTypeToLLVMType(info.pointee_type, false);
@@ -844,6 +886,7 @@ pub fn Methods(comptime Ctx: type) type {
                             .struct_type_name = struct_type_name,
                             .enum_type_name = ptr_val.enum_type_name,
                             .alias_extra = ptr_val.alias_extra,
+                            .depth_value = ptr_val.alias_depth_value,
                         };
                         try alias_slots.put(ba.alias_slot, alias_info);
                         last_instruction_was_terminator = false;
