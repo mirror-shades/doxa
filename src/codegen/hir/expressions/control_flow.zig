@@ -722,8 +722,6 @@ pub const ControlFlowHandler = struct {
             // Handle group path patterns using MemberCheck
             if (case.path_patterns.len > 0) {
                 for (case.path_patterns, 0..) |path_pattern, pp_idx| {
-                    try self.generator.instructions.append(.Dup);
-
                     if (path_pattern.tokens.len >= 2) {
                         const group_name = path_pattern.tokens[0].lexeme;
                         // Find member index by qualifier in the GroupTable
@@ -732,6 +730,10 @@ pub const ControlFlowHandler = struct {
                                 if (gtable.members(gid)) |members| {
                                     for (members, 0..) |member, member_idx| {
                                         if (std.mem.eql(u8, member.qualifier, path_pattern.tokens[1].lexeme)) {
+                                            // The check consumes its operand, so duplicate
+                                            // the subject for it; enum/struct path patterns
+                                            // emit no check here and must not leave a copy.
+                                            try self.generator.instructions.append(.Dup);
                                             try self.generator.instructions.append(.{ .MemberCheck = .{ .member_index = @intCast(member_idx) } });
 
                                             if (pp_idx == case.path_patterns.len - 1) {

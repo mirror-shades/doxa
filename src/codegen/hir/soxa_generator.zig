@@ -752,6 +752,11 @@ pub const HIRGenerator = struct {
 
     /// Pass 3: Generate function bodies AFTER main program
     fn generateFunctionBodies(self: *HIRGenerator) !void {
+        // Global/module array tracking is the only array tracking that should
+        // span functions; capture it once so each function body starts from a
+        // clean per-function view (see `captureGlobalArrayTracking`).
+        try self.symbol_table.captureGlobalArrayTracking();
+
         for (self.function_bodies.items) |*function_body| {
             self.current_function = function_body.function_info.name;
             self.current_function_module = function_body.module_alias;
@@ -1574,6 +1579,24 @@ pub const HIRGenerator = struct {
     pub fn pushStructReceiver(self: *HIRGenerator, receiver: *ast.Expr) !void {
         if (receiver.data == .Variable) {
             const var_token = receiver.data.Variable;
+
+            // An alias (`^`) parameter is not backed by a local slot; its storage
+            // pointer lives in the alias-slot table. Pushing its variable index
+            // would miss both slot maps and emit a null receiver, so dispatch on
+            // the alias slot exactly as `this` does for instance methods.
+            if (self.symbol_table.isAliasParameter(var_token.lexeme)) {
+                const alias_slot = self.slot_manager.getAliasSlot(var_token.lexeme) orelse
+                    return error.InvalidAliasArgument;
+                try self.instructions.append(.{
+                    .PushStorageId = .{
+                        .var_index = alias_slot,
+                        .var_name = var_token.lexeme,
+                        .scope_kind = .Local,
+                    },
+                });
+                return;
+            }
+
             const var_idx = try self.getOrCreateVariable(var_token.lexeme);
             const scope_kind = self.symbol_table.determineVariableScope(var_token.lexeme);
             try self.instructions.append(.{

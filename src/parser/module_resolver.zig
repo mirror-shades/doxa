@@ -561,11 +561,14 @@ pub fn extractModuleInfo(self: *Parser, module_ast: *ast.Expr, module_path: []co
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                         if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
+                            const param_aliases = try self.allocator.alloc(bool, func.params.len);
+                            for (func.params, 0..) |param, pi| param_aliases[pi] = param.is_alias;
                             try self.getImportedSymbols().put(full_name, .{
                                 .kind = .Function,
                                 .name = symbol_name,
                                 .original_module = module_path,
                                 .param_count = @intCast(func.params.len),
+                                .param_aliases = param_aliases,
                                 .return_type_info = func.return_type_info,
                             });
                         }
@@ -855,11 +858,14 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ name, symbol_name });
 
                         if (specific_symbol == null or std.mem.eql(u8, specific_symbol.?, symbol_name)) {
+                            const param_aliases = try self.allocator.alloc(bool, func.params.len);
+                            for (func.params, 0..) |param, pi| param_aliases[pi] = param.is_alias;
                             try self.getImportedSymbols().put(full_name, .{
                                 .kind = .Function,
                                 .name = symbol_name,
                                 .original_module = module_path,
                                 .param_count = @intCast(func.params.len),
+                                .param_aliases = param_aliases,
                                 .return_type_info = func.return_type_info,
                             });
                         }

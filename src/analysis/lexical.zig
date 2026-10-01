@@ -155,7 +155,14 @@ pub const LexicalAnalyzer = struct {
 
     pub fn lexTokens(self: *LexicalAnalyzer) !std.array_list.Managed(Token) {
         while (!self.isAtEnd()) {
-            try self.getNextToken();
+            self.getNextToken() catch |err| {
+                // Report a located diagnostic unless a specific site already did
+                // (e.g. `=` used for assignment, or an out-of-range int literal).
+                if (err != error.OutOfMemory and !self.reporter.hasCompileErrors()) {
+                    self.reportLexError(err);
+                }
+                return err;
+            };
         }
 
         try self.tokens.append(Token.init(.EOF, "", .nothing, self.line, self.column));
@@ -384,7 +391,6 @@ pub const LexicalAnalyzer = struct {
                 if (isAlpha(c)) {
                     try self.identifier();
                 } else {
-                    std.debug.print("Unexpected character: {c}\n", .{c});
                     return error.UnexpectedCharacter;
                 }
             },
@@ -438,8 +444,15 @@ pub const LexicalAnalyzer = struct {
     }
 
     fn intLiteralOutOfRange(self: *LexicalAnalyzer, literal: []const u8) ErrorList {
+        self.reporter.reportCompileError(self.tokenLocation(), ErrorCode.INTEGER_VALUE_OUT_OF_RANGE, "integer literal '{s}' is out of range for int (64-bit)", .{literal});
+        return error.IntegerOverflow;
+    }
+
+    /// Location of the token currently being lexed (`self.start` / `self.token_line`).
+    /// Used to point diagnostics at the literal that failed rather than the cursor.
+    fn tokenLocation(self: *LexicalAnalyzer) Location {
         const token_column = self.tokenColumn();
-        const location = Location{
+        return .{
             .file = self.file_path,
             .file_uri = self.file_uri,
             .range = .{
@@ -449,8 +462,37 @@ pub const LexicalAnalyzer = struct {
                 .end_col = token_column,
             },
         };
-        self.reporter.reportCompileError(location, ErrorCode.INTEGER_VALUE_OUT_OF_RANGE, "integer literal '{s}' is out of range for int (64-bit)", .{literal});
-        return error.IntegerOverflow;
+    }
+
+    fn lexErrorMessage(err: anyerror) []const u8 {
+        return switch (err) {
+            error.UnterminatedString => "unterminated string literal",
+            error.UnterminatedMultilineComment => "unterminated block comment; missing '*/'",
+            error.UnterminatedZigBlock => "unterminated inline zig block; missing '}'",
+            error.UnexpectedCharacter => "unexpected character",
+            error.InvalidNumber => "invalid numeric literal",
+            error.LeadingZeros => "numeric literal cannot have leading zeros",
+            error.MultipleExponents => "numeric literal cannot have multiple exponents",
+            error.InvalidExponent => "exponent has no digits",
+            error.InvalidEscapeSequence => "invalid escape sequence in string literal",
+            error.InvalidUnicodeEscape => "invalid unicode escape; expected \\u{...} with 1-6 hex digits",
+            error.CodepointTooLarge => "unicode escape is out of range (maximum U+10FFFF)",
+            error.ByteValueTooLarge => "byte literal must be in the range 0..255 (two hex digits, e.g. 0xFF)",
+            error.EllipsisWithoutNewline => "'...' continuation must follow a completed line",
+            error.ExpectedIdentifier => "expected a module name after 'zig'",
+            error.ExpectedLeftBrace => "expected '{' to open the inline zig block",
+            error.InvalidInternalMethod => "unknown internal method",
+            else => "could not tokenize this input",
+        };
+    }
+
+    fn reportLexError(self: *LexicalAnalyzer, err: anyerror) void {
+        self.reporter.reportCompileError(
+            self.tokenLocation(),
+            ErrorCode.SYNTAX_ERROR,
+            "{s}: {s}",
+            .{ @errorName(err), lexErrorMessage(err) },
+        );
     }
 
     fn peekAt(self: *LexicalAnalyzer, offset: i32) u8 {
@@ -526,7 +568,6 @@ pub const LexicalAnalyzer = struct {
             const remaining = self.source[self.current..];
 
             if (remaining[0] >= 0x80) {
-                std.debug.print("Unexpected character in identifier: {c}\n", .{remaining[0]});
                 return error.UnexpectedCharacter;
             }
 

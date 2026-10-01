@@ -358,6 +358,18 @@ pub const IRPrinter = struct {
         /// of an existing alias adds one. A heap store through the alias
         /// re-homes into the owning frame's arena at that depth.
         alias_extra: u8 = 0,
+        /// True when this value was read through an alias (`^` parameter or a
+        /// method receiver's `this`). A heap field stored through it must be
+        /// cloned into the owning frame's arena, not the current scope, so it
+        /// survives the current frame's exit.
+        alias_owned: bool = false,
+        /// Runtime alias depth for an alias-owned value: the LLVM value (an
+        /// `i64`) naming how many frames separate this frame from the frame
+        /// that owns the aliased storage. 0 means the immediate caller. This is
+        /// carried across calls as a trailing argument so a store through an
+        /// alias re-homes into the true owner's arena, not a soon-to-be-freed
+        /// intermediate callee.
+        alias_depth_value: ?[]const u8 = null,
     };
 
     pub const VariableInfo = struct {

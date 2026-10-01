@@ -396,6 +396,7 @@ pub const ErrorCode = struct {
     pub const UNKNOWN_TYPE = "E2025";
     pub const NOT_TRUTHY = "E2026";
     pub const EXPECTED_OPEN_BRACE = "E2027";
+    pub const INVALID_PLACEHOLDER_EXPRESSION = "E2028";
 
     // 3xxx - Memory & Ownership
     pub const MEMORY_ERROR = "E3001";

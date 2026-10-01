@@ -815,15 +815,8 @@ pub const TypeSystem = struct {
                                 }
                             }
                             // Instance method on a struct receiver: `inst.method()`.
-                            const recv_type = self.inferTypeFromExpression(fa.object, symbol_table);
-                            if (recv_type == .Struct) {
-                                if (self.struct_table) |st| {
-                                    if (st.getName(recv_type.Struct)) |sname| {
-                                        const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ sname, fa.field.lexeme }) catch return .Unknown;
-                                        defer self.allocator.free(qualified);
-                                        if (sigs.get(qualified)) |info| return info.return_type;
-                                    }
-                                }
+                            if (self.instanceMethodReturnType(fa, sigs, symbol_table)) |ret| {
+                                return ret;
                             }
                         },
                         else => {},
@@ -1008,6 +1001,52 @@ pub const TypeSystem = struct {
         const before = name[0..last_dot];
         const prev_dot = std.mem.lastIndexOfScalar(u8, before, '.') orelse return null;
         return name[prev_dot + 1 ..];
+    }
+
+    /// The declared return type of an instance method `recv.method()`, or null
+    /// when the receiver is not known to be a struct or the method is not
+    /// registered. A variable's tracked type is `.Struct = 0` — id 0 is the
+    /// struct table's sentinel — so the concrete struct name is recovered from
+    /// the variable's tracked custom type, with field resolution and the struct
+    /// table's own name as fallbacks.
+    fn instanceMethodReturnType(
+        self: *TypeSystem,
+        fa: ast.FieldAccess,
+        sigs: *const std.StringHashMap(FunctionInfo),
+        symbol_table: *SymbolTable,
+    ) ?HIRType {
+        var recv_name: ?[]const u8 = null;
+        if (fa.object.data == .Variable) {
+            recv_name = symbol_table.getVariableCustomType(fa.object.data.Variable.lexeme);
+        }
+        if (recv_name == null) {
+            if (self.resolveFieldAccessType(fa.object, symbol_table)) |res| {
+                recv_name = res.custom_type_name;
+            }
+        }
+        if (recv_name == null) {
+            const recv_type = self.inferTypeFromExpression(fa.object, symbol_table);
+            if (recv_type == .Struct) {
+                if (self.struct_table) |st| recv_name = st.getName(recv_type.Struct);
+            }
+        }
+
+        const sname = recv_name orelse return null;
+        const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ sname, fa.field.lexeme }) catch return null;
+        defer self.allocator.free(qualified);
+        if (sigs.get(qualified)) |info| return info.return_type;
+
+        // Method signatures are keyed by the bare struct name; a module-qualified
+        // receiver (`mod.Type`) needs its scope prefix stripped.
+        if (std.mem.lastIndexOfScalar(u8, sname, '.')) |dot| {
+            const bare = sname[dot + 1 ..];
+            if (bare.len > 0) {
+                const bare_qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ bare, fa.field.lexeme }) catch return null;
+                defer self.allocator.free(bare_qualified);
+                if (sigs.get(bare_qualified)) |info| return info.return_type;
+            }
+        }
+        return null;
     }
 
     pub fn inferBinaryOpResultType(self: *TypeSystem, operator_type: TokenType, left_expr: *ast.Expr, right_expr: *ast.Expr, symbol_table: *SymbolTable) HIRType {

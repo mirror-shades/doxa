@@ -89,6 +89,29 @@ pub fn resolveBareCallee(generator: *HIRGenerator, bare_name: []const u8) Resolv
         };
     }
 
+    // A function imported by name from a `.zig` module: the inline-Zig wrapper
+    // exports it as `<zig-stem>.<name>`, while the import bound the bare name.
+    if (generator.imported_symbols) |syms| {
+        if (syms.get(bare_name)) |sym| {
+            if (sym.kind == .Function and std.mem.endsWith(u8, sym.original_module, ".zig")) {
+                const stem = std.fs.path.stem(sym.original_module);
+                const qualified = std.fmt.allocPrint(generator.allocator, "{s}.{s}", .{ stem, bare_name }) catch
+                    return .{
+                        .qualified_name = bare_name,
+                        .call_kind = .ModuleFunction,
+                        .function_index = null,
+                        .name_allocated = false,
+                    };
+                return .{
+                    .qualified_name = qualified,
+                    .call_kind = .ModuleFunction,
+                    .function_index = null,
+                    .name_allocated = true,
+                };
+            }
+        }
+    }
+
     return .{
         .qualified_name = bare_name,
         .call_kind = .ModuleFunction,

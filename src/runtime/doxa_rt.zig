@@ -264,6 +264,10 @@ pub export fn doxa_set_environ(env: ?*const std.process.Environ.Map) callconv(.c
     startup_environ = env;
 }
 
+pub export fn doxa_environ() callconv(.c) ?*const std.process.Environ.Map {
+    return startup_environ;
+}
+
 pub export fn doxa_getenv(name_ptr: ?[*]const u8, name_len: u64, out_len: *u64) callconv(.c) ?[*]const u8 {
     const env = startup_environ orelse return null;
     const name = if (name_ptr) |p| p[0..@intCast(name_len)] else return null;

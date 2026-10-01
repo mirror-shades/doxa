@@ -373,11 +373,11 @@ pub const SemanticAnalyzer = struct {
 
             if (variable.type == .FUNCTION) {
                 if (self.parser != null and self.parser.?.entry_point_name != null and std.mem.eql(u8, variable.name, self.parser.?.entry_point_name.?)) continue;
-                self.reporter.reportWarning(null, ErrorCode.UNUSED_FUNCTION, "unused function '{s}'", .{variable.name});
+                self.reporter.reportWarning(variable.decl_location, ErrorCode.UNUSED_FUNCTION, "unused function '{s}'", .{variable.name});
             } else if (variable.is_param) {
-                self.reporter.reportWarning(null, ErrorCode.UNUSED_PARAMETER, "unused parameter '{s}'", .{variable.name});
+                self.reporter.reportWarning(variable.decl_location, ErrorCode.UNUSED_PARAMETER, "unused parameter '{s}'", .{variable.name});
             } else {
-                self.reporter.reportWarning(null, ErrorCode.UNUSED_VARIABLE, "unused variable '{s}'", .{variable.name});
+                self.reporter.reportWarning(variable.decl_location, ErrorCode.UNUSED_VARIABLE, "unused variable '{s}'", .{variable.name});
             }
         }
 
@@ -398,6 +398,9 @@ pub const SemanticAnalyzer = struct {
                         // direct-import names produce a warning.
                         const i = std.mem.indexOf(u8, entry.key_ptr.*, ".");
                         if (i) |_| continue;
+                        // TODO: thread the import-site location through `ImportedSymbol`
+                        // so this warning renders with a source snippet. It currently
+                        // carries no token, unlike scope variables.
                         self.reporter.reportWarning(null, ErrorCode.UNUSED_IMPORT, "unused import '{s}'", .{sym.name});
                     }
                 }
@@ -847,19 +850,20 @@ pub const SemanticAnalyzer = struct {
                             false,
                             self.memory,
                         );
-                        _ = scope.createValueBinding(
+                        if (scope.createValueBinding(
                             func.name.lexeme,
                             TokenLiteral{ .function = .{ .params = func.params, .body = func.body, .closure = &env, .defining_module = null } },
                             .FUNCTION,
                             func_type_info,
                             true,
-                        ) catch |err| {
-                            if (err == error.DuplicateVariableName) {
-                                // Ignore duplicates in pre-pass; they will be reported later
-                            } else {
+                        )) |func_var| {
+                            func_var.recordDeclLocation(func.name);
+                        } else |err| {
+                            if (err != error.DuplicateVariableName) {
+                                // Duplicates in the pre-pass are reported later, once.
                                 return err;
                             }
-                        };
+                        }
                     }
                 },
                 else => {},
@@ -1004,7 +1008,9 @@ pub const SemanticAnalyzer = struct {
                         scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
                     else
                         scope.createValueBinding(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable);
-                    _ = binding catch |err| {
+                    if (binding) |declared| {
+                        declared.recordDeclLocation(decl.name);
+                    } else |err| {
                         if (err == error.DuplicateVariableName) {
                             self.reporter.reportCompileError(
                                 getLocationFromBase(stmt.base),
@@ -1017,7 +1023,7 @@ pub const SemanticAnalyzer = struct {
                         } else {
                             return err;
                         }
-                    };
+                    }
                 },
                 .Block => |block_stmts| {
                     const block_scope = try self.memory.scope_manager.createScope(scope, self.memory);
@@ -1350,7 +1356,9 @@ pub const SemanticAnalyzer = struct {
                                 scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
                             else
                                 scope.createValueBinding(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable);
-                            _ = binding catch |err| {
+                            if (binding) |declared| {
+                                declared.recordDeclLocation(decl.name);
+                            } else |err| {
                                 if (err == error.DuplicateVariableName) {
                                     self.reporter.reportCompileError(
                                         getLocationFromBase(stmt.base),
@@ -1363,7 +1371,7 @@ pub const SemanticAnalyzer = struct {
                                 } else {
                                     return err;
                                 }
-                            };
+                            }
                         }
                     }
 
@@ -1395,6 +1403,23 @@ pub const SemanticAnalyzer = struct {
                         if (expression.data == .Unreachable) {
                             prev_was_terminator = true;
                         }
+                        // Struct method bodies are not statements in this scope, so
+                        // they are validated here, once, with the struct type bound as
+                        // the receiver context. Without this, unresolved names inside a
+                        // method body (e.g. a typo'd receiver) never error and codegen
+                        // silently emits a null-based access.
+                        if (expression.data == .StructDecl) {
+                            const struct_decl = expression.data.StructDecl;
+                            for (struct_decl.methods) |method| {
+                                const method_struct_type: ?[]const u8 = if (method.is_static) null else struct_decl.name.lexeme;
+                                try self.validateFunctionBodyWithStruct(
+                                    method,
+                                    .{ .location = getLocationFromBase(expression.base) },
+                                    method.return_type_info,
+                                    method_struct_type,
+                                );
+                            }
+                        }
                     }
                 },
                 .Return => |return_stmt| {
@@ -1415,7 +1440,7 @@ pub const SemanticAnalyzer = struct {
                     }
 
                     if (method_struct_type) |struct_name| {
-                        std.debug.print("Found method '{s}' in struct '{s}'\n", .{ func.name.lexeme, struct_name });
+                        _ = struct_name;
                     }
                     // Removed the warning for functions that aren't methods - they're just regular functions
 
@@ -2421,6 +2446,7 @@ pub const SemanticAnalyzer = struct {
                 }
             };
             param_var.is_param = true;
+            param_var.recordDeclLocation(param.name);
         }
 
         // Temporarily set current scope to function scope

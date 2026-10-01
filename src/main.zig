@@ -273,11 +273,12 @@ fn registerMissingTypesFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
     };
 
     // Ensure all lazy module namespaces are loaded so their enum/group/struct
-    // declarations are available in the module cache.
+    // declarations are available in the module cache. (Reachability loading is
+    // done by the resolver; this is the safety net for any namespace registered
+    // after it, e.g. while lowering.)
     var ns_it = parser.module_namespaces.iterator();
     while (ns_it.next()) |entry| {
-        const mi = entry.value_ptr.*;
-        if (mi.ast == null) {
+        if (entry.value_ptr.ast == null) {
             _ = parser.ensureModuleNamespace(entry.key_ptr.*) catch continue;
         }
     }
@@ -299,6 +300,11 @@ fn registerMissingTypesFromModuleCache(parser: *Parser, semantic_analyzer: *Sema
                             try Registration.groupDecl(semantic_analyzer, expr.data.GroupDecl);
                         } else if (expr.data == .StructDecl) {
                             try Registration.structDecl(semantic_analyzer, expr.data.StructDecl);
+                            // Register the struct's methods too. Semantic inference
+                            // does this on first use, but a struct referenced only
+                            // from an imported module body never goes through it, so
+                            // its method calls would silently degrade to no-ops.
+                            try semantic_analyzer.ensureImportedStructRegistered(expr.data.StructDecl.name.lexeme);
                         }
                     }
                 },
@@ -748,11 +754,11 @@ fn emitInspectionArtifact(io: std.Io, zig_exe_path: []const u8, cli_options: *co
     const term = try child.wait(io);
     switch (term) {
         .exited => |code| if (code != 0) {
-            std.debug.print("Warning: could not emit {s} (zig cc exited {d})\n", .{ out_name, code });
+            std.debug.print("Warning: could not emit inspection artifact {s} (zig cc exited with code {d}); continuing\n", .{ out_name, code });
             return;
         },
         else => {
-            std.debug.print("Warning: could not emit {s}\n", .{out_name});
+            std.debug.print("Warning: could not emit inspection artifact {s} (zig cc terminated unexpectedly); continuing\n", .{out_name});
             return;
         },
     }
@@ -876,8 +882,14 @@ fn compileToNative(
         });
         const term = try child.wait(io);
         switch (term) {
-            .exited => |code| if (code != 0) return error.Unexpected,
-            else => return error.Unexpected,
+            .exited => |code| if (code != 0) {
+                reportBuildStepFailure(reporter, "compiling the program object", code);
+                return error.Unexpected;
+            },
+            else => {
+                reportBuildStepFailure(reporter, "compiling the program object", null);
+                return error.Unexpected;
+            },
         }
         break :blk try artifact_cache.publish(key, obj_ext);
     };
@@ -957,8 +969,14 @@ fn compileToNative(
         });
         const term = try child.wait(io);
         switch (term) {
-            .exited => |code| if (code != 0) return error.Unexpected,
-            else => return error.Unexpected,
+            .exited => |code| if (code != 0) {
+                reportBuildStepFailure(reporter, "compiling the runtime object", code);
+                return error.Unexpected;
+            },
+            else => {
+                reportBuildStepFailure(reporter, "compiling the runtime object", null);
+                return error.Unexpected;
+            },
         }
         break :blk try artifact_cache.publish(key, obj_ext);
     };
@@ -1017,11 +1035,11 @@ fn compileToNative(
         const term2 = try child_ln.wait(io);
         switch (term2) {
             .exited => |code| if (code != 0) {
-                std.debug.print("link failed\n", .{});
+                reportBuildStepFailure(reporter, "linking the executable", code);
                 return error.Unexpected;
             },
             else => {
-                std.debug.print("link failed\n", .{});
+                reportBuildStepFailure(reporter, "linking the executable", null);
                 return error.Unexpected;
             },
         }
@@ -1489,6 +1507,129 @@ fn exitIfCompileErrors(reporter: *Reporter) void {
     }
 }
 
+fn parserErrorHint(err: anyerror) []const u8 {
+    return switch (err) {
+        error.ExpectedComma => "expected a ',' between arguments or list elements",
+        error.ExpectedCommaOrBrace => "expected ',' or '}'",
+        error.ExpectedCommaOrParen => "expected ',' or ')'",
+        error.ExpectedCommaOrBracket => "expected ',' or ']'",
+        error.ExpectedCommaOrClosingBracket => "expected ',' or a closing bracket",
+        error.ExpectedCommaOrClosingParenthesis => "expected ',' or a closing parenthesis",
+        error.ExpectedRightParen, error.ExpectedClosingParen, error.ExpectedClosingParenthesis => "expected a closing parenthesis ')'",
+        error.ExpectedLeftParen => "expected an opening parenthesis '('",
+        error.ExpectedRightBrace => "expected a closing brace '}'",
+        error.ExpectedLeftBrace => "expected an opening brace '{'",
+        error.ExpectedRightBracket => "expected a closing bracket ']'",
+        error.ExpectedLeftBracket => "expected an opening bracket '['",
+        error.ExpectedExpression => "expected an expression",
+        error.ExpectedIdentifier => "expected an identifier",
+        error.ExpectedType => "expected a type",
+        error.ExpectedThen => "expected 'then' after the condition",
+        error.ExpectedElse => "expected 'else'",
+        error.ExpectedColon => "expected ':'",
+        error.ExpectedAssignmentOperator => "expected an assignment operator",
+        error.ExpectedReturnsKeyword => "expected 'returns'",
+        error.ExpectedLeftBraceOrReturnsKeyword => "expected '{' or 'returns'",
+        error.ExpectedFunctionName => "expected a function name",
+        error.ExpectedFunctionParams => "expected function parameters",
+        error.ExpectedFunctionBody => "expected a function body",
+        error.ExpectedFunctionReturnType => "expected a function return type",
+        error.ExpectedString, error.ExpectedStringLiteral => "expected a string literal",
+        error.ExpectedMapKey => "expected a map key",
+        error.ExpectedInKeyword => "expected 'in'",
+        error.ExpectedWhereKeyword => "expected 'where'",
+        error.ExpectedMapKeyword => "expected 'map'",
+        error.ExpectedPattern => "expected a pattern",
+        error.ExpectedEnumVariant => "expected an enum variant",
+        error.ExpectedModuleName => "expected a module name",
+        error.ExpectedImportName => "expected an import name",
+        error.UnexpectedToken => "unexpected token",
+        error.ParserDidNotAdvance => "parser could not make progress",
+        error.InternalParserError => "internal parser error",
+        else => "",
+    };
+}
+
+fn reportParserError(parser: *Parser, reporter: *Reporter, err: anyerror) void {
+    const tok = parser.peek();
+
+    const file = if (tok.file.len > 0) tok.file else parser.current_file;
+    const file_uri = if (tok.file_uri.len > 0) tok.file_uri else parser.current_file_uri;
+
+    const loc = Location{
+        .file = file,
+        .file_uri = file_uri,
+        .range = .{
+            .start_line = tok.line,
+            .start_col = tok.column,
+            .end_line = tok.line,
+            .end_col = tok.column + tok.lexeme.len,
+        },
+    };
+
+    var lexeme_buf: [64]u8 = undefined;
+    var token_desc: []const u8 = @tagName(tok.type);
+    if (tok.lexeme.len > 0 and tok.lexeme.len <= lexeme_buf.len and isPrintableAscii(tok.lexeme)) {
+        token_desc = std.fmt.bufPrint(&lexeme_buf, "{s} '{s}'", .{ @tagName(tok.type), tok.lexeme }) catch @tagName(tok.type);
+    }
+
+    const hint = parserErrorHint(err);
+    if (hint.len > 0) {
+        reporter.reportCompileError(
+            loc,
+            ErrorCode.SYNTAX_ERROR,
+            "{s}: {s}; found {s}",
+            .{ @errorName(err), hint, token_desc },
+        );
+    } else {
+        reporter.reportCompileError(
+            loc,
+            ErrorCode.SYNTAX_ERROR,
+            "parse error: {s}; found {s}",
+            .{ @errorName(err), token_desc },
+        );
+    }
+}
+
+fn isPrintableAscii(text: []const u8) bool {
+    for (text) |byte| {
+        if (byte < 0x20 or byte > 0x7e) return false;
+    }
+    return true;
+}
+
+/// Fallback for a compilation phase that returned an error without emitting a
+/// diagnostic of its own. Turns what would otherwise be a bare Zig error (and
+/// stack trace) into a located, severity-tagged message.
+fn reportPhaseFailure(reporter: *Reporter, phase: []const u8, err: anyerror) void {
+    reporter.reportCompileError(
+        null,
+        ErrorCode.INTERNAL_ERROR,
+        "internal compiler error in the {s} phase: {s}",
+        .{ phase, @errorName(err) },
+    );
+}
+
+/// Surfaces a failed build step (a `zig` subprocess) as a diagnostic. The
+/// subprocess's own stderr is inherited, so this adds the step and exit status.
+fn reportBuildStepFailure(reporter: *Reporter, step: []const u8, exit_code: ?u8) void {
+    if (exit_code) |code| {
+        reporter.reportCompileError(
+            null,
+            ErrorCode.INTERNAL_ERROR,
+            "{s} failed: zig exited with code {d}",
+            .{ step, code },
+        );
+    } else {
+        reporter.reportCompileError(
+            null,
+            ErrorCode.INTERNAL_ERROR,
+            "{s} failed: zig terminated unexpectedly",
+            .{step},
+        );
+    }
+}
+
 fn isDoxaFile(path: []const u8, path_uri: []const u8, reporter: *Reporter) void {
     if (!stringEndsWith(path, DOXA_EXTENSION)) {
         const loc = Location{
@@ -1501,7 +1642,7 @@ fn isDoxaFile(path: []const u8, path_uri: []const u8, reporter: *Reporter) void 
                 .end_col = 0,
             },
         };
-        reporter.reportCompileError(loc, null, "Error: '{s}' is not a doxa file\n", .{path});
+        reporter.reportCompileError(loc, null, "'{s}' is not a doxa file", .{path});
         std.process.exit(EXIT_CODE_USAGE);
     }
 }
@@ -1543,6 +1684,7 @@ pub fn main(init: std.process.Init) !void {
 
     var reporter = Reporter.init(init.io, gpa, .{}, &sourceCache);
     defer reporter.deinit();
+    reporter.detectAnsi(init.environ_map);
 
     const cli_options = try parseArgs(gpa, init);
     defer cli_options.deinit(gpa);
@@ -1608,7 +1750,14 @@ pub fn main(init: std.process.Init) !void {
     try sourceCache.load(script_path, source);
     isDoxaFile(script_path, try reporter.ensureFileUri(init.io, script_path), &reporter);
 
-    try pipeline(init.io, init.environ_map, gpa, cli_options, script_path, &memoryManager, &reporter, &profiler, source);
+    pipeline(init.io, init.environ_map, gpa, cli_options, script_path, &memoryManager, &reporter, &profiler, source) catch |err| {
+        // Compile-time diagnostics exit inside `pipeline`; reaching here means an
+        // unexpected failure that would otherwise print a Zig stack trace.
+        if (!reporter.hasCompileErrors()) {
+            std.debug.print("Doxa: compilation failed: {s}\n", .{@errorName(err)});
+        }
+        std.process.exit(EXIT_CODE_USAGE);
+    };
 }
 
 fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8, memoryManager: *MemoryManager, reporter: *Reporter, profiler: *Profiler, source: []const u8) !void {
@@ -1616,6 +1765,9 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
 
     profiler.begin("lex");
     const lexedTokens = lexicAnalysis(io, memoryManager, source, script_path, reporter) catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "lexer", err);
+        }
         exitIfCompileErrors(reporter);
         return err;
     };
@@ -1631,6 +1783,9 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter);
     defer parser.deinit();
     const parsedStatements = parser.execute() catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportParserError(&parser, reporter, err);
+        }
         exitIfCompileErrors(reporter);
         return err;
     };
@@ -1647,6 +1802,9 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     profiler.begin("resolve");
     var resolver = Resolver.init(&parser);
     resolver.resolve() catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "resolve", err);
+        }
         exitIfCompileErrors(reporter);
         return err;
     };
@@ -1657,6 +1815,9 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), reporter, memoryManager, &parser);
     defer semantic_analyzer.deinit();
     semantic_analyzer.analyze(parsedStatements) catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "semantic", err);
+        }
         exitIfCompileErrors(reporter);
         return err;
     };
@@ -1672,6 +1833,9 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
     defer reachable_modules.deinit();
     const hir_program = generateHIRProgram(io, memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, reporter, profiler) catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "hir", err);
+        }
         exitIfCompileErrors(reporter);
         return err;
     };

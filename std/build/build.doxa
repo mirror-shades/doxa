@@ -461,7 +461,8 @@ public function run(c :: Context, force :: tetra) returns int | error.StdError {
 public function execute(c :: Context, force :: tetra) {
     const outcome is run(c, force)
     outcome as int then {
-        @print("build exit code: {string(outcome)}\n")
+        @print("build exit code: {@string(outcome)}\n")
+        if outcome != 0 then @exit(outcome)
     } else {
         # The compiler's own diagnostics already describe the failing artifact;
         # here we only need to signal the failure on the standard channel.

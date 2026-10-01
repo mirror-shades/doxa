@@ -1,5 +1,4 @@
 const std = @import("std");
-const token = @import("../types/token.zig");
 const ast = @import("../ast/ast.zig");
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const expression_parser = @import("expression_parser.zig");
@@ -130,25 +129,13 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: as
     defer temp_parser.deinit();
 
     const expr = try expression_parser.parseExpression(&temp_parser) orelse {
-        const var_token = token.Token{
-            .type = .IDENTIFIER,
-            .lexeme = owned_content,
-            .literal = .{ .nothing = {} },
-            .line = 0,
-            .column = 0,
-            .file = self.current_file,
-            .file_uri = self.current_file_uri,
-        };
-
-        const var_expr = try self.allocator.create(ast.Expr);
-        var_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = outer_span,
-            },
-            .data = .{ .Variable = var_token },
-        };
-        return var_expr;
+        self.reporter.reportCompileError(
+            outer_span.location,
+            Errors.ErrorCode.INVALID_PLACEHOLDER_EXPRESSION,
+            "invalid interpolation placeholder '{s}'; built-in operations require '@' (e.g. `{{@string(value)}}`)",
+            .{content},
+        );
+        return error.InvalidExpression;
     };
 
     expr.base.span = outer_span;

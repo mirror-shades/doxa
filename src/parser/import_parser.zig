@@ -18,6 +18,7 @@ pub const ImportedSymbol = struct {
     namespace_alias: ?[]const u8 = null,
     param_count: ?u32 = null,
     param_types: ?[]ast.TypeInfo = null,
+    param_aliases: ?[]bool = null,
     return_type_info: ?ast.TypeInfo = null,
     enum_role: ?EnumRole = null,
     enum_type_name: ?[]const u8 = null,

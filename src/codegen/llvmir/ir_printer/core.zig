@@ -973,7 +973,7 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn rehomeForLocalStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
             if (self.plainStoreProven(value, declared_type)) return value;
             if (value.region == .Deep or rehomeUnknownToClone(declared_type))
-                return self.cloneHeapValue(w, id, value, declared_type, .persistent, true, 0);
+                return self.cloneHeapValue(w, id, value, declared_type, .persistent, true, 0, null);
             return self.cloneHeapForStore(w, id, value, declared_type);
         }
 
@@ -988,7 +988,7 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn rehomeForGlobalStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
             if (self.plainGlobalStoreProven(value, declared_type)) return value;
             if (value.region == .Func or value.region == .Deep or rehomeUnknownToClone(declared_type))
-                return self.cloneHeapValue(w, id, value, declared_type, .program_root, true, 0);
+                return self.cloneHeapValue(w, id, value, declared_type, .program_root, true, 0, null);
             return self.cloneHeapForGlobalStore(w, id, value, declared_type);
         }
 
@@ -1014,26 +1014,26 @@ pub fn Methods(comptime Ctx: type) type {
         /// that destination (or an ancestor of it). Arrays are always copied on
         /// assignment. Scalars are returned unchanged.
         pub fn cloneHeapForStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
-            return self.cloneHeapValue(w, id, value, declared_type, .persistent, false, 0);
+            return self.cloneHeapValue(w, id, value, declared_type, .persistent, false, 0, null);
         }
 
         /// Always clone into the function's persistent scope. Used for by-value
         /// parameters so the callee cannot mutate the caller's heap object.
         pub fn cloneHeapForSnapshot(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
-            return self.cloneHeapValue(w, id, value, declared_type, .persistent, true, 0);
+            return self.cloneHeapValue(w, id, value, declared_type, .persistent, true, 0, null);
         }
 
         /// Deep-copy a return value into the caller's scope (one level above the
         /// current function scope) so it survives the function scope being freed.
         pub fn cloneHeapForReturn(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
-            return self.cloneHeapValue(w, id, value, declared_type, .caller, true, 0);
+            return self.cloneHeapValue(w, id, value, declared_type, .caller, true, 0, null);
         }
 
         /// Deep-copy a heap value into the program-root arena. Used when storing
         /// into a global: cloning into the current function would leave the
         /// global dangling after that function's `doxa_scope_exit()`.
         pub fn cloneHeapForGlobalStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType) !StackVal {
-            return self.cloneHeapValue(w, id, value, declared_type, .program_root, false, 0);
+            return self.cloneHeapValue(w, id, value, declared_type, .program_root, false, 0, null);
         }
 
         /// Re-home a heap value stored through a `^` alias into the arena that
@@ -1041,12 +1041,33 @@ pub fn Methods(comptime Ctx: type) type {
         /// between this function and that owner, so the clone lands where the
         /// caller's variable lives and not in a callee scope that is about to
         /// be freed.
-        pub fn cloneHeapForAliasStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType, alias_extra: u8) !StackVal {
-            return self.cloneHeapValue(w, id, value, declared_type, .caller, false, alias_extra);
+        pub fn cloneHeapForAliasStore(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType, alias_extra: u8, depth_value: ?[]const u8) !StackVal {
+            // A cross-call runtime depth already counts every frame between the
+            // callee and the owner, so the compile-time re-pass count would
+            // double-count it. Use only one carrier.
+            const extra: u8 = if (depth_value != null) 0 else alias_extra;
+            return self.cloneHeapValue(w, id, value, declared_type, .caller, false, extra, depth_value);
         }
 
-        pub fn cloneHeapValue(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType, dest: HeapCloneDest, snapshot: bool, extra_levels: u8) !StackVal {
+        pub fn cloneHeapValue(self: *IRPrinter, w: anytype, id: *usize, value: StackVal, declared_type: HIR.HIRType, dest: HeapCloneDest, snapshot: bool, extra_levels: u8, depth_value: ?[]const u8) !StackVal {
             const levels_up: usize = (self.scope_depth -| @as(usize, @intFromBool(self.in_function_context))) + @intFromBool(dest == .caller) + extra_levels;
+
+            // A runtime alias depth adds how many frames the owner sits above the
+            // immediate caller; fold it into the level with an `add` so the
+            // clone lands in the true owner's arena.
+            var levels_owned: ?[]const u8 = null;
+            defer if (levels_owned) |l| self.allocator.free(l);
+            const levels_operand: []const u8 = if (depth_value) |d| blk: {
+                const lvl = try self.nextTemp(id);
+                const add_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {d}, {s}\n", .{ lvl, levels_up, d });
+                defer self.allocator.free(add_line);
+                try w.writeAll(add_line);
+                break :blk lvl;
+            } else blk: {
+                const s = try std.fmt.allocPrint(self.allocator, "{d}", .{levels_up});
+                levels_owned = s;
+                break :blk s;
+            };
 
             switch (declared_type) {
                 .String => {
@@ -1082,7 +1103,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const call_line = if (dest == .program_root)
                         try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_root(ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ s_ptr, s_len, out_ptr_slot, out_len_slot })
                     else
-                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_at(i64 {d}, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ levels_up, s_ptr, s_len, out_ptr_slot, out_len_slot });
+                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_clone_at(i64 {s}, ptr {s}, i64 {s}, ptr {s}, ptr {s})\n", .{ levels_operand, s_ptr, s_len, out_ptr_slot, out_len_slot });
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
 
@@ -1113,7 +1134,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const clone_line = if (dest == .program_root)
                         try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_{s}_root(ptr {s})\n", .{ clone_reg, if (snapshot) "clone" else "rehome", src_ptr.name })
                     else
-                        try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_{s}_at(i64 {d}, ptr {s})\n", .{ clone_reg, if (snapshot) "clone" else "rehome", levels_up, src_ptr.name });
+                        try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_{s}_at(i64 {s}, ptr {s})\n", .{ clone_reg, if (snapshot) "clone" else "rehome", levels_operand, src_ptr.name });
                     defer self.allocator.free(clone_line);
                     try w.writeAll(clone_line);
                     return .{ .name = clone_reg, .ty = .PTR, .array_type = value.array_type, .fixed_array_depth = value.fixed_array_depth, .fixed_array_sizes = value.fixed_array_sizes };
@@ -1133,7 +1154,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 const scalar_line = if (dest == .program_root)
                                     try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_clone_scalar_root(i64 {d}, ptr {s})\n", .{ clone_reg, words, src_ptr.name })
                                 else
-                                    try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_clone_scalar_at(i64 {d}, i64 {d}, ptr {s})\n", .{ clone_reg, levels_up, words, src_ptr.name });
+                                    try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_struct_clone_scalar_at(i64 {s}, i64 {d}, ptr {s})\n", .{ clone_reg, levels_operand, words, src_ptr.name });
                                 defer self.allocator.free(scalar_line);
                                 try w.writeAll(scalar_line);
                                 return .{ .name = clone_reg, .ty = .PTR, .struct_type_name = value.struct_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names };
@@ -1144,7 +1165,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const clone_line = if (dest == .program_root)
                         try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @{s}(ptr {s})\n", .{ clone_reg, if (snapshot) "doxa_struct_clone_root" else "doxa_struct_rehome_root", src_ptr.name })
                     else
-                        try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @{s}(i64 {d}, ptr {s})\n", .{ clone_reg, if (snapshot) "doxa_struct_clone_at" else "doxa_struct_rehome_at", levels_up, src_ptr.name });
+                        try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @{s}(i64 {s}, ptr {s})\n", .{ clone_reg, if (snapshot) "doxa_struct_clone_at" else "doxa_struct_rehome_at", levels_operand, src_ptr.name });
                     defer self.allocator.free(clone_line);
                     try w.writeAll(clone_line);
                     return .{ .name = clone_reg, .ty = .PTR, .struct_type_name = value.struct_type_name, .struct_field_types = value.struct_field_types, .struct_field_names = value.struct_field_names };
@@ -1161,7 +1182,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const call_line = if (dest == .program_root)
                         try std.fmt.allocPrint(self.allocator, "  call void @doxa_clone_doxa_value_root(ptr {s})\n", .{slot})
                     else
-                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_clone_doxa_value_at(i64 {d}, ptr {s})\n", .{ levels_up, slot });
+                        try std.fmt.allocPrint(self.allocator, "  call void @doxa_clone_doxa_value_at(i64 {s}, ptr {s})\n", .{ levels_operand, slot });
                     defer self.allocator.free(call_line);
                     try w.writeAll(call_line);
                     const loaded = try self.nextTemp(id);

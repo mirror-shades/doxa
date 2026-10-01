@@ -1279,6 +1279,245 @@ pub const Parser = struct {
         return null;
     }
 
+    /// Materialize every nested module namespace referenced by a module's
+    /// bodies (`std.host` in `std.host.isWindows`). Semantic analysis performs
+    /// this lazily for the entry file, but imported module bodies are lowered by
+    /// codegen without a semantic pass, so a nested call inside one would
+    /// otherwise resolve against a namespace that was never loaded.
+    pub fn materializeNestedNamespacesInModule(self: *Parser, module_ast: *ast.Expr) void {
+        if (module_ast.data != .Block) return;
+        _ = walkStatements(NamespaceContext{ .parser = self }, module_ast.data.Block.statements);
+    }
+
+    /// The single pre-order traversal over a module body's expression tree.
+    /// `ReferenceContext` (does this body name X?) and `NamespaceContext`
+    /// (materialize nested namespaces) both build on it, so the node enumeration
+    /// lives in exactly one place. `ctx.visit` runs for every expression before
+    /// its children and returns true to stop.
+    fn walkStatements(ctx: anytype, statements: []ast.Stmt) bool {
+        for (statements) |stmt| {
+            if (walkStmt(ctx, stmt)) return true;
+        }
+        return false;
+    }
+
+    fn walkStmt(ctx: anytype, stmt: ast.Stmt) bool {
+        switch (stmt.data) {
+            .Expression => |maybe_expr| {
+                if (maybe_expr) |expr| {
+                    // A struct declaration carries method bodies, which are
+                    // lowered as functions but are not statements of the block.
+                    if (expr.data == .StructDecl) {
+                        for (expr.data.StructDecl.methods) |method| {
+                            if (walkStatements(ctx, method.body)) return true;
+                        }
+                        return false;
+                    }
+                    return walkExpr(ctx, expr);
+                }
+            },
+            .VarDecl => |decl| if (decl.initializer) |initializer| return walkExpr(ctx, initializer),
+            .Block => |inner| return walkStatements(ctx, inner),
+            .FunctionDecl => |func| return walkStatements(ctx, func.body),
+            .Return => |ret| if (ret.value) |value| return walkExpr(ctx, value),
+            .MapLiteral => |lit| {
+                if (walkMapEntries(ctx, lit.entries)) return true;
+                if (lit.else_value) |else_value| return walkExpr(ctx, else_value);
+            },
+            .Assert => |assert_stmt| {
+                if (walkExpr(ctx, assert_stmt.condition)) return true;
+                if (assert_stmt.message) |message| return walkExpr(ctx, message);
+            },
+            .Cast => |cast| {
+                if (walkExpr(ctx, cast.value)) return true;
+                if (cast.then_branch) |then_expr| {
+                    if (walkExpr(ctx, then_expr)) return true;
+                }
+                if (cast.else_branch) |else_expr| return walkExpr(ctx, else_expr);
+            },
+            .Defer => |expr| return walkExpr(ctx, expr),
+            .Lift => |lift| return walkExpr(ctx, lift.value),
+            else => {},
+        }
+        return false;
+    }
+
+    fn walkMapEntries(ctx: anytype, entries: []*ast.MapEntry) bool {
+        for (entries) |entry| {
+            if (walkExpr(ctx, entry.key)) return true;
+            if (walkExpr(ctx, entry.value)) return true;
+        }
+        return false;
+    }
+
+    fn walkExpr(ctx: anytype, expr: *ast.Expr) bool {
+        if (ctx.visit(expr)) return true;
+        switch (expr.data) {
+            .InterpolatedString => |template| for (template.parts) |part| switch (part) {
+                .String => {},
+                .Expression => |part_expr| if (walkExpr(ctx, part_expr)) return true,
+            },
+            .Binary => |binary| {
+                if (binary.left) |left| if (walkExpr(ctx, left)) return true;
+                if (binary.right) |right| if (walkExpr(ctx, right)) return true;
+            },
+            .Unary => |unary| if (unary.right) |right| return walkExpr(ctx, right),
+            .Peek => |peek_expr| return walkExpr(ctx, peek_expr.expr),
+            .Print => |print_expr| return walkExpr(ctx, print_expr.expr),
+            .PeekStruct => |peek_struct| return walkExpr(ctx, peek_struct.expr),
+            .Assignment => |assign| if (assign.value) |value| return walkExpr(ctx, value),
+            .Grouping => |maybe_inner| if (maybe_inner) |inner| return walkExpr(ctx, inner),
+            .If => |if_expr| {
+                if (if_expr.condition) |condition| if (walkExpr(ctx, condition)) return true;
+                if (if_expr.then_branch) |then_branch| if (walkExpr(ctx, then_branch)) return true;
+                if (if_expr.else_branch) |else_branch| return walkExpr(ctx, else_branch);
+            },
+            .Block => |block_expr| {
+                if (walkStatements(ctx, block_expr.statements)) return true;
+                if (block_expr.value) |value| return walkExpr(ctx, value);
+            },
+            .Array => |items| for (items) |item| if (walkExpr(ctx, item)) return true,
+            .Struct => |fields| for (fields) |field| if (walkExpr(ctx, field.value)) return true,
+            .Index => |index_expr| {
+                if (walkExpr(ctx, index_expr.array)) return true;
+                return walkExpr(ctx, index_expr.index);
+            },
+            .IndexAssign => |assign| {
+                if (walkExpr(ctx, assign.array)) return true;
+                if (walkExpr(ctx, assign.index)) return true;
+                return walkExpr(ctx, assign.value);
+            },
+            .FunctionCall => |call_expr| {
+                if (walkExpr(ctx, call_expr.callee)) return true;
+                for (call_expr.arguments) |arg| if (walkExpr(ctx, arg.expr)) return true;
+            },
+            .Logical => |logical| {
+                if (walkExpr(ctx, logical.left)) return true;
+                return walkExpr(ctx, logical.right);
+            },
+            .FieldAccess => |field| return walkExpr(ctx, field.object),
+            .StructLiteral => |literal| for (literal.fields) |field| if (walkExpr(ctx, field.value)) return true,
+            .FieldAssignment => |field_assignment| {
+                if (walkExpr(ctx, field_assignment.object)) return true;
+                return walkExpr(ctx, field_assignment.value);
+            },
+            .Exists => |exists| {
+                if (walkExpr(ctx, exists.array)) return true;
+                return walkExpr(ctx, exists.condition);
+            },
+            .ForAll => |forall| {
+                if (walkExpr(ctx, forall.array)) return true;
+                return walkExpr(ctx, forall.condition);
+            },
+            .ArrayType => |array_type| if (array_type.size) |size| return walkExpr(ctx, size),
+            .Match => |match_expr| {
+                if (walkExpr(ctx, match_expr.value)) return true;
+                for (match_expr.cases) |case| if (walkExpr(ctx, case.body)) return true;
+            },
+            .Map => |map_expr| return walkMapEntries(ctx, map_expr.entries),
+            .MapLiteral => |map_expr| {
+                if (walkMapEntries(ctx, map_expr.entries)) return true;
+                if (map_expr.else_value) |else_value| return walkExpr(ctx, else_value);
+            },
+            .InternalCall => |internal_call| {
+                if (walkExpr(ctx, internal_call.receiver)) return true;
+                for (internal_call.arguments) |arg| if (walkExpr(ctx, arg)) return true;
+            },
+            .Increment => |inner| return walkExpr(ctx, inner),
+            .Decrement => |inner| return walkExpr(ctx, inner),
+            .CompoundAssign => |assign| if (assign.value) |value| return walkExpr(ctx, value),
+            .Assert => |assert_expr| {
+                if (walkExpr(ctx, assert_expr.condition)) return true;
+                if (assert_expr.message) |message| return walkExpr(ctx, message);
+            },
+            .Cast => |cast| {
+                if (walkExpr(ctx, cast.value)) return true;
+                if (cast.then_branch) |then_expr| {
+                    if (walkExpr(ctx, then_expr)) return true;
+                }
+                if (cast.else_branch) |else_expr| return walkExpr(ctx, else_expr);
+            },
+            .ReturnExpr => |ret| if (ret.value) |value| return walkExpr(ctx, value),
+            .Loop => |loop| {
+                if (loop.var_decl) |var_decl| if (walkStmt(ctx, var_decl.*)) return true;
+                if (loop.condition) |condition| if (walkExpr(ctx, condition)) return true;
+                if (loop.step) |step| if (walkExpr(ctx, step)) return true;
+                return walkExpr(ctx, loop.body);
+            },
+            .Range => |range| {
+                if (walkExpr(ctx, range.start)) return true;
+                return walkExpr(ctx, range.end);
+            },
+            else => {},
+        }
+        return false;
+    }
+
+    /// Name-reference visitor: true when the expression itself names `name`.
+    const ReferenceContext = struct {
+        name: []const u8,
+
+        fn visit(self: ReferenceContext, expr: *ast.Expr) bool {
+            return switch (expr.data) {
+                .Variable => |tok| std.mem.eql(u8, tok.lexeme, self.name),
+                .EnumMember => |tok| std.mem.eql(u8, tok.lexeme, self.name),
+                .StructLiteral => |literal| std.mem.eql(u8, literal.name.lexeme, self.name),
+                .Assignment => |assign| std.mem.eql(u8, assign.name.lexeme, self.name),
+                .CompoundAssign => |assign| std.mem.eql(u8, assign.name.lexeme, self.name),
+                else => false,
+            };
+        }
+    };
+
+    /// Nested-namespace visitor: resolve each field-access chain rooted at a
+    /// module namespace, loading the namespace segments it names.
+    const NamespaceContext = struct {
+        parser: *Parser,
+
+        fn visit(self: NamespaceContext, expr: *ast.Expr) bool {
+            if (expr.data == .FieldAccess) self.parser.materializeNamespacePath(expr);
+            return false;
+        }
+    };
+
+    /// Resolve `expr` as a module-namespace path (`std`, `std.host`) when every
+    /// segment is a loaded namespace. Returns an allocator-owned name the caller
+    /// must free, or null.
+    fn namespacePathIfModule(self: *Parser, expr: *ast.Expr) ?[]const u8 {
+        switch (expr.data) {
+            .Variable => |v| {
+                if (!self.module_namespaces.contains(v.lexeme)) return null;
+                return self.allocator.dupe(u8, v.lexeme) catch null;
+            },
+            .FieldAccess => |field| {
+                const parent = self.namespacePathIfModule(field.object) orelse return null;
+                defer self.allocator.free(parent);
+                const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ parent, field.field.lexeme }) catch return null;
+                if (self.module_namespaces.contains(qualified)) return qualified;
+                self.allocator.free(qualified);
+                return null;
+            },
+            else => return null,
+        }
+    }
+
+    /// Ensure each nested namespace along `expr`'s module path is loaded.
+    fn materializeNamespacePath(self: *Parser, expr: *ast.Expr) void {
+        switch (expr.data) {
+            .Variable => |v| {
+                _ = self.ensureModuleNamespace(v.lexeme) catch {};
+            },
+            .FieldAccess => |field| {
+                self.materializeNamespacePath(field.object);
+                if (self.namespacePathIfModule(field.object)) |parent| {
+                    defer self.allocator.free(parent);
+                    _ = self.ensureNestedModuleNamespace(parent, field.field.lexeme) catch {};
+                }
+            },
+            else => {},
+        }
+    }
+
     fn namespaceChainContainsImport(self: *Parser, module_name: []const u8, importer_file: []const u8, import_path: []const u8) !bool {
         const target_path = try normalizeImportPathForCycleCheck(self.allocator, importer_file, import_path);
         defer self.allocator.free(target_path);
@@ -1362,6 +1601,28 @@ pub const Parser = struct {
         while (made_progress) {
             made_progress = false;
 
+            // Nested module namespaces referenced by loaded module bodies
+            // (`std.host` in `std.host.isWindows`) are not imports, so they are
+            // materialized here rather than through the import scan below.
+            // Loading one can add a module to the graph, so it shares the same
+            // fixpoint. The ASTs are snapshotted because materialization inserts
+            // into `module_namespaces`.
+            {
+                var module_asts = std.array_list.Managed(*ast.Expr).init(self.allocator);
+                defer module_asts.deinit();
+                var ast_it = self.module_namespaces.iterator();
+                while (ast_it.next()) |entry| {
+                    if (entry.value_ptr.ast) |module_ast| {
+                        _ = module_asts.append(module_ast) catch break;
+                    }
+                }
+                const loaded_before = self.loadedNamespaceCount();
+                for (module_asts.items) |module_ast| {
+                    self.materializeNestedNamespacesInModule(module_ast);
+                }
+                if (self.loadedNamespaceCount() > loaded_before) made_progress = true;
+            }
+
             var pending = std.array_list.Managed(PendingModuleDependency).init(self.allocator);
             defer pending.deinit();
 
@@ -1423,6 +1684,17 @@ pub const Parser = struct {
         }
     }
 
+    /// How many namespaces have an AST, i.e. are loaded. Used to detect whether
+    /// a reachability step made progress.
+    fn loadedNamespaceCount(self: *Parser) usize {
+        var count: usize = 0;
+        var it = self.module_namespaces.iterator();
+        while (it.next()) |entry| {
+            if (entry.value_ptr.ast != null) count += 1;
+        }
+        return count;
+    }
+
     fn moduleReferencesImport(module_info: ast.ModuleInfo, import: ast.ImportInfo) bool {
         return switch (import.import_type) {
             .Module => if (import.namespace_alias) |alias| moduleReferencesName(module_info, alias) else false,
@@ -1444,144 +1716,7 @@ pub const Parser = struct {
     fn moduleReferencesName(module_info: ast.ModuleInfo, name: []const u8) bool {
         const module_ast = module_info.ast orelse return false;
         if (module_ast.data != .Block) return false;
-        return statementsReferenceName(module_ast.data.Block.statements, name);
-    }
-
-    fn statementsReferenceName(statements: []ast.Stmt, name: []const u8) bool {
-        for (statements) |stmt| {
-            if (stmtReferencesName(stmt, name)) return true;
-        }
-        return false;
-    }
-
-    fn stmtReferencesName(stmt: ast.Stmt, name: []const u8) bool {
-        return switch (stmt.data) {
-            .Expression => |maybe_expr| if (maybe_expr) |expr| exprReferencesName(expr, name) else false,
-            .VarDecl => |decl| if (decl.initializer) |initializer| exprReferencesName(initializer, name) else false,
-            .Block => |statements| statementsReferenceName(statements, name),
-            .FunctionDecl => |func| statementsReferenceName(func.body, name),
-            .Return => |ret| if (ret.value) |value| exprReferencesName(value, name) else false,
-            .MapLiteral => |lit| blk: {
-                for (lit.entries) |entry| {
-                    if (exprReferencesName(entry.key, name) or exprReferencesName(entry.value, name)) break :blk true;
-                }
-                if (lit.else_value) |else_value| {
-                    if (exprReferencesName(else_value, name)) break :blk true;
-                }
-                break :blk false;
-            },
-            .Assert => |assert_stmt| exprReferencesName(assert_stmt.condition, name) or
-                (if (assert_stmt.message) |message| exprReferencesName(message, name) else false),
-            .Cast => |cast| exprReferencesName(cast.value, name) or
-                (if (cast.then_branch) |then_expr| exprReferencesName(then_expr, name) else false) or
-                (if (cast.else_branch) |else_expr| exprReferencesName(else_expr, name) else false),
-            else => false,
-        };
-    }
-
-    fn exprReferencesName(expr: *const ast.Expr, name: []const u8) bool {
-        return switch (expr.data) {
-            .Variable => |tok| std.mem.eql(u8, tok.lexeme, name),
-            .Binary => |binary| (if (binary.left) |left| exprReferencesName(left, name) else false) or
-                (if (binary.right) |right| exprReferencesName(right, name) else false),
-            .Unary => |unary| if (unary.right) |right| exprReferencesName(right, name) else false,
-            .Peek => |peek_expr| exprReferencesName(peek_expr.expr, name),
-            .InterpolatedString => |template| blk: {
-                for (template.parts) |part| {
-                    switch (part) {
-                        .Expression => |part_expr| if (exprReferencesName(part_expr, name)) break :blk true,
-                        .String => {},
-                    }
-                }
-                break :blk false;
-            },
-            .Print => |print_expr| exprReferencesName(print_expr.expr, name),
-            .PeekStruct => |peek_struct| exprReferencesName(peek_struct.expr, name),
-            .Assignment => |assign_expr| std.mem.eql(u8, assign_expr.name.lexeme, name) or
-                (if (assign_expr.value) |value| exprReferencesName(value, name) else false),
-            .Grouping => |maybe_inner| if (maybe_inner) |inner| exprReferencesName(inner, name) else false,
-            .If => |if_expr| (if (if_expr.condition) |condition| exprReferencesName(condition, name) else false) or
-                (if (if_expr.then_branch) |then_branch| exprReferencesName(then_branch, name) else false) or
-                (if (if_expr.else_branch) |else_branch| exprReferencesName(else_branch, name) else false),
-            .Block => |block_expr| statementsReferenceName(block_expr.statements, name) or
-                (if (block_expr.value) |value| exprReferencesName(value, name) else false),
-            .Array => |items| blk: {
-                for (items) |item| {
-                    if (exprReferencesName(item, name)) break :blk true;
-                }
-                break :blk false;
-            },
-            .Struct => |fields| blk: {
-                for (fields) |field| {
-                    if (exprReferencesName(field.value, name)) break :blk true;
-                }
-                break :blk false;
-            },
-            .Index => |index_expr| exprReferencesName(index_expr.array, name) or exprReferencesName(index_expr.index, name),
-            .IndexAssign => |assign| exprReferencesName(assign.array, name) or
-                exprReferencesName(assign.index, name) or
-                exprReferencesName(assign.value, name),
-            .FunctionCall => |call_expr| blk: {
-                if (exprReferencesName(call_expr.callee, name)) break :blk true;
-                for (call_expr.arguments) |arg| {
-                    if (exprReferencesName(arg.expr, name)) break :blk true;
-                }
-                break :blk false;
-            },
-            .Logical => |logical| exprReferencesName(logical.left, name) or exprReferencesName(logical.right, name),
-            .FieldAccess => |field| exprReferencesName(field.object, name),
-            .StructLiteral => |literal| blk: {
-                if (std.mem.eql(u8, literal.name.lexeme, name)) break :blk true;
-                for (literal.fields) |field| {
-                    if (exprReferencesName(field.value, name)) break :blk true;
-                }
-                break :blk false;
-            },
-            .FieldAssignment => |field_assignment| exprReferencesName(field_assignment.object, name) or exprReferencesName(field_assignment.value, name),
-            .Exists => |exists| exprReferencesName(exists.array, name) or exprReferencesName(exists.condition, name),
-            .ForAll => |forall| exprReferencesName(forall.array, name) or exprReferencesName(forall.condition, name),
-            .Match => |match_expr| blk: {
-                if (exprReferencesName(match_expr.value, name)) break :blk true;
-                for (match_expr.cases) |case| {
-                    if (exprReferencesName(case.body, name)) break :blk true;
-                }
-                break :blk false;
-            },
-            .EnumMember => |tok| std.mem.eql(u8, tok.lexeme, name),
-            .Map => |map_expr| mapEntriesReferenceName(map_expr.entries, name),
-            .MapLiteral => |map_expr| mapEntriesReferenceName(map_expr.entries, name) or
-                (if (map_expr.else_value) |else_value| exprReferencesName(else_value, name) else false),
-            .InternalCall => |internal_call| blk: {
-                if (exprReferencesName(internal_call.receiver, name)) break :blk true;
-                for (internal_call.arguments) |arg| {
-                    if (exprReferencesName(arg, name)) break :blk true;
-                }
-                break :blk false;
-            },
-            .Increment => |inner| exprReferencesName(inner, name),
-            .Decrement => |inner| exprReferencesName(inner, name),
-            .CompoundAssign => |assign| std.mem.eql(u8, assign.name.lexeme, name) or
-                (if (assign.value) |value| exprReferencesName(value, name) else false),
-            .Assert => |assert_expr| exprReferencesName(assert_expr.condition, name) or
-                (if (assert_expr.message) |message| exprReferencesName(message, name) else false),
-            .Cast => |cast| exprReferencesName(cast.value, name) or
-                (if (cast.then_branch) |then_expr| exprReferencesName(then_expr, name) else false) or
-                (if (cast.else_branch) |else_expr| exprReferencesName(else_expr, name) else false),
-            .ReturnExpr => |ret| if (ret.value) |value| exprReferencesName(value, name) else false,
-            .Loop => |loop| (if (loop.var_decl) |var_decl| stmtReferencesName(var_decl.*, name) else false) or
-                (if (loop.condition) |condition| exprReferencesName(condition, name) else false) or
-                (if (loop.step) |step| exprReferencesName(step, name) else false) or
-                exprReferencesName(loop.body, name),
-            .Range => |range| exprReferencesName(range.start, name) or exprReferencesName(range.end, name),
-            else => false,
-        };
-    }
-
-    fn mapEntriesReferenceName(entries: []*ast.MapEntry, name: []const u8) bool {
-        for (entries) |entry| {
-            if (exprReferencesName(entry.key, name) or exprReferencesName(entry.value, name)) return true;
-        }
-        return false;
+        return walkStatements(ReferenceContext{ .name = name }, module_ast.data.Block.statements);
     }
 
     fn moduleContributesBodies(module_info: ast.ModuleInfo) bool {
@@ -1756,6 +1891,9 @@ pub const Parser = struct {
                                     }
                                 }
 
+                                const param_aliases = try self.allocator.alloc(bool, func.params.len);
+                                for (func.params, 0..) |param, i| param_aliases[i] = param.is_alias;
+
                                 try self.getImportedSymbols().put(symbol_name, .{
                                     .kind = .Function,
                                     .name = func.name.lexeme,
@@ -1763,6 +1901,7 @@ pub const Parser = struct {
                                     .namespace_alias = null,
                                     .param_count = @intCast(func.params.len),
                                     .param_types = param_types,
+                                    .param_aliases = param_aliases,
                                     .return_type_info = func.return_type_info,
                                 });
                                 return;
@@ -1831,7 +1970,29 @@ pub const Parser = struct {
                                 }
                             }
                         },
-                        .ZigDecl, .Block, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast, .Defer, .Lift => {},
+                        .ZigDecl => |zig_decl| {
+                            for (zig_decl.sigs) |sig| {
+                                if (!std.mem.eql(u8, sig.name, symbol_name)) continue;
+                                // The inline-Zig wrapper exports every function as
+                                // `<zig-stem>.<name>`, so register that qualified
+                                // symbol (return-type inference looks it up) and the
+                                // bare imported name (call resolution looks it up).
+                                const stem = std.fs.path.stem(module_path);
+                                const info = import_parser.ImportedSymbol{
+                                    .kind = .Function,
+                                    .name = sig.name,
+                                    .original_module = module_path,
+                                    .param_count = @intCast(sig.param_types.len),
+                                    .param_types = sig.param_types,
+                                    .return_type_info = sig.return_type,
+                                };
+                                try self.getImportedSymbols().put(symbol_name, info);
+                                const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ stem, sig.name });
+                                try self.getImportedSymbols().put(qualified, info);
+                                return;
+                            }
+                        },
+                        .Block, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast, .Defer, .Lift => {},
                     }
                 }
             },

@@ -1739,6 +1739,10 @@ fn writeModuleMemberCompletionItem(writer: *std.Io.Writer, name: []const u8, edi
     try writer.writeAll("}");
 }
 
+fn lspZeroBased(value: usize) usize {
+    return if (value > 0) value - 1 else 0;
+}
+
 fn buildDocumentSymbolsPayload(self: *Server, id: JsonValue) ![]u8 {
     var buffer = std.Io.Writer.Allocating.init(self.allocator);
     defer buffer.deinit();
@@ -1753,27 +1757,45 @@ fn buildDocumentSymbolsPayload(self: *Server, id: JsonValue) ![]u8 {
         if (!first) try writer.writeAll(",");
         first = false;
 
+        // Compiler positions are 1-based; LSP is 0-based. An unset end (0)
+        // means "same as start", mirroring `writeLspRange`.
+        const start_line = lspZeroBased(sym.start_line);
+        const start_char = lspZeroBased(sym.start_character);
+        var end_line = if (sym.end_line == 0) start_line else lspZeroBased(sym.end_line);
+        var end_char = if (sym.end_line == 0) start_char else lspZeroBased(sym.end_character);
+        if (end_line < start_line or (end_line == start_line and end_char < start_char)) {
+            end_line = start_line;
+            end_char = start_char;
+        }
+
+        // The selection is the declaration name on the start line, clamped so
+        // `selectionRange` is always contained in `range`.
+        const sel_line = start_line;
+        var sel_char = start_char + sym.name.len;
+        if (end_line == start_line and sel_char > end_char) sel_char = end_char;
+        if (sel_char < start_char) sel_char = start_char;
+
         try writer.writeAll("{\"name\":");
         try writeJsonValue(writer, sym.name);
         try writer.writeAll(",\"kind\":");
         try writer.print("{d}", .{sym.kind});
         try writer.writeAll(",\"range\":{\"start\":{\"line\":");
-        try writer.print("{d}", .{sym.start_line});
+        try writer.print("{d}", .{start_line});
         try writer.writeAll(",\"character\":");
-        try writer.print("{d}", .{sym.start_character});
+        try writer.print("{d}", .{start_char});
         try writer.writeAll("},\"end\":{\"line\":");
-        try writer.print("{d}", .{sym.end_line});
+        try writer.print("{d}", .{end_line});
         try writer.writeAll(",\"character\":");
-        try writer.print("{d}", .{sym.end_character});
+        try writer.print("{d}", .{end_char});
         try writer.writeAll("}}");
         try writer.writeAll(",\"selectionRange\":{\"start\":{\"line\":");
-        try writer.print("{d}", .{sym.start_line});
+        try writer.print("{d}", .{start_line});
         try writer.writeAll(",\"character\":");
-        try writer.print("{d}", .{sym.start_character});
+        try writer.print("{d}", .{start_char});
         try writer.writeAll("},\"end\":{\"line\":");
-        try writer.print("{d}", .{sym.start_line});
+        try writer.print("{d}", .{sel_line});
         try writer.writeAll(",\"character\":");
-        try writer.print("{d}", .{sym.start_character + sym.name.len});
+        try writer.print("{d}", .{sel_char});
         try writer.writeAll("}}}");
     }
 
@@ -1869,11 +1891,18 @@ fn buildDotHover(
 
     for (ct.fields) |field| {
         if (std.mem.eql(u8, field.name, member_text)) {
-            try writer.writeAll("{\"contents\":{\"kind\":\"markdown\",\"value\":\"`");
-            try writer.writeAll(field.name);
-            try writer.writeAll(" : ");
-            try writer.writeAll(field.type_name);
-            try writer.writeAll("`\"}}");
+            var markdown = std.Io.Writer.Allocating.init(allocator);
+            defer markdown.deinit();
+            const md = &markdown.writer;
+            try md.writeAll("`");
+            try md.writeAll(field.name);
+            try md.writeAll(" : ");
+            try md.writeAll(field.type_name);
+            try md.writeAll("`");
+
+            try writer.writeAll("{\"contents\":{\"kind\":\"markdown\",\"value\":");
+            try writeJsonValue(writer, markdown.written());
+            try writer.writeAll("}}");
             return true;
         }
     }
@@ -3196,6 +3225,100 @@ test "hover payload stays valid JSON for intrinsics and user callables" {
     const std_hover = try expectValidHover(&server, "file:///hover.doxa", 9);
     defer std.testing.allocator.free(std_hover);
     try std.testing.expect(std.mem.indexOf(u8, std_hover, "get(url :: string)") != null);
+}
+
+test "diagnostic payload is valid JSON for long union messages" {
+    var reporter = Reporter.init(std.testing.io, std.testing.allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+
+    const uri = "file:///c:/dev/doxa-projects/oord/src/main.doxa";
+    const loc = reporting.Location{
+        .file = "c:\\dev\\doxa-projects\\oord\\src\\main.doxa",
+        .file_uri = uri,
+        .range = .{ .start_line = 96, .start_col = 1, .end_line = 96, .end_col = 1 },
+    };
+    reporter.reportCompileError(loc, "E1003", "Type mismatch: expected union (String | Array | Array | Array | Array | Array), got Function", .{});
+    reporter.reportCompileError(loc, "E1003", "Type mismatch: expected union (String | Int | Float | Byte | Tetra), got member of kind error.Method", .{});
+
+    const payload = try reporter.buildPublishDiagnosticsPayload(std.testing.allocator, uri);
+    defer std.testing.allocator.free(payload);
+
+    var parsed = try std.json.parseFromSlice(JsonValue, std.testing.allocator, payload, .{});
+    defer parsed.deinit();
+    try std.testing.expect(std.mem.indexOf(u8, payload, "expected union") != null);
+}
+
+test "dot-field hover payload is valid JSON" {
+    var reporter = Reporter.init(std.testing.io, std.testing.allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var sink = CaptureSink.init(std.testing.allocator);
+    defer sink.deinit();
+    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    defer server.deinit();
+
+    const alloc = server.symbol_index.arena.allocator();
+    try server.symbol_index.addVariable("node", "Node");
+    const fields = try alloc.alloc(CachedField, 1);
+    fields[0] = .{ .name = try alloc.dupe(u8, "x"), .type_name = "int", .is_public = true };
+    try server.symbol_index.types.put(try alloc.dupe(u8, "Node"), .{
+        .name = try alloc.dupe(u8, "Node"),
+        .kind = .Struct,
+        .fields = fields,
+        .methods = &.{},
+        .enum_variants = &.{},
+    });
+
+    try server.storeDocument("file:///dot.doxa", "node.x");
+    const params = "{\"textDocument\":{\"uri\":\"file:///dot.doxa\"},\"position\":{\"line\":0,\"character\":6}}";
+    var parsed_params = try std.json.parseFromSlice(JsonValue, std.testing.allocator, params, .{});
+    defer parsed_params.deinit();
+
+    const payload = try buildHoverPayload(&server, .{ .integer = 1 }, parsed_params.value);
+    defer std.testing.allocator.free(payload);
+
+    var parsed = try std.json.parseFromSlice(JsonValue, std.testing.allocator, payload, .{});
+    defer parsed.deinit();
+    try std.testing.expect(parsed.value.object.get("result").?.object.get("contents") != null);
+}
+
+test "document symbol ranges are well-formed and selection is contained" {
+    var reporter = Reporter.init(std.testing.io, std.testing.allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var sink = CaptureSink.init(std.testing.allocator);
+    defer sink.deinit();
+    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    defer server.deinit();
+
+    try analyzeInto(&server, USER_SOURCE);
+
+    const payload = try buildDocumentSymbolsPayload(&server, .{ .integer = 1 });
+    defer std.testing.allocator.free(payload);
+
+    var parsed = try std.json.parseFromSlice(JsonValue, std.testing.allocator, payload, .{});
+    defer parsed.deinit();
+
+    const result = parsed.value.object.get("result").?;
+    try std.testing.expect(result.array.items.len > 0);
+
+    for (result.array.items) |item| {
+        const full = item.object.get("range").?.object;
+        const sel = item.object.get("selectionRange").?.object;
+        const fsl = full.get("start").?.object.get("line").?.integer;
+        const fsc = full.get("start").?.object.get("character").?.integer;
+        const fel = full.get("end").?.object.get("line").?.integer;
+        const fec = full.get("end").?.object.get("character").?.integer;
+        const ssl = sel.get("start").?.object.get("line").?.integer;
+        const ssc = sel.get("start").?.object.get("character").?.integer;
+        const sel_line = sel.get("end").?.object.get("line").?.integer;
+        const sec = sel.get("end").?.object.get("character").?.integer;
+
+        try std.testing.expect(fsl < fel or (fsl == fel and fsc <= fec));
+        try std.testing.expect(fsl < ssl or (fsl == ssl and fsc <= ssc));
+        try std.testing.expect(sel_line < fel or (sel_line == fel and sec <= fec));
+    }
+
+    // The first statement is `add`, so its zero-based start line is 0.
+    try std.testing.expectEqual(@as(i64, 0), result.array.items[0].object.get("range").?.object.get("start").?.object.get("line").?.integer);
 }
 
 const INLAY_SOURCE =
