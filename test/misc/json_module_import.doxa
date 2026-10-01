@@ -1,0 +1,9 @@
+# Regression: `std.json.Node` methods (`field`, `text`) called from an imported
+# module used to compile but silently return nothing. Codegen dispatches a struct
+# method only when `struct_methods` has the struct; semantic registers it on
+# first inference, which never runs for an imported module body. Registering
+# module-cache struct methods before HIR lowering fixes it.
+
+module h from "./json_module_import_helper.doxa"
+
+entry function main() { @print("plan={h.read()}\n") }

@@ -1,0 +1,22 @@
+module std from @std()
+
+# Regression: `std.methods.sliceString` computes `@length(collection)` on a
+# string. The array-element tracking in the HIR symbol table was a flat,
+# name-keyed map, so an earlier `^collection :: string[]` parameter in
+# methods.doxa leaked onto `sliceString`'s `collection :: string` parameter and
+# `@length` compiled as an array length over the string's data pointer. On a
+# heap-allocated string (here, a concatenation result rather than a .rodata
+# literal) the bounds check then read allocator garbage and spuriously reported
+# OutOfBounds for short strings.
+entry function main() {
+    check("asdf" + "")
+    check("asdfg" + "")
+    check("asdfgsdfg" + "")
+}
+
+function check(s :: string) {
+    const n is @length(s)
+    const r is std.methods.sliceString(s, 0, n - 1)
+    const out is r as string else "OOB"
+    @print("{out}\n")
+}

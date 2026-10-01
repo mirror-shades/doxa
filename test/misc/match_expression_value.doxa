@@ -1,0 +1,26 @@
+# Regression: a match used as a value must merge its arm results with valid
+# SSA. The previous lowering left each arm's extra subject copy on the stack,
+# so the merge phi referenced an arm-local value (invalid IR: "does not
+# dominate all uses") and the result never reached the caller.
+
+public enum Role { Coordinator, Planner }
+
+function roleKey(role :: Role) returns string {
+    return match role {
+        Role.Coordinator then "coord",
+        Role.Planner then "plan",
+    }
+}
+
+entry function main() {
+    @print(roleKey(Role.Coordinator) + "\n")
+    @print(roleKey(Role.Planner) + "\n")
+
+    const n is 3
+    var s is match n {
+        1 then "one",
+        2 then "two",
+        else "many",
+    }
+    @print(s + "\n")
+}

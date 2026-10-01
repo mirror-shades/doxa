@@ -1,0 +1,8 @@
+# Regression: a nested module namespace (`std.time`) used inside an imported
+# module's body must be materialized. Imported bodies are lowered by codegen
+# without a semantic pass, so the lazy nested-namespace resolution never ran and
+# the call resolved against a namespace that was never loaded.
+
+module s from "./nested_import_helper.doxa"
+
+entry function main() { @print("clock={s.hasClock()}\n") }

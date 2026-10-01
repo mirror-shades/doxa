@@ -1,0 +1,8 @@
+# Regression: a function imported by name from a `.zig` module must resolve.
+# The wrapper exports it as `<stem>.<name>`, and the specific import bound only
+# the bare name, so the call fell through to an unresolved module function
+# (E5001).
+
+import double from "./zig_specific_module.zig"
+
+entry function main() { @print("{double(21)}\n") }

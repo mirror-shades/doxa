@@ -1,0 +1,15 @@
+module std from @std()
+
+public struct C {
+    public x :: string,
+    public function new(x :: string) returns C { return $C { x is x } }
+    public method dump() returns string {
+        std.json.beginObject()
+        std.json.writeKey("k")
+        std.json.writeText(this.x)
+        std.json.end()
+        const out is std.json.finish()
+        out as string then { return out } else { return "err" }
+        return "err"
+    }
+}

@@ -95,6 +95,16 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected = .{ .exit_code = 1, .contains_message = "equals sign '=' is not used for variable declarations", .error_code = "E2004" },
         },
         .{
+            .name = "alias argument on by-value parameter",
+            .path = "./test/misc/alias_argument_not_needed.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "does not require an alias argument", .error_code = "E1028" },
+        },
+        .{
+            .name = "alias argument on specifically imported by-value parameter",
+            .path = "./test/misc/alias_specific_import.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "does not require an alias argument", .error_code = "E1028" },
+        },
+        .{
             .name = "undefined variable",
             .path = "./test/misc/error_test.doxa",
             .expected = .{ .exit_code = 1, .contains_message = "Undefined variable", .error_code = "E1001" },
