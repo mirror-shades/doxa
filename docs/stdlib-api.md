@@ -163,20 +163,7 @@ public function exec(input :: string) returns int | error.StdError
 
 ```doxa
 public function exec(input :: string) returns int | error.StdError {
-    var input_string :: string
-    if Process.osName() == "windows" then {
-        each c in input {
-            if c == "/" then {
-                @push(input_string, "\\")
-            } else {
-                @push(input_string, c)
-            }
-        }
-    } else {
-        input_string is input
-    }
-
-    const code is Process.exec_cmd(input_string)
+    const code is Process.exec_cmd(input)
     const err is Process.takeLastErrorCode()
     if err == 0 then return code
     return mapProcessError(err)
@@ -196,22 +183,69 @@ public function execCapture(input :: string) returns string | error.StdError
 
 ```doxa
 public function execCapture(input :: string) returns string | error.StdError {
-    var input_string :: string
-    if Process.osName() == "windows" then {
-        each c in input {
-            if c == "/" then {
-                @push(input_string, "\\")
-            } else {
-                @push(input_string, c)
-            }
-        }
-    } else {
-        input_string is input
-    }
-
-    const output is Process.exec_capture_stdout(input_string)
+    const output is Process.exec_capture_stdout(input)
     const err is Process.takeLastErrorCode()
     if err == 0 then return output
+    return mapProcessError(err)
+}
+```
+
+</details>
+
+### `execCaptureEnv`
+
+```doxa
+public function execCaptureEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError
+```
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function execCaptureEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
+    const output is Process.exec_capture_stdout_env(program, args, env_keys, env_values)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return output
+    return mapProcessError(err)
+}
+```
+
+</details>
+
+### `execArgs`
+
+```doxa
+public function execArgs(program :: string, args :: string[]) returns int | error.StdError
+```
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function execArgs(program :: string, args :: string[]) returns int | error.StdError {
+    const code is Process.exec_args(program, args)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return code
+    return mapProcessError(err)
+}
+```
+
+</details>
+
+### `execArgsEnv`
+
+```doxa
+public function execArgsEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError
+```
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function execArgsEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
+    const code is Process.exec_args_env(program, args, env_keys, env_values)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return code
     return mapProcessError(err)
 }
 ```
@@ -2799,7 +2833,8 @@ code, and an `error.StdError` prints a mapped message to stderr and exits 1.
 public function execute(c :: Context, force :: tetra) {
     const outcome is run(c, force)
     outcome as int then {
-        @print("build exit code: {string(outcome)}\n")
+        @print("build exit code: {@string(outcome)}\n")
+        if outcome != 0 then @exit(outcome)
     } else {
         # The compiler's own diagnostics already describe the failing artifact;
         # here we only need to signal the failure on the standard channel.
