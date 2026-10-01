@@ -654,6 +654,33 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#execcaptureenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      execCaptureEnv
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execargs" class="md-nav__link">
+    <span class="md-ellipsis">
+      execArgs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execargsenv" class="md-nav__link">
+    <span class="md-ellipsis">
+      execArgsEnv
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#execok" class="md-nav__link">
     <span class="md-ellipsis">
       execOk
@@ -2610,20 +2637,7 @@ exists), and a collapsible copy of the full source declaration.</p>
 <summary>Source</summary>
 
 <div class="highlight"><pre><span></span><code>public function exec(input :: string) returns int | error.StdError {
-    var input_string :: string
-    if Process.osName() == &quot;windows&quot; then {
-        each c in input {
-            if c == &quot;/&quot; then {
-                @push(input_string, &quot;\\&quot;)
-            } else {
-                @push(input_string, c)
-            }
-        }
-    } else {
-        input_string is input
-    }
-
-    const code is Process.exec_cmd(input_string)
+    const code is Process.exec_cmd(input)
     const err is Process.takeLastErrorCode()
     if err == 0 then return code
     return mapProcessError(err)
@@ -2639,22 +2653,57 @@ exists), and a collapsible copy of the full source declaration.</p>
 <summary>Source</summary>
 
 <div class="highlight"><pre><span></span><code>public function execCapture(input :: string) returns string | error.StdError {
-    var input_string :: string
-    if Process.osName() == &quot;windows&quot; then {
-        each c in input {
-            if c == &quot;/&quot; then {
-                @push(input_string, &quot;\\&quot;)
-            } else {
-                @push(input_string, c)
-            }
-        }
-    } else {
-        input_string is input
-    }
-
-    const output is Process.exec_capture_stdout(input_string)
+    const output is Process.exec_capture_stdout(input)
     const err is Process.takeLastErrorCode()
     if err == 0 then return output
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execcaptureenv"><code>execCaptureEnv</code></h3>
+<div class="highlight"><pre><span></span><code>public function execCaptureEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execCaptureEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
+    const output is Process.exec_capture_stdout_env(program, args, env_keys, env_values)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return output
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execargs"><code>execArgs</code></h3>
+<div class="highlight"><pre><span></span><code>public function execArgs(program :: string, args :: string[]) returns int | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execArgs(program :: string, args :: string[]) returns int | error.StdError {
+    const code is Process.exec_args(program, args)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return code
+    return mapProcessError(err)
+}
+</code></pre></div>
+
+</details>
+
+<h3 id="execargsenv"><code>execArgsEnv</code></h3>
+<div class="highlight"><pre><span></span><code>public function execArgsEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError
+</code></pre></div>
+<details>
+<summary>Source</summary>
+
+<div class="highlight"><pre><span></span><code>public function execArgsEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
+    const code is Process.exec_args_env(program, args, env_keys, env_values)
+    const err is Process.takeLastErrorCode()
+    if err == 0 then return code
     return mapProcessError(err)
 }
 </code></pre></div>
@@ -4751,7 +4800,8 @@ code, and an <code>error.StdError</code> prints a mapped message to stderr and e
 <div class="highlight"><pre><span></span><code>public function execute(c :: Context, force :: tetra) {
     const outcome is run(c, force)
     outcome as int then {
-        @print(&quot;build exit code: {string(outcome)}\n&quot;)
+        @print(&quot;build exit code: {@string(outcome)}\n&quot;)
+        if outcome != 0 then @exit(outcome)
     } else {
         # The compiler&#39;s own diagnostics already describe the failing artifact;
         # here we only need to signal the failure on the standard channel.
