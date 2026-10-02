@@ -2994,12 +2994,9 @@ pub const SemanticAnalyzer = struct {
             const ParserType = @TypeOf(pconst.*);
             const p: *ParserType = @constCast(pconst);
 
-            // If the module is already in-progress in the parser's resolution map, it's circular
-            if (p.module_resolution_status.get(module_path)) |status| {
-                return status == .IN_PROGRESS;
-            }
-
-            // Also check the active import stack for a re-entry
+            // A module is circular iff it is re-entered while its resolution is
+            // active; the graph owns that state, surfaced here as the parser's
+            // live import stack. After resolution completes the stack is empty.
             for (p.import_stack.items) |entry| {
                 if (std.mem.eql(u8, entry.module_path, module_path)) return true;
             }

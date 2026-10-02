@@ -26,8 +26,13 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
     const exe_path = try harness.doxaExePath(allocator);
     defer allocator.free(exe_path);
 
-    const argv = [_][]const u8{ exe_path, "run", path };
-    return try harness.runCommandCapture(allocator, &argv, repo_root, input);
+    var argv = std.array_list.Managed([]const u8).init(allocator);
+    defer argv.deinit();
+    try argv.appendSlice(&[_][]const u8{ exe_path, "run", path });
+    if (repo_root) |rr| {
+        try argv.append(try std.fmt.allocPrint(allocator, "--include={s}", .{rr}));
+    }
+    return try harness.runCommandCapture(allocator, argv.items, repo_root, input);
 }
 
 fn runErrorCase(allocator: std.mem.Allocator, tc: ErrorCase) !test_results {

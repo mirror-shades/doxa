@@ -26,8 +26,13 @@ fn compileDoxaSource(allocator: std.mem.Allocator, src: []const u8, out: []const
     const exe_path = try harness.doxaExePath(allocator);
     defer allocator.free(exe_path);
 
-    const argv = [_][]const u8{ exe_path, "compile", src, "-o", out };
-    const result = try harness.runCommandCapture(allocator, &argv, repo_root, null);
+    var argv = std.array_list.Managed([]const u8).init(allocator);
+    defer argv.deinit();
+    try argv.appendSlice(&[_][]const u8{ exe_path, "compile", src, "-o", out });
+    if (repo_root) |rr| {
+        try argv.append(try std.fmt.allocPrint(allocator, "--include={s}", .{rr}));
+    }
+    const result = try harness.runCommandCapture(allocator, argv.items, repo_root, null);
     allocator.free(result.stdout);
     if (result.exit_code != 0) {
         std.debug.print("compile failed: {s} -> {s} (exit {d})\n{s}\n", .{ src, out, result.exit_code, result.stderr });

@@ -31,6 +31,7 @@ const StructMethodInfo = @import("./analysis/semantic/semantic.zig").StructMetho
 const LspServer = @import("./lsp/server.zig");
 const Resolver = @import("./resolver/resolver.zig").Resolver;
 const platform = @import("./utils/platform.zig");
+const module_graph = @import("./module/graph.zig");
 
 const constants = @import("common/constants.zig");
 const MAX_FILE_SIZE = constants.MAX_SOURCE_FILE_BYTES;
@@ -1669,6 +1670,32 @@ pub fn main(init: std.process.Init) !void {
     };
 }
 
+/// The compilation's declared roots, in priority order: the entry file's
+/// directory (`pkg`), the installed standard library (`std`), then each
+/// `--include=` directory (`inc0`, `inc1`, …). A file outside every root is a
+/// hard error at registration; there is no path- or content-derived fallback.
+fn buildModuleGraph(io: std.Io, allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8) !module_graph.ModuleGraph {
+    var roots = std.array_list.Managed(module_graph.Root).init(allocator);
+    defer roots.deinit();
+
+    const entry_dir = std.fs.path.dirname(script_path) orelse ".";
+    try roots.append(.{ .tag = "pkg", .path = entry_dir });
+
+    const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
+    defer allocator.free(exe_dir);
+    const std_root = try std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "std" });
+    defer allocator.free(std_root);
+    try roots.append(.{ .tag = "std", .path = std_root });
+
+    for (cli_options.include_dirs.items, 0..) |dir, i| {
+        const tag = try std.fmt.allocPrint(allocator, "inc{d}", .{i});
+        defer allocator.free(tag);
+        try roots.append(.{ .tag = tag, .path = dir });
+    }
+
+    return module_graph.ModuleGraph.init(io, allocator, roots.items);
+}
+
 fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8, memoryManager: *MemoryManager, reporter: *Reporter, profiler: *Profiler, source: []const u8) !void {
     profiler.begin("compile");
 
@@ -1689,11 +1716,62 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     profiler.end();
 
     profiler.begin("parse");
-    var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter);
+    var graph_store = buildModuleGraph(io, allocator, cli_options, script_path) catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "resolve", err);
+        }
+        exitIfCompileErrors(reporter);
+        return err;
+    };
+    defer graph_store.deinit();
+
+    // The entry file is record 0: register it before any import resolves, so
+    // root-file declarations have an owning record and no synthetic key is
+    // derived outside the graph. The root parse is driven below and completes
+    // the record.
+    const entry_physical = module_graph.physicalPath(io, allocator, script_path) catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "resolve", err);
+        }
+        exitIfCompileErrors(reporter);
+        return err;
+    };
+    defer allocator.free(entry_physical);
+    const entry_record = graph_store.ensureRecord(entry_physical) catch |err| {
+        switch (err) {
+            error.ModuleRootUnknown => reporter.reportCompileError(
+                null,
+                ErrorCode.MODULE_ROOT_UNKNOWN,
+                "Entry file '{s}' is outside every declared root",
+                .{script_path},
+            ),
+            error.DuplicateStableKey => reporter.reportCompileError(
+                null,
+                ErrorCode.DUPLICATE_STABLE_KEY,
+                "Two distinct modules claim the entry file's stable key for '{s}'",
+                .{script_path},
+            ),
+            error.OutOfMemory => {},
+        }
+        exitIfCompileErrors(reporter);
+        return err;
+    };
+
+    var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter, &graph_store);
     defer parser.deinit();
+    // The entry record owns any inline `zig` synthetic records this parse
+    // generates, so no owner key is derived outside the graph.
+    parser.owner_record = entry_record;
     const parsedStatements = parser.execute() catch |err| {
         if (!reporter.hasCompileErrors()) {
             parser.reportParseError(err);
+        }
+        exitIfCompileErrors(reporter);
+        return err;
+    };
+    parser.completeEntryRecord(entry_record, source, parsedStatements) catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "parse", err);
         }
         exitIfCompileErrors(reporter);
         return err;

@@ -7,6 +7,7 @@ const LexicalAnalyzer = @import("../src/analysis/lexical.zig").LexicalAnalyzer;
 const Parser = @import("../src/parser/parser_types.zig").Parser;
 const Reporting = @import("../src/utils/reporting.zig");
 const inline_zig_compiler = @import("../src/inline_zig/compiler.zig");
+const module_graph = @import("../src/module/graph.zig");
 
 test "inline zig: accepts import consts and function bodies" {
     const src =
@@ -262,7 +263,11 @@ test "inline zig: collectInlineZigDecls only sees reachable modules" {
     defer tokens.deinit();
 
     const uri = try reporter.ensureFileUri(testing.io, "test/inline_zig_collect.doxa");
-    var parser = Parser.init(testing.io, allocator, tokens.items, "test/inline_zig_collect.doxa", uri, &reporter);
+    var graph_store = try module_graph.ModuleGraph.init(testing.io, allocator, &.{
+        .{ .tag = "pkg", .path = "." },
+    });
+    defer graph_store.deinit();
+    var parser = Parser.init(testing.io, allocator, tokens.items, "test/inline_zig_collect.doxa", uri, &reporter, &graph_store);
     defer parser.deinit();
     _ = try parser.execute();
 

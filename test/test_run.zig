@@ -18,6 +18,12 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
     var argv = std.array_list.Managed([]const u8).init(allocator);
     defer argv.deinit();
     try argv.appendSlice(&[_][]const u8{ exe_path, "run", path });
+    // The repo root is declared as a root so test cases may spell repo-relative
+    // module paths (e.g. `"std/std.doxa"`); files outside every root are a hard
+    // error under the module graph.
+    if (repo_root) |rr| {
+        try argv.append(try std.fmt.allocPrint(allocator, "--include={s}", .{rr}));
+    }
     if (extra_args.len > 0) {
         try argv.append("--");
         try argv.appendSlice(extra_args);
