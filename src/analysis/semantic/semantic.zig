@@ -421,10 +421,18 @@ pub const SemanticAnalyzer = struct {
         if (self.parser) |p| {
             // Safely access parser's imported symbols map
             if (p.imported_symbols) |symbols| {
+                // Pass 1 registers functions, structs, and enums — every type a
+                // group can name as a member. `registerGroupType` resolves its
+                // members eagerly, but `imported_symbols` is a hash map with
+                // unspecified iteration order, so flattening a group in this
+                // same pass can race its member enums/structs and emit a
+                // spurious "Group member ... is not a declared type" whose
+                // presence depends on how many modules happened to be loaded.
+                // Groups are flattened in pass 2 instead.
                 var it = symbols.iterator();
                 while (it.next()) |entry| {
                     const sym = entry.value_ptr.*;
-                    // Process all imported symbols, including functions
+                    if (sym.kind == .Group) continue;
                     switch (sym.kind) {
                         .Function => {
                             const func_type = try self.allocator.create(ast.FunctionType);
@@ -584,31 +592,38 @@ pub const SemanticAnalyzer = struct {
                                 }
                             }
                         },
-                        .Group => {
-                            var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
-                            if (p.module_cache.get(sym.original_module)) |mi| {
-                                mod_info = mi;
-                            } else {
-                                continue;
-                            }
-                            if (mod_info) |mi| {
-                                if (mi.ast) |module_ast| {
-                                    if (module_ast.data == .Block) {
-                                        for (module_ast.data.Block.statements) |stmt| {
-                                            switch (stmt.data) {
-                                                .GroupDecl => |gd| {
-                                                    if (std.mem.eql(u8, gd.name.lexeme, sym.name)) {
-                                                        try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
-                                                    }
-                                                },
-                                                else => {},
+                        else => {},
+                    }
+                }
+
+                // Pass 2: flatten groups now that every member type in pass 1
+                // has been registered.
+                var group_it = symbols.iterator();
+                while (group_it.next()) |entry| {
+                    const sym = entry.value_ptr.*;
+                    if (sym.kind != .Group) continue;
+
+                    var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
+                    if (p.module_cache.get(sym.original_module)) |mi| {
+                        mod_info = mi;
+                    } else {
+                        continue;
+                    }
+                    if (mod_info) |mi| {
+                        if (mi.ast) |module_ast| {
+                            if (module_ast.data == .Block) {
+                                for (module_ast.data.Block.statements) |stmt| {
+                                    switch (stmt.data) {
+                                        .GroupDecl => |gd| {
+                                            if (std.mem.eql(u8, gd.name.lexeme, sym.name)) {
+                                                try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
                                             }
-                                        }
+                                        },
+                                        else => {},
                                     }
                                 }
                             }
-                        },
-                        else => {},
+                        }
                     }
                 }
             }
@@ -631,6 +646,56 @@ pub const SemanticAnalyzer = struct {
                     const sd = mod_expr.data.StructDecl;
                     if (!sd.is_public) continue;
                     try self.registerImportedStruct(sd);
+                }
+            }
+
+            // Enums and groups have no equivalent of the struct pass's fallback,
+            // and the imported-symbols paths above look their module up in
+            // `module_cache` — which is keyed by resolved path and is not merged
+            // back from the child parsers that resolve recursive imports. Scan
+            // `module_namespaces`, the authoritative propagated map, instead.
+            // Enums are registered before groups so every group member exists
+            // when the group is flattened.
+            var enum_ns_it = p.module_namespaces.iterator();
+            while (enum_ns_it.next()) |entry| {
+                const module_info = entry.value_ptr.*;
+                const module_ast = module_info.ast orelse continue;
+                if (module_ast.data != .Block) continue;
+                for (module_ast.data.Block.statements) |mod_stmt| {
+                    switch (mod_stmt.data) {
+                        .EnumDecl => |ed| {
+                            if (ed.is_public) _ = try self.ensureEnumRegistered(ed);
+                        },
+                        .Expression => |maybe_expr| {
+                            const mod_expr = maybe_expr orelse continue;
+                            if (mod_expr.data == .EnumDecl) {
+                                const ed = mod_expr.data.EnumDecl;
+                                if (ed.is_public) _ = try self.ensureEnumRegistered(ed);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+            var group_ns_it = p.module_namespaces.iterator();
+            while (group_ns_it.next()) |entry| {
+                const module_info = entry.value_ptr.*;
+                const module_ast = module_info.ast orelse continue;
+                if (module_ast.data != .Block) continue;
+                for (module_ast.data.Block.statements) |mod_stmt| {
+                    switch (mod_stmt.data) {
+                        .GroupDecl => |gd| {
+                            if (gd.is_public) try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
+                        },
+                        .Expression => |maybe_expr| {
+                            const mod_expr = maybe_expr orelse continue;
+                            if (mod_expr.data == .GroupDecl) {
+                                const gd = mod_expr.data.GroupDecl;
+                                if (gd.is_public) try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
+                            }
+                        },
+                        else => {},
+                    }
                 }
             }
         }
@@ -707,6 +772,109 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
+    /// A type annotation can name a module that was never loaded — a re-export
+    /// hub's submodule referenced only from a type position
+    /// (`std.http.ServerRequest`). Such a module is normally materialized only
+    /// on a value access, so without this the annotated declaration is checked
+    /// against a struct whose methods and fields were never registered.
+    fn materializeTypeExprModules(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) void {
+        switch (type_expr.data) {
+            .Custom => |custom| _ = self.materializeQualifiedTypeName(custom.lexeme),
+            .Array => |array| self.materializeTypeExprModules(array.element_type),
+            .Union => |types| for (types) |t| self.materializeTypeExprModules(t),
+            .Map => |map| {
+                if (map.key_type) |k| self.materializeTypeExprModules(k);
+                self.materializeTypeExprModules(map.value_type);
+            },
+            .Struct => |fields| for (fields) |f| self.materializeTypeExprModules(f.type_expr),
+            .Basic, .Enum => {},
+        }
+    }
+
+    /// Materialize the module named by a possibly-qualified type reference and
+    /// register the public type it names, returning the bare type name. A bare
+    /// name is returned unchanged.
+    pub fn materializeQualifiedTypeName(self: *SemanticAnalyzer, qualified: []const u8) []const u8 {
+        const dot = std.mem.lastIndexOfScalar(u8, qualified, '.') orelse return qualified;
+        self.materializeNamespacePath(qualified[0..dot]);
+        self.registerNamedType(qualified[dot + 1 ..]);
+        return qualified[dot + 1 ..];
+    }
+
+    /// Ensure each dotted segment of a module path is loaded (`std.http` loads
+    /// `std`, then `std.http`).
+    fn materializeNamespacePath(self: *SemanticAnalyzer, path: []const u8) void {
+        const parser_const = self.parser orelse return;
+        const parser: *Parser = @constCast(parser_const);
+
+        var idx: usize = 0;
+        while (idx < path.len) {
+            const dot = std.mem.indexOfScalarPos(u8, path, idx, '.') orelse path.len;
+            const segment = path[idx..dot];
+            if (idx == 0) {
+                _ = parser.ensureModuleNamespace(segment) catch {};
+            } else {
+                _ = parser.ensureNestedModuleNamespace(path[0 .. idx - 1], segment) catch {};
+            }
+            idx = dot + 1;
+        }
+    }
+
+    /// Register the public struct/enum/group named `bare` from whatever module
+    /// is now loaded, so its methods and fields are available. Every loaded
+    /// module's public enums are registered first: a group can only be
+    /// flattened once each of its member enums exists in `custom_types`.
+    fn registerNamedType(self: *SemanticAnalyzer, bare: []const u8) void {
+        self.ensureImportedStructRegistered(bare) catch {};
+
+        const parser = self.parser orelse return;
+        var it = parser.module_namespaces.iterator();
+        while (it.next()) |entry| {
+            const module_ast = entry.value_ptr.ast orelse continue;
+            if (module_ast.data != .Block) continue;
+            for (module_ast.data.Block.statements) |stmt| {
+                switch (stmt.data) {
+                    .EnumDecl => |ed| {
+                        if (ed.is_public) _ = self.ensureEnumRegistered(ed) catch {};
+                    },
+                    .Expression => |maybe_expr| {
+                        const e = maybe_expr orelse continue;
+                        if (e.data == .EnumDecl) {
+                            const ed = e.data.EnumDecl;
+                            if (ed.is_public) _ = self.ensureEnumRegistered(ed) catch {};
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        var group_it = parser.module_namespaces.iterator();
+        while (group_it.next()) |entry| {
+            const module_ast = entry.value_ptr.ast orelse continue;
+            if (module_ast.data != .Block) continue;
+            for (module_ast.data.Block.statements) |stmt| {
+                switch (stmt.data) {
+                    .GroupDecl => |gd| {
+                        if (gd.is_public and std.mem.eql(u8, gd.name.lexeme, bare)) {
+                            helpers.registerGroupType(self, gd.name.lexeme, gd.members) catch {};
+                        }
+                    },
+                    .Expression => |maybe_expr| {
+                        const e = maybe_expr orelse continue;
+                        if (e.data == .GroupDecl) {
+                            const gd = e.data.GroupDecl;
+                            if (gd.is_public and std.mem.eql(u8, gd.name.lexeme, bare)) {
+                                helpers.registerGroupType(self, gd.name.lexeme, gd.members) catch {};
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
     fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {
         // Pre-pass A: pre-register local custom type declarations in custom_types so parameter
         // type annotations referring to these types (including alias params) can be validated.
@@ -721,6 +889,7 @@ pub const SemanticAnalyzer = struct {
                                 // Lower field types from AST and register as a custom type
                                 const struct_fields = try self.allocator.alloc(ast.StructFieldType, struct_decl.fields.len);
                                 for (struct_decl.fields, struct_fields) |field, *sf| {
+                                    self.materializeTypeExprModules(field.type_expr);
                                     const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
                                     sf.* = .{ .name = field.name.lexeme, .type_info = field_type_info, .is_public = field.is_public };
                                 }
@@ -767,6 +936,7 @@ pub const SemanticAnalyzer = struct {
                     for (func.params, 0..) |param, i| {
                         param_aliases[i] = param.is_alias;
                         if (param.type_expr) |type_expr| {
+                            self.materializeTypeExprModules(type_expr);
                             const param_type_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
                             defer self.allocator.destroy(param_type_ptr);
 
@@ -1085,6 +1255,7 @@ pub const SemanticAnalyzer = struct {
                             // Convert struct fields to TypeInfo format
                             const struct_fields = try self.allocator.alloc(ast.StructFieldType, struct_decl.fields.len);
                             for (struct_decl.fields, struct_fields) |field, *struct_field| {
+                                self.materializeTypeExprModules(field.type_expr);
                                 const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
                                 struct_field.* = .{
                                     .name = field.name.lexeme,
@@ -2066,7 +2237,7 @@ pub const SemanticAnalyzer = struct {
                 } };
             },
             .Custom => |custom| {
-                const canonical_name = self.resolveTypeAlias(custom.lexeme);
+                const canonical_name = ast.bareTypeName(self.resolveTypeAlias(custom.lexeme));
                 type_info.* = .{ .base = .Custom, .custom_type = canonical_name };
             },
             .Array => |array| {
@@ -2416,10 +2587,10 @@ pub const SemanticAnalyzer = struct {
 
         // Add parameters to function scope
         for (func.params) |param| {
-            const param_type_info = if (param.type_expr) |type_expr|
-                try ast.typeInfoFromExpr(self.allocator, type_expr)
-            else
-                try ast.TypeInfo.createDefault(self.allocator);
+            const param_type_info = if (param.type_expr) |type_expr| blk: {
+                self.materializeTypeExprModules(type_expr);
+                break :blk try ast.typeInfoFromExpr(self.allocator, type_expr);
+            } else try ast.TypeInfo.createDefault(self.allocator);
 
             if (param.type_expr == null) {
                 param_type_info.* = .{ .base = .Nothing }; // Default to nothing if no type specified
@@ -2750,6 +2921,7 @@ pub const SemanticAnalyzer = struct {
                                         // Convert fields to TypeInfo and register struct
                                         const field_types = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
                                         for (sd.fields, field_types) |field, *ft| {
+                                            self.materializeTypeExprModules(field.type_expr);
                                             const ti = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
                                             ft.* = .{ .name = field.name.lexeme, .type_info = ti };
                                         }

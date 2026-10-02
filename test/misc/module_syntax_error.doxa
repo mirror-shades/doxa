@@ -1,0 +1,8 @@
+module bad from "./moddata/broken_syntax.doxa"
+
+# Regression: a syntax error in an imported module must surface as a located
+# syntax error (E2001) naming the module, not an unlocated internal error
+# (E8001) from the resolve phase.
+entry function main() {
+    @print("{bad.broken()}\n")
+}

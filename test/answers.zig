@@ -236,6 +236,18 @@ pub const expected_module_method_calls_results = [_]print_result{
     .{ .value = "42 42 7" },
 };
 
+pub const expected_module_qualified_collision_results = [_]print_result{
+    .{ .value = "105 211" },
+};
+
+pub const expected_module_qualified_group_results = [_]print_result{
+    .{ .value = "group ok" },
+};
+
+pub const expected_module_imported_struct_members_results = [_]print_result{
+    .{ .value = "GET GET GET" },
+};
+
 pub const expected_inline_zig_test_results = [_]print_result{
     .{ .value = "42" },
     .{ .value = "49" },

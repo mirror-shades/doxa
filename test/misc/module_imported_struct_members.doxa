@@ -1,0 +1,20 @@
+module req from "./moddata/req_mod.doxa"
+
+# Regression: methods and fields of a struct reached through a module qualifier
+# (`req.Req`) must resolve wherever the type is named. A parameter annotation
+# (`r :: req.Req`) left the module unloaded, so `r.body()` reported "Unknown
+# method" and `r.verb` reported the struct as a missing module field; a value
+# access (`req.take()`) happened to load the module and worked. The annotation
+# is now materialized when it is processed.
+function viaParam(r :: req.Req) returns string {
+    return r.body()
+}
+
+function viaField(r :: req.Req) returns string {
+    return r.verb
+}
+
+entry function main() {
+    const r is $req.Req { verb is "GET" }
+    @print("{viaParam(r)} {viaField(r)} {r.body()}\n")
+}
