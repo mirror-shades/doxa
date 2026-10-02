@@ -8,6 +8,9 @@ const precedence = @import("./precedence.zig");
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const import_parser = @import("import_parser.zig");
 const module_resolver = @import("module_resolver.zig");
+const module_graph = @import("../module/graph.zig");
+const ModuleGraph = module_graph.ModuleGraph;
+const ModuleRecord = module_graph.ModuleRecord;
 
 const ast = @import("../ast/ast.zig");
 const ModuleInfo = ast.ModuleInfo;
@@ -24,12 +27,6 @@ const TokenStyle = enum {
     Keyword,
     Symbol,
     Undefined,
-};
-
-pub const ModuleResolutionStatus = enum {
-    NOT_STARTED,
-    IN_PROGRESS,
-    COMPLETED,
 };
 
 pub const ImportStackEntry = struct {
@@ -126,6 +123,14 @@ pub const Parser = struct {
 
     current_file: []const u8,
     current_file_uri: []const u8,
+    /// The one authoritative module store, shared by every parser in a
+    /// compilation.
+    graph: *ModuleGraph,
+    /// The graph record for the file this parser is parsing. It owns the
+    /// synthetic records generated for inline `zig Name { … }` blocks, whose
+    /// stable keys derive from it. Null only for a parser that is not parsing a
+    /// file (a temporary expression parser).
+    owner_record: ?*ModuleRecord = null,
     current_module: ?ModuleInfo = null,
     module_cache: std.StringHashMap(ModuleInfo),
     module_namespaces: std.StringHashMap(ModuleInfo),
@@ -135,7 +140,6 @@ pub const Parser = struct {
 
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
-    module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
     import_stack: std.array_list.Managed(ImportStackEntry),
 
     // Match path pattern tracking
@@ -143,7 +147,7 @@ pub const Parser = struct {
     current_path_pattern_is_wildcard: bool = false,
     current_path_pattern_field_names: ?[]const token.Token = null,
 
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter) Parser {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter, graph_store: *ModuleGraph) Parser {
         const parser = Parser{
             .io = io,
             .allocator = allocator,
@@ -152,12 +156,12 @@ pub const Parser = struct {
             .reporter = reporter,
             .current_file = current_file,
             .current_file_uri = current_file_uri,
+            .graph = graph_store,
             .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap(ModuleImportEntry)).init(allocator),
             .specific_imports = std.array_list.Managed(SpecificImportEntry).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
-            .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
             .import_stack = std.array_list.Managed(ImportStackEntry).init(allocator),
         };
 
@@ -172,7 +176,6 @@ pub const Parser = struct {
         if (self.imported_symbols) |*imported_symbols| {
             imported_symbols.deinit();
         }
-        self.module_resolution_status.deinit();
         self.import_stack.deinit();
     }
 
@@ -420,6 +423,14 @@ pub const Parser = struct {
                         });
                     }
 
+                    // An inline `zig` block is a namespace, and every namespace
+                    // is a synthetic module record owned by the file that
+                    // declares it. Its stable key derives from the owner, so two
+                    // files may each declare `zig Name` without collision.
+                    if (self.owner_record) |owner| {
+                        _ = try self.graph.addGeneratedRecord(self.allocator, owner, module_name);
+                    }
+
                     const imported_symbols = self.getImportedSymbols();
                     for (sigs) |sig| {
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, sig.name });
@@ -586,6 +597,23 @@ pub const Parser = struct {
         }
 
         return statements.toOwnedSlice();
+    }
+
+    /// Complete the entry file's record from the externally-driven root parse.
+    /// The entry file is record 0 in the module graph; like any module it owns
+    /// its source and body, so `Parsed` never means `ast == null`. `record` is
+    /// the graph record for `self.current_file`, registered before imports
+    /// resolved. The body is wrapped in a block so the record carries the same
+    /// shape an imported module's record does.
+    pub fn completeEntryRecord(self: *Parser, record: *ModuleRecord, source: []const u8, statements: []ast.Stmt) ErrorList!void {
+        const module_block = try self.allocator.create(ast.Expr);
+        module_block.* = .{
+            .base = .{ .id = ast.generateNodeId(), .span = null },
+            .data = .{ .Block = .{ .statements = statements, .value = null } },
+        };
+
+        const info = try module_resolver.extractModuleInfoWithParser(self, module_block, self.current_file, null, self);
+        self.graph.completeExternalParse(record, source, module_block, info);
     }
 
     pub fn hasReturnWithValue(self: *Parser) !bool {
