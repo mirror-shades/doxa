@@ -2138,6 +2138,68 @@ public function isMac() returns tetra {
 
 </details>
 
+### `pathFor`
+
+```doxa
+public function pathFor(os :: string, parts :: string[]) returns string
+```
+
+Joins `parts` with the separator for `os` (one of the names returned by
+`os()`, e.g. `"windows"`, `"linux"`, `"macos"`). Empty segments are skipped,
+an absolute segment resets the result, and a separator already at the join
+point is not doubled.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function pathFor(os :: string, parts :: string[]) returns string {
+    const sep is sepFor(os)
+    var result is ""
+    var i is 0
+    while i < @length(parts) {
+        const part is parts[i]
+        if @length(part) == 0 then {
+            i is i + 1
+            continue
+        }
+
+        if isAbsolute(part, os) then {
+            result is part
+        } else if @length(result) == 0 then {
+            result is part
+        } else if isSep(result[@length(result) - 1], os) then {
+            result is result + part
+        } else {
+            result is result + sep + part
+        }
+        i is i + 1
+    }
+    return result
+}
+```
+
+</details>
+
+### `path`
+
+```doxa
+public function path(parts :: string[]) returns string
+```
+
+Joins `parts` with the host OS's separator. See `pathFor`.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function path(parts :: string[]) returns string {
+    return pathFor(os(), parts)
+}
+```
+
+</details>
+
 ## `std.time`
 
 ### `unix`
