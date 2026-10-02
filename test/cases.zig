@@ -262,6 +262,21 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_module_method_calls_results[0..],
     },
     .{
+        .name = "module qualified collision",
+        .path = "./test/misc/module_qualified_collision.doxa",
+        .expected_print = answers.expected_module_qualified_collision_results[0..],
+    },
+    .{
+        .name = "module qualified group",
+        .path = "./test/misc/module_qualified_group.doxa",
+        .expected_print = answers.expected_module_qualified_group_results[0..],
+    },
+    .{
+        .name = "module imported struct members",
+        .path = "./test/misc/module_imported_struct_members.doxa",
+        .expected_print = answers.expected_module_imported_struct_members_results[0..],
+    },
+    .{
         .name = "inline zig string",
         .path = "./test/misc/inline_zig_string.doxa",
         .expected_print = &[_]print_result{
@@ -298,6 +313,20 @@ const shared_cases = [_]Case{
         .name = "std file list",
         .path = "./test/misc/std_file_list.doxa",
         .expected_print = answers.expected_std_file_list_results[0..],
+    },
+    .{
+        .name = "host path join",
+        .path = "./test/misc/host_path.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "a/b" },
+            .{ .value = "a\\b" },
+            .{ .value = "/b/c" },
+            .{ .value = "/etc/hosts" },
+            .{ .value = "C:\\Users\\x" },
+            .{ .value = "a/b/c" },
+            .{ .value = "a/b" },
+            .{ .value = "host ok" },
+        },
     },
     .{
         .name = "inline zig string escape",

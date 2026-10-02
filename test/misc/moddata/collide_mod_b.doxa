@@ -1,0 +1,3 @@
+public function collide(x :: int, y :: int) returns int {
+    return x + y + 200
+}

@@ -1987,7 +1987,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Struct };
         },
         .StructLiteral => |struct_lit| {
-            if (lookupVariable(self, struct_lit.name.lexeme)) |variable| {
+            const bare_name = self.materializeQualifiedTypeName(struct_lit.name.lexeme);
+            if (lookupVariable(self, bare_name)) |variable| {
                 if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                     if (storage.type_info.base == .Custom) {
                         type_info.* = storage.type_info.*;
@@ -2038,13 +2039,13 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             }
                         }
                     } else {
-                        type_info.* = .{ .base = .Custom, .custom_type = struct_lit.name.lexeme };
+                        type_info.* = .{ .base = .Custom, .custom_type = bare_name };
                     }
                 } else {
-                    type_info.* = .{ .base = .Custom, .custom_type = struct_lit.name.lexeme };
+                    type_info.* = .{ .base = .Custom, .custom_type = bare_name };
                 }
             } else {
-                type_info.* = .{ .base = .Custom, .custom_type = struct_lit.name.lexeme };
+                type_info.* = .{ .base = .Custom, .custom_type = bare_name };
             }
         },
         .EnumDecl => {

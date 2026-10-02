@@ -106,6 +106,9 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
     new_parser.import_stack = try self.import_stack.clone();
 
     const module_statements = new_parser.execute() catch |err| {
+        if (!self.reporter.hasCompileErrors()) {
+            new_parser.reportParseError(err);
+        }
         _ = self.module_resolution_status.remove(normalized_path);
         return err;
     };

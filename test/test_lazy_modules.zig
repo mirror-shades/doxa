@@ -135,6 +135,37 @@ test "lazy modules: duplicate specific symbol names keep distinct import entries
     try testing.expect(std.mem.eql(u8, parser.specific_imports.items[1].module_path, "./same_b.doxa"));
 }
 
+test "specific import: binds only the named symbol and exposes no namespace" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var parsed = try parseSource(allocator, &reporter, "import alpha from \"./two.doxa\"\n", "test/misc/lazy/two_user.doxa");
+    defer parsed.deinit();
+    const parser = &parsed.parser;
+
+    try testing.expect(try parser.ensureImportedSymbol("alpha"));
+
+    // Only the named symbol is bound; the module's other public declarations
+    // are not injected into the importer.
+    try testing.expect(parser.imported_symbols.?.contains("alpha"));
+    try testing.expect(!parser.imported_symbols.?.contains("beta"));
+    try testing.expect(!(try parser.ensureImportedSymbol("beta")));
+
+    // A specific import exposes no user-visible namespace for its module; the
+    // module is registered under a path-hash key so calls within it still
+    // resolve, but the file stem never becomes a namespace the importer sees.
+    try testing.expect(!parser.module_namespaces.contains("two"));
+    var found_hashed = false;
+    var it = parser.module_namespaces.iterator();
+    while (it.next()) |entry| {
+        if (std.mem.startsWith(u8, entry.key_ptr.*, "$import_")) found_hashed = true;
+    }
+    try testing.expect(found_hashed);
+}
+
 test "lazy modules: circular imports are detected when reached" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();

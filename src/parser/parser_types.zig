@@ -63,6 +63,56 @@ const PendingModuleDependency = struct {
     parent_file: []const u8,
 };
 
+fn parserErrorHint(err: anyerror) []const u8 {
+    return switch (err) {
+        error.ExpectedComma => "expected a ',' between arguments or list elements",
+        error.ExpectedCommaOrBrace => "expected ',' or '}'",
+        error.ExpectedCommaOrParen => "expected ',' or ')'",
+        error.ExpectedCommaOrBracket => "expected ',' or ']'",
+        error.ExpectedCommaOrClosingBracket => "expected ',' or a closing bracket",
+        error.ExpectedCommaOrClosingParenthesis => "expected ',' or a closing parenthesis",
+        error.ExpectedRightParen, error.ExpectedClosingParen, error.ExpectedClosingParenthesis => "expected a closing parenthesis ')'",
+        error.ExpectedLeftParen => "expected an opening parenthesis '('",
+        error.ExpectedRightBrace => "expected a closing brace '}'",
+        error.ExpectedLeftBrace => "expected an opening brace '{'",
+        error.ExpectedRightBracket => "expected a closing bracket ']'",
+        error.ExpectedLeftBracket => "expected an opening bracket '['",
+        error.ExpectedExpression => "expected an expression",
+        error.ExpectedIdentifier => "expected an identifier",
+        error.ExpectedType => "expected a type",
+        error.ExpectedThen => "expected 'then' after the condition",
+        error.ExpectedElse => "expected 'else'",
+        error.ExpectedColon => "expected ':'",
+        error.ExpectedAssignmentOperator => "expected an assignment operator",
+        error.ExpectedReturnsKeyword => "expected 'returns'",
+        error.ExpectedLeftBraceOrReturnsKeyword => "expected '{' or 'returns'",
+        error.ExpectedFunctionName => "expected a function name",
+        error.ExpectedFunctionParams => "expected function parameters",
+        error.ExpectedFunctionBody => "expected a function body",
+        error.ExpectedFunctionReturnType => "expected a function return type",
+        error.ExpectedString, error.ExpectedStringLiteral => "expected a string literal",
+        error.ExpectedMapKey => "expected a map key",
+        error.ExpectedInKeyword => "expected 'in'",
+        error.ExpectedWhereKeyword => "expected 'where'",
+        error.ExpectedMapKeyword => "expected 'map'",
+        error.ExpectedPattern => "expected a pattern",
+        error.ExpectedEnumVariant => "expected an enum variant",
+        error.ExpectedModuleName => "expected a module name",
+        error.ExpectedImportName => "expected an import name",
+        error.UnexpectedToken => "unexpected token",
+        error.ParserDidNotAdvance => "parser could not make progress",
+        error.InternalParserError => "internal parser error",
+        else => "",
+    };
+}
+
+fn isPrintableAscii(text: []const u8) bool {
+    for (text) |byte| {
+        if (byte < 0x20 or byte > 0x7e) return false;
+    }
+    return true;
+}
+
 pub const Parser = struct {
     tokens: []const token.Token,
     current: usize,
@@ -252,6 +302,53 @@ pub const Parser = struct {
         };
 
         return block_expr;
+    }
+
+    /// Report a parser-phase failure at the token the parser stopped on.
+    /// `execute` returns errors without emitting a diagnostic — the caller owns
+    /// presentation — so every caller must route through here: the root file in
+    /// `main.zig` and each lazily parsed imported module in `module_resolver.zig`.
+    /// Otherwise a parse failure in an imported module surfaces as an unlocated
+    /// internal compiler error instead of a syntax error at the offending line.
+    pub fn reportParseError(self: *Parser, err: anyerror) void {
+        const tok = self.peek();
+
+        const file = if (tok.file.len > 0) tok.file else self.current_file;
+        const file_uri = if (tok.file_uri.len > 0) tok.file_uri else self.current_file_uri;
+
+        const loc = Location{
+            .file = file,
+            .file_uri = file_uri,
+            .range = .{
+                .start_line = tok.line,
+                .start_col = tok.column,
+                .end_line = tok.line,
+                .end_col = tok.column + tok.lexeme.len,
+            },
+        };
+
+        var lexeme_buf: [64]u8 = undefined;
+        var token_desc: []const u8 = @tagName(tok.type);
+        if (tok.lexeme.len > 0 and tok.lexeme.len <= lexeme_buf.len and isPrintableAscii(tok.lexeme)) {
+            token_desc = std.fmt.bufPrint(&lexeme_buf, "{s} '{s}'", .{ @tagName(tok.type), tok.lexeme }) catch @tagName(tok.type);
+        }
+
+        const hint = parserErrorHint(err);
+        if (hint.len > 0) {
+            self.reporter.reportCompileError(
+                loc,
+                ErrorCode.SYNTAX_ERROR,
+                "{s}: {s}; found {s}",
+                .{ @errorName(err), hint, token_desc },
+            );
+        } else {
+            self.reporter.reportCompileError(
+                loc,
+                ErrorCode.SYNTAX_ERROR,
+                "parse error: {s}; found {s}",
+                .{ @errorName(err), token_desc },
+            );
+        }
     }
 
     pub fn execute(self: *Parser) ErrorList![]ast.Stmt {
