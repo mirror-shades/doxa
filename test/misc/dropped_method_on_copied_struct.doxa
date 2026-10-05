@@ -1,0 +1,45 @@
+# Regression test: a method call on a struct-typed local that was initialised
+# from another struct expression must resolve exactly like one initialised from
+# a constructor. `const copy is original` recorded no type *name* (only the
+# placeholder id the constructor path stores), so the call fell through to the
+# builtin path, matched no table, and was dropped without a diagnostic: a
+# value-returning method yielded the receiver itself and a void method did
+# nothing at all. See plan/struct-and-array-representation.md, Finding 1.
+struct Counter {
+    value :: int,
+
+    function new(start :: int) returns Counter {
+        return $Counter { value is start }
+    }
+
+    method get() returns int {
+        return this.value
+    }
+
+    method bump(by :: int) {
+        this.value += by
+    }
+}
+
+entry function main() {
+    const original is Counter.new(7)
+    @print("original {original.get()}\n")
+
+    # Value-returning: this printed the receiver struct, not the int.
+    const copied is original
+    @print("copied {copied.get()}\n")
+
+    # Void: the mutation never landed when the call was dropped. Read back
+    # through the same name so the assertion does not depend on aliasing.
+    const alsoCopied is original
+    alsoCopied.bump(5)
+    @print("after bump {alsoCopied.get()}\n")
+
+    # And through a nested field, which resolves no name either.
+    const holder is $Holder { inner is original }
+    @print("field {holder.inner.get()}\n")
+}
+
+struct Holder {
+    inner :: Counter,
+}

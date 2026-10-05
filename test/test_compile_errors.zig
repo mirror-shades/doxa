@@ -135,6 +135,11 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected = .{ .exit_code = 1, .contains_message = "String is not assignable to type Coord", .error_code = "E1003" },
         },
         .{
+            .name = "unknown method on a struct-initialised local",
+            .path = "./test/misc/unknown_method_on_copied_struct.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Unknown method 'nope' on struct 'Counter'", .error_code = "E1012" },
+        },
+        .{
             .name = "undefined variable suggestion",
             .path = "./test/misc/undefined_variable_suggestion.doxa",
             .expected = .{ .exit_code = 1, .contains_message = "Did you mean 'total'?", .error_code = "E1001" },
