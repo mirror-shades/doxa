@@ -55,6 +55,10 @@ pub fn Methods(comptime Ctx: type) type {
             func_start_labels: *std.StringHashMap(bool),
             peek_state: *PeekEmitState,
         ) !void {
+            const prev_peek_state = self.active_peek_state;
+            self.active_peek_state = peek_state;
+            defer self.active_peek_state = prev_peek_state;
+
             self.in_function_context = true;
             defer self.in_function_context = false;
 

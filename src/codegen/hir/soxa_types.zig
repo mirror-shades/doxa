@@ -1,6 +1,7 @@
 const std = @import("std");
 const HIRInstruction = @import("soxa_instructions.zig").HIRInstruction;
 const HIRValue = @import("soxa_values.zig").HIRValue;
+const module_graph = @import("../../module/graph.zig");
 
 pub const StructId = u32;
 pub const EnumId = u32;
@@ -131,6 +132,16 @@ pub const FunctionInfo = struct {
     param_is_readonly: []bool,
     param_types: []HIRType,
 };
+
+/// Signatures keyed by defining `(ModuleId, declared name)`. This is the
+/// authoritative store; `name` remains the temporary emitted link spelling
+/// until Phase 6 renders the versioned mangling from the same key.
+pub const FunctionSignatureMap = std.HashMap(
+    module_graph.SymbolKey,
+    FunctionInfo,
+    module_graph.SymbolKeyContext,
+    std.hash_map.default_max_load_percentage,
+);
 
 pub const HIRProgram = struct {
     instructions: []HIRInstruction,

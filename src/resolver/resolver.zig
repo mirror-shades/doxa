@@ -41,7 +41,11 @@ pub const Resolver = struct {
             const namespace = key_entry.key_ptr.*;
             if (self.parser.module_namespaces.get(namespace)) |existing| {
                 if (existing.ast == null) {
-                    _ = try self.parser.loadAndRegisterModule(existing.file_path, namespace, null);
+                    const module_info = try self.parser.loadAndRegisterModule(existing.file_path, namespace, null);
+                    // Bind the alias owner-scoped on the file that declared it,
+                    // so codegen name resolution reads the record, not the flat
+                    // alias-keyed map.
+                    try self.parser.bindResolvedNamespace(namespace, module_info, existing.importer_path);
                 }
             }
         }

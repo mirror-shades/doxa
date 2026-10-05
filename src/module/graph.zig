@@ -22,6 +22,28 @@ const ast = @import("../ast/ast.zig");
 pub const ModuleId = u32;
 pub const TypeId = u32;
 
+/// The internal identity of a symbol owned by a module: the *defining* record
+/// plus the declared local name (`fn` for a top-level function, `Struct.method`
+/// for a method). Never a source alias; a dependency-free stand-in for the
+/// eventual `(ModuleId, SymbolKind, components)` mangling key.
+pub const SymbolKey = struct {
+    module: ModuleId,
+    name: []const u8,
+};
+
+pub const SymbolKeyContext = struct {
+    pub fn hash(_: SymbolKeyContext, key: SymbolKey) u64 {
+        var h = std.hash.Wyhash.init(0);
+        h.update(std.mem.asBytes(&key.module));
+        h.update(key.name);
+        return h.final();
+    }
+
+    pub fn eql(_: SymbolKeyContext, a: SymbolKey, b: SymbolKey) bool {
+        return a.module == b.module and std.mem.eql(u8, a.name, b.name);
+    }
+};
+
 /// Semantic type identity: the defining module plus the declared name. Two
 /// modules' `Node` are distinct because `module` differs. Never a numeric id.
 pub const TypeRef = struct {
@@ -48,8 +70,32 @@ pub const Binding = union(enum) {
     namespace: ModuleId,
 };
 
+/// A name in a module's own namespace: what it binds, its visibility, and the
+/// span of the declaration that introduced it (pointing at the previous
+/// declaration for duplicate-binding diagnostics). The span is null while a
+/// binding is materialized lazily by resolution and the declaration site has
+/// not been scanned yet.
+pub const BoundName = struct {
+    binding: Binding,
+    visibility: Visibility,
+    span: ?ast.SourceSpan = null,
+};
+
 /// Stable key for the synthetic `builtin` module namespace.
 pub const builtin_key = "builtin";
+
+/// The compilation-local, deterministic link prefix for a module's symbols:
+/// `__doxa_m1_<16 hex>__`. It is derived from `stable_module_key` (never a
+/// source alias or an absolute path), so two modules can never share an
+/// internal codegen key, and the emitted `.ll` is independent of checkout
+/// directory and of discovery order. Phase 6 replaces this placeholder with the
+/// full versioned mangling; until then it is the temporary LLVM spelling.
+pub fn linkPrefix(allocator: std.mem.Allocator, stable_module_key: []const u8) ![]const u8 {
+    const hashing = @import("../utils/hashing.zig");
+    const digest = hashing.hashBytes(stable_module_key);
+    const hex = hashing.hexOf(digest);
+    return std.fmt.allocPrint(allocator, "__doxa_m1_{s}__", .{hex[0..16]});
+}
 
 /// Generated identities derive from their owner, never a bare `gen:<name>`.
 /// Each inline `zig Name { … }` is declared in exactly one file and duplicate
@@ -256,6 +302,9 @@ pub const ModuleRecord = struct {
     physical_key: ?[]const u8,
     /// Mangled/deterministic identity; never an absolute path.
     stable_module_key: []const u8,
+    /// Deterministic link prefix derived from `stable_module_key`, used for
+    /// internal codegen keys and the temporary LLVM spelling until Phase 6.
+    link_prefix: []const u8,
     status: ModuleStatus = .NotLoaded,
     /// Set iff `status == .Failed`.
     failed_stage: ?ModuleStage = null,
@@ -272,6 +321,14 @@ pub const ModuleRecord = struct {
     /// per-record analysis (Phase 5).
     source: ?[]const u8 = null,
     ast: ?*ast.Expr = null,
+    /// This file's own namespace: bare name → binding. Owner-scoped, so two
+    /// files may bind the same name to different entities. Keys and symbol
+    /// names are owned by the graph arena.
+    bindings: std.StringHashMapUnmanaged(BoundName) = .empty,
+    /// The subset of `bindings` visible to importers (`public` declarations and
+    /// public re-exports). The single public surface; `import n from S` reads
+    /// here.
+    public_bindings: std.StringHashMapUnmanaged(BoundName) = .empty,
 };
 
 pub const ModuleGraphError = error{
@@ -351,6 +408,7 @@ pub const ModuleGraph = struct {
             .id = @intCast(self.records.items.len),
             .physical_key = if (physical_key) |key| try allocator.dupe(u8, key) else null,
             .stable_module_key = try allocator.dupe(u8, stable_key),
+            .link_prefix = try linkPrefix(allocator, stable_key),
         };
 
         try self.records.append(allocator, new_record);
@@ -376,6 +434,63 @@ pub const ModuleGraph = struct {
 
     pub fn record(self: *const ModuleGraph, id: ModuleId) *ModuleRecord {
         return self.records.items[id];
+    }
+
+    /// Introduce (or replace) a binding in `record`'s own namespace. `name` and
+    /// the symbol name are copied into the graph arena, so the binding never
+    /// borrows a lexer buffer. A public binding is mirrored into the record's
+    /// public surface.
+    pub fn bindName(
+        self: *ModuleGraph,
+        target: *ModuleRecord,
+        name: []const u8,
+        binding: Binding,
+        visibility: Visibility,
+        span: ?ast.SourceSpan,
+    ) !void {
+        const allocator = self.arena.allocator();
+        const owned_name = try allocator.dupe(u8, name);
+        var owned_binding = binding;
+        switch (binding) {
+            .symbol => |symbol| owned_binding = .{ .symbol = .{
+                .module = symbol.module,
+                .name = try allocator.dupe(u8, symbol.name),
+                .kind = symbol.kind,
+            } },
+            .namespace => {},
+        }
+        const bound = BoundName{ .binding = owned_binding, .visibility = visibility, .span = span };
+        try target.bindings.put(allocator, owned_name, bound);
+        if (visibility == .Public) {
+            try target.public_bindings.put(allocator, owned_name, bound);
+        }
+    }
+
+    /// Bind a symbol declared in `target` itself (its defining module is the
+    /// record).
+    pub fn bindSymbol(
+        self: *ModuleGraph,
+        target: *ModuleRecord,
+        name: []const u8,
+        kind: SymbolKind,
+        visibility: Visibility,
+        span: ?ast.SourceSpan,
+    ) !void {
+        return self.bindName(target, name, .{ .symbol = .{ .module = target.id, .name = name, .kind = kind } }, visibility, span);
+    }
+
+    /// Bind a namespace in `target`'s own namespace. The target is a namespace
+    /// record: an imported module, an inline `zig Name { … }`, or a `.zig`
+    /// file import.
+    pub fn bindNamespace(
+        self: *ModuleGraph,
+        target: *ModuleRecord,
+        name: []const u8,
+        namespace_id: ModuleId,
+        visibility: Visibility,
+        span: ?ast.SourceSpan,
+    ) !void {
+        return self.bindName(target, name, .{ .namespace = namespace_id }, visibility, span);
     }
 
     /// Drive the Parse stage: `NotLoaded → Parsing → Parsed`. A re-entry while

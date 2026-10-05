@@ -161,8 +161,14 @@ pub const HIRInstruction = union(enum) {
 
     /// Boxed member index check: unions and groups pack the active member into
     /// the same `reserved` bits, so one instruction discriminates either.
+    ///
+    /// `expected_tag` additionally compares the box's runtime tag (its head
+    /// word). A union whose member list has no distinct index for a `nothing`
+    /// arm (or reorders members) would otherwise let a `nothing` box satisfy a
+    /// struct member's index check; the tag is what separates the two.
     MemberCheck: struct {
         member_index: u32,
+        expected_tag: ?u32 = null,
     },
 
     /// Unwrap a boxed %DoxaValue, replacing it with the member payload.

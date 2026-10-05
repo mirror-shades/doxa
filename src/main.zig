@@ -246,75 +246,6 @@ fn nativeOutputPath(allocator: std.mem.Allocator, cli: *const CLI, script_path: 
     return withExeSuffix(allocator, raw, is_windows);
 }
 
-fn registerMissingTypesFromModuleCache(parser: *Parser, semantic_analyzer: *SemanticAnalyzer) !void {
-    const Registration = struct {
-        fn enumDecl(parser_inner: *Parser, analyzer: *SemanticAnalyzer, ed: anytype) !void {
-            const helpers = @import("./analysis/semantic/helpers.zig");
-            const variants = try parser_inner.allocator.alloc([]const u8, ed.variants.len);
-            for (ed.variants, variants) |v, *name| name.* = v.lexeme;
-            try helpers.registerEnumType(analyzer, ed.name.lexeme, variants);
-        }
-        fn groupDecl(analyzer: *SemanticAnalyzer, gd: anytype) !void {
-            const helpers = @import("./analysis/semantic/helpers.zig");
-            try helpers.registerGroupType(analyzer, gd.name.lexeme, gd.members);
-        }
-        fn structDecl(analyzer: *SemanticAnalyzer, sd: anytype) !void {
-            const ast = @import("./ast/ast.zig");
-            const helpers = @import("./analysis/semantic/helpers.zig");
-            const field_types = try analyzer.allocator.alloc(ast.StructFieldType, sd.fields.len);
-            for (sd.fields, 0..) |field, i| {
-                field_types[i] = ast.StructFieldType{
-                    .name = field.name.lexeme,
-                    .type_info = try analyzer.typeExprToTypeInfo(field.type_expr),
-                    .is_public = field.is_public,
-                };
-            }
-            try helpers.registerStructType(analyzer, sd.name.lexeme, field_types);
-        }
-    };
-
-    // Ensure all lazy module namespaces are loaded so their enum/group/struct
-    // declarations are available in the module cache. (Reachability loading is
-    // done by the resolver; this is the safety net for any namespace registered
-    // after it, e.g. while lowering.)
-    var ns_it = parser.module_namespaces.iterator();
-    while (ns_it.next()) |entry| {
-        if (entry.value_ptr.ast == null) {
-            _ = parser.ensureModuleNamespace(entry.key_ptr.*) catch continue;
-        }
-    }
-
-    var cache_it = parser.module_cache.iterator();
-    while (cache_it.next()) |entry| {
-        const module_info = entry.value_ptr.*;
-        const module_ast = module_info.ast orelse continue;
-        if (module_ast.data != .Block) continue;
-        for (module_ast.data.Block.statements) |stmt| {
-            switch (stmt.data) {
-                .EnumDecl => |ed| try Registration.enumDecl(parser, semantic_analyzer, ed),
-                .GroupDecl => |gd| try Registration.groupDecl(semantic_analyzer, gd),
-                .Expression => |maybe_expr| {
-                    if (maybe_expr) |expr| {
-                        if (expr.data == .EnumDecl) {
-                            try Registration.enumDecl(parser, semantic_analyzer, expr.data.EnumDecl);
-                        } else if (expr.data == .GroupDecl) {
-                            try Registration.groupDecl(semantic_analyzer, expr.data.GroupDecl);
-                        } else if (expr.data == .StructDecl) {
-                            try Registration.structDecl(semantic_analyzer, expr.data.StructDecl);
-                            // Register the struct's methods too. Semantic inference
-                            // does this on first use, but a struct referenced only
-                            // from an imported module body never goes through it, so
-                            // its method calls would silently degrade to no-ops.
-                            try semantic_analyzer.ensureImportedStructRegistered(expr.data.StructDecl.name.lexeme);
-                        }
-                    }
-                },
-                else => {},
-            }
-        }
-    }
-}
-
 fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter, profiler: *Profiler) !HIRProgram {
     const root_scope = semantic_analyzer.memory.scope_manager.root_scope orelse return error.MissingRootScope;
     var constant_folder = ConstantFolder.init(memoryManager.getAnalysisAllocator(), root_scope);
@@ -332,10 +263,10 @@ fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []A
     profiler.begin("register-types");
     // Enums, groups, and structs declared in dependency modules may not appear
     // on the root parser's `imported_symbols` map (private structs are never
-    // direct imports, yet public structs reference them in fields). Register them
-    // from the module cache so HIR lowering resolves types like `error.IO` in
-    // return unions and `Node[]` in `LinkedList.nodes`.
-    try registerMissingTypesFromModuleCache(parser, semantic_analyzer);
+    // direct imports, yet public structs reference them in fields). Register
+    // them from every parsed module record so HIR lowering resolves types like
+    // `error.IO` in return unions and `Node[]` in `LinkedList.nodes`.
+    try semantic_analyzer.registerMissingTypesFromImportedModules();
 
     // Recompute struct field HIR types now that enums/groups/structs from every
     // module are registered. The eager lowering in registerStructType ran before
@@ -345,10 +276,12 @@ fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []A
 
     profiler.begin("hir-lower");
     defer profiler.end();
-    var hir_generator = HIRGenerator.init(io, memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer);
+    var hir_generator = HIRGenerator.init(io, memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer, parser.graph, if (parser.owner_record) |record| record.id else 0);
     defer hir_generator.deinit();
 
     hir_generator.type_system.function_signatures = &hir_generator.function_signatures;
+    hir_generator.type_system.call_return_resolver = HIRGenerator.resolveCallReturnTypeThunk;
+    hir_generator.type_system.call_return_ctx = &hir_generator;
 
     const custom_types = semantic_analyzer.getCustomTypes();
     var custom_types_iter = custom_types.iterator();
@@ -1407,7 +1340,7 @@ const SCAFFOLD_BUILD =
     \\
     \\c.addArtifact(exe)
     \\
-    \\build.execute(c, false)
+    \\build.execute(c)
     \\
 ;
 

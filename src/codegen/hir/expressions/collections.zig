@@ -443,15 +443,22 @@ pub const CollectionsHandler = struct {
                 try self.generator.generateExpression(right, true, false);
             }
 
-            // Generate the appropriate compound assignment instruction
+            // Generate the appropriate compound assignment instruction.
+            // Every operator the parser can produce here is listed; anything
+            // else means the desugaring in `precedence.zig` grew an arm this
+            // table never learned. That used to fall through to `ArithOp.Add`,
+            // which silently compiled the wrong arithmetic — `arr[i] //= 3`
+            // returned 13 (10 + 3) because `DOUBLE_SLASH` was missing. A
+            // missing arm must stop the build, not invent arithmetic.
             const arith_op = switch (binary.operator.type) {
                 .PLUS => ArithOp.Add,
                 .MINUS => ArithOp.Sub,
                 .ASTERISK => ArithOp.Mul,
                 .SLASH => ArithOp.Div,
+                .DOUBLE_SLASH => ArithOp.IntDiv,
                 .MODULO => ArithOp.Mod,
                 .POWER => ArithOp.Pow,
-                else => ArithOp.Add,
+                else => return ErrorList.InvalidOperator,
             };
             try self.generator.instructions.append(.{ .ArrayCompoundAssign = .{ .bounds_check = true, .op = arith_op } });
 

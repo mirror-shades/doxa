@@ -146,6 +146,15 @@ pub fn Methods(comptime Ctx: type) type {
             // Union) stay on the boxed ArrayHeader path. Multidimensional arrays
             // whose innermost element is a scalar type (e.g. float[N][M]) are
             // eligible via nested_depth; the element_type itself may be .Array.
+            //
+            // TODO(fixed storage): this tests the whole element type, so a single
+            // union member anywhere in an element struct costs the entire array
+            // its static layout — `Space { value :: nothing | Piece }[64]` is a
+            // pointer array plus a 64-element `doxa_array_fill_default_structs`
+            // walk that allocates a struct per cell. The rationale (a boxed
+            // member needs an addressable cell) is sound; testing the member
+            // rather than the whole struct is what makes the cost invisible in
+            // the source. See plan/struct-and-array-representation.md.
             const can_flat_alloc = blk: {
                 if (inst.element_type == .Array) {
                     if (inst.nested_depth > 0) {
@@ -169,6 +178,13 @@ pub fn Methods(comptime Ctx: type) type {
                 // access is a single GEP and field access is one more GEP — no
                 // box pointer, no opaque accessor, no clone. Structs with heap
                 // fields stay on the boxed path below.
+                //
+                // TODO(fixed storage): the `nested_depth == 0` restriction has
+                // no rationale. `int[8][8]` already emits
+                // `alloca [8 x [8 x i64]]`, and `[8 x [8 x { i64, i64 }]]` is
+                // the same shape for a by-value struct element — so `Cell[8][8]`
+                // silently drops to `doxa_array_new` while `Cell[64]` stays
+                // static. See plan/struct-and-array-representation.md.
                 if (inst.element_struct_field_types) |field_types| {
                     if (field_types.len > 0 and structFieldsAreFlatScalars(field_types)) {
                         const words = field_types.len;
@@ -343,6 +359,27 @@ pub fn Methods(comptime Ctx: type) type {
                     );
                 defer self.allocator.free(line);
                 try w.writeAll(line);
+            }
+
+            // A fixed array whose innermost element is a struct that could not be
+            // flat-allocated (a heap or union field, or a multidimensional struct
+            // array) is a header of struct pointers. `doxa_array_new*` zeroes
+            // those slots, so construct a default struct for each, registered
+            // under the element descriptor. A dynamic array starts empty, so this
+            // is a no-op for it.
+            const fill_inner = HIR.arrayInnermostElementType(inst.element_type) orelse inst.element_type;
+            const fill_fixed = (inst.storage_kind == .fixed or inst.storage_kind == .const_literal) and inst.size > 0;
+            if (fill_fixed and fill_inner == .Struct) {
+                const sid = fill_inner.Struct;
+                const fill_fields = self.struct_fields_by_id.get(sid);
+                const fill_name = self.struct_type_names_by_id.get(sid);
+                if (fill_fields != null and fill_name != null) {
+                    if (self.getOrCreateStructDescGlobalByName(fill_name.?, fill_fields.?)) |desc_global| {
+                        const fill_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_array_fill_default_structs(ptr {s}, ptr {s})\n", .{ reg, desc_global });
+                        defer self.allocator.free(fill_line);
+                        try w.writeAll(fill_line);
+                    } else |_| {}
+                }
             }
 
             const arr_val = StackVal{
@@ -1225,6 +1262,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 current_bits.name,
                                 value_bits.name,
                                 .{},
+                                current_block,
                             );
                             break :blk no_line;
                         },
@@ -1236,6 +1274,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 current_bits.name,
                                 value_bits.name,
                                 .{},
+                                current_block,
                             );
                             break :blk no_line;
                         },
@@ -2424,6 +2463,16 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("  call void @doxa_peek_end()\n");
         }
 
+        /// A 1-D flat fixed array of scalar structs (B1 layout): the backing
+        /// buffer holds by-value `{i64, …}` elements, not struct pointers. Such a
+        /// value needs promotion to a boxed header before any runtime routine
+        /// that reads tag-7 elements.
+        pub fn isFlatStructArray(val: StackVal) bool {
+            return val.fixed_array_depth == 1 and
+                val.array_type != null and val.array_type.? == .Struct and
+                val.struct_field_types != null and val.struct_type_name != null;
+        }
+
         /// Synthesizes a temporary on-stack ArrayHeader that wraps a flat
         /// fixed array buffer, so that runtime functions expecting an
         /// ArrayHeader (doxa_array_to_string, doxa_print_array_hdr, etc.)
@@ -2435,6 +2484,15 @@ pub fn Methods(comptime Ctx: type) type {
             val: StackVal,
             id: *usize,
         ) !StackVal {
+            // A flat fixed array of scalar structs stores its elements by value,
+            // not as heap pointers, so a synthetic header over the raw buffer
+            // would make the runtime read the first field word as a pointer.
+            // Promote it to a real header of boxed struct elements instead.
+            if (isFlatStructArray(val)) {
+                const hdr = try self.emitFixedStructArrayHeader(w, val, "0", id);
+                return StackVal{ .name = hdr, .ty = .PTR, .array_type = val.array_type, .fixed_array_depth = 0 };
+            }
+
             var total_elems: u64 = val.fixed_array_sizes[0];
             for (1..@as(usize, val.fixed_array_depth)) |d| {
                 total_elems *= val.fixed_array_sizes[d];

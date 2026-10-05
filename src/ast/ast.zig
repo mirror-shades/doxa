@@ -1240,6 +1240,12 @@ pub const ModuleInfo = struct {
     importer_path: []const u8 = "",
     symbols: ?std.StringHashMap(ModuleSymbol) = null,
     is_inline_zig: bool = false,
+    /// MIGRATION (Phase 2 → removed once bindings live only on `ModuleRecord`):
+    /// the graph record this payload belongs to, so a resolution path that
+    /// returns a `ModuleInfo` can recover its record (for owner-scoped binding).
+    /// A `ModuleId` is a `u32`; keeping the raw integer avoids an import cycle
+    /// between the AST and the module graph.
+    record_id: ?u32 = null,
 
     pub fn hasPublicSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {
         if (self.symbols) |symbols| {

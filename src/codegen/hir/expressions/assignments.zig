@@ -176,6 +176,12 @@ pub const AssignmentsHandler = struct {
             .SLASH_EQUAL => {
                 try self.handleDivideEqual(left_type, right_type, compound.name);
             },
+            .DOUBLE_SLASH_EQUAL => {
+                try self.handleIntDivEqual(left_type, right_type, compound.name);
+            },
+            .MODULO_EQUAL => {
+                try self.handleModuloEqual(left_type, right_type, compound.name);
+            },
             .POWER_EQUAL => {
                 try self.handlePowerEqual(left_type, right_type, compound.name);
             },
@@ -386,5 +392,65 @@ pub const AssignmentsHandler = struct {
             );
             return ErrorList.TypeMismatch;
         }
+    }
+
+    /// `//=`. Integer-only, matching the binary `//`: `semantic.zig` rejects a
+    /// float operand there with `E1006`, so a float target is a type error here
+    /// rather than a silent conversion.
+    fn handleIntDivEqual(self: *AssignmentsHandler, left_type: HIRType, right_type: HIRType, name: ast.Token) !void {
+        if (left_type == .Int and right_type == .Int) {
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .IntDiv, .operand_type = .Int } });
+        } else if (left_type == .Byte and right_type == .Byte) {
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .IntDiv, .operand_type = .Byte } });
+        } else if (left_type == .Byte and right_type == .Int) {
+            try self.generator.instructions.append(.{ .Convert = .{ .from_type = .Int, .to_type = .Byte } });
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .IntDiv, .operand_type = .Byte } });
+        } else {
+            try self.reportCompoundOperandMismatch("///=", left_type, right_type, name);
+            return ErrorList.TypeMismatch;
+        }
+    }
+
+    /// `%=`. Integer-only, matching the binary `%`.
+    fn handleModuloEqual(self: *AssignmentsHandler, left_type: HIRType, right_type: HIRType, name: ast.Token) !void {
+        if (left_type == .Int and right_type == .Int) {
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .Mod, .operand_type = .Int } });
+        } else if (left_type == .Byte and right_type == .Byte) {
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .Mod, .operand_type = .Byte } });
+        } else if (left_type == .Byte and right_type == .Int) {
+            try self.generator.instructions.append(.{ .Convert = .{ .from_type = .Int, .to_type = .Byte } });
+            try self.generator.instructions.append(.{ .Arith = .{ .op = .Mod, .operand_type = .Byte } });
+        } else {
+            try self.reportCompoundOperandMismatch("%=", left_type, right_type, name);
+            return ErrorList.TypeMismatch;
+        }
+    }
+
+    /// The shared operand-mismatch diagnostic for the integer-only compound
+    /// operators. `op` is spelled out in the message so the error names the
+    /// operator the programmer actually wrote.
+    fn reportCompoundOperandMismatch(
+        self: *AssignmentsHandler,
+        op: []const u8,
+        left_type: HIRType,
+        right_type: HIRType,
+        name: ast.Token,
+    ) !void {
+        const location = Location{
+            .file = name.file,
+            .file_uri = name.file_uri,
+            .range = .{
+                .start_line = name.line,
+                .start_col = name.column,
+                .end_line = name.line,
+                .end_col = name.column + name.lexeme.len,
+            },
+        };
+        self.generator.reporter.reportCompileError(
+            location,
+            ErrorCode.TYPE_MISMATCH,
+            "Cannot use {s} operator between {s} and {s}. Both operands must be integers or bytes.",
+            .{ op, @tagName(left_type), @tagName(right_type) },
+        );
     }
 };
