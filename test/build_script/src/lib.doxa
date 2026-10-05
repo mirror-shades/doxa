@@ -1,0 +1,3 @@
+public function greet(who :: string) returns string {
+    return "Hello, {who}!"
+}

@@ -1,0 +1,48 @@
+# Regression: a 1-D fixed array of scalar-only structs stored in a struct field
+# is promoted to a heap array of boxed struct elements (tag 7), each registered
+# under the element struct's descriptor, instead of storing the inline stack
+# buffer as if it were an ArrayHeader. Covers the clone across a function-return
+# scope boundary, element mutation, iteration, reflection, and the zero-fill
+# path (where the element type is never constructed).
+
+struct Pt {
+    public x :: int,
+    public y :: int,
+}
+
+struct Holder {
+    public pts :: Pt[3]
+
+    public function new() returns Holder {
+        var arr :: Pt[3]
+        arr[0] is $Pt { x is 1, y is 2 }
+        arr[1] is $Pt { x is 3, y is 4 }
+        arr[2] is $Pt { x is 5, y is 6 }
+        return $Holder { pts is arr }
+    }
+}
+
+struct Blank {
+    public pts :: Pt[2]
+
+    public function new() returns Blank {
+        var arr :: Pt[2] is []
+        return $Blank { pts is arr }
+    }
+}
+
+public entry function main() {
+    var h is Holder.new()
+    @print("{h.pts[0].x} {h.pts[0].y} {h.pts[1].x} {h.pts[2].y}\n")
+
+    h.pts[1].x is 30
+    @print("{h.pts[1].x}\n")
+
+    each n in h.pts { n.y += 100 }
+    @print("{h.pts[0].y} {h.pts[1].y} {h.pts[2].y}\n")
+
+    @print(@string(h.pts) + "\n")
+
+    var b is Blank.new()
+    @print("{b.pts[0].x} {b.pts[1].y}\n")
+}

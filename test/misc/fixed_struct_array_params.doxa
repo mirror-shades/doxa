@@ -1,0 +1,40 @@
+# Regression: a fixed array of scalar-only structs crossing a call boundary.
+# A by-value parameter gets an independent boxed copy (a flat memcpy would
+# reinterpret the first by-value word as a tag-7 pointer); a read-only
+# parameter borrows a non-owning view; a `^` alias gets a pointer-array view so
+# field and whole-element writes land back in the caller's flat buffer.
+
+struct Pt {
+    public x :: int,
+    public y :: int,
+}
+
+function sum(p :: Pt[2]) returns int {
+    return p[0].x + p[1].y
+}
+
+function clobber(p :: Pt[2]) {
+    p[0].x is 1000
+}
+
+function bumpField(^p :: Pt[2]) {
+    p[1].x is 111
+}
+
+function replace(^p :: Pt[2]) {
+    p[0] is $Pt { x is 222, y is 333 }
+}
+
+public entry function main() {
+    var arr :: Pt[2]
+    arr[0] is $Pt { x is 1, y is 2 }
+    arr[1] is $Pt { x is 3, y is 4 }
+
+    @print("{sum(arr)}\n")
+    clobber(arr)
+    @print("{arr[0].x} {arr[1].y}\n")
+
+    bumpField(^arr)
+    replace(^arr)
+    @print("{arr[0].x} {arr[0].y} {arr[1].x}\n")
+}

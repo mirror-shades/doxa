@@ -1,0 +1,77 @@
+# Regression: `var` seeded from a `const` reference is still a mutable binding.
+#
+# The declaration keyword decides mutability, not the initializer. Inferring a
+# binding's constness from the initializer made every `var x is <const ref>`
+# a constant, so the later `x is ...` was rejected as an assignment to an
+# immutable variable. Literals masked it: an int/string literal or an enum tag
+# infers a mutable type, so only an immutable initializer exposed the bug.
+#
+# Covers module-level and function-local declarations (the local path is the
+# one that regressed), across int, string, and struct constants.
+
+struct Pair {
+    pub left :: int,
+    pub right :: int,
+}
+
+const WIDTHS is 10
+const GREETING is "hello"
+const ORIGIN is $Pair{ left is 1, right is 2 }
+
+var module_int is WIDTHS
+var module_string is GREETING
+var module_struct is ORIGIN
+
+module_int is 5
+module_string is "world"
+module_struct is $Pair{ left is 9, right is 8 }
+
+function bumpInt() returns int {
+    var held is WIDTHS
+    held is 7
+    return held
+}
+
+function readOnlyInt() returns int {
+    var held is WIDTHS
+    return held
+}
+
+function bumpString() returns string {
+    var held is GREETING
+    held is "goodbye"
+    return held
+}
+
+function bumpStruct() returns Pair {
+    var held is ORIGIN
+    held is $Pair{ left is 4, right is 3 }
+    return held
+}
+
+function shadowParam(seed :: int) returns int {
+    var held is seed
+    held is held + 1
+    return held
+}
+
+entry function main() {
+    @print(@string(module_int))
+    @print(" ")
+    @print(module_string)
+    @print(" ")
+    @print(@string(module_struct.left))
+    @print("\n")
+
+    @print(@string(readOnlyInt()))
+    @print(" ")
+    @print(@string(bumpInt()))
+    @print(" ")
+    @print(bumpString())
+    @print(" ")
+    @print(@string(bumpStruct().right))
+    @print("\n")
+
+    @print(@string(shadowParam(41)))
+    @print("\n")
+}

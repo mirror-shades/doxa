@@ -1,0 +1,103 @@
+# A branch that folds down to a direct jump to the loop label must not take the
+# other branch's code with it. Each function below pairs a diverging `then`
+# (or `else`) with a live opposite branch.
+
+function thenContinue(list :: string[]) returns int {
+    var n is 0
+    for i while i < @length(list) do i += 1 {
+        if list[i] == "" then { continue } else n += 1
+    }
+    return n
+}
+
+function thenContinueBare(list :: string[]) returns int {
+    var n is 0
+    for i while i < @length(list) do i += 1 {
+        if list[i] == "" then continue else n += 1
+    }
+    return n
+}
+
+function thenBreak(list :: string[]) returns int {
+    var n is 0
+    for i while i < @length(list) do i += 1 {
+        if list[i] == "" then { break } else n += 1
+    }
+    return n
+}
+
+# work before the divergence still runs
+function thenContinueAfterWork(list :: string[]) returns int {
+    var n is 0
+    for i while i < @length(list) do i += 1 {
+        if list[i] == "" then {
+            n += 100
+            continue
+        } else n += 1
+    }
+    return n
+}
+
+# no else branch: the shortcut is sound and must stay taken
+function thenContinueNoElse(list :: string[]) returns int {
+    var n is 0
+    for i while i < @length(list) do i += 1 {
+        if list[i] == "" then { continue }
+        n += 1
+    }
+    return n
+}
+
+function elseContinue(list :: string[]) returns int {
+    var n is 0
+    for i while i < @length(list) do i += 1 {
+        if list[i] != "" then n += 1 else { continue }
+    }
+    return n
+}
+
+# both branches diverge to different labels
+function thenContinueElseBreak(list :: string[]) returns int {
+    var n is 0
+    for i while i < @length(list) do i += 1 {
+        if list[i] == "" then { continue } else { break }
+        n += 100
+    }
+    return n
+}
+
+# the jump must target the innermost enclosing loop
+function nestedInner(list :: string[]) returns int {
+    var n is 0
+    for i is 0 while i < 2 do i += 1 {
+        for j while j < @length(list) do j += 1 {
+            if list[j] == "" then { continue } else n += 1
+        }
+        n += 10
+    }
+    return n
+}
+
+function maybeInt(s :: string) returns int | nothing {
+    if s == "" then return nothing
+    return 5
+}
+
+function asThenContinue(list :: string[]) returns int {
+    var n is 0
+    for i while i < @length(list) do i += 1 {
+        maybeInt(list[i]) as int then { continue } else n += 1
+    }
+    return n
+}
+
+const list is ["a", "", "b"]
+@print("thenContinue      = {thenContinue(list)}\n")
+@print("thenContinueBare  = {thenContinueBare(list)}\n")
+@print("thenBreak         = {thenBreak(list)}\n")
+@print("thenContinueWork  = {thenContinueAfterWork(list)}\n")
+@print("thenContinueNoElse= {thenContinueNoElse(list)}\n")
+@print("elseContinue      = {elseContinue(list)}\n")
+@print("thenContElseBreak = {thenContinueElseBreak(list)}\n")
+@print("nestedInner       = {nestedInner(list)}\n")
+@print("asThenContinue    = {asThenContinue(list)}\n")

@@ -118,6 +118,11 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_slice_heap_string_results[0..],
     },
     .{
+        .name = "var seeded from a const reference",
+        .path = "./test/misc/var_from_const_ref.doxa",
+        .expected_print = answers.expected_var_from_const_ref_results[0..],
+    },
+    .{
         .name = "union narrow",
         .path = "./test/misc/union_narrow.doxa",
         .expected_print = answers.expected_union_narrow_results[0..],
@@ -188,6 +193,38 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "bare control statement as a branch body",
+        .path = "./test/misc/branch_control_body.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "sum       = 10" },
+            .{ .value = "first     = 5" },
+            .{ .value = "firstMiss = -1" },
+            .{ .value = "blanks    = 1" },
+            .{ .value = "nonBlank  = 2" },
+            .{ .value = "firstStr  = a" },
+            .{ .value = "firstNone = none" },
+            .{ .value = "tagZ      = 0" },
+            .{ .value = "tagA      = 11" },
+            .{ .value = "scanA     = 11" },
+            .{ .value = "scanZ     = 0" },
+        },
+    },
+    .{
+        .name = "diverging branch keeps the opposite branch",
+        .path = "./test/misc/loop_branch_jump.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "thenContinue      = 2" },
+            .{ .value = "thenContinueBare  = 2" },
+            .{ .value = "thenBreak         = 1" },
+            .{ .value = "thenContinueWork  = 102" },
+            .{ .value = "thenContinueNoElse= 2" },
+            .{ .value = "elseContinue      = 2" },
+            .{ .value = "thenContElseBreak = 0" },
+            .{ .value = "nestedInner       = 24" },
+            .{ .value = "asThenContinue    = 1" },
+        },
+    },
+    .{
         .name = "nested struct return",
         .path = "./test/misc/nested_struct_return.doxa",
         .expected_print = answers.expected_nested_struct_return_results[0..],
@@ -213,6 +250,23 @@ const shared_cases = [_]Case{
             .{ .value = "hi Frank!" },
             .{ .value = "hi A" },
             .{ .value = "hi B!" },
+        },
+    },
+    .{
+        .name = "tetra parameter from a comparison",
+        .path = "./test/misc/tetra_param_comparison.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "int eq true" },
+            .{ .value = "int lt false" },
+            .{ .value = "mod eq false" },
+            .{ .value = "not false" },
+            .{ .value = "and true" },
+            .{ .value = "byte true" },
+            .{ .value = "float true" },
+            .{ .value = "string true" },
+            .{ .value = "place 14 false" },
+            .{ .value = "stored true" },
+            .{ .value = "stored not false" },
         },
     },
     .{
@@ -242,6 +296,26 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_fixed_struct_array_results[0..],
     },
     .{
+        .name = "fixed struct field array",
+        .path = "./test/misc/fixed_struct_field_array.doxa",
+        .expected_print = answers.expected_fixed_struct_field_array_results[0..],
+    },
+    .{
+        .name = "fixed struct array params",
+        .path = "./test/misc/fixed_struct_array_params.doxa",
+        .expected_print = answers.expected_fixed_struct_array_params_results[0..],
+    },
+    .{
+        .name = "union struct field",
+        .path = "./test/misc/union_struct_field.doxa",
+        .expected_print = answers.expected_union_struct_field_results[0..],
+    },
+    .{
+        .name = "union nothing match",
+        .path = "./test/misc/union_nothing_match.doxa",
+        .expected_print = answers.expected_union_nothing_match_results[0..],
+    },
+    .{
         .name = "floored arithmetic",
         .path = "./test/misc/floored_arith.doxa",
         .expected_print = answers.expected_floored_arith_results[0..],
@@ -260,6 +334,11 @@ const shared_cases = [_]Case{
         .name = "module method calls",
         .path = "./test/misc/module_method_calls.doxa",
         .expected_print = answers.expected_module_method_calls_results[0..],
+    },
+    .{
+        .name = "module alias owner scope",
+        .path = "./test/misc/module_alias_owner.doxa",
+        .expected_print = answers.expected_module_alias_owner_results[0..],
     },
     .{
         .name = "module qualified collision",
@@ -568,6 +647,11 @@ const shared_cases = [_]Case{
         .name = "alias test",
         .path = "./test/misc/alias_test.doxa",
         .expected_print = answers.expected_alias_test_results[0..],
+    },
+    .{
+        .name = "fixed array struct field",
+        .path = "./test/misc/fixed_field_array.doxa",
+        .expected_print = answers.expected_fixed_field_array_results[0..],
     },
     .{
         .name = "list",

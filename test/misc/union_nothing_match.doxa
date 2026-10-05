@@ -1,0 +1,38 @@
+# A union with a `nothing` arm must be discriminated by the runtime tag, not
+# only the member index: a struct-member arm must not select a `nothing` box,
+# and a destructuring arm must not dereference its null payload.
+
+struct Piece {
+    public colour :: int,
+}
+
+struct Space {
+    public value :: nothing | Piece,
+}
+
+public entry function main() {
+    var empty is $Space { value is nothing }
+    var filled is $Space { value is $Piece { colour is 7 } }
+
+    const e is empty.value
+    match e {
+        Piece { colour } then @print("piece {colour}\n"),
+        else @print("empty\n"),
+    }
+    const f is filled.value
+    match f {
+        Piece { colour } then @print("piece {colour}\n"),
+        else @print("empty\n"),
+    }
+
+    # A field-access subject parses directly (no local binding required) for a
+    # type-dispatch arm.
+    match empty.value {
+        Piece then @print("direct piece\n"),
+        else @print("direct empty\n"),
+    }
+    match filled.value {
+        Piece then @print("direct piece\n"),
+        else @print("direct empty\n"),
+    }
+}

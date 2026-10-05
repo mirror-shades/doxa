@@ -1,0 +1,25 @@
+# Regression guard for `var` seeded from a `const` reference.
+#
+# Restoring `var` mutability must not make `const` mutable. The declaration
+# keyword is the only thing that decides binding mutability, so a `const`
+# initialized from another `const` is still an immutable binding and the
+# reassignment below must keep being rejected.
+const WIDTHS is 10
+const GREETING is "hello"
+
+function bumpInt() {
+    const held is WIDTHS
+    held is 7
+    @print(@string(held))
+}
+
+function bumpString() {
+    const held is GREETING
+    held is "goodbye"
+    @print(held)
+}
+
+entry function main() {
+    bumpInt()
+    bumpString()
+}

@@ -1,0 +1,10 @@
+import build from @std()
+
+var c is build.Context.host()
+c.debug is true
+
+var exe is build.Executable.new("app", "src/app.doxa", "bin/app")
+
+c.addArtifact(exe)
+
+build.execute(c)

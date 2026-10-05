@@ -120,6 +120,21 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected = .{ .exit_code = 1, .contains_message = "Undefined variable", .error_code = "E1001" },
         },
         .{
+            .name = "const seeded from a const reference stays immutable",
+            .path = "./test/syntax/const_reassign_error.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Cannot assign to immutable variable", .error_code = "E1015" },
+        },
+        .{
+            .name = "method call with too few arguments",
+            .path = "./test/misc/method_too_few_args.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Too few arguments: expected 2, got 1", .error_code = "E5006" },
+        },
+        .{
+            .name = "method call argument type mismatch",
+            .path = "./test/misc/method_argument_type_mismatch.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "String is not assignable to type Coord", .error_code = "E1003" },
+        },
+        .{
             .name = "undefined variable suggestion",
             .path = "./test/misc/undefined_variable_suggestion.doxa",
             .expected = .{ .exit_code = 1, .contains_message = "Did you mean 'total'?", .error_code = "E1001" },

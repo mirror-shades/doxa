@@ -50,6 +50,12 @@ fn parseSource(allocator: std.mem.Allocator, reporter: *Reporting.Reporter, sour
     return .{ .tokens = tokens, .parser = parser, .graph = graph_store };
 }
 
+/// Whether a module file has a graph record, keyed by its stable module key.
+/// A record's existence is the load fact; there is no spelling-keyed cache.
+fn moduleLoaded(parser: *Parser, stable_path: []const u8) bool {
+    return parser.graph.findStable(stable_path) != null;
+}
+
 test "lazy modules: aggregator children load only when referenced" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
@@ -61,18 +67,19 @@ test "lazy modules: aggregator children load only when referenced" {
     defer parsed.deinit();
     const parser = &parsed.parser;
 
-    try testing.expectEqual(@as(usize, 0), parser.module_cache.count());
+    // Entry record only; `bundle` is interned but materializes nothing yet.
+    try testing.expectEqual(@as(usize, 1), parser.graph.count());
     try testing.expect(parser.module_namespaces.contains("bundle"));
 
     _ = try parser.ensureModuleNamespace("bundle");
-    try testing.expectEqual(@as(usize, 1), parser.module_cache.count());
-    try testing.expect(parser.module_cache.contains("bundle.doxa"));
-    try testing.expect(!parser.module_cache.contains("a.doxa"));
-    try testing.expect(!parser.module_cache.contains("b.doxa"));
+    try testing.expectEqual(@as(usize, 2), parser.graph.count());
+    try testing.expect(moduleLoaded(parser, "pkg//test/misc/lazy/bundle.doxa"));
+    try testing.expect(!moduleLoaded(parser, "pkg//test/misc/lazy/a.doxa"));
+    try testing.expect(!moduleLoaded(parser, "pkg//test/misc/lazy/b.doxa"));
 
     _ = try parser.ensureNestedModuleNamespace("bundle", "a");
-    try testing.expect(parser.module_cache.contains("a.doxa"));
-    try testing.expect(!parser.module_cache.contains("b.doxa"));
+    try testing.expect(moduleLoaded(parser, "pkg//test/misc/lazy/a.doxa"));
+    try testing.expect(!moduleLoaded(parser, "pkg//test/misc/lazy/b.doxa"));
 }
 
 test "lazy modules: standard-library aggregator stays shallow until child use" {
@@ -87,16 +94,16 @@ test "lazy modules: standard-library aggregator stays shallow until child use" {
     const parser = &parsed.parser;
 
     _ = try parser.ensureModuleNamespace("std");
-    try testing.expect(parser.module_cache.contains("std/std.doxa"));
-    try testing.expect(!parser.module_cache.contains("process/process.doxa"));
-    try testing.expect(!parser.module_cache.contains("http/http.doxa"));
+    try testing.expect(moduleLoaded(parser, "pkg//std/std.doxa"));
+    try testing.expect(!moduleLoaded(parser, "pkg//std/process/process.doxa"));
+    try testing.expect(!moduleLoaded(parser, "pkg//std/http/http.doxa"));
 
     _ = try parser.ensureNestedModuleNamespace("std", "process");
-    try testing.expect(parser.module_cache.contains("process/process.doxa"));
-    try testing.expect(!parser.module_cache.contains("http/http.doxa"));
+    try testing.expect(moduleLoaded(parser, "pkg//std/process/process.doxa"));
+    try testing.expect(!moduleLoaded(parser, "pkg//std/http/http.doxa"));
 
     _ = try parser.ensureNestedModuleNamespace("std", "http");
-    try testing.expect(parser.module_cache.contains("http/http.doxa"));
+    try testing.expect(moduleLoaded(parser, "pkg//std/http/http.doxa"));
 }
 
 test "lazy modules: direct imports materialize without transitive siblings" {
@@ -110,9 +117,9 @@ test "lazy modules: direct imports materialize without transitive siblings" {
     defer parsed.deinit();
     const parser = &parsed.parser;
 
-    try testing.expectEqual(@as(usize, 0), parser.module_cache.count());
+    try testing.expectEqual(@as(usize, 1), parser.graph.count());
     _ = try parser.ensureModuleNamespace("direct");
-    try testing.expect(parser.module_cache.contains("direct.doxa"));
+    try testing.expect(moduleLoaded(parser, "pkg//test/misc/lazy/direct.doxa"));
 }
 
 test "lazy modules: two spellings of one file are one record" {
@@ -266,34 +273,58 @@ test "lazy modules: reachable dependencies follow body references" {
     const parser = &parsed.parser;
 
     _ = try parser.ensureModuleNamespace("parent");
-    try testing.expect(parser.module_cache.contains("uses_a_only.doxa"));
-    try testing.expect(!parser.module_cache.contains("a.doxa"));
-    try testing.expect(!parser.module_cache.contains("b.doxa"));
+    try testing.expect(moduleLoaded(parser, "pkg//test/misc/lazy/uses_a_only.doxa"));
+    try testing.expect(!moduleLoaded(parser, "pkg//test/misc/lazy/a.doxa"));
+    try testing.expect(!moduleLoaded(parser, "pkg//test/misc/lazy/b.doxa"));
 
     try parser.ensureReachableModuleDependencies();
-    try testing.expect(parser.module_cache.contains("a.doxa"));
-    try testing.expect(!parser.module_cache.contains("b.doxa"));
+    try testing.expect(moduleLoaded(parser, "pkg//test/misc/lazy/a.doxa"));
+    try testing.expect(!moduleLoaded(parser, "pkg//test/misc/lazy/b.doxa"));
 }
 
-test "lazy modules: duplicate specific symbol names keep distinct import entries" {
+test "lazy modules: two imports of one name in a file are a duplicate binding" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
 
     var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
-    var parsed = try parseSource(
+    const result = parseSource(
         allocator,
         &reporter,
         "import Same from \"./same_a.doxa\"\nimport Same from \"./same_b.doxa\"\n",
         "test/misc/lazy/same_user.doxa",
     );
-    defer parsed.deinit();
-    const parser = &parsed.parser;
 
-    try testing.expectEqual(@as(usize, 2), parser.specific_imports.items.len);
-    try testing.expect(std.mem.eql(u8, parser.specific_imports.items[0].module_path, "./same_a.doxa"));
-    try testing.expect(std.mem.eql(u8, parser.specific_imports.items[1].module_path, "./same_b.doxa"));
+    try testing.expectError(error.DuplicateVariableName, result);
+    try testing.expect(reporter.hasCompileErrors());
+
+    // The diagnostic points at both sites: the offending import and the
+    // previous declaration of the same name.
+    try testing.expect(reporter.diagnostics.items.len >= 1);
+    const diag = reporter.diagnostics.items[reporter.diagnostics.items.len - 1];
+    try testing.expect(diag.related_info != null);
+    try testing.expectEqual(@as(usize, 1), diag.related_info.?.len);
+    try testing.expectEqualStrings("previous declaration here", diag.related_info.?[0].message);
+    try testing.expectEqualStrings("test/misc/lazy/same_user.doxa", diag.related_info.?[0].location.file);
+}
+
+test "lazy modules: a module alias may not collide with a declaration" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    const result = parseSource(
+        allocator,
+        &reporter,
+        "var alpha is 1\nmodule alpha from \"./same_a.doxa\"\n",
+        "test/misc/lazy/alias_decl_user.doxa",
+    );
+
+    try testing.expectError(error.DuplicateVariableName, result);
+    try testing.expect(reporter.hasCompileErrors());
 }
 
 test "specific import: binds only the named symbol and exposes no namespace" {
@@ -315,16 +346,54 @@ test "specific import: binds only the named symbol and exposes no namespace" {
     try testing.expect(!parser.imported_symbols.?.contains("beta"));
     try testing.expect(!(try parser.ensureImportedSymbol("beta")));
 
+    // The name is bound owner-scoped on the importing file's record, naming the
+    // *defining* module (two.doxa), with the declaration's kind preserved.
+    const entry = parsed.graph.record(0);
+    const alpha = entry.bindings.get("alpha").?;
+    try testing.expect(std.meta.activeTag(alpha.binding) == .symbol);
+    try testing.expectEqual(module_graph.SymbolKind.Function, alpha.binding.symbol.kind);
+    const two = parsed.graph.findStable("pkg//test/misc/lazy/two.doxa").?;
+    try testing.expectEqual(two.id, alpha.binding.symbol.module);
+    try testing.expect(entry.bindings.get("beta") == null);
+
     // A specific import exposes no user-visible namespace for its module; the
     // module is registered under a path-hash key so calls within it still
     // resolve, but the file stem never becomes a namespace the importer sees.
     try testing.expect(!parser.module_namespaces.contains("two"));
     var found_hashed = false;
     var it = parser.module_namespaces.iterator();
-    while (it.next()) |entry| {
-        if (std.mem.startsWith(u8, entry.key_ptr.*, "$import_")) found_hashed = true;
+    while (it.next()) |entry_ns| {
+        if (std.mem.startsWith(u8, entry_ns.key_ptr.*, "$import_")) found_hashed = true;
     }
     try testing.expect(found_hashed);
+}
+
+test "bindings: `import n from S` binds the submodule namespace on the importer" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var parsed = try parseSource(allocator, &reporter, "import a from \"./bundle.doxa\"\n", "test/misc/lazy/import_bind_user.doxa");
+    defer parsed.deinit();
+    const parser = &parsed.parser;
+
+    // A submodule import binds a namespace, not an `imported_symbols` entry,
+    // so the return value is false but the binding is present.
+    _ = try parser.ensureImportedSymbol("a");
+
+    // `a` is a re-exported submodule, so it is a namespace binding on the
+    // importing file's record, pointing at a.doxa's record.
+    const entry = parsed.graph.record(0);
+    const a_binding = entry.bindings.get("a").?;
+    try testing.expect(std.meta.activeTag(a_binding.binding) == .namespace);
+    const a_record = parsed.graph.findStable("pkg//test/misc/lazy/a.doxa").?;
+    try testing.expectEqual(a_record.id, a_binding.binding.namespace);
+
+    // The parent module and its other submodule are not injected.
+    try testing.expect(entry.bindings.get("bundle") == null);
+    try testing.expect(entry.bindings.get("b") == null);
 }
 
 test "lazy modules: circular imports are detected when reached" {
@@ -400,6 +469,126 @@ test "submodule import: multiple submodules each bind their own namespace" {
     try testing.expect(parser.module_namespaces.contains("b"));
 
     try testing.expect(!parser.module_namespaces.contains("bundle"));
+}
+
+test "bindings: top-level declarations are owner-scoped with visibility" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var parsed = try parseSource(
+        allocator,
+        &reporter,
+        "public function foo() returns int {\n    return 1\n}\nfunction bar() returns int {\n    return 2\n}\n",
+        "test/misc/lazy/bind_decls.doxa",
+    );
+    defer parsed.deinit();
+    const entry = parsed.graph.record(0);
+
+    const foo = entry.bindings.get("foo").?;
+    try testing.expect(foo.visibility == .Public);
+    try testing.expect(std.meta.activeTag(foo.binding) == .symbol);
+    try testing.expectEqual(module_graph.SymbolKind.Function, foo.binding.symbol.kind);
+    try testing.expectEqual(entry.id, foo.binding.symbol.module);
+    try testing.expect(entry.public_bindings.contains("foo"));
+
+    // A private declaration is in the file's namespace but not its public
+    // surface.
+    const bar = entry.bindings.get("bar").?;
+    try testing.expect(bar.visibility == .Private);
+    try testing.expect(!entry.public_bindings.contains("bar"));
+}
+
+test "bindings: a resolved module alias is bound on its owning file's record" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var parsed = try parseSource(
+        allocator,
+        &reporter,
+        "module util from \"./bind_a.doxa\"\n",
+        "test/misc/lazy/bind_user.doxa",
+    );
+    defer parsed.deinit();
+    const parser = &parsed.parser;
+
+    const entry = parser.graph.record(0);
+    try testing.expect(entry.bindings.get("util") == null);
+
+    _ = try parser.ensureModuleNamespace("util");
+
+    // Resolution binds `util` on the file that declared it, not globally.
+    const util = entry.bindings.get("util").?;
+    try testing.expect(std.meta.activeTag(util.binding) == .namespace);
+    const target = parser.graph.findStable("pkg//test/misc/lazy/bind_a.doxa").?;
+    try testing.expectEqual(target.id, util.binding.namespace);
+}
+
+test "bindings: two files may use the same alias for different targets" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var parsed = try parseSource(
+        allocator,
+        &reporter,
+        "module left from \"./lazy/alias_left.doxa\"\nmodule right from \"./lazy/alias_right.doxa\"\n",
+        "test/misc/bind_root.doxa",
+    );
+    defer parsed.deinit();
+    const parser = &parsed.parser;
+
+    _ = try parser.ensureModuleNamespace("left");
+    _ = try parser.ensureModuleNamespace("right");
+    try parser.ensureReachableModuleDependencies();
+
+    const left = parser.graph.findStable("pkg//test/misc/lazy/alias_left.doxa").?;
+    const right = parser.graph.findStable("pkg//test/misc/lazy/alias_right.doxa").?;
+    const a = parser.graph.findStable("pkg//test/misc/lazy/a.doxa").?;
+    const b = parser.graph.findStable("pkg//test/misc/lazy/b.doxa").?;
+
+    // Each file's `dep` alias is bound on that file's own record to its own
+    // target: the flat alias map cannot represent this, the records can.
+    const left_dep = left.bindings.get("dep").?;
+    try testing.expect(std.meta.activeTag(left_dep.binding) == .namespace);
+    try testing.expectEqual(a.id, left_dep.binding.namespace);
+
+    const right_dep = right.bindings.get("dep").?;
+    try testing.expect(std.meta.activeTag(right_dep.binding) == .namespace);
+    try testing.expectEqual(b.id, right_dep.binding.namespace);
+}
+
+test "bindings: an inline zig block is a namespace binding owned by its file" {
+    var arena = std.heap.ArenaAllocator.init(testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var parsed = try parseSource(
+        allocator,
+        &reporter,
+        "zig Math {\n    pub fn double(n: i64) i64 {\n        return n * 2;\n    }\n}\n",
+        "test/misc/lazy/bind_zig.doxa",
+    );
+    defer parsed.deinit();
+    const entry = parsed.graph.record(0);
+
+    const math = entry.bindings.get("Math").?;
+    try testing.expect(std.meta.activeTag(math.binding) == .namespace);
+
+    const generated = parsed.graph.findStable("pkg//test/misc/lazy/bind_zig.doxa//zig/Math").?;
+    try testing.expectEqual(generated.id, math.binding.namespace);
+    // The block's own namespace is its function surface.
+    try testing.expect(generated.bindings.contains("double"));
+    try testing.expectEqual(module_graph.SymbolKind.Function, generated.bindings.get("double").?.binding.symbol.kind);
 }
 
 test "submodule import: `module bundle` does not leak submodules as bare namespaces" {

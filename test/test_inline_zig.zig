@@ -275,8 +275,8 @@ test "inline zig: collectInlineZigDecls only sees reachable modules" {
 
     // Only load std.process, not std.http
     _ = try parser.ensureNestedModuleNamespace("std", "process");
-    try testing.expect(parser.module_cache.contains("process/process.doxa"));
-    try testing.expect(!parser.module_cache.contains("http/http.doxa"));
+    try testing.expect(parser.graph.findStable("pkg//std/process/process.doxa") != null);
+    try testing.expect(parser.graph.findStable("pkg//std/http/http.doxa") == null);
 
     // collectInlineZigDecls iterates module_namespaces — should only see Process's zig block
     const parsed_at_root: [0]ast.Stmt = .{};
@@ -301,7 +301,7 @@ test "inline zig: collectInlineZigDecls only sees reachable modules" {
 
     // Now load std.http and verify it shows up
     _ = try parser.ensureNestedModuleNamespace("std", "http");
-    try testing.expect(parser.module_cache.contains("http/http.doxa"));
+    try testing.expect(parser.graph.findStable("pkg//std/http/http.doxa") != null);
 
     const zig_decls2 = try inline_zig_compiler.collectInlineZigDecls(
         allocator,
