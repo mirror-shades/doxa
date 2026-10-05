@@ -556,6 +556,25 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
             if (custom_type_name) |custom_type| {
                 try self.trackVariableCustomType(decl.name.lexeme, custom_type);
+            } else if (decl.initializer) |init_expr| {
+                // An unannotated declaration whose initialiser already has a
+                // concrete custom type (`const copy is original`, `const p is
+                // registry.first()`) has no annotation to name the type from.
+                // Method resolution reads the *name*, so the variable looked
+                // nameless and a call on it evaluated its receiver and dropped
+                // the call with no diagnostic (the `is_known_builtin` early
+                // return in `generateInternalMethodCall`). Recovering it from the
+                // HIR type is not enough either: the constructor path records a
+                // placeholder `HIRType{ .Struct = 0 }` that no table lookup
+                // resolves. Ask the same resolver call sites use, so a
+                // declaration and a call on it always agree.
+                if (self.type_system.resolveFieldAccessType(init_expr, &self.symbol_table)) |res| {
+                    if (res.custom_type_name) |name| {
+                        if (self.isCustomType(name) != null) {
+                            try self.trackVariableCustomType(decl.name.lexeme, name);
+                        }
+                    }
+                }
             }
 
             const var_idx = precreated_cast_idx orelse try self.symbol_table.createVariable(decl.name.lexeme);
