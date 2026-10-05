@@ -253,6 +253,24 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "method call on a copied struct local",
+        .path = "./test/misc/dropped_method_on_copied_struct.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "original 7" },
+            .{ .value = "copied 7" },
+            .{ .value = "after bump 12" },
+            .{ .value = "field 12" },
+        },
+    },
+    .{
+        .name = "same-scope struct assignment aliases",
+        .path = "./test/misc/same_scope_struct_alias.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "before 1 1" },
+            .{ .value = "after 42 42" },
+        },
+    },
+    .{
         .name = "tetra parameter from a comparison",
         .path = "./test/misc/tetra_param_comparison.doxa",
         .expected_print = &[_]print_result{
