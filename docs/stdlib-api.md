@@ -2832,18 +2832,26 @@ public method addArtifact(b :: Executable) {
 ### `run`
 
 ```doxa
-public function run(c :: Context, force :: tetra) returns int | error.StdError
+public function run(c :: Context) returns int | error.StdError
 ```
 
 Drive the compiler over every artifact in the context. Returns the first
-non-zero exit code or mapped error encountered, or 0 on success. `force`
-bypasses the artifact-level up-to-date skip.
+non-zero exit code or mapped error encountered, or 0 on success.
+
+There is deliberately no up-to-date skip here. An earlier version compared the
+output's mtime against the entry source alone and skipped the compile when the
+output looked newer, which silently ignored every change in an imported module
+and reported success while leaving a stale binary in place — including when the
+program no longer compiled at all. Re-deriving the module closure in this layer
+would mean duplicating the compiler's import resolution, so the check is the
+driver's alone; `plan/incremental-builds.md` tracks the whole-unit manifest
+that will make the driver able to answer this content-accurately.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function run(c :: Context, force :: tetra) returns int | error.StdError {
+public function run(c :: Context) returns int | error.StdError {
     # A cross target must name its OS; an empty OS is never silently resolved to
     # the host.
     if @length(c.target.os) == 0 then return error.Common.InvalidArgument
@@ -2854,11 +2862,6 @@ public function run(c :: Context, force :: tetra) returns int | error.StdError {
     var i is 0
     while i < @length(c.artifacts) {
         const art is c.artifacts[i]
-
-        if not force and artifactIsUpToDate(art, c.target.os) then {
-            i is i + 1
-            continue
-        }
 
         const links is joinLines(art.links)
         const libdirs is joinLines(art.libdirs)
@@ -2880,7 +2883,7 @@ public function run(c :: Context, force :: tetra) returns int | error.StdError {
 ### `execute`
 
 ```doxa
-public function execute(c :: Context, force :: tetra)
+public function execute(c :: Context)
 ```
 
 Drive the compiler over every artifact and propagate the outcome through the
@@ -2892,8 +2895,8 @@ code, and an `error.StdError` prints a mapped message to stderr and exits 1.
 <summary>Source</summary>
 
 ```doxa
-public function execute(c :: Context, force :: tetra) {
-    const outcome is run(c, force)
+public function execute(c :: Context) {
+    const outcome is run(c)
     outcome as int then {
         @print("build exit code: {@string(outcome)}\n")
         if outcome != 0 then @exit(outcome)

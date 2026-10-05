@@ -165,11 +165,11 @@ Matching on a group must cover every member. This is a **flat** check over the e
 group Error { IOError, CommonError, FileError }
 
 match err {
-    IOError.NotFound => ...
-    IOError.PermissionDenied => ...
+    IOError.NotFound then { }
+    IOError.PermissionDenied then { }
     // IOError.EOF missing → not exhaustive
-    CommonError.* => ...         // wildcard covers all CommonError variants
-    FileError { path } => ...
+    CommonError.* then { }       # wildcard covers all CommonError variants
+    FileError { path } then { }
 }
 ```
 
@@ -182,9 +182,9 @@ An exhaustive match requires either:
 
 ```doxa
 match err {
-    Error.IOError.NotFound => ...          // single variant
-    Error.IOError.* => handle_io(err),     // all IOError variants (narrows to IOError)
-    else => ...
+    Error.IOError.NotFound then { }      # single variant
+    Error.IOError.* then handle_io(err), # all IOError variants (narrows to IOError)
+    else { }
 }
 ```
 
@@ -196,8 +196,8 @@ Struct members are matched with destructuring syntax:
 
 ```doxa
 match err {
-    Error.FileError { path } => print(path),
-    Error.ConfigError { key, value } => ...
+    Error.FileError { path } then print(path),
+    Error.ConfigError { key, value } then { }
 }
 ```
 
@@ -207,9 +207,9 @@ The struct is narrowed to its member type, and fields are available directly.
 
 ```doxa
 match result {
-    string => use(result),
-    Error => handle(result),        // catch-all for the group
-    Error.IOError.* => ...
+    string then use(result),
+    Error then handle(result),      # catch-all for the group
+    Error.IOError.* then { }
 }
 ```
 
