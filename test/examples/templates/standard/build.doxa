@@ -4,7 +4,7 @@ var c is build.Context.host()
 c.debug is false
 c.optimization is build.Optimization.Speed
 
-var exe is build.Builder.executable("my-app", "src/main.doxa", "bin/my-app")
+var exe is build.Executable.new("my-app", "src/main.doxa", "bin/my-app")
 exe.include("include")
 exe.libdir("lib")
 exe.link("raylib")
@@ -19,4 +19,4 @@ match os {
 
 c.addArtifact(exe)
 
-build.execute(c, false)
+build.execute(c)

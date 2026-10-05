@@ -4,6 +4,7 @@ const testing = std.testing;
 const test_run = @import("test_run.zig");
 const test_compile = @import("test_compile.zig");
 const test_compile_errors = @import("test_compile_errors.zig");
+const test_build_script = @import("test_build_script.zig");
 
 // The program suites drive the installed `doxa` binary through hundreds of
 // subprocesses and take about a minute. They live in their own test executable
@@ -25,5 +26,10 @@ test "compile suite" {
 
 test "compile errors suite" {
     const summary = try test_compile_errors.runAll(testing.allocator);
+    try testing.expect(summary.failed == 0 and summary.untested == 0);
+}
+
+test "build script suite" {
+    const summary = try test_build_script.runAll(testing.allocator);
     try testing.expect(summary.failed == 0 and summary.untested == 0);
 }

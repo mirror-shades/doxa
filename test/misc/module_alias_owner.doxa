@@ -1,0 +1,4 @@
+module left from "./lazy/alias_left.doxa"
+module right from "./lazy/alias_right.doxa"
+
+@print("{left.get()} {right.get()}\n")

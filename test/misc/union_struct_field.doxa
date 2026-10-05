@@ -1,0 +1,45 @@
+# Regression: a union/group-typed struct field is stored as a pointer to a heap
+# %DoxaValue box (one i64 field word), so the member tag survives and `as`
+# narrows to the active member. Also pins the default construction of a fixed
+# struct array that cannot be flat-allocated (multidimensional, union field):
+# every element is a real default struct, not a null pointer.
+
+struct Piece {
+    public colour :: int,
+}
+
+struct Pt {
+    public x :: int,
+    public y :: int,
+}
+
+struct Space {
+    public value :: nothing | Piece,
+}
+
+struct Grid {
+    public cells :: Space[2][2]
+
+    public function new() returns Grid {
+        var s :: Space[2][2]
+        return $Grid { cells is s }
+    }
+}
+
+public entry function main() {
+    var one is $Space { value is nothing }
+    var two is $Space { value is $Piece { colour is 3 } }
+    @print("{one.value as nothing then 1 else 0} {two.value as Piece then 1 else 0}\n")
+
+    var g is Grid.new()
+    @print("{g.cells[0][0].value as nothing then 7 else 9} {g.cells[1][1].value as nothing then 7 else 9}\n")
+
+    g.cells[0][1].value is $Piece { colour is 5 }
+    @print("{g.cells[0][1].value as Piece then 5 else 0} {g.cells[0][0].value as nothing then 7 else 9}\n")
+
+    # A bare 1-D flat scalar-struct array prints its by-value elements, not the
+    # raw word at each slot reinterpreted as a struct pointer.
+    var c :: Pt[2] is []
+    c[0] is $Pt { x is 1, y is 2 }
+    @print(@string(c) + "\n")
+}

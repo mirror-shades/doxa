@@ -1,0 +1,54 @@
+# Regression test: an expression the compiler types as a `tetra` must be
+# accepted by a `tetra` parameter. The semantic layer types every comparison as
+# a tetra, but `emitCompareInstruction` pushes an LLVM `i1` for every operand
+# type except `.Tetra`, so a runtime comparison (and every other `i1` producer:
+# `not`, `and`/`or`/`xor`, the quantifiers) reached a user function's tetra
+# parameter as `I1` and failed argument lowering with
+# `CallArgumentTypeMismatch`. Builtins always accepted it, which is why the bug
+# only surfaced on user-defined functions and methods.
+struct Cell {
+    public rank :: int,
+    public file :: int,
+}
+
+struct Board {
+    public turns :: int,
+
+    public method place(cell :: Cell, filled :: tetra) returns string {
+        this.turns += 1
+        return "place {cell.rank}{cell.file} {filled}"
+    }
+}
+
+function show(label :: string, t :: tetra) {
+    @print("{label} {t}\n")
+}
+
+entry function main() {
+    var n is 7
+    const board is $Board { turns is 0 }
+
+    show("int eq", n == 7)
+    show("int lt", n < 7)
+    show("mod eq", n % 2 == 0)
+
+    show("not", not (n == 7))
+    show("and", n > 2 and n < 10)
+
+    const b1 :: byte is 200
+    const b2 :: byte is 200
+    show("byte", b1 == b2)
+
+    const f is 1.5
+    show("float", f > 1.0)
+
+    show("string", "abc" == "abc")
+
+    @print(board.place($Cell { rank is 1, file is 4 }, n % 2 == 0) + "\n")
+
+    # A tetra parameter must keep accepting the other producers unchanged.
+    var flag :: tetra is true
+    show("stored", flag)
+    flag is not flag
+    show("stored not", flag)
+}

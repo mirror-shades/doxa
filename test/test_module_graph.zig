@@ -244,6 +244,59 @@ test "module graph: a generated record derives its key from the owner" {
     try testing.expectError(error.DuplicateStableKey, graph_store.addGeneratedRecord(testing.allocator, owner, "IO"));
 }
 
+test "module graph: bindings are owner-scoped and mirror the public surface" {
+    var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
+    defer graph_store.deinit();
+
+    const a = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa");
+    const b = try graph_store.addRecord("/pkg/b.doxa", "pkg//b.doxa");
+
+    try graph_store.bindSymbol(a, "Node", .Type, .Public, null);
+    try graph_store.bindNamespace(a, "util", b.id, .Private, null);
+    // The same name in two modules is two bindings, each naming its own
+    // defining module.
+    try graph_store.bindSymbol(b, "Node", .Type, .Private, null);
+
+    try testing.expectEqual(a.id, a.bindings.get("Node").?.binding.symbol.module);
+    try testing.expectEqual(b.id, b.bindings.get("Node").?.binding.symbol.module);
+    try testing.expectEqual(graph.SymbolKind.Type, a.bindings.get("Node").?.binding.symbol.kind);
+
+    // Only public bindings appear in the public surface.
+    try testing.expect(a.public_bindings.contains("Node"));
+    try testing.expect(!b.public_bindings.contains("Node"));
+    try testing.expect(!a.public_bindings.contains("util"));
+    try testing.expectEqual(b.id, a.bindings.get("util").?.binding.namespace);
+}
+
+test "module graph: symbol keys are module-qualified" {
+    const ctx = graph.SymbolKeyContext{};
+    const a = graph.SymbolKey{ .module = 1, .name = "Node" };
+    const b = graph.SymbolKey{ .module = 2, .name = "Node" };
+    const a2 = graph.SymbolKey{ .module = 1, .name = "Node" };
+
+    try testing.expect(ctx.eql(a, a2));
+    try testing.expect(!ctx.eql(a, b));
+    try testing.expectEqual(ctx.hash(a), ctx.hash(a2));
+    try testing.expect(ctx.hash(a) != ctx.hash(b));
+}
+
+test "module graph: link prefixes are deterministic and distinct" {
+    var g1 = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
+    defer g1.deinit();
+    const a1 = try g1.addRecord("/pkg/a.doxa", "pkg//a.doxa");
+    const b1 = try g1.addRecord("/pkg/b.doxa", "pkg//b.doxa");
+
+    // Distinct modules never share an internal key.
+    try testing.expect(!std.mem.eql(u8, a1.link_prefix, b1.link_prefix));
+
+    // The prefix is derived from the stable key, so it is independent of the
+    // checkout path and of discovery order.
+    var g2 = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
+    defer g2.deinit();
+    const b2 = try g2.addRecord("/elsewhere/b.doxa", "pkg//b.doxa");
+    try testing.expectEqualStrings(b1.link_prefix, b2.link_prefix);
+}
+
 test "module graph: record pointers survive growth" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
