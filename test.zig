@@ -50,6 +50,7 @@ test "suite wiring: every test file is reachable" {
         "test_run.zig",
         "test_compile.zig",
         "test_compile_errors.zig",
+        "test_build_script.zig",
     };
 
     var dir = try std.Io.Dir.cwd().openDir(testing.io, "test", .{ .iterate = true });
