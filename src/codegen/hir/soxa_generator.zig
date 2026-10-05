@@ -1649,7 +1649,7 @@ pub const HIRGenerator = struct {
         });
     }
 
-    pub fn generateInternalMethodCall(self: *HIRGenerator, method: Token, receiver: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
+    pub fn generateInternalMethodCall(self: *HIRGenerator, method: Token, receiver: *ast.Expr, callee: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
         const name = method.lexeme;
 
         const receiver_type = self.inferTypeFromExpression(receiver);
@@ -1658,14 +1658,13 @@ pub const HIRGenerator = struct {
                 const recv_var_name = receiver.data.Variable.lexeme;
                 const struct_name = blk: {
                     if (self.symbol_table.getVariableCustomType(recv_var_name)) |ctype| break :blk ctype;
-                    // TODO(dropped method call): this fallback assumes the
-                    // receiver variable is named after its type, which is
-                    // almost never true. When it guesses wrong,
-                    // `struct_methods.get` misses and the function falls off the
-                    // end emitting neither a call nor a diagnostic — a dropped
-                    // call. Resolve the declared/inferred struct type instead,
-                    // and make the miss a compile error: see
-                    // plan/struct-and-array-representation.md.
+                    // Stopgap only: guessing that a variable is named after its
+                    // type is wrong almost always, and when it is wrong the
+                    // method table lookup below misses and the call is dropped
+                    // (see the `!is_known_builtin` early return). Declarations
+                    // now track the concrete name, so this should be
+                    // unreachable; `plan/module-graph.md` Phase 4 removes the
+                    // bare-name fallbacks entirely.
                     break :blk recv_var_name;
                 };
 
@@ -1785,6 +1784,26 @@ pub const HIRGenerator = struct {
             std.mem.eql(u8, name, "float") or
             std.mem.eql(u8, name, "byte");
         if (!is_known_builtin) {
+            // A struct receiver that matched no method table and is not a builtin
+            // operation is an unresolvable method call. It used to evaluate the
+            // receiver and return, which silently dropped the call: a
+            // value-returning method yielded the receiver and a void method did
+            // nothing at all. Report it instead. `hasErrors` guards the "exactly
+            // one diagnostic" rule — when the semantic layer already rejected
+            // this expression it has reported E1012 itself, and
+            // `plan/module-graph.md` requires one diagnostic per problem.
+            if (receiver_type == .Struct and !self.reporter.hasErrors()) {
+                const display_name = if (receiver.data == .Variable)
+                    (self.symbol_table.getVariableCustomType(receiver.data.Variable.lexeme) orelse "<struct>")
+                else
+                    "<struct>";
+                self.reporter.reportCompileError(
+                    callee.base.location(),
+                    ErrorCode.UNKNOWN_METHOD,
+                    "Unknown method '{s}' on struct '{s}'",
+                    .{ name, display_name },
+                );
+            }
             try self.generateExpression(receiver, true, should_pop_after_use);
             return;
         }

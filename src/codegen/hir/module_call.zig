@@ -306,15 +306,12 @@ fn classifyFieldAccessCall(generator: *HIRGenerator, field_access: ast.FieldAcce
         }
     }
 
-    // TODO(dropped method call): this fallthrough reaches
-    // `generateInternalMethodCall`, which emits nothing at all when it cannot
-    // match the name — no call, no diagnostic — leaving the receiver's value on
-    // the operand stack. So `const copied is b; copied.get(0)` silently yields
-    // the receiver and `copied.set(0, v)` silently does nothing. The receiver
-    // name fails to resolve because `resolveReceiverStructName` does not follow
-    // a struct type through a local initialiser. An unresolvable call must be a
-    // compile error, not a silent no-op: see
-    // plan/struct-and-array-representation.md.
+    // Falling through to `.internal_method` is the *normal* path for a method call
+    // on a local variable, not a failure: `generateInternalMethodCall` resolves
+    // the receiver's struct name from the tracked custom type and emits the call.
+    // A name it cannot resolve used to end in a silent no-op; that is now an E1012
+    // at its `!is_known_builtin` return. See
+    // plan/struct-and-array-representation.md, Finding 1.
     return .{ .internal_method = field_access };
 }
 

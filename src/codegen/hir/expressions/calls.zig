@@ -95,7 +95,7 @@ pub const CallsHandler = struct {
                 try self.generateStructConstructorCall(type_name, call_data.arguments);
             },
             .internal_method => |fa| {
-                try self.generator.generateInternalMethodCall(fa.field, fa.object, call_data.arguments, should_pop_after_use);
+                try self.generator.generateInternalMethodCall(fa.field, fa.object, call_data.callee, call_data.arguments, should_pop_after_use);
             },
         }
     }
