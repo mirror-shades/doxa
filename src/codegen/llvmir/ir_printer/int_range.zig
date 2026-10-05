@@ -86,6 +86,14 @@ pub const IntRange = struct {
         return self.lo_known and self.lo >= 0;
     }
 
+    /// True when the value provably cannot be zero. This is what discharges
+    /// the divide-by-zero guard: a divisor that is a non-zero constant or is
+    /// bounded strictly positive needs no runtime check.
+    pub fn isNonZero(self: IntRange) bool {
+        if (self.konst) |c| return c != 0;
+        return self.lo_known and self.lo > 0;
+    }
+
     /// True when the value provably cannot be positive.
     pub fn isNonPositive(self: IntRange) bool {
         if (self.konst) |c| return c <= 0;
@@ -212,6 +220,15 @@ pub const SignFacts = struct {
     lhs_nonneg: bool = false,
     /// The divisor provably cannot be negative.
     rhs_nonneg: bool = false,
+    /// The divisor provably cannot be zero, so the division needs no guard.
+    rhs_nonzero: bool = false,
+
+    /// True when the divisor is statically known not to be zero, whether as an
+    /// exact constant or from a strictly positive lower bound.
+    pub fn divisorNonZero(f: SignFacts) bool {
+        if (f.const_divisor) |c| return c != 0;
+        return f.rhs_nonzero;
+    }
 };
 
 /// Reads the facts off a pair of ranges.
@@ -220,6 +237,7 @@ pub fn signFacts(lhs: IntRange, rhs: IntRange) SignFacts {
         .const_divisor = rhs.konst,
         .lhs_nonneg = lhs.isNonNegative(),
         .rhs_nonneg = rhs.isNonNegative(),
+        .rhs_nonzero = rhs.isNonZero(),
     };
 }
 
@@ -410,6 +428,48 @@ pub fn Methods(comptime Ctx: type) type {
             }
         };
 
+        /// Emits a guard that traps when `divisor` is zero.
+        ///
+        /// `sdiv`/`srem`/`udiv`/`urem` by zero is undefined behavior in LLVM,
+        /// and the backend duly folds it: an unguarded `5 // z` returned
+        /// `-69242844270821376` rather than failing. Every shape that divides by
+        /// a register therefore routes through here first.
+        ///
+        /// The check is skipped when `facts` already proves the divisor non-zero
+        /// (an exact non-zero constant, or a strictly positive lower bound), so
+        /// a literal divisor costs nothing. The taken arm is a self-contained
+        /// basic block and `current_block` is advanced to the continuation, the
+        /// same contract `overflow.zig` uses for its trap diamond.
+        fn emitDivisorGuard(
+            self: *IRPrinter,
+            out: *Lines,
+            id: *usize,
+            divisor: []const u8,
+            facts: SignFacts,
+            current_block: *[]const u8,
+        ) !void {
+            if (facts.divisorNonZero()) return;
+
+            const is_zero = try out.temp(id);
+            try out.line("  {s} = icmp eq i64 {s}, 0\n", .{ is_zero, divisor });
+
+            // The labels consume the shared counter only to stay unique; as
+            // named values they take no part in LLVM's unnamed numbering.
+            const trap_label = try std.fmt.allocPrint(out.alloc, "div0.trap.{d}", .{id.*});
+            id.* += 1;
+            const cont_label = try std.fmt.allocPrint(out.alloc, "div0.cont.{d}", .{id.*});
+            id.* += 1;
+
+            try out.line("  br i1 {s}, label %{s}, label %{s}\n\n", .{ is_zero, trap_label, cont_label });
+            try out.line(
+                "{s}:\n  call void @doxa_trap_div_by_zero()\n  unreachable\n\n{s}:\n",
+                .{ trap_label, cont_label },
+            );
+
+            self.current_block = cont_label;
+            current_block.* = cont_label;
+        }
+
         /// Emits the `i1` under which a truncated result needs a one-step
         /// correction: the remainder is non-zero *and* the operands' signs
         /// differ. When the divisor's sign is already known the test collapses
@@ -455,6 +515,7 @@ pub fn Methods(comptime Ctx: type) type {
             dividend: []const u8,
             divisor: []const u8,
             facts: SignFacts,
+            current_block: *[]const u8,
         ) ![]const u8 {
             var out = Lines{ .alloc = self.allocator };
             defer out.deinit();
@@ -479,10 +540,12 @@ pub fn Methods(comptime Ctx: type) type {
                     try out.line("  {s} = sub i64 {s}, {s}\n", .{ result, residue, adjustment });
                 },
                 .srem_bare => {
+                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
                     result = try out.temp(id);
                     try out.line("  {s} = srem i64 {s}, {s}\n", .{ result, dividend, divisor });
                 },
                 .fixup_dividend_sign => {
+                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
                     const residue = try out.temp(id);
                     try out.line("  {s} = srem i64 {s}, {s}\n", .{ residue, dividend, divisor });
                     const condition = try emitCorrectionCondition(&out, id, residue, dividend, divisor, true);
@@ -492,6 +555,7 @@ pub fn Methods(comptime Ctx: type) type {
                     try out.line("  {s} = add i64 {s}, {s}\n", .{ result, residue, adjustment });
                 },
                 .fixup_general => {
+                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
                     const residue = try out.temp(id);
                     try out.line("  {s} = srem i64 {s}, {s}\n", .{ residue, dividend, divisor });
                     const condition = try emitCorrectionCondition(&out, id, residue, dividend, divisor, false);
@@ -516,6 +580,7 @@ pub fn Methods(comptime Ctx: type) type {
             dividend: []const u8,
             divisor: []const u8,
             facts: SignFacts,
+            current_block: *[]const u8,
         ) ![]const u8 {
             var out = Lines{ .alloc = self.allocator };
             defer out.deinit();
@@ -531,10 +596,12 @@ pub fn Methods(comptime Ctx: type) type {
                     try out.line("  {s} = ashr i64 {s}, {d}\n", .{ result, cleared, k });
                 },
                 .sdiv_bare => {
+                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
                     result = try out.temp(id);
                     try out.line("  {s} = sdiv i64 {s}, {s}\n", .{ result, dividend, divisor });
                 },
                 .fixup_dividend_sign => {
+                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
                     const quotient = try out.temp(id);
                     try out.line("  {s} = sdiv i64 {s}, {s}\n", .{ quotient, dividend, divisor });
                     const residue = try out.temp(id);
@@ -546,6 +613,7 @@ pub fn Methods(comptime Ctx: type) type {
                     try out.line("  {s} = sub i64 {s}, {s}\n", .{ result, quotient, adjustment });
                 },
                 .fixup_general => {
+                    try emitDivisorGuard(self, &out, id, divisor, facts, current_block);
                     const quotient = try out.temp(id);
                     try out.line("  {s} = sdiv i64 {s}, {s}\n", .{ quotient, dividend, divisor });
                     const residue = try out.temp(id);

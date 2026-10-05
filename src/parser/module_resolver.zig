@@ -27,14 +27,11 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
     const normalized_path = try normalizeModulePath(self, module_name);
     defer self.allocator.free(normalized_path);
 
-    // Resolution never consults the spelling-keyed `module_cache`: a specifier
-    // is only a probe for a candidate path, and identity comes from the graph
-    // keyed by `realpath`. The cache is written below for codegen compatibility
-    // (removed in Phase 2) but must never decide identity.
-    //
-    // Probe the file, then key by its real path so two spellings, aliases, or a
-    // symlink to the same file collapse to one record and one parse.
-    const module_data = try self.loadModuleSourceWithPath(module_name);
+    // A specifier is only a probe for a candidate path; identity comes from the
+    // graph keyed by `realpath`. Probe the file, then key by its real path so
+    // two spellings, aliases, or a symlink to the same file collapse to one
+    // record and one parse.
+    const module_data = try loadModuleSourceOrReport(self, module_name);
     const physical = graph.physicalPath(self.io, self.allocator, module_data.resolved_path) catch |err| {
         self.allocator.free(module_data.source);
         self.allocator.free(module_data.resolved_path);
@@ -90,10 +87,7 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
         .ready => {},
     }
 
-    const info = record.module_info orelse return error.ModuleParseError;
-    const cache_key = try self.allocator.dupe(u8, normalized_path);
-    try self.module_cache.put(cache_key, info);
-    return info;
+    return record.module_info orelse error.ModuleParseError;
 }
 
 /// Caller state for the Parse stage body. `err` carries the original error out
@@ -142,12 +136,6 @@ fn parseModuleIntoRecord(ctx: *ParseContext, record: *module_graph.ModuleRecord)
     // This module's record owns the inline `zig` synthetic records its body
     // generates.
     new_parser.owner_record = record;
-
-    new_parser.module_cache = std.StringHashMap(ModuleInfo).init(self.allocator);
-    var cache_it = self.module_cache.iterator();
-    while (cache_it.next()) |entry| {
-        try new_parser.module_cache.put(entry.key_ptr.*, entry.value_ptr.*);
-    }
     new_parser.import_stack = try self.import_stack.clone();
 
     const module_statements = new_parser.execute() catch |err| {
@@ -224,7 +212,7 @@ fn zigModuleStem(module_path: []const u8) []const u8 {
 // (`collectInlineZigDecls`) picks it up unchanged.
 // `display_name` becomes the module name used in calls (the import alias).
 pub fn resolveZigModule(self: *Parser, module_path: []const u8, display_name: []const u8) ErrorList!ast.ModuleInfo {
-    const module_data = try self.loadModuleSourceWithPath(module_path);
+    const module_data = try loadModuleSourceOrReport(self, module_path);
 
     // A `.zig` file import uses the imported file's own physical identity; the
     // alias only names the binding, it does not mint a second identity.
@@ -279,7 +267,7 @@ pub fn resolveZigModule(self: *Parser, module_path: []const u8, display_name: []
         } },
     };
 
-    const info = ast.ModuleInfo{
+    var info = ast.ModuleInfo{
         .name = name_owned,
         .imports = &[_]ast.ImportInfo{},
         .ast = module_block,
@@ -309,6 +297,7 @@ pub fn resolveZigModule(self: *Parser, module_path: []const u8, display_name: []
         },
         error.OutOfMemory => return error.OutOfMemory,
     };
+    info.record_id = record.id;
     if (record.module_info == null) {
         record.module_info = info;
         record.source = module_data.source;
@@ -543,6 +532,25 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     }
 
     return error.ModuleNotFound;
+}
+
+/// Load a module's source, turning a missing file into a located diagnostic
+/// that names both the specifier and the importing file. Without this the
+/// `ModuleNotFound` error escapes the resolve phase and surfaces as a bare
+/// "internal compiler error", which says nothing about what was not found.
+fn loadModuleSourceOrReport(self: *Parser, module_name: []const u8) ErrorList!ModuleData {
+    return self.loadModuleSourceWithPath(module_name) catch |err| switch (err) {
+        error.ModuleNotFound => {
+            self.reporter.reportCompileError(
+                null,
+                ErrorCode.MODULE_NOT_FOUND,
+                "Module '{s}' could not be found (imported from '{s}')",
+                .{ module_name, self.current_file },
+            );
+            return error.ModuleNotFound;
+        },
+        else => return err,
+    };
 }
 
 pub fn loadModuleSource(self: *Parser, module_name: []const u8) ErrorList![]const u8 {
@@ -1062,10 +1070,11 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
         .ast = module_ast,
         .file_path = module_path,
         .symbols = module_symbols,
+        .record_id = if (module_parser.owner_record) |record| record.id else null,
     };
 }
 
-pub fn recordModuleImport(self: *Parser, importer_path: []const u8, alias: []const u8, imported_path: []const u8, is_public: bool) !void {
+pub fn recordModuleImport(self: *Parser, importer_path: []const u8, alias: []const u8, imported_path: []const u8, is_public: bool, span: ?ast.SourceSpan) !void {
     var module_aliases = try self.module_imports.getOrPut(importer_path);
     if (!module_aliases.found_existing) {
         module_aliases.value_ptr.* = std.StringHashMap(@import("parser_types.zig").ModuleImportEntry).init(self.allocator);
@@ -1074,5 +1083,6 @@ pub fn recordModuleImport(self: *Parser, importer_path: []const u8, alias: []con
     try module_aliases.value_ptr.put(alias, .{
         .imported_path = imported_path,
         .is_public = is_public,
+        .span = span,
     });
 }

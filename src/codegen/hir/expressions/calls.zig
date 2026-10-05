@@ -120,7 +120,7 @@ pub const CallsHandler = struct {
         }
 
         const ret_type: HIRType = self.generator.inferCallReturnType(qualified_name, .LocalFunction) catch
-            self.generator.convertTypeInfo(mi.return_type.*);
+            self.generator.convertTypeInfo(mi.signature.return_type.*);
         const fn_index: ?u32 = self.generator.getFunctionIndex(qualified_name);
 
         var arg_count: u32 = @intCast(arguments.len);
@@ -158,7 +158,7 @@ pub const CallsHandler = struct {
         // reference, and a plain variable's storage is not a `%DoxaValue` box,
         // so the callee cannot read or write the union layout directly.
         const finfo_opt = switch (call_kind) {
-            .LocalFunction, .ModuleFunction => self.generator.function_signatures.get(function_name),
+            .LocalFunction, .ModuleFunction => self.generator.functionInfoByLink(function_name),
             .BuiltinFunction => null,
         };
         const AliasWriteback = struct {

@@ -254,12 +254,12 @@ pub fn Methods(comptime Ctx: type) type {
                                 break :blk name;
                             },
                             .IntDiv => blk: {
-                                const name = try FlooredArith.emitFlooredDiv(self, w, id, lhs.name, rhs.name, signFacts(lhs.int_range, rhs.int_range));
+                                const name = try FlooredArith.emitFlooredDiv(self, w, id, lhs.name, rhs.name, signFacts(lhs.int_range, rhs.int_range), current_block);
                                 result_range = arithRange(.IntDiv, .Int, lhs.int_range, rhs.int_range);
                                 break :blk name;
                             },
                             .Mod => blk: {
-                                const name = try FlooredArith.emitFlooredMod(self, w, id, lhs.name, rhs.name, signFacts(lhs.int_range, rhs.int_range));
+                                const name = try FlooredArith.emitFlooredMod(self, w, id, lhs.name, rhs.name, signFacts(lhs.int_range, rhs.int_range), current_block);
                                 result_range = arithRange(.Mod, .Int, lhs.int_range, rhs.int_range);
                                 break :blk name;
                             },
@@ -319,7 +319,7 @@ pub fn Methods(comptime Ctx: type) type {
                             try w.writeAll(line);
                         },
                         .IntDiv => {
-                            unreachable;
+                            return error.UnsupportedFloatIntDiv;
                         },
                         .Mod => {
                             const line = try std.fmt.allocPrint(self.allocator, "  {s} = frem double {s}, {s}\n", .{ name, lhs_double, rhs_double });
@@ -1401,7 +1401,14 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(call_line);
                 },
                 .PTR => {
-                    if (val.struct_field_types) |fts| {
+                    if (IRPrinter.isFlatStructArray(val)) {
+                        // By-value struct slots, not pointers: promote to a boxed
+                        // header so the runtime prints real struct elements.
+                        const hdr = try self.emitFixedStructArrayHeader(w, val, "0", id);
+                        const call_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_print_array_hdr(ptr {s})\n", .{hdr});
+                        defer self.allocator.free(call_line);
+                        try w.writeAll(call_line);
+                    } else if (val.struct_field_types) |fts| {
                         _ = fts;
                         const dv = try self.buildDoxaValue(w, val, null, id);
                         const tmp_ptr = try self.nextTemp(id);
@@ -1693,13 +1700,40 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(expected_line);
                 try w.writeAll(expected_line);
 
-                const eq_i1 = try self.nextTemp(id);
-                const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, {s}\n", .{ eq_i1, member_i32, expected });
+                var cond = try self.nextTemp(id);
+                const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, {s}\n", .{ cond, member_i32, expected });
                 defer self.allocator.free(cmp_line);
                 try w.writeAll(cmp_line);
 
+                // A union whose member list does not give `nothing` its own
+                // index would let a nothing box satisfy a struct/enum member's
+                // index check. Require the runtime tag too when the pattern
+                // names one.
+                if (mc.expected_tag) |want_tag| {
+                    const tag_i32 = try self.nextTemp(id);
+                    const tag_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 0\n", .{ tag_i32, value.name });
+                    defer self.allocator.free(tag_line);
+                    try w.writeAll(tag_line);
+
+                    const want = try self.nextTemp(id);
+                    const want_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ want, want_tag });
+                    defer self.allocator.free(want_line);
+                    try w.writeAll(want_line);
+
+                    const tag_eq = try self.nextTemp(id);
+                    const tag_cmp = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, {s}\n", .{ tag_eq, tag_i32, want });
+                    defer self.allocator.free(tag_cmp);
+                    try w.writeAll(tag_cmp);
+
+                    const both = try self.nextTemp(id);
+                    const both_line = try std.fmt.allocPrint(self.allocator, "  {s} = and i1 {s}, {s}\n", .{ both, cond, tag_eq });
+                    defer self.allocator.free(both_line);
+                    try w.writeAll(both_line);
+                    cond = both;
+                }
+
                 const result = try self.nextTemp(id);
-                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ result, eq_i1 });
+                const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ result, cond });
                 defer self.allocator.free(zext_line);
                 try w.writeAll(zext_line);
 
@@ -2140,6 +2174,8 @@ pub fn Methods(comptime Ctx: type) type {
                     // (`param_is_readonly` from `hir/param_mutation.zig`), so the
                     // call site needs no re-analysis.
                     if (arg.fixed_array_depth > 0 and declared_type != null and declared_type.? == .Array) {
+                        const elem_type = arg.array_type orelse HIR.HIRType.Int;
+                        const inner = HIR.arrayInnermostElementType(elem_type) orelse elem_type;
                         if (is_readonly) {
                             arg = try self.wrapFixedArrayHeader(w, .{
                                 .name = arg.name,
@@ -2149,8 +2185,15 @@ pub fn Methods(comptime Ctx: type) type {
                                 .fixed_array_sizes = arg.fixed_array_sizes,
                             }, id);
                             arg_ptr.* = arg;
+                        } else if (inner == .Struct) {
+                            // A struct element is a heap pointer in the dynamic
+                            // representation. A flat memcpy would reinterpret the
+                            // first by-value word as a pointer, so copy through
+                            // the boxing promotion instead.
+                            const hdr = try self.emitFixedStructArrayHeader(w, arg, "0", id);
+                            arg = .{ .name = hdr, .ty = .PTR, .array_type = elem_type };
+                            arg_ptr.* = arg;
                         } else {
-                            const elem_type = arg.array_type orelse HIR.HIRType.Int;
                             const elem_size = self.arrayElementSize(elem_type);
                             const elem_tag = self.arrayElementTag(elem_type);
                             var total_elems: u64 = arg.fixed_array_sizes[0];
@@ -2244,6 +2287,23 @@ pub fn Methods(comptime Ctx: type) type {
                         arg = .{ .name = narrowed, .ty = .I2 };
                         arg_ptr.* = arg;
                     }
+                    // The semantic layer types every comparison as a tetra
+                    // (`infer_type.zig`), but `emitCompareInstruction` pushes an
+                    // `i1` for every operand type except `.Tetra`, so a runtime
+                    // comparison reaches a tetra parameter as `I1`. Builtins have
+                    // always accepted it (`builtinTypeMatchesStack`); without this
+                    // the same argument was a hard `CallArgumentTypeMismatch` for a
+                    // user function. Every `I1` producer (icmp, `not`, `and`/`or`/
+                    // `xor`, the quantifiers) yields 0 or 1, so zero-extension is
+                    // the identity on the tetra encoding.
+                    if (decl == .Tetra and arg.ty == .I1) {
+                        const widened = try self.nextTemp(id);
+                        const zext_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext i1 {s} to i2\n", .{ widened, arg.name });
+                        defer self.allocator.free(zext_line);
+                        try w.writeAll(zext_line);
+                        arg = .{ .name = widened, .ty = .I2 };
+                        arg_ptr.* = arg;
+                    }
                     if (decl == .Float and (arg.ty == .I64 or arg.ty == .I8)) {
                         const src_ty = if (arg.ty == .I8) "i8" else "i64";
                         const widened = try self.nextTemp(id);
@@ -2295,7 +2355,7 @@ pub fn Methods(comptime Ctx: type) type {
                         @tagName(declared_type.?),
                         @tagName(arg.ty),
                     });
-                    unreachable;
+                    return error.CallArgumentTypeMismatch;
                 };
                 const arg_str = try std.fmt.allocPrint(self.allocator, "{s} {s}", .{ llvm_ty, arg.name });
                 try arg_strings.append(arg_str);
@@ -2666,8 +2726,7 @@ pub fn Methods(comptime Ctx: type) type {
             id: *usize,
         ) !StackVal {
             const elem_type = fixed.array_type orelse HIR.HIRType.Int;
-            const elem_size = self.arrayElementSize(elem_type);
-            const elem_tag = self.arrayElementTag(elem_type);
+            const inner = HIR.arrayInnermostElementType(elem_type) orelse elem_type;
 
             var total_elems: u64 = fixed.fixed_array_sizes[0];
             var i: u32 = 1;
@@ -2675,64 +2734,17 @@ pub fn Methods(comptime Ctx: type) type {
                 total_elems *= fixed.fixed_array_sizes[i];
             }
 
-            // Named, not a numeric temp: the alloca is replayed in the entry
-            // block, and LLVM requires unnamed temps to be numbered in order.
-            const hdr_reg = try std.fmt.allocPrint(self.allocator, "%synth.hdr.{d}", .{self.synth_header_counter});
-            self.synth_header_counter += 1;
-            try self.entry_allocas.append(try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_reg}));
+            // A struct element is a heap pointer in the dynamic representation,
+            // so the view needs a pointer array over the flat by-value slots
+            // rather than a direct borrow of them.
+            if (inner == .Struct) {
+                return self.wrapFixedStructArrayHeader(w, fixed, id);
+            }
 
-            const data_ptr = try self.nextTemp(id);
-            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr, hdr_reg });
-            defer self.allocator.free(gep_line);
-            try w.writeAll(gep_line);
-            const store_data = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ fixed.name, data_ptr });
-            defer self.allocator.free(store_data);
-            try w.writeAll(store_data);
-
-            const len_ptr = try self.nextTemp(id);
-            const len_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 1\n", .{ len_ptr, hdr_reg });
-            defer self.allocator.free(len_gep);
-            try w.writeAll(len_gep);
-            const store_len = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ total_elems, len_ptr });
-            defer self.allocator.free(store_len);
-            try w.writeAll(store_len);
-
-            const cap_ptr = try self.nextTemp(id);
-            const cap_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 2\n", .{ cap_ptr, hdr_reg });
-            defer self.allocator.free(cap_gep);
-            try w.writeAll(cap_gep);
-            const store_cap = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ total_elems, cap_ptr });
-            defer self.allocator.free(store_cap);
-            try w.writeAll(store_cap);
-
-            const esz_ptr = try self.nextTemp(id);
-            const esz_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 3\n", .{ esz_ptr, hdr_reg });
-            defer self.allocator.free(esz_gep);
-            try w.writeAll(esz_gep);
-            const store_esz = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ elem_size, esz_ptr });
-            defer self.allocator.free(store_esz);
-            try w.writeAll(store_esz);
-
-            const tag_ptr = try self.nextTemp(id);
-            const tag_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 4\n", .{ tag_ptr, hdr_reg });
-            defer self.allocator.free(tag_gep);
-            try w.writeAll(tag_gep);
-            const store_tag = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ elem_tag, tag_ptr });
-            defer self.allocator.free(store_tag);
-            try w.writeAll(store_tag);
-
-            // Field 5 (`scope`) must be initialised: a non-owning view has no
-            // owning arena, and leaving it undefined lets a stack garbage pointer
-            // reach the runtime's rehome/alloc paths.
-            const scope_ptr = try self.nextTemp(id);
-            const scope_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 5\n", .{ scope_ptr, hdr_reg });
-            defer self.allocator.free(scope_gep);
-            try w.writeAll(scope_gep);
-            const store_scope = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{scope_ptr});
-            defer self.allocator.free(store_scope);
-            try w.writeAll(store_scope);
-
-            return .{ .name = hdr_reg, .ty = .PTR, .array_type = elem_type };
+            const elem_size = self.arrayElementSize(elem_type);
+            const elem_tag = self.arrayElementTag(elem_type);
+            const hdr = try self.buildNonOwningHeader(w, fixed.name, total_elems, elem_size, elem_tag, id);
+            return .{ .name = hdr, .ty = .PTR, .array_type = elem_type };
         }
     };
 }

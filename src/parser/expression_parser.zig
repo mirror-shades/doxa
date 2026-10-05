@@ -139,32 +139,10 @@ pub fn lengthofExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast
 pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     self.advance();
 
-    // Try to parse as a simple identifier first
-    var value: *ast.Expr = undefined;
-    if (self.peek().type == .IDENTIFIER) {
-        const match_value = self.peek();
-        self.advance();
-
-        value = try self.allocator.create(ast.Expr);
-        value.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(match_value),
-            },
-            .data = .{
-                .Variable = match_value,
-            },
-        };
-
-        // Check if this is followed by array indexing
-        if (self.peek().type == .LEFT_BRACKET) {
-            self.advance();
-            value = try Parser.index(self, value, .NONE) orelse return error.ExpectedExpression;
-        }
-    } else {
-        // Parse as a complex expression
-        value = try precedence.parsePrecedence(self, Precedence.PRIMARY) orelse return error.ExpectedExpression;
-    }
+    // The subject is any expression with its full postfix chain
+    // (`x`, `x[i]`, `x.field`, `x[i][j].field`). `{` has no infix rule, so
+    // precedence parsing stops exactly at the match body.
+    const value = try precedence.parsePrecedence(self, Precedence.NONE) orelse return error.ExpectedExpression;
 
     if (self.peek().type != .LEFT_BRACE) {
         return error.ExpectedLeftBrace;
@@ -184,20 +162,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
             self.advance();
             const else_token = self.previous();
 
-            var body: *ast.Expr = undefined;
-            if (self.peek().type == .LEFT_BRACE) {
-                const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
-                body = block_expr;
-                if (self.peek().type == .COMMA) self.advance();
-            } else {
-                body = try parseExpression(self) orelse return error.ExpectedExpression;
-                while (self.peek().type == .NEWLINE) self.advance();
-                if (self.peek().type == .COMMA) {
-                    self.advance();
-                } else if (self.peek().type != .RIGHT_BRACE) {
-                    return error.ExpectedCommaOrBrace;
-                }
-            }
+const body = try matchArmBody(self);
 
             try cases.append(.{
                 .patterns = try self.allocator.dupe(token.Token, &[_]token.Token{else_token}),
@@ -258,20 +223,7 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
         }
         self.advance();
 
-        var body: *ast.Expr = undefined;
-        if (self.peek().type == .LEFT_BRACE) {
-            const block_expr = try Parser.block(self, null, .NONE) orelse return error.ExpectedLeftBrace;
-            body = block_expr;
-            if (self.peek().type == .COMMA) self.advance();
-        } else {
-            body = try parseExpression(self) orelse return error.ExpectedExpression;
-            while (self.peek().type == .NEWLINE) self.advance();
-            if (self.peek().type == .COMMA) {
-                self.advance();
-            } else if (self.peek().type != .RIGHT_BRACE) {
-                return error.ExpectedCommaOrBrace;
-            }
-        }
+        const body = try matchArmBody(self);
 
         try cases.append(.{
             .patterns = try patterns.toOwnedSlice(),
@@ -301,6 +253,32 @@ pub fn parseMatchExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*a
         },
     };
     return match_expr;
+}
+
+/// Parses one `match` arm body and consumes whatever separates it from the next
+/// arm. A braced body may be followed by a comma or by whatever comes next; an
+/// expression or a bare control statement must be followed by a comma or the
+/// closing brace, since neither can absorb what follows it.
+fn matchArmBody(self: *Parser) ErrorList!*ast.Expr {
+    var form: Parser.BranchForm = undefined;
+    const body = (try self.branchBody(
+        .{ .allow_implicit_value = true, .lowest_precedence = false },
+        &form,
+    )) orelse return error.ExpectedExpression;
+
+    switch (form) {
+        .block => if (self.peek().type == .COMMA) self.advance(),
+        .expression, .diverging => {
+            while (self.peek().type == .NEWLINE) self.advance();
+            if (self.peek().type == .COMMA) {
+                self.advance();
+            } else if (self.peek().type != .RIGHT_BRACE) {
+                return error.ExpectedCommaOrBrace;
+            }
+        },
+    }
+
+    return body;
 }
 
 pub fn doExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -924,34 +902,15 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     if (self.peek().type == .THEN) {
         self.advance();
 
-        if (self.peek().type == .CONTINUE or self.peek().type == .BREAK or self.peek().type == .RETURN) {
-            const stmt: ast.Stmt = switch (self.peek().type) {
-                .CONTINUE => try statement_parser.parseContinueStmt(self),
-                .BREAK => try statement_parser.parseBreakStmt(self),
-                .RETURN => try statement_parser.parseReturnStmt(self),
-                else => unreachable,
-            };
-            var stmts = try self.allocator.alloc(ast.Stmt, 1);
-            stmts[0] = stmt;
-            const block_expr = try self.allocator.create(ast.Expr);
-            block_expr.* = .{
-                .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(self.previous()) },
-                .data = .{ .Block = .{ .statements = stmts, .value = null } },
-            };
-            then_expr = block_expr;
-        } else if (self.peek().type == .LEFT_BRACE) {
-            then_expr = (try self.liftBlock()) orelse {
-                condition.deinit(self.allocator);
-                self.allocator.destroy(condition);
-                return error.ExpectedExpression;
-            };
-        } else {
-            then_expr = (try parseExpression(self)) orelse {
-                condition.deinit(self.allocator);
-                self.allocator.destroy(condition);
-                return error.ExpectedExpression;
-            };
-        }
+        var then_form: Parser.BranchForm = undefined;
+        then_expr = (try self.branchBody(
+            .{ .allow_implicit_value = false, .lowest_precedence = false },
+            &then_form,
+        )) orelse {
+            condition.deinit(self.allocator);
+            self.allocator.destroy(condition);
+            return error.ExpectedExpression;
+        };
     } else if (self.peek().type == .LEFT_BRACE) {
         then_expr = (try self.liftBlock()) orelse {
             condition.deinit(self.allocator);
@@ -984,10 +943,12 @@ pub fn parseIfExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
         self.advance();
         if (self.peek().type == .IF) {
             else_expr = try parseIfExpr(self, null, .NONE);
-        } else if (self.peek().type == .LEFT_BRACE) {
-            else_expr = try self.liftBlock();
         } else {
-            else_expr = try precedence.parsePrecedence(self, .NONE);
+            var else_form: Parser.BranchForm = undefined;
+            else_expr = try self.branchBody(
+                .{ .allow_implicit_value = false, .lowest_precedence = true },
+                &else_form,
+            );
         }
 
         if (else_expr == null) {
@@ -1129,12 +1090,11 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
     var then_branch: ?*ast.Expr = null;
     if (self.peek().type == .THEN) {
         self.advance();
-        if (self.peek().type == .LEFT_BRACE) {
-            const block_expr = try self.liftBlock() orelse return error.ExpectedLeftBrace;
-            then_branch = block_expr;
-        } else {
-            then_branch = try parseExpression(self) orelse return error.ExpectedExpression;
-        }
+        var then_form: Parser.BranchForm = undefined;
+        then_branch = try self.branchBody(
+            .{ .allow_implicit_value = false, .lowest_precedence = false },
+            &then_form,
+        ) orelse return error.ExpectedExpression;
     }
 
     var else_branch: ?*ast.Expr = null;
@@ -1146,12 +1106,11 @@ pub fn castExpr(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList!?*ast.
 
         while (self.peek().type == .NEWLINE) self.advance();
 
-        if (self.peek().type == .LEFT_BRACE) {
-            const block_expr = try self.liftBlock() orelse return error.ExpectedLeftBrace;
-            else_branch = block_expr;
-        } else {
-            else_branch = try parseExpression(self) orelse return error.ExpectedExpression;
-        }
+        var else_form: Parser.BranchForm = undefined;
+        else_branch = try self.branchBody(
+            .{ .allow_implicit_value = false, .lowest_precedence = false },
+            &else_form,
+        ) orelse return error.ExpectedExpression;
     }
 
     const cast_expr = try self.allocator.create(ast.Expr);

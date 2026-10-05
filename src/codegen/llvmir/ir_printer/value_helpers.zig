@@ -226,6 +226,14 @@ pub fn Methods(comptime Ctx: type) type {
         };
 
         if (current_ty != .I64) {
+            // TODO(struct default): `.Nothing` reaches here from an
+            // uninitialized struct declaration and widens `"{}"` — a
+            // zero-sized type — into `zext {} 0 to i64`, which `zig cc` rejects.
+            // `zext` is only ever correct for an integer stack type, so this
+            // fall-through must not be how a non-integer arrives. The fix is
+            // gated on the struct-default decision in
+            // plan/uninitialized-declarations.md; behaviour is unchanged until
+            // that lands.
             const widened = try self.nextTemp(id);
             const src_ty = self.stackTypeToLLVMType(current_ty);
             const widen_line = try std.fmt.allocPrint(self.allocator, "  {s} = zext {s} {s} to i64\n", .{ widened, src_ty, current_name });

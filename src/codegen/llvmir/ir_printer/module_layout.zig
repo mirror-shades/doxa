@@ -1,5 +1,6 @@
 const std = @import("std");
 const StructTable = @import("../../../common/struct_table.zig").StructTable;
+const EnumTable = @import("../../../common/enum_table.zig").EnumTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -241,6 +242,25 @@ pub fn Methods(comptime Ctx: type) type {
                     }
                     _ = try self.struct_field_names_by_type.put(entry.qualified_name, owned_names);
                 }
+                // Enum field type names must be known before the descriptor is
+                // first created. A fixed-array default fill can construct an
+                // element struct (and materialize its descriptor) before any
+                // `StructNew` for that type, so relying on the construction site
+                // alone would cache a descriptor whose enum fields render as bare
+                // discriminants. Names are borrowed from the analysis arena.
+                if (!self.struct_field_enum_type_names_by_type.contains(entry.qualified_name)) {
+                    const enum_names = try self.allocator.alloc(?[]const u8, entry.fields.len);
+                    for (entry.fields, 0..) |field, i| {
+                        enum_names[i] = null;
+                        if (field.type_info.base != .Custom) continue;
+                        const ct = field.type_info.custom_type orelse continue;
+                        if (self.enum_table) |et_opaque| {
+                            const et: *EnumTable = @ptrCast(@alignCast(et_opaque));
+                            if (et.getIdByName(ct) != null) enum_names[i] = ct;
+                        }
+                    }
+                    _ = try self.struct_field_enum_type_names_by_type.put(entry.qualified_name, enum_names);
+                }
             }
         }
 
@@ -254,6 +274,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_write_stderr(ptr, i64)\n");
             try w.writeAll("declare void @doxa_exit(i64) noreturn\n");
             try w.writeAll("declare void @doxa_panic(ptr, i64)\n");
+            try w.writeAll("declare void @doxa_trap_div_by_zero() noreturn\n");
             try w.writeAll("");
             try w.writeAll("declare void @doxa_print_i64(i64)\n");
             try w.writeAll("declare void @doxa_print_u64(i64)\n");
@@ -291,6 +312,9 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_new_at(i64, i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_new_nested(i64, i64, i64, ptr, i64, i64, i64)\n");
+            try w.writeAll("declare ptr @doxa_array_from_fixed_at(i64, ptr, ptr, i64, i64, i64)\n");
+            try w.writeAll("declare ptr @doxa_array_from_fixed_structs_at(i64, ptr, i64, i64, ptr)\n");
+            try w.writeAll("declare void @doxa_array_fill_default_structs(ptr, ptr)\n");
             try w.writeAll("declare ptr @doxa_array_clone(ptr)\n");
             try w.writeAll("declare ptr @doxa_array_clone_at(i64, ptr)\n");
             try w.writeAll("declare ptr @doxa_array_clone_root(ptr)\n");
@@ -669,6 +693,10 @@ pub fn Methods(comptime Ctx: type) type {
             entry_mangled_name: ?[]const u8,
             entry_return_type: ?HIR.HIRType,
         ) !void {
+            const prev_peek_state = self.active_peek_state;
+            self.active_peek_state = peek_state;
+            defer self.active_peek_state = prev_peek_state;
+
             try outer_w.writeAll("define void @doxa_program_main()" ++ Ctx.function_attr_group ++ " {\n");
             try outer_w.writeAll("entry:\n");
             try outer_w.writeAll("  %str_out_ptr = alloca ptr\n");
