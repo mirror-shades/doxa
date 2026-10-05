@@ -2,6 +2,30 @@
 
 Doxa unifies conditional branching with a consistent then / else pattern across if, as, and match.
 
+### Branch bodies
+
+Every `then` and `else` branch, and every `match` arm, takes a body in one of three forms:
+
+- **An expression**, ending with a space.
+- **A block**, `{ ... }`, ending without one.
+- **A bare `return`, `break`, or `continue`.**
+
+The third form is shorthand for the block that contains only that statement, so it
+diverges exactly as `else { continue }` does:
+
+```doxa
+const v is maybeInt(s) as int else continue   # same as: else { continue }
+if list[i] != "" then n += 1 else continue
+match tag {
+    "a" then out is 1,
+    else continue
+}
+```
+
+A bare control statement is newline-terminated, except that `else` and `,` may
+follow it — `else` belongs to the enclosing branch and `,` to the next `match`
+arm.
+
 ### if / then / else
 
 - **then required**, **else optional**.
@@ -81,7 +105,7 @@ var x is if cond then compute() else 0
 
 `lift` terminates the block (code after `lift` is unreachable). It scopes to the immediately enclosing block `{ }`.
 
-`return` always exits the enclosing function. `lift` always provides a value to the enclosing expression.
+`return` always exits the enclosing function. `lift` always provides a value to the enclosing expression. `break` and `continue` always target the innermost enclosing loop.
 
 ```doxa
 var x is foo() as int else {
@@ -95,7 +119,7 @@ var x is foo() as int else {
 }
 ```
 
-When `as` or `if` is used in assignment, block branches must either `lift` a value or diverge via `return`/`break`. A block that falls through without `lift` produces `nothing`, which is a compile error when a value is expected.
+When `as` or `if` is used in assignment, block branches must either `lift` a value or diverge via `return`/`break`/`continue`. A block that falls through without `lift` produces `nothing`, which is a compile error when a value is expected. A branch that is a bare control statement counts as diverging here too, since it is the same block written without braces.
 
 `match` arms are not affected — implicit last-expression returns are preserved in match blocks.
 
@@ -131,7 +155,7 @@ Use match to branch on:
 
 - **Concrete values**: numbers, strings, enum variants (`.Red`, `.Green`, ...)
 - **Union type arms**: `int`, `float`, `string`, `byte`, `tetra`, `nothing`, or custom types
-- **Struct subjects**: the struct's name as a type test, optionally with `{ field, ... }` to bind its fields
+- **Struct subjects**: the struct's name as a type test, optionally with a `{ field }` pattern to bind its fields
 
 Arm syntax and delimiters:
 
@@ -217,7 +241,7 @@ Notes:
 
 ### Quick reference
 
-- **if**: then required else optional. Inline expressions or blocks with `lift`.
-- **as**: else required then optional. Type narrowing in both branches. Blocks use `lift` or `return`.
+- **if**: then required else optional. Inline expressions, blocks with `lift`, or a bare `return`/`break`/`continue`.
+- **as**: else required then optional. Type narrowing in both branches. Blocks use `lift` or diverge; a bare control statement is shorthand for a diverging block.
 - **match**: pattern then BODY else BODY. Block arms use implicit last expression.
 - **lift**: provides a value from a block, terminates the block. Scopes to the immediately enclosing `{ }`.
