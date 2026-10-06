@@ -1114,11 +1114,11 @@ public method hasHeader(name :: string) returns tetra {
 public function readRequest(connection :: int) returns int
 ```
 
-Parse the next request from the connection's buffer. Returns `1` when a
-request is ready (read it with `takeRequest`), `0` when more bytes are needed
-(retry on the next `Readable` event), and a negative status on a connection
-error. Decoding is non-blocking, so a slow or partial sender cannot stall the
-loop.
+Whether a request is waiting on the connection. Returns `1` when one is
+(read it with `takeRequest`), `0` when none has arrived yet (retry on the
+next `Readable` event), and a negative status once the connection has ended.
+A request only appears here complete and valid: a malformed or oversized one
+is answered by the library and the connection reports `Closed`.
 
 <details>
 <summary>Source</summary>
@@ -1137,7 +1137,7 @@ public function readRequest(connection :: int) returns int {
 public function takeRequest(connection :: int) returns ServerRequest
 ```
 
-The request parsed by the last successful `readRequest`.
+The request `readRequest` reported. It stays available until `respond`.
 
 <details>
 <summary>Source</summary>
@@ -1243,8 +1243,9 @@ public struct Message {
 public function upgradeWebSocket(connection :: int) returns error.StdError
 ```
 
-Complete the RFC 6455 handshake on an accepted connection whose pending
-request asked to upgrade. Call after `readRequest`, before `wsSend`/`wsNext`.
+Accept the pending request's upgrade to a WebSocket (RFC 6455). Call after
+`readRequest`. The handshake is written in the background; `wsSend` may be
+called at once and its frames follow the handshake.
 
 <details>
 <summary>Source</summary>
@@ -1266,7 +1267,10 @@ public function upgradeWebSocket(connection :: int) returns error.StdError {
 public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError
 ```
 
-Send one WebSocket frame with `data` as its payload.
+Queue one WebSocket frame with `data` as its payload. Returns at once: a
+peer that is slow to read never blocks the caller. A peer that falls further
+behind than `Limit.OutboundBytes` is closed with `CloseReason.SlowConsumer`
+and the call returns `error.IO.WriteFailed`.
 
 <details>
 <summary>Source</summary>
@@ -1288,11 +1292,11 @@ public function wsSend(connection :: int, op :: WsOp, data :: string) returns er
 public function wsNext(connection :: int) returns int
 ```
 
-Advance the connection's frame decoder. Returns `1` when a message is ready
-(read it with `wsMessage`), `0` when more bytes are needed (retry on the next
-`Readable` event), `2` when the peer closed, and a negative status on a
-protocol or transport error. Fragmented messages are reassembled before they
-are surfaced. Decoding is non-blocking.
+Take the connection's next message. Returns `1` when one is ready (read it
+with `wsMessage`), `0` when none is waiting (retry on the next `Readable`
+event), `2` once the peer has closed, and a negative status when the peer
+broke the protocol or a size limit. Messages arrive whole: fragments are
+reassembled and text is validated before they are surfaced.
 
 <details>
 <summary>Source</summary>
@@ -1327,23 +1331,41 @@ public function wsMessage(connection :: int) returns Message {
 
 </details>
 
+### `wsPending`
+
+```doxa
+public function wsPending(connection :: int) returns int
+```
+
+How many messages are waiting for `wsNext`. The library stops reading from
+a connection once `Limit.InboxMessages` are waiting, so this never grows
+past it.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function wsPending(connection :: int) returns int {
+    return HTTP.wsPending(connection)
+}
+```
+
+</details>
+
 ### `wsBuffered`
 
 ```doxa
 public function wsBuffered(connection :: int) returns tetra
 ```
 
-Whether undecoded bytes are already buffered for the connection. A poll loop
-uses `while std.http.wsBuffered(handle) { ... wsNext ... }` to drain frames
-that arrived with (or pipelined behind) the handshake before waiting on
-another readiness event.
+Whether messages are waiting for `wsNext`.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
 public function wsBuffered(connection :: int) returns tetra {
-    return HTTP.wsBuffered(connection)
+    return HTTP.wsPending(connection) > 0
 }
 ```
 
@@ -1355,7 +1377,7 @@ public function wsBuffered(connection :: int) returns tetra {
 public function takeLastErrorCode() returns int
 ```
 
-The last error code left by `readRequest`/`ws*`, taken and cleared.
+The last error code left by a `ws*` call, taken and cleared.
 
 <details>
 <summary>Source</summary>
@@ -1374,10 +1396,11 @@ public function takeLastErrorCode() returns int {
 public enum EventKind
 ```
 
-Why a `poll` event fired. `Accepted` is a fresh connection, `Readable` is a
-connection with bytes to read, and `Closed` is a peer that closed or errored.
-The inline-Zig boundary only carries scalars, so the codes crossing it are
-mapped by `eventKindFromCode`.
+Why a `poll` event fired. `Accepted` is a fresh connection. `Readable` is a
+connection with a complete request or message waiting. `Closed` is a
+connection that has ended: it is reported once, after everything else from
+that connection, and `closeReason` says why. The library has already cleaned
+up; calling `close` afterwards is allowed and does nothing.
 
 <details>
 <summary>Source</summary>
@@ -1419,9 +1442,10 @@ public struct Event {
 public function poll(listener :: int, timeout_ms :: int) returns Event[]
 ```
 
-Wait for readiness across the listener and every live connection. Blocks up
-to `timeout_ms` (0 polls immediately, negative waits indefinitely) and
-returns the events that fired.
+Wait for events on the listener's connections. Blocks up to `timeout_ms`
+(0 does not wait, negative waits indefinitely) and returns every event that
+is ready. Connections are read in the background whether or not the program
+is polling; `poll` only collects what is finished.
 
 <details>
 <summary>Source</summary>
@@ -1438,6 +1462,131 @@ public function poll(listener :: int, timeout_ms :: int) returns Event[] {
         })
     }
     return events
+}
+```
+
+</details>
+
+### `CloseReason`
+
+```doxa
+public enum CloseReason
+```
+
+Why a connection ended.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public enum CloseReason {
+    Open,
+    PeerClosed,
+    Reset,
+    LocalClose,
+    IdleTimeout,
+    ReadTimeout,
+    WriteTimeout,
+    HandlerTimeout,
+    SlowConsumer,
+    TooLarge,
+    ProtocolError,
+    HandshakeFailed,
+    ConnectFailed,
+    TlsError,
+}
+```
+
+</details>
+
+### `closeReason`
+
+```doxa
+public function closeReason(connection :: int) returns CloseReason
+```
+
+Why `connection` ended; `CloseReason.Open` while it has not. Valid from the
+`Closed` event until the next `poll`. A connection the program closed itself
+reads as `LocalClose`.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function closeReason(connection :: int) returns CloseReason {
+    return closeReasonFromCode(HTTP.closeReason(connection))
+}
+```
+
+</details>
+
+### `Limit`
+
+```doxa
+public enum Limit
+```
+
+The caps and deadlines every connection runs under. Sizes are in bytes and
+deadlines in milliseconds; a deadline of 0 is disabled.
+
+- `HeadBytes`: a request's headers. Over it: `431`, then `TooLarge`.
+- `BodyBytes`: a request's body. Over it: `413`, then `TooLarge`.
+- `MessageBytes`: one reassembled WebSocket message. Over it: `TooLarge`.
+- `OutboundBytes`: frames queued for one peer. Over it: `SlowConsumer`.
+- `InboxMessages`: messages one connection may have waiting for the program
+before the library stops reading from it.
+- `PendingBytes`: bytes waiting for the program across all connections
+before the library stops reading.
+- `Connections`: open connections; further ones wait to be accepted.
+- `HandshakeMs`: opening a client connection.
+- `HeadMs`: the rest of a request's headers once they have started.
+- `ReadMs`: a body or message making no progress.
+- `WriteMs`: a send making no progress.
+- `IdleMs`: a kept-alive connection with no request.
+- `HandlerMs`: the program answering a request it was given.
+- `LingerMs`: the peer acknowledging a close the library started.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public enum Limit {
+    HeadBytes,
+    BodyBytes,
+    MessageBytes,
+    OutboundBytes,
+    InboxMessages,
+    PendingBytes,
+    Connections,
+    HandshakeMs,
+    HeadMs,
+    ReadMs,
+    WriteMs,
+    IdleMs,
+    HandlerMs,
+    LingerMs,
+}
+```
+
+</details>
+
+### `setLimit`
+
+```doxa
+public function setLimit(which :: Limit, value :: int) returns error.StdError
+```
+
+Set one limit for connections opened from now on.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function setLimit(which :: Limit, value :: int) returns error.StdError {
+    HTTP.setLimit(limitCode(which), value)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
 }
 ```
 
@@ -3722,6 +3871,13 @@ public struct Node {
         }
     }
 
+    public function parse(text :: string) returns Node | error.StdError {
+        const root is JSON.parseDocument(text)
+        const code is JSON.takeLastErrorCode()
+        if code == 0 then return Node.new(root)
+        return mapJSONError(code)
+    }
+
     public method kind() returns Kind {
         const code is JSON.nodeKind(this.handle)
         return match code {
@@ -3784,6 +3940,26 @@ public struct Node {
         return value
     }
 }
+```
+
+</details>
+
+#### `Node.parse`
+
+```doxa
+public function parse(text :: string) returns Node | error.StdError
+```
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function parse(text :: string) returns Node | error.StdError {
+        const root is JSON.parseDocument(text)
+        const code is JSON.takeLastErrorCode()
+        if code == 0 then return Node.new(root)
+        return mapJSONError(code)
+    }
 ```
 
 </details>
@@ -3963,26 +4139,6 @@ public method booleanValue() returns tetra | nothing {
         if JSON.takeLastErrorCode() != 0 then return nothing
         return value
     }
-```
-
-</details>
-
-### `parse`
-
-```doxa
-public function parse(text :: string) returns Node | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function parse(text :: string) returns Node | error.StdError {
-    const root is JSON.parseDocument(text)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return Node.new(root)
-    return mapJSONError(code)
-}
 ```
 
 </details>

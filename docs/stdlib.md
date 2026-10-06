@@ -1,7 +1,7 @@
 # Standard Library
 
 ## How to use
-The standard library can be included as a module using the `@std()` method which returns a string of the path to the library.
+The standard library is imported like any other module. `@std()` is its specifier, the string `"std//std.doxa"` (the file `std.doxa` under the `std` root; see [Modules](modules.md#specifiers)).
 ```
 module std from @std()
 ```
@@ -283,7 +283,7 @@ than a dangling value.
 ```doxa
 module std from @std()
 
-const result is std.json.parse("{\"name\":\"doxa\",\"stars\":5}")
+const result is std.json.Node.parse("{\"name\":\"doxa\",\"stars\":5}")
 match result {
     std.json.Node then {
         const name is result.field("name")
