@@ -1,6 +1,6 @@
-module std from "std/std.doxa"
-import Message, ServerRequest, WsOp from "std/http/http.doxa"
-module error from "std/error.doxa"
+module std from @std()
+import Message, ServerRequest, WsOp from "std//http/http.doxa"
+module error from "std//error.doxa"
 
 /* Bind both listeners before the declarations below: an imported module's types
    become visible only after the first call into it, so `Message`, `WsOp`, and
@@ -19,6 +19,10 @@ const partial_listener is std.http.listen(0) as int else 0
 const partial_port is std.http.localAddr(partial_listener) as int else 0
 const sugar_listener is std.http.listen(0) as int else 0
 const sugar_port is std.http.localAddr(sugar_listener) as int else 0
+const plain_listener is std.http.listen(0) as int else 0
+const plain_port is std.http.localAddr(plain_listener) as int else 0
+const burst_listener is std.http.listen(0) as int else 0
+const burst_port is std.http.localAddr(burst_listener) as int else 0
 
 zig WsFixture {
     const std = @import("std");
@@ -217,6 +221,20 @@ zig WsFixture {
         defer stream.close(io);
         var read_buffer: [16 * 1024]u8 = undefined;
         var reader = stream.reader(io, &read_buffer);
+        // A plain request to a WebSocket-only server is answered 426 at once.
+        if (mode == 12) {
+            if (!sendRaw(stream, "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")) {
+                state.results[0].store(-2, .release);
+                return;
+            }
+            const line = reader.interface.takeDelimiterExclusive('\n') catch {
+                state.results[0].store(-3, .release);
+                return;
+            };
+            const ok = std.mem.startsWith(u8, line, "HTTP/1.1 426 ");
+            state.results[0].store(if (ok) 1 else -1, .release);
+            return;
+        }
         if (!sendUpgrade(stream)) {
             state.results[0].store(-2, .release);
             return;
@@ -356,6 +374,34 @@ zig WsFixture {
             const close_payload = [2]u8{ 0x03, 0xE8 };
             _ = sendFrame(stream, 0x8, true, &close_payload);
             _ = readFrame(&reader, &outbuf);
+            return;
+        }
+
+        // Idle peer: completes the handshake, then sends nothing. The server
+        // must close it once its idle deadline passes.
+        if (mode == 13) {
+            const ended = if (reader.interface.take(1)) |_| false else |_| true;
+            state.results[0].store(if (ended) 1 else -1, .release);
+            return;
+        }
+        // Burst: five frames in one go, then read the five echoes.
+        if (mode == 14) {
+            for (0..5) |_| {
+                if (!sendFrame(stream, 0x1, true, "burst")) {
+                    state.results[0].store(-4, .release);
+                    return;
+                }
+            }
+            var echo: [256]u8 = undefined;
+            var echoed: i64 = 0;
+            for (0..5) |_| {
+                const frame = readFrame(&reader, &echo) orelse break;
+                if (frame.opcode == 0x1 and std.mem.eql(u8, echo[0..frame.len], "burst")) echoed += 1;
+            }
+            state.results[0].store(if (echoed == 5) 1 else -1, .release);
+            const close_payload = [2]u8{ 0x03, 0xE8 };
+            _ = sendFrame(stream, 0x8, true, &close_payload);
+            _ = readFrame(&reader, &echo);
             return;
         }
 
@@ -608,6 +654,60 @@ function serveSugar(listener :: int) returns int {
     return served
 }
 
+/* Accept WebSockets until a connection ends, and return why it ended. */
+function serveUntilClosed(listener :: int) returns std.http.CloseReason {
+    var guard is 0
+    while guard < 100 do guard += 1 {
+        const events is std.http.poll(listener, 500)
+        for i while i < @length(events) do i += 1 {
+            const event is events[i]
+            if event.kind == std.http.EventKind.Closed then {
+                return std.http.closeReason(event.handle)
+            }
+            std.http.wsAccept(event.handle)
+        }
+    }
+    return std.http.CloseReason.Open
+}
+
+/* Echo until the peer closes; returns the most Readable events one `poll`
+   carried for a single connection. */
+function serveBurst(listener :: int) returns int {
+    var most is 0
+    var done is false
+    var guard is 0
+    while not done and guard < 100 do guard += 1 {
+        const events is std.http.poll(listener, 500)
+        var readable is 0
+        for i while i < @length(events) do i += 1 {
+            const event is events[i]
+            if event.kind == std.http.EventKind.Readable then readable += 1
+            if event.kind == std.http.EventKind.Closed then {
+                done is true
+            } else if std.http.wsAccept(event.handle) then {
+                var reading is true
+                while reading {
+                    const m is std.http.wsRead(event.handle)
+                    m as Message then {
+                        const message is m
+                        if message.op == std.http.WsOp.Close then {
+                            std.http.wsClose(event.handle)
+                            done is true
+                            reading is false
+                        } else {
+                            std.http.wsWrite(event.handle, message.op, message.data)
+                        }
+                    } else {
+                        reading is false
+                    }
+                }
+            }
+        }
+        if readable > most then most is readable
+    }
+    return most
+}
+
 WsFixture.start(codec_port, 1)
 const codec_served is serve(codec_listener)
 WsFixture.finish()
@@ -687,3 +787,25 @@ std.http.close(sugar_listener)
 @print("sugar ping {WsFixture.resultAt(2)}\n")
 @print("sugar close {WsFixture.resultAt(3)}\n")
 @print("sugar served {sugar_served}\n")
+
+# A plain request to a WebSocket-only server is answered 426, not left hanging.
+WsFixture.start(plain_port, 12)
+const plain_reason is serveUntilClosed(plain_listener)
+WsFixture.finish()
+@print("plain 426 {WsFixture.resultAt(0)} {plain_reason == std.http.CloseReason.PeerClosed}\n")
+
+# A WebSocket peer that goes silent is closed at the idle deadline.
+std.http.setLimit(std.http.Limit.IdleMs, 200)
+WsFixture.start(plain_port, 13)
+const idle_reason is serveUntilClosed(plain_listener)
+WsFixture.finish()
+std.http.setLimit(std.http.Limit.IdleMs, 120000)
+std.http.close(plain_listener)
+@print("idle closed {WsFixture.resultAt(0)} {idle_reason == std.http.CloseReason.IdleTimeout}\n")
+
+# A burst of frames is reported once per poll, not once per frame.
+WsFixture.start(burst_port, 14)
+const burst_most is serveBurst(burst_listener)
+WsFixture.finish()
+std.http.close(burst_listener)
+@print("burst {WsFixture.resultAt(0)} most {burst_most}\n")

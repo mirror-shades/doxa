@@ -198,6 +198,8 @@ const Engine = struct {
     /// start of the next `poll`, so the program can still ask why. Main thread
     /// only.
     var delivered: std.ArrayList(i64) = .empty;
+    /// Counts `poll` calls; see `Conn.reported_poll`. Main thread only.
+    var poll_serial: u64 = 0;
 };
 
 fn engineIo() Io {
@@ -389,6 +391,10 @@ const Conn = struct {
     outbox_head: usize = 0,
     outbox_bytes: usize = 0,
     outbox_closing: bool = false,
+
+    /// The last `poll` that reported this connection readable, so one `poll`
+    /// reports it once. Guarded by `Engine.mutex`.
+    reported_poll: u64 = 0,
 
     /// The message the last `wsNext` surfaced. Main thread only.
     current: Message = .{},
@@ -754,15 +760,14 @@ fn acceptLoop(listener: *Listener) void {
     while (true) {
         // Take a connection slot before accepting, so connections past the
         // limit wait in the kernel backlog rather than in memory.
-        const limits = blk: {
+        {
             Engine.mutex.lock(io) catch return;
             defer Engine.mutex.unlock(io);
             while (Engine.live_conns >= Engine.limits.connections) {
                 Engine.slot_freed.wait(io, &Engine.mutex) catch return;
             }
             Engine.live_conns += 1;
-            break :blk Engine.limits;
-        };
+        }
 
         const stream = listener.server.accept(io) catch |err| {
             returnSlot(io);
@@ -773,6 +778,13 @@ fn acceptLoop(listener: *Listener) void {
             continue;
         };
 
+        // The limits in force when the connection opens, not when the
+        // acceptor started waiting for it.
+        const limits = blk: {
+            Engine.mutex.lockUncancelable(io);
+            defer Engine.mutex.unlock(io);
+            break :blk Engine.limits;
+        };
         const conn = Conn.create(.server, .{ .stream = stream }, limits) orelse {
             stream.close(io);
             returnSlot(io);
@@ -790,7 +802,10 @@ fn acceptLoop(listener: *Listener) void {
         Engine.mutex.lockUncancelable(io);
         conn.handle = Engine.next_handle;
         Engine.next_handle += 1;
-        const registered = if (Engine.entries.put(gpa, conn.handle, .{ .conn = conn })) |_| true else |_| false;
+        // A listener closed while this connection was being accepted takes
+        // it along: nothing could ever poll or close it.
+        const registered = Engine.entries.contains(listener.handle) and
+            if (Engine.entries.put(gpa, conn.handle, .{ .conn = conn })) |_| true else |_| false;
         if (registered) {
             Engine.mailbox.append(gpa, .{ .owner = conn.owner, .handle = conn.handle, .kind = .accepted }) catch {};
         } else {
@@ -1028,8 +1043,8 @@ fn writeUpgrade(conn: *Conn, key: []const u8) Io.Writer.Error!void {
     try conn.flush();
 }
 
-/// Writes one unfragmented frame. A client masks its payload; a server must
-/// not (RFC 6455 §5.1).
+/// Buffers one unfragmented frame; the caller flushes. A client masks its
+/// payload; a server must not (RFC 6455 §5.1).
 fn writeFrame(conn: *Conn, io: Io, frame: Frame) Io.Writer.Error!void {
     const out = conn.out;
     const masked = conn.role == .client;
@@ -1058,7 +1073,6 @@ fn writeFrame(conn: *Conn, io: Io, frame: Frame) Io.Writer.Error!void {
         for (frame.data, 0..) |*byte, i| byte.* ^= mask[i % 4];
     }
     try out.writeAll(frame.data);
-    try conn.flush();
 }
 
 /// RFC 6455 §5.5.1/§7.4.1: a close payload is empty, or a 2-byte status code
@@ -1126,8 +1140,8 @@ fn failWebSocket(conn: *Conn, io: Io, code: u16, reason: CloseReason) CloseReaso
     conn.linger = true;
 
     conn.mutex.lockUncancelable(io);
-    const report = !conn.user_closed;
-    if (report) conn.inbox.append(gpa, .{ .failed = true }) catch {};
+    const report = !conn.user_closed and conn.inboxLen() == 0;
+    if (!conn.user_closed) conn.inbox.append(gpa, .{ .failed = true }) catch {};
     conn.inbox_waiting.store(conn.inboxLen(), .release);
     conn.mutex.unlock(io);
     if (report) postNotice(io, conn.owner, conn.handle, .readable);
@@ -1137,8 +1151,11 @@ fn failWebSocket(conn: *Conn, io: Io, code: u16, reason: CloseReason) CloseReaso
 /// Hands a complete message to the program, waiting while the connection's
 /// undelivered-message credit or the global byte budget is spent. Takes
 /// ownership of `data`. Returns a reason when the connection must end instead.
+/// Only a message landing in an empty inbox posts a notice: `poll` keeps
+/// reporting a connection while its inbox is non-empty.
 fn deliver(conn: *Conn, io: Io, op: Opcode, data: []u8) ?CloseReason {
     conn.disarmRead();
+    var notify = false;
     reserveBudget(io, data.len) catch {
         gpa.free(data);
         return conn.canceledReason(.reader);
@@ -1150,6 +1167,7 @@ fn deliver(conn: *Conn, io: Io, op: Opcode, data: []u8) ?CloseReason {
             conn.changed.wait(io, &conn.mutex) catch break :blk conn.canceledReason(.reader);
         }
         if (conn.user_closed) break :blk .local_close;
+        notify = conn.inboxLen() == 0;
         conn.inbox.append(gpa, .{ .op = @intFromEnum(op), .data = data }) catch break :blk .reset;
         conn.inbox_waiting.store(conn.inboxLen(), .release);
         break :blk null;
@@ -1159,7 +1177,7 @@ fn deliver(conn: *Conn, io: Io, op: Opcode, data: []u8) ?CloseReason {
         releaseBudget(io, data.len);
         return reason;
     }
-    postNotice(io, conn.owner, conn.handle, .readable);
+    if (notify) postNotice(io, conn.owner, conn.handle, .readable);
     return null;
 }
 
@@ -1185,7 +1203,9 @@ fn serveWebSocket(conn: *Conn, io: Io) CloseReason {
     const expect_masked = conn.role == .server;
 
     while (true) {
-        conn.disarmRead();
+        // Between frames the connection is idle: a peer that has silently
+        // gone away must not hold its slot and tasks forever.
+        conn.armRead(io, .idle);
         const head = conn.in.takeArray(2) catch |err| switch (err) {
             error.EndOfStream => return .peer_closed,
             error.ReadFailed => return conn.readFailure(),
@@ -1283,12 +1303,14 @@ fn frameReadFailure(conn: *Conn, err: Io.Reader.Error) CloseReason {
     };
 }
 
-/// Drains a WebSocket connection's outbound queue to the socket. Returns when
-/// the queue is closed and empty, or a write fails.
+/// Drains a WebSocket connection's outbound queue to the socket. Frames queued
+/// together go out in one flush. Returns when the queue is closed and empty,
+/// or a write fails.
 fn writeLoop(conn: *Conn) void {
     const io = engineIo();
     defer release(conn, io);
     while (true) {
+        var drained = false;
         const frame: Frame = blk: {
             conn.mutex.lockUncancelable(io);
             defer conn.mutex.unlock(io);
@@ -1301,6 +1323,7 @@ fn writeLoop(conn: *Conn) void {
             if (conn.outbox_head == conn.outbox.items.len) {
                 conn.outbox.clearRetainingCapacity();
                 conn.outbox_head = 0;
+                drained = true;
             }
             conn.outbox_bytes -= next.data.len;
             break :blk next;
@@ -1308,15 +1331,20 @@ fn writeLoop(conn: *Conn) void {
         defer gpa.free(frame.data);
 
         conn.armWrite(io);
-        writeFrame(conn, io, frame) catch {
-            // The reader is still blocked on the socket; it has to go too.
-            conn.setReason(io, conn.writeFailure(.writer));
-            conn.closeOutbox(io);
-            conn.requestKill(io);
-            return;
-        };
+        writeFrame(conn, io, frame) catch return failWrite(conn, io);
+        // Only the writer takes from the queue, so a frame left behind is
+        // still there next turn and shares this flush.
+        if (drained) conn.flush() catch return failWrite(conn, io);
         conn.disarmWrite();
     }
+}
+
+/// A write by the writer task failed. The reader is still blocked on the
+/// socket; it has to go too.
+fn failWrite(conn: *Conn, io: Io) void {
+    conn.setReason(io, conn.writeFailure(.writer));
+    conn.closeOutbox(io);
+    conn.requestKill(io);
 }
 
 // ---------------------------------------------------------------------------
@@ -1502,6 +1530,21 @@ fn retireDelivered(io: Io) void {
     Engine.supervisor_wake.set(io);
 }
 
+/// Appends one event to the cells `poll` returns. A connection is reported
+/// readable at most once per `poll`. Caller holds `Engine.mutex`.
+fn reportLocked(handle: i64, kind: NoticeKind, conn: ?*Conn) bool {
+    if (kind == .readable) if (conn) |c| {
+        if (c.reported_poll == Engine.poll_serial) return false;
+        c.reported_poll = Engine.poll_serial;
+    };
+    Events.handles.append(gpa, handle) catch return false;
+    Events.kinds.append(gpa, @intFromEnum(kind)) catch {
+        _ = Events.handles.pop();
+        return false;
+    };
+    return true;
+}
+
 /// Moves every notice for `owner` out of the mailbox, optionally only the
 /// first of one kind. Notices for dead handles are dropped. Caller holds
 /// `Engine.mutex`.
@@ -1509,30 +1552,30 @@ fn takeNoticesLocked(owner: i64, only: ?NoticeKind) usize {
     var taken: usize = 0;
     var kept: usize = 0;
     for (Engine.mailbox.items) |notice| {
-        const alive = Engine.entries.contains(notice.handle);
+        const entry = Engine.entries.get(notice.handle) orelse continue;
         const wanted = notice.owner == owner and
             (only == null or (only.? == notice.kind and taken == 0));
-        if (alive and !wanted) {
+        if (!wanted) {
             Engine.mailbox.items[kept] = notice;
             kept += 1;
             continue;
         }
-        if (!alive) continue;
-        Events.handles.append(gpa, notice.handle) catch continue;
-        Events.kinds.append(gpa, @intFromEnum(notice.kind)) catch {
-            _ = Events.handles.pop();
-            continue;
+        const conn: ?*Conn = switch (entry) {
+            .conn => |c| c,
+            .listener => null,
         };
-        taken += 1;
+        if (reportLocked(notice.handle, notice.kind, conn)) taken += 1;
     }
     Engine.mailbox.items.len = kept;
     return taken;
 }
 
 /// Reports every connection of `owner` that still has messages waiting. A
-/// notice says a message arrived; this says one is still there, so a program
-/// that puts off reading is told again instead of waiting forever on a
-/// connection the library has stopped reading. Caller holds `Engine.mutex`.
+/// notice is posted only when a connection's inbox stops being empty; this is
+/// what keeps reporting it while messages remain, so a program that reads a
+/// few at a time, or puts reading off, is told again instead of waiting
+/// forever on a connection the library has stopped reading. Caller holds
+/// `Engine.mutex`.
 fn remindLocked(owner: i64) usize {
     var reminded: usize = 0;
     var it = Engine.entries.valueIterator();
@@ -1540,12 +1583,7 @@ fn remindLocked(owner: i64) usize {
         .listener => {},
         .conn => |conn| {
             if (conn.owner != owner or conn.inbox_waiting.load(.acquire) == 0) continue;
-            Events.handles.append(gpa, conn.handle) catch continue;
-            Events.kinds.append(gpa, @intFromEnum(NoticeKind.readable)) catch {
-                _ = Events.handles.pop();
-                continue;
-            };
-            reminded += 1;
+            if (reportLocked(conn.handle, .readable, conn)) reminded += 1;
         },
     };
     return reminded;
@@ -1558,6 +1596,7 @@ fn collect(owner: i64, timeout_ms: i64, only: ?NoticeKind) i64 {
     Events.handles.clearRetainingCapacity();
     Events.kinds.clearRetainingCapacity();
     retireDelivered(io);
+    Engine.poll_serial += 1;
 
     const deadline: ?i64 = if (timeout_ms < 0) null else nowNs(io) +| timeout_ms *| std.time.ns_per_ms;
     while (true) {
@@ -1568,7 +1607,7 @@ fn collect(owner: i64, timeout_ms: i64, only: ?NoticeKind) i64 {
             return -1;
         }
         var taken = takeNoticesLocked(owner, only);
-        if (taken == 0 and only == null) taken = remindLocked(owner);
+        if (only == null) taken += remindLocked(owner);
         if (taken == 0) Engine.mail.reset();
         Engine.mutex.unlock(io);
         if (taken != 0) break;
@@ -2231,10 +2270,6 @@ pub fn performRequest(method: []const u8, url: []const u8, headers: []const u8, 
     };
     performJob(&job, timeout_ms);
     return Client.body;
-}
-
-pub fn getText(url: []const u8, timeout_ms: i64) []const u8 {
-    return performRequest("GET", url, "", "", timeout_ms, 3);
 }
 
 fn filenameFromUrl(url: []const u8) []const u8 {

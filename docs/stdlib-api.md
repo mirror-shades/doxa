@@ -812,6 +812,26 @@ public struct Response {
     raw_headers :: string,
     body_text :: string,
 
+    /* Perform one request. The error arm means no response arrived; a non-2xx
+       status is still a `Response`. */
+    public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+        var header_blob is ""
+        for i while i < @length(req.headers) do i += 1 {
+            header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
+        }
+        const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
+        const status is HTTP.takeStatusCode()
+        const headers is HTTP.takeResponseHeaders()
+        const err is HTTP.takeLastErrorCode()
+        HTTP.releaseResponse()
+        if err == 0 then return $Response {
+            status_code is status,
+            raw_headers is headers,
+            body_text is value,
+        }
+        return mapIOError(err)
+    }
+
     public method statusCode() returns int {
         return this.status_code
     }
@@ -839,6 +859,40 @@ public struct Response {
         return false
     }
 }
+```
+
+</details>
+
+#### `Response.send`
+
+```doxa
+public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError
+```
+
+Perform one request. The error arm means no response arrived; a non-2xx
+status is still a `Response`.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+        var header_blob is ""
+        for i while i < @length(req.headers) do i += 1 {
+            header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
+        }
+        const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
+        const status is HTTP.takeStatusCode()
+        const headers is HTTP.takeResponseHeaders()
+        const err is HTTP.takeLastErrorCode()
+        HTTP.releaseResponse()
+        if err == 0 then return $Response {
+            status_code is status,
+            raw_headers is headers,
+            body_text is value,
+        }
+        return mapIOError(err)
+    }
 ```
 
 </details>
@@ -998,6 +1052,16 @@ public struct ServerRequest {
     public body_text :: string,
     raw_headers :: string,
 
+    /* The request `readRequest` reported. It stays available until `respond`. */
+    public function take(connection :: int) returns ServerRequest {
+        return $ServerRequest {
+            verb is HTTP.requestMethod(connection),
+            target is HTTP.requestTarget(connection),
+            body_text is HTTP.requestBody(connection),
+            raw_headers is HTTP.requestHead(connection),
+        }
+    }
+
     public method path() returns string {
         return this.target
     }
@@ -1025,6 +1089,30 @@ public struct ServerRequest {
         return false
     }
 }
+```
+
+</details>
+
+#### `ServerRequest.take`
+
+```doxa
+public function take(connection :: int) returns ServerRequest
+```
+
+The request `readRequest` reported. It stays available until `respond`.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function take(connection :: int) returns ServerRequest {
+        return $ServerRequest {
+            verb is HTTP.requestMethod(connection),
+            target is HTTP.requestTarget(connection),
+            body_text is HTTP.requestBody(connection),
+            raw_headers is HTTP.requestHead(connection),
+        }
+    }
 ```
 
 </details>
@@ -1115,7 +1203,7 @@ public function readRequest(connection :: int) returns int
 ```
 
 Whether a request is waiting on the connection. Returns `1` when one is
-(read it with `takeRequest`), `0` when none has arrived yet (retry on the
+(read it with `ServerRequest.take`), `0` when none has arrived yet (retry on the
 next `Readable` event), and a negative status once the connection has ended.
 A request only appears here complete and valid: a malformed or oversized one
 is answered by the library and the connection reports `Closed`.
@@ -1126,30 +1214,6 @@ is answered by the library and the connection reports `Closed`.
 ```doxa
 public function readRequest(connection :: int) returns int {
     return HTTP.readRequest(connection)
-}
-```
-
-</details>
-
-### `takeRequest`
-
-```doxa
-public function takeRequest(connection :: int) returns ServerRequest
-```
-
-The request `readRequest` reported. It stays available until `respond`.
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function takeRequest(connection :: int) returns ServerRequest {
-    return $ServerRequest {
-        verb is HTTP.requestMethod(connection),
-        target is HTTP.requestTarget(connection),
-        body_text is HTTP.requestBody(connection),
-        raw_headers is HTTP.requestHead(connection),
-    }
 }
 ```
 
@@ -1542,7 +1606,9 @@ before the library stops reading.
 - `HeadMs`: the rest of a request's headers once they have started.
 - `ReadMs`: a body or message making no progress.
 - `WriteMs`: a send making no progress.
-- `IdleMs`: a kept-alive connection with no request.
+- `IdleMs`: a kept-alive connection with no request, or a WebSocket with
+no incoming frame. Until heartbeats land, a WebSocket peer stays open by
+sending something, a ping included, within it.
 - `HandlerMs`: the program answering a request it was given.
 - `LingerMs`: the peer acknowledging a close the library started.
 
@@ -1608,6 +1674,23 @@ public struct Route {
     param_names :: string[],
     param_values :: string[],
 
+    /* The route `Router.find` just matched, with the segments it captured. */
+    public function captured(id :: int, pattern :: string) returns Route {
+        var names :: string[]
+        var values :: string[]
+        const count is HTTP.paramCount()
+        for i while i < count do i += 1 {
+            @push(names, HTTP.paramNameAt(i))
+            @push(values, HTTP.paramValueAt(i))
+        }
+        return $Route {
+            id is id,
+            pattern is pattern,
+            param_names is names,
+            param_values is values,
+        }
+    }
+
     public method param(name :: string) returns string | nothing {
         for i while i < @length(this.param_names) do i += 1 {
             if this.param_names[i] == name then {
@@ -1618,6 +1701,37 @@ public struct Route {
         return nothing
     }
 }
+```
+
+</details>
+
+#### `Route.captured`
+
+```doxa
+public function captured(id :: int, pattern :: string) returns Route
+```
+
+The route `Router.find` just matched, with the segments it captured.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function captured(id :: int, pattern :: string) returns Route {
+        var names :: string[]
+        var values :: string[]
+        const count is HTTP.paramCount()
+        for i while i < count do i += 1 {
+            @push(names, HTTP.paramNameAt(i))
+            @push(values, HTTP.paramValueAt(i))
+        }
+        return $Route {
+            id is id,
+            pattern is pattern,
+            param_names is names,
+            param_values is values,
+        }
+    }
 ```
 
 </details>
@@ -1673,6 +1787,17 @@ public struct Router {
         @push(this.patterns, pattern)
         @push(this.ids, id)
     }
+
+    /* The first route added for `verb` whose pattern matches `path`, or
+       `nothing`. A `:name` pattern segment captures that path segment. */
+    public method find(verb :: string, path :: string) returns Route | nothing {
+        for i while i < @length(this.patterns) do i += 1 {
+            if this.verbs[i] == verb and HTTP.matchPattern(this.patterns[i], path) == 1 then {
+                return Route.captured(this.ids[i], this.patterns[i])
+            }
+        }
+        return nothing
+    }
 }
 ```
 
@@ -1718,42 +1843,27 @@ public method add(verb :: string, pattern :: string, id :: int) {
 
 </details>
 
-### `route`
+#### `Router.find`
 
 ```doxa
-public function route(^router :: Router, verb :: string, path :: string) returns Route | nothing
+public method find(verb :: string, path :: string) returns Route | nothing
 ```
 
-`^router` borrows the caller's Router instead of snapshotting its three
-arrays on every call, which the arena model would otherwise deep-copy per
-request (docs/memory.md by-value parameters snapshot).
+The first route added for `verb` whose pattern matches `path`, or
+`nothing`. A `:name` pattern segment captures that path segment.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function route(^router :: Router, verb :: string, path :: string) returns Route | nothing {
-    for i while i < @length(router.patterns) do i += 1 {
-        if router.verbs[i] == verb then {
-            if HTTP.matchPattern(router.patterns[i], path) == 1 then {
-                var names :: string[]
-                var values :: string[]
-                const count is HTTP.paramCount()
-                for j while j < count do j += 1 {
-                    @push(names, HTTP.paramNameAt(j))
-                    @push(values, HTTP.paramValueAt(j))
-                }
-                return $Route {
-                    id is router.ids[i],
-                    pattern is router.patterns[i],
-                    param_names is names,
-                    param_values is values,
-                }
+public method find(verb :: string, path :: string) returns Route | nothing {
+        for i while i < @length(this.patterns) do i += 1 {
+            if this.verbs[i] == verb and HTTP.matchPattern(this.patterns[i], path) == 1 then {
+                return Route.captured(this.ids[i], this.patterns[i])
             }
         }
+        return nothing
     }
-    return nothing
-}
 ```
 
 </details>
@@ -1793,40 +1903,6 @@ public function close(handle :: int) returns error.StdError {
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
-}
-```
-
-</details>
-
-### `get`
-
-```doxa
-public function get(url :: string) returns Response | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function get(url :: string) returns Response | error.StdError {
-    return performGet(url, 30000)
-}
-```
-
-</details>
-
-### `getWithTimeout`
-
-```doxa
-public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
-    return performGet(url, timeout_ms)
 }
 ```
 
@@ -1883,34 +1959,38 @@ public function new() returns Request {
 
 </details>
 
-### `request`
+### `get`
 
 ```doxa
-public function request(verb :: string, url :: string, ^req :: Request) returns Response | error.StdError
+public function get(url :: string) returns Response | error.StdError
 ```
-
-`^req` borrows the caller's Request so `req.headers` is not deep-copied.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function request(verb :: string, url :: string, ^req :: Request) returns Response | error.StdError {
-    var header_blob is ""
-    for i while i < @length(req.headers) do i += 1 {
-        header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
-    }
-    const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
-    const status is HTTP.takeStatusCode()
-    const headers is HTTP.takeResponseHeaders()
-    const err is HTTP.takeLastErrorCode()
-    HTTP.releaseResponse()
-    if err == 0 then return $Response {
-        status_code is status,
-        raw_headers is headers,
-        body_text is value,
-    }
-    return mapIOError(err)
+public function get(url :: string) returns Response | error.StdError {
+    var req is Request.new()
+    return Response.send("GET", url, req)
+}
+```
+
+</details>
+
+### `getWithTimeout`
+
+```doxa
+public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError
+```
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
+    var req is Request.new()
+    req.timeout_ms is timeout_ms
+    return Response.send("GET", url, req)
 }
 ```
 
@@ -1927,7 +2007,7 @@ public function post(url :: string, ^req :: Request) returns Response | error.St
 
 ```doxa
 public function post(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("POST", url, ^req)
+    return Response.send("POST", url, req)
 }
 ```
 
@@ -1944,7 +2024,7 @@ public function put(url :: string, ^req :: Request) returns Response | error.Std
 
 ```doxa
 public function put(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("PUT", url, ^req)
+    return Response.send("PUT", url, req)
 }
 ```
 
@@ -1961,7 +2041,7 @@ public function delete(url :: string, ^req :: Request) returns Response | error.
 
 ```doxa
 public function delete(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("DELETE", url, ^req)
+    return Response.send("DELETE", url, req)
 }
 ```
 
@@ -1978,7 +2058,7 @@ public function head(url :: string, ^req :: Request) returns Response | error.St
 
 ```doxa
 public function head(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("HEAD", url, ^req)
+    return Response.send("HEAD", url, req)
 }
 ```
 
@@ -1990,18 +2070,16 @@ public function head(url :: string, ^req :: Request) returns Response | error.St
 public function getText(url :: string) returns string | error.StdError
 ```
 
+The body of a GET, whatever its status.
+
 <details>
 <summary>Source</summary>
 
 ```doxa
 public function getText(url :: string) returns string | error.StdError {
-    const value is HTTP.getText(url, 30000)
-    const _status is HTTP.takeStatusCode()
-    const _headers is HTTP.takeResponseHeaders()
-    const err is HTTP.takeLastErrorCode()
-    HTTP.releaseResponse()
-    if err == 0 then return value
-    return mapIOError(err)
+    const response is get(url)
+    response as Response then return response.body()
+    else return response
 }
 ```
 
@@ -2034,7 +2112,8 @@ public function wsAccept(connection :: int) returns tetra
 
 Complete the handshake if `connection`'s buffered request is a WebSocket
 upgrade. Returns `true` once it is a WebSocket; while it is still `false`,
-call again after the next readable event.
+call again after the next readable event. A request that is not an upgrade
+is answered `426 Upgrade Required`, so its client is never left waiting.
 
 <details>
 <summary>Source</summary>
@@ -2044,8 +2123,9 @@ public function wsAccept(connection :: int) returns tetra {
     if isWebSocket(connection) then return true
     const status is readRequest(connection)
     if status != 1 then return false
-    upgradeWebSocket(connection)
-    return takeLastErrorCode() == 0
+    if HTTP.upgradeWebSocket(connection) == 0 then return true
+    respond(connection, 426, "Upgrade: websocket\u{d}\u{a}Sec-WebSocket-Version: 13", "")
+    return false
 }
 ```
 

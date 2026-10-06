@@ -1,6 +1,6 @@
-module std from "std/std.doxa"
-import Response from "std/http/http.doxa"
-module error from "std/error.doxa"
+module std from @std()
+import Response from "std//http/http.doxa"
+module error from "std//error.doxa"
 
 zig Fixture {
     const std = @import("std");
@@ -344,7 +344,7 @@ while request_status == 0 and request_guard < 100 do request_guard += 1 {
 }
 var primitive_ok is false
 if request_status == 1 then {
-    const request is std.http.takeRequest(connection)
+    const request is std.http.ServerRequest.take(connection)
     if request.verb == "GET" and request.target == "/" then primitive_ok is true
 }
 std.http.respond(connection, 200, "Content-Type: text/plain\u{d}\u{a}", "primitive")
@@ -392,7 +392,7 @@ const timeout_port is Fixture.startTimeoutServer()
 const timeout_started is std.time.monotonic()
 var timeout_request is std.http.Request.new()
 timeout_request.timeout_ms is 50
-const timeout_result is std.http.request("GET", "http://127.0.0.1:{timeout_port}/slow", ^timeout_request)
+const timeout_result is std.http.Response.send("GET", "http://127.0.0.1:{timeout_port}/slow", timeout_request)
 const timeout_elapsed_ms is (std.time.monotonic() - timeout_started) // 1000000
 const server_finished_before_join is Fixture.serverFinished()
 const timeout_server_error is Fixture.finishServer()
@@ -468,7 +468,7 @@ var credential_request is std.http.Request.new()
 @push(credential_request.headers, "Authorization: secret")
 @push(credential_request.headers, "X-Preserve: yes")
 credential_request.max_redirects is 1
-const credential_result is std.http.request("GET", "http://127.0.0.1:{credential_port}/start", ^credential_request)
+const credential_result is std.http.Response.send("GET", "http://127.0.0.1:{credential_port}/start", credential_request)
 const credential_server_error is Fixture.finishServer()
 var credential_ok is responseStatusBody(credential_result, 200, "secure")
 if Fixture.requestMatched() != 1 or credential_server_error != 0 then credential_ok is false
@@ -478,7 +478,7 @@ else @print("redirect credentials failed server={credential_server_error}\n")
 const limit_port is Fixture.startLimitServer()
 var limit_request is std.http.Request.new()
 limit_request.max_redirects is 0
-const limit_result is std.http.request("GET", "http://127.0.0.1:{limit_port}/start", ^limit_request)
+const limit_result is std.http.Response.send("GET", "http://127.0.0.1:{limit_port}/start", limit_request)
 const limit_server_error is Fixture.finishServer()
 var limit_ok is true
 limit_result as Response then {

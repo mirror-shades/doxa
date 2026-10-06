@@ -1,4 +1,4 @@
-module std from "std/std.doxa"
+module std from @std()
 
 function textOf(value :: string | nothing) returns string {
     value as string then {
@@ -15,14 +15,14 @@ public entry function main() {
     router.add("GET", "/users/:id", 2)
     router.add("POST", "/users/:id/posts/:post", 3)
 
-    const root is std.http.route(^router, "GET", "/")
+    const root is router.find("GET", "/")
     root as std.http.Route then {
         @print("root {root.id}\n")
     } else {
         @print("root miss\n")
     }
 
-    const user is std.http.route(^router, "GET", "/users/42")
+    const user is router.find("GET", "/users/42")
     user as std.http.Route then {
         const route is user
         const id is route.param("id")
@@ -31,7 +31,7 @@ public entry function main() {
         @print("user miss\n")
     }
 
-    const post is std.http.route(^router, "POST", "/users/7/posts/99")
+    const post is router.find("POST", "/users/7/posts/99")
     post as std.http.Route then {
         const route is post
         const id is route.param("id")
@@ -41,21 +41,21 @@ public entry function main() {
         @print("post miss\n")
     }
 
-    const absent is std.http.route(^router, "GET", "/users/7/nope")
+    const absent is router.find("GET", "/users/7/nope")
     absent as std.http.Route then {
         @print("absent hit\n")
     } else {
         @print("absent miss\n")
     }
 
-    const wrong_verb is std.http.route(^router, "DELETE", "/users/7")
+    const wrong_verb is router.find("DELETE", "/users/7")
     wrong_verb as std.http.Route then {
         @print("verb hit\n")
     } else {
         @print("verb miss\n")
     }
 
-    const extra is std.http.route(^router, "POST", "/users/7/posts/99")
+    const extra is router.find("POST", "/users/7/posts/99")
     extra as std.http.Route then {
         const route is extra
         const missing is route.param("absent")

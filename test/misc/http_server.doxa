@@ -1,6 +1,6 @@
-module std from "std/std.doxa"
-import Route from "std/http/http.doxa"
-module error from "std/error.doxa"
+module std from @std()
+import Route from "std//http/http.doxa"
+module error from "std//error.doxa"
 
 zig Fixture {
     const std = @import("std");
@@ -162,8 +162,8 @@ function serve(listener :: int, total :: int) returns int {
                 while processing {
                     const status is std.http.readRequest(event.handle)
                     if status == 1 then {
-                        const request is std.http.takeRequest(event.handle)
-                        const matched is std.http.route(^router, request.verb, request.target)
+                        const request is std.http.ServerRequest.take(event.handle)
+                        const matched is router.find(request.verb, request.target)
                         matched as Route then {
                             const route is matched
                             if route.id == 1 then {
@@ -203,7 +203,7 @@ function serveExpect(listener :: int) returns int {
             if event.kind == std.http.EventKind.Accepted or event.kind == std.http.EventKind.Readable then {
                 const status is std.http.readRequest(event.handle)
                 if status == 1 then {
-                    const request is std.http.takeRequest(event.handle)
+                    const request is std.http.ServerRequest.take(event.handle)
                     std.http.respond(event.handle, 200, "Content-Type: text/plain\u{d}\u{a}", request.body_text)
                     served += 1
                     std.http.close(event.handle)
