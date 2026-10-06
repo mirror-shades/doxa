@@ -5,6 +5,7 @@ const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
 const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
 const StructId = @import("../soxa_types.zig").StructId;
+const EnumId = @import("../soxa_types.zig").EnumId;
 const TypeSystem = @import("../type_system.zig").TypeSystem;
 const HIREnum = @import("../soxa_values.zig").HIREnum;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
@@ -65,7 +66,7 @@ pub const ControlFlowHandler = struct {
     /// group-typed. A binding's tracked custom type wins over inference so a
     /// group annotation is authoritative even when the initializer alone would
     /// not reveal it.
-    fn resolveMatchGroup(self: *ControlFlowHandler, subject: *ast.Expr) ?MatchGroup {
+    fn resolveMatchGroup(self: *ControlFlowHandler, subject: *ast.Expr, subject_type: HIRType) ?MatchGroup {
         const group_table = self.generator.type_system.group_table orelse return null;
 
         if (subject.data == .Variable) {
@@ -77,7 +78,6 @@ pub const ControlFlowHandler = struct {
             }
         }
 
-        const subject_type = self.generator.inferTypeFromExpression(subject);
         if (subject_type == .Group) {
             const name = group_table.getName(subject_type.Group) orelse return null;
             return .{ .id = subject_type.Group, .name = name };
@@ -447,8 +447,7 @@ pub const ControlFlowHandler = struct {
     /// The struct a match subject is. A variable initialized from a struct
     /// literal carries `.Struct = 0` plus its declared type name, so the id is
     /// resolved through that name the same way field access does.
-    fn matchSubjectStructId(self: *ControlFlowHandler, subject: *ast.Expr) ?StructId {
-        const subject_type = self.generator.inferTypeFromExpression(subject);
+    fn matchSubjectStructId(self: *ControlFlowHandler, subject: *ast.Expr, subject_type: HIRType) ?StructId {
         if (subject_type != .Struct) return null;
         const fallback_name: ?[]const u8 = if (subject.data == .Variable)
             self.generator.symbol_table.getVariableCustomType(subject.data.Variable.lexeme)
@@ -463,8 +462,8 @@ pub const ControlFlowHandler = struct {
     /// the arm is decided statically: `true` when the subject is that struct,
     /// `false` when it is a different one. Null leaves the pattern to the
     /// checks below.
-    fn structTypePatternMatches(self: *ControlFlowHandler, subject: *ast.Expr, pattern: ast.Token) ?bool {
-        const subject_sid = self.matchSubjectStructId(subject) orelse return null;
+    fn structTypePatternMatches(self: *ControlFlowHandler, subject: *ast.Expr, subject_type: HIRType, pattern: ast.Token) ?bool {
+        const subject_sid = self.matchSubjectStructId(subject, subject_type) orelse return null;
         const table = self.generator.type_system.struct_table orelse return null;
         const pattern_sid = table.getIdByName(pattern.lexeme) orelse return null;
         return subject_sid == pattern_sid;
@@ -491,8 +490,7 @@ pub const ControlFlowHandler = struct {
     /// Resolve `pattern` against the union the subject is typed as. Null when
     /// the subject is not a union or the pattern names no registered type —
     /// both are owned by the checks below.
-    fn unionPatternFor(self: *ControlFlowHandler, subject: *ast.Expr, pattern: ast.Token) ?UnionPattern {
-        const subject_type = self.generator.inferTypeFromExpression(subject);
+    fn unionPatternFor(self: *ControlFlowHandler, subject_type: HIRType, pattern: ast.Token) ?UnionPattern {
         if (subject_type != .Union) return null;
 
         const struct_id: ?u32 = if (self.generator.type_system.struct_table) |t|
@@ -580,56 +578,42 @@ pub const ControlFlowHandler = struct {
     }
 
     pub fn generateMatch(self: *ControlFlowHandler, match_expr: ast.MatchExpr, preserve_result: bool) ErrorList!void {
-        // Extract enum type context from the match value
+        // The subject's type is the analyzer's answer for the subject
+        // expression, whatever its form: a local, a field, an element, an
+        // `each` binding or a call result all match the same way.
+        const subject_type = try self.generator.typeOf(match_expr.value);
+        const subject_enum_id: ?EnumId = if (subject_type == .Enum) subject_type.Enum else null;
+
+        // TODO(plan/type-authority.md, Phase B step 3): a union's id and member
+        // order still come from two derivations, and a box is built with the
+        // generator's (the declared type of the slot or field it is stored
+        // in), not the analyzer's. Member indexes for a union, group or struct
+        // subject therefore have to be read from the same derivation that
+        // boxed the value until declarations and fields are converted too.
+        const boxing_subject_type = self.generator.inferTypeFromExpression(match_expr.value);
+
+        // Enum type named by the arm patterns, for the subjects that are not
+        // themselves enum-typed but whose patterns spell out an enum.
         var match_enum_type: ?[]const u8 = null;
-        switch (match_expr.value.data) {
-            .Variable => |v| {
-                const var_name = v.lexeme;
-                // Only an enum-typed subject is enumerated by its variants; a
-                // struct or group custom type here would turn every pattern
-                // into an "is not an enum type" error.
-                if (self.generator.symbol_table.getVariableCustomType(var_name)) |custom_name| {
-                    if (self.generator.type_system.custom_types.get(custom_name)) |ct| {
-                        if (ct.kind == .Enum) match_enum_type = custom_name;
+        if (subject_enum_id) |enum_id| {
+            // Arm bodies resolve a bare `.Variant` against the subject's enum,
+            // under the name the generator registered it by.
+            if (self.generator.type_system.enum_table) |table| {
+                if (table.getName(enum_id)) |qualified| {
+                    const registered = &self.generator.type_system.custom_types;
+                    if (registered.contains(qualified)) {
+                        match_enum_type = qualified;
+                    } else if (std.mem.lastIndexOfScalar(u8, qualified, '.')) |dot| {
+                        if (registered.contains(qualified[dot + 1 ..])) match_enum_type = qualified[dot + 1 ..];
                     }
                 }
-
-                if (match_enum_type == null) {
-                    if (self.generator.symbol_table.getTrackedVariableType(var_name)) |var_type| {
-                        if (var_type == .Enum) {
-                            match_enum_type = self.generator.symbol_table.getVariableCustomType(var_name);
-                        }
-                    }
-                }
-
-                // If the variable name itself is a registered enum type, use it.
-                if (match_enum_type == null) {
-                    if (self.generator.type_system.custom_types.get(var_name)) |ct| {
-                        if (ct.kind == .Enum) {
-                            match_enum_type = var_name;
-                        }
-                    }
-                }
-            },
-            .FieldAccess => |fa| {
-                // Handle matching on enum member container like GameState.Start (unlikely here but safe)
-                if (fa.object.data == .Variable) {
-                    const base_name = fa.object.data.Variable.lexeme;
-                    if (self.generator.type_system.custom_types.get(base_name)) |ct| {
-                        if (ct.kind == .Enum) match_enum_type = base_name;
-                    }
-                }
-            },
-            else => {},
+            }
         }
 
-        // Fallback: when the subject's enum type can't be determined from its
-        // declaration (e.g. it came from a field access or an untyped binding),
-        // infer it from the arm patterns. Enum-variant patterns carry the type
-        // in their dotted path (`E.A` -> [E, A]; `ns.E.A` -> [ns, E, A]), so the
-        // enum type is the token immediately before the variant. Without this,
-        // enum patterns fall through to literal comparison and never match.
-        if (match_enum_type == null) {
+        // Enum-variant patterns carry the type in their dotted path
+        // (`E.A` -> [E, A]; `ns.E.A` -> [ns, E, A]), so the enum type is the
+        // token immediately before the variant.
+        if (subject_enum_id == null) {
             outer: for (match_expr.cases) |case| {
                 for (case.path_patterns) |pp| {
                     if (pp.tokens.len >= 2) {
@@ -648,7 +632,7 @@ pub const ControlFlowHandler = struct {
         // A group subject is discriminated by its boxed member index, never by
         // an enum variant index, so resolve it once and keep it out of
         // `match_enum_type` — that name only ever enumerates an enum.
-        const match_group = self.resolveMatchGroup(match_expr.value);
+        const match_group = self.resolveMatchGroup(match_expr.value, boxing_subject_type);
         if (match_group != null) match_enum_type = null;
 
         // Track whether any pattern is an explicit else (wildcard) to know if falling through is possible.
@@ -791,7 +775,7 @@ pub const ControlFlowHandler = struct {
                 // A union subject decides the arm here: the pattern's type is
                 // compared against the member index it boxed, and a member the
                 // union never carries makes the arm dead code.
-                if (self.unionPatternFor(match_expr.value, pattern_token)) |union_pattern| {
+                if (self.unionPatternFor(boxing_subject_type, pattern_token)) |union_pattern| {
                     switch (union_pattern) {
                         .member => |m| {
                             try self.generator.instructions.append(.Dup);
@@ -812,8 +796,7 @@ pub const ControlFlowHandler = struct {
                     continue;
                 }
 
-                const subject_type = self.generator.inferTypeFromExpression(match_expr.value);
-                const subject_sid = self.matchSubjectStructId(match_expr.value);
+                const subject_sid = self.matchSubjectStructId(match_expr.value, boxing_subject_type);
                 const pattern_sid: ?u32 = if (self.generator.type_system.struct_table) |table|
                     table.getIdByName(pattern_token.lexeme)
                 else
@@ -841,7 +824,7 @@ pub const ControlFlowHandler = struct {
                         pattern_location,
                         ErrorCode.TYPE_MISMATCH,
                         "Cannot match {s} against struct pattern '{s}'; narrow the subject with 'as' first",
-                        .{ @tagName(std.meta.activeTag(subject_type)), pattern_token.lexeme },
+                        .{ @tagName(std.meta.activeTag(boxing_subject_type)), pattern_token.lexeme },
                     );
                     return ErrorList.TypeMismatch;
                 }
@@ -867,14 +850,18 @@ pub const ControlFlowHandler = struct {
                     // Check if this is a type pattern for union matching
                     const is_type_pattern = switch (pattern.type) {
                         .INT_TYPE, .FLOAT_TYPE, .STRING_TYPE, .BYTE_TYPE, .TETRA_TYPE, .NOTHING_TYPE => true,
+                        // `nothing` is both the type and its only value. Over
+                        // a union subject the arm asks which member the box
+                        // holds, so it is the type test.
+                        .NOTHING => subject_type == .Union,
                         else => std.mem.indexOf(u8, pattern.lexeme, "[]") != null,
                     };
 
                     if (is_type_pattern) {
                         // This is a type pattern - use TypeCheck instruction
-                        const type_name = pattern.lexeme;
+                        const type_name = if (pattern.type == .NOTHING) "nothing" else pattern.lexeme;
                         try self.generator.instructions.append(.{ .TypeCheck = .{ .target_type = type_name } });
-                    } else if (self.structTypePatternMatches(match_expr.value, pattern)) |is_match| {
+                    } else if (self.structTypePatternMatches(match_expr.value, boxing_subject_type, pattern)) |is_match| {
                         // A struct subject makes an identifier pattern a type
                         // test, decided here: comparing it as an enum variant or
                         // as a literal would never select the arm.
@@ -897,7 +884,7 @@ pub const ControlFlowHandler = struct {
                         }
                         // Not this type: try the next pattern of the same arm.
                         continue;
-                    } else if (self.unionPatternFor(match_expr.value, pattern)) |union_pattern| {
+                    } else if (self.unionPatternFor(boxing_subject_type, pattern)) |union_pattern| {
                         // A union subject is discriminated by the member index
                         // it boxed, never by an enum variant or a literal.
                         switch (union_pattern) {
@@ -920,6 +907,22 @@ pub const ControlFlowHandler = struct {
                                 continue;
                             },
                         }
+                    } else if (subject_enum_id) |enum_id| {
+                        // An enum-typed subject: the pattern names one of that
+                        // enum's variants, resolved against the enum table by
+                        // id rather than by a type name recovered from syntax.
+                        const variant = try self.resolveEnumVariantById(enum_id, pattern);
+                        const pattern_value = HIRValue{
+                            .enum_variant = HIREnum{
+                                .type_name = variant.enum_name,
+                                .variant_name = pattern.lexeme,
+                                .variant_index = variant.index,
+                                .path = null,
+                            },
+                        };
+                        const pattern_value_idx = try self.generator.addConstant(pattern_value);
+                        try self.generator.instructions.append(.{ .Const = .{ .value = pattern_value, .constant_id = pattern_value_idx } });
+                        try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = HIRType{ .Enum = enum_id } } });
                     } else if (match_enum_type) |enum_type_name| {
                         // Generate the pattern value (enum member with proper context)
                         const variant_index = try self.resolveEnumPatternVariantIndex(enum_type_name, pattern);
@@ -1001,23 +1004,22 @@ pub const ControlFlowHandler = struct {
                 // the pattern only says which fields to bind. Resolve it once so
                 // GetField, StoreVar and the symbol table all agree.
                 const pattern_token = case.path_patterns[0].tokens[case.path_patterns[0].tokens.len - 1];
-                const subject_type = self.generator.inferTypeFromExpression(match_expr.value);
                 const destructure_struct_id: ?StructId = if (match_group) |group| blk: {
                     const member = case.path_patterns[0].split(group.name).member.lexeme;
                     const table = self.generator.type_system.struct_table orelse break :blk null;
                     break :blk table.getIdByName(member);
-                } else if (self.unionPatternFor(match_expr.value, pattern_token)) |union_pattern| blk: {
+                } else if (self.unionPatternFor(boxing_subject_type, pattern_token)) |union_pattern| blk: {
                     break :blk switch (union_pattern) {
                         .member => |m| m.struct_id,
                         .never => null,
                     };
-                } else self.matchSubjectStructId(match_expr.value);
+                } else self.matchSubjectStructId(match_expr.value, boxing_subject_type);
 
                 // Dup the match value so we still have it after field extraction
                 try self.generator.instructions.append(.Dup);
                 // A boxed subject — a group or a union — keeps the struct in its
                 // payload, so unwrap it before touching fields
-                if (match_group != null or subject_type == .Union) {
+                if (match_group != null or boxing_subject_type == .Union) {
                     try self.generator.instructions.append(.{ .UnboxPayload = .{} });
                 }
                 // The value is now a struct_instance — dup it so GetField doesn't consume it
@@ -1642,6 +1644,35 @@ pub const ControlFlowHandler = struct {
 
         // End merge point
         try self.generator.instructions.append(.{ .Label = .{ .name = end_label } });
+    }
+
+    const ResolvedVariant = struct { enum_name: []const u8, index: u32 };
+
+    /// The variant of enum `enum_id` that `pattern` names.
+    fn resolveEnumVariantById(self: *ControlFlowHandler, enum_id: EnumId, pattern: ast.Token) ErrorList!ResolvedVariant {
+        const location = Location{
+            .file = pattern.file,
+            .file_uri = pattern.file_uri,
+            .range = .{
+                .start_line = pattern.line,
+                .start_col = pattern.column,
+                .end_line = pattern.line,
+                .end_col = pattern.column + pattern.lexeme.len,
+            },
+        };
+        const table = self.generator.type_system.enum_table orelse return ErrorList.UnknownCustomType;
+        const enum_name = table.getName(enum_id) orelse return ErrorList.UnknownCustomType;
+        const variants = table.variants(enum_id) orelse return ErrorList.UnknownCustomType;
+        for (variants) |variant| {
+            if (std.mem.eql(u8, variant.name, pattern.lexeme)) return .{ .enum_name = enum_name, .index = variant.index };
+        }
+        self.generator.reporter.reportCompileError(
+            location,
+            ErrorCode.VARIABLE_NOT_FOUND,
+            "Unknown enum variant '{s}' for enum '{s}'",
+            .{ pattern.lexeme, enum_name },
+        );
+        return ErrorList.InvalidEnumVariant;
     }
 
     fn resolveEnumPatternVariantIndex(self: *ControlFlowHandler, enum_type_name: []const u8, pattern: ast.Token) ErrorList!u32 {

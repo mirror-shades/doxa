@@ -38,6 +38,7 @@ pub const ErrorList = error{
     NullAssignmentValue,
     ExpectedStructType,
     UnknownVariableType,
+    MissingExpressionType,
     UnknownCustomType,
     InvalidExpressionType,
     ImportMustHaveFrom,

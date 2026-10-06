@@ -10,6 +10,7 @@ const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const TETRA_FALSE = @import("../soxa_generator.zig").TETRA_FALSE;
 const TETRA_TRUE = @import("../soxa_generator.zig").TETRA_TRUE;
+const CompareOp = @import("../soxa_instructions.zig").CompareOp;
 
 pub const BinaryExpressionHandler = struct {
     generator: *HIRGenerator,
@@ -19,8 +20,8 @@ pub const BinaryExpressionHandler = struct {
     }
 
     pub fn generateBinary(self: *BinaryExpressionHandler, bin: ast.Binary, should_pop_after_use: bool) ErrorList!void {
-        const left_type = self.generator.inferTypeFromExpression(bin.left.?);
-        const right_type = self.generator.inferTypeFromExpression(bin.right.?);
+        const left_type = try self.generator.typeOf(bin.left.?);
+        const right_type = try self.generator.typeOf(bin.right.?);
 
         // Special handling for equality/inequality with enum members lacking context.
         // If one side is an enum-typed expression (or a field whose declared type is an enum),
@@ -65,12 +66,12 @@ pub const BinaryExpressionHandler = struct {
             .DOUBLE_SLASH => try self.handleIntegerDivideOperator(left_type, right_type, bin),
             .MODULO => try self.handleModuloOperator(left_type, right_type, bin),
             .POWER => try self.handlePowerOperator(left_type, right_type, bin),
-            .EQUALITY => try self.handleEqualityOperator(bin),
-            .BANG_EQUAL => try self.handleInequalityOperator(bin),
-            .LESS => try self.handleLessOperator(bin),
-            .GREATER => try self.handleGreaterOperator(bin),
-            .LESS_EQUAL => try self.handleLessEqualOperator(bin),
-            .GREATER_EQUAL => try self.handleGreaterEqualOperator(bin),
+            .EQUALITY => try self.emitComparison(bin, .Eq),
+            .BANG_EQUAL => try self.emitComparison(bin, .Ne),
+            .LESS => try self.emitComparison(bin, .Lt),
+            .GREATER => try self.emitComparison(bin, .Gt),
+            .LESS_EQUAL => try self.emitComparison(bin, .Le),
+            .GREATER_EQUAL => try self.emitComparison(bin, .Ge),
             else => {
                 self.generator.reporter.reportCompileError(
                     bin.left.?.base.location(),
@@ -219,7 +220,7 @@ pub const BinaryExpressionHandler = struct {
                 try self.generator.instructions.append(.{ .LogicalOp = .{ .op = .Not } });
             },
             .MINUS => {
-                const operand_type = self.generator.inferTypeFromExpression(unary.right.?);
+                const operand_type = try self.generator.typeOf(unary.right.?);
                 const zero_value = switch (operand_type) {
                     .Int => HIRValue{ .int = 0 },
                     .Float => HIRValue{ .float = 0.0 },
@@ -373,33 +374,155 @@ pub const BinaryExpressionHandler = struct {
         }
     }
 
-    fn handleEqualityOperator(self: *BinaryExpressionHandler, bin: ast.Binary) !void {
-        const operand_type = self.generator.inferComparisonOperandType(bin.left.?, bin.right.?);
-        try self.generator.instructions.append(.{ .Compare = .{ .op = .Eq, .operand_type = operand_type } });
+    /// How the two operands of a comparison are compared, decided from their
+    /// analyzed types and nothing else.
+    const Comparison = union(enum) {
+        /// Both operands already share the representation `operand_type`
+        /// names (after the numeric widening the emitter applies).
+        direct: HIRType,
+        /// One operand is a boxed union or group value and the other is a
+        /// value of one of its members.
+        boxed_member: struct {
+            boxed_on_left: bool,
+            member_type: HIRType,
+        },
+    };
+
+    fn isBoxed(t: HIRType) bool {
+        return t == .Union or t == .Group;
     }
 
-    fn handleInequalityOperator(self: *BinaryExpressionHandler, bin: ast.Binary) !void {
-        const operand_type = self.generator.inferComparisonOperandType(bin.left.?, bin.right.?);
-        try self.generator.instructions.append(.{ .Compare = .{ .op = .Ne, .operand_type = operand_type } });
+    fn bareName(name: []const u8) []const u8 {
+        const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return name;
+        return name[dot + 1 ..];
     }
 
-    fn handleLessOperator(self: *BinaryExpressionHandler, bin: ast.Binary) !void {
-        const operand_type = self.generator.inferComparisonOperandType(bin.left.?, bin.right.?);
-        try self.generator.instructions.append(.{ .Compare = .{ .op = .Lt, .operand_type = operand_type } });
+    fn sameMemberType(a: HIRType, b: HIRType) bool {
+        if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+        return switch (a) {
+            .Struct => |id| id == b.Struct,
+            .Enum => |id| id == b.Enum,
+            .Group => |id| id == b.Group,
+            .Array => |inner| sameMemberType(inner.*, b.Array.*),
+            else => true,
+        };
     }
 
-    fn handleGreaterOperator(self: *BinaryExpressionHandler, bin: ast.Binary) !void {
-        const operand_type = self.generator.inferComparisonOperandType(bin.left.?, bin.right.?);
-        try self.generator.instructions.append(.{ .Compare = .{ .op = .Gt, .operand_type = operand_type } });
+    /// Where `member` sits among the members `boxed` can hold, or null when
+    /// it is not one of them.
+    fn memberIndexIn(self: *BinaryExpressionHandler, boxed: HIRType, member: HIRType) ?u32 {
+        switch (boxed) {
+            .Union => |u| {
+                for (u.members, 0..) |candidate, idx| {
+                    if (sameMemberType(candidate.*, member)) return @intCast(idx);
+                }
+                return null;
+            },
+            .Group => |gid| {
+                const group_table = self.generator.type_system.group_table orelse return null;
+                const members = group_table.members(gid) orelse return null;
+                const member_name: []const u8 = switch (member) {
+                    .Enum => |id| (self.generator.type_system.enum_table orelse return null).getName(id) orelse return null,
+                    .Struct => |id| (self.generator.type_system.struct_table orelse return null).getName(id) orelse return null,
+                    else => return null,
+                };
+                for (members, 0..) |candidate, idx| {
+                    if (std.mem.eql(u8, candidate.qualifier, bareName(member_name))) return @intCast(idx);
+                }
+                return null;
+            },
+            else => return null,
+        }
     }
 
-    fn handleLessEqualOperator(self: *BinaryExpressionHandler, bin: ast.Binary) !void {
-        const operand_type = self.generator.inferComparisonOperandType(bin.left.?, bin.right.?);
-        try self.generator.instructions.append(.{ .Compare = .{ .op = .Le, .operand_type = operand_type } });
+    fn classifyComparison(self: *BinaryExpressionHandler, bin: ast.Binary, left: HIRType, right: HIRType) ErrorList!Comparison {
+        if (isBoxed(left) != isBoxed(right)) {
+            const boxed = if (isBoxed(left)) left else right;
+            const member = if (isBoxed(left)) right else left;
+            if (self.memberIndexIn(boxed, member) != null) {
+                return .{ .boxed_member = .{ .boxed_on_left = isBoxed(left), .member_type = member } };
+            }
+            self.generator.reporter.reportCompileError(
+                bin.left.?.base.location(),
+                ErrorCode.TYPE_MISMATCH,
+                "Cannot compare {s} with {s}: the {s} can never hold that type",
+                .{ @tagName(left), @tagName(right), @tagName(boxed) },
+            );
+            return ErrorList.TypeMismatch;
+        }
+        if (isBoxed(left)) {
+            self.generator.reporter.reportCompileError(
+                bin.left.?.base.location(),
+                ErrorCode.TYPE_MISMATCH,
+                "Cannot compare two {s} values directly; narrow one side with 'as' or match first",
+                .{@tagName(left)},
+            );
+            return ErrorList.TypeMismatch;
+        }
+        if (left == .Float or right == .Float) return .{ .direct = .Float };
+        if (left == .Int or right == .Int) return .{ .direct = .Int };
+        // Same type on both sides: the annotation is that type.
+        return .{ .direct = left };
     }
 
-    fn handleGreaterEqualOperator(self: *BinaryExpressionHandler, bin: ast.Binary) !void {
-        const operand_type = self.generator.inferComparisonOperandType(bin.left.?, bin.right.?);
-        try self.generator.instructions.append(.{ .Compare = .{ .op = .Ge, .operand_type = operand_type } });
+    fn emitComparison(self: *BinaryExpressionHandler, bin: ast.Binary, op: CompareOp) ErrorList!void {
+        const left = try self.generator.typeOf(bin.left.?);
+        const right = try self.generator.typeOf(bin.right.?);
+        switch (try self.classifyComparison(bin, left, right)) {
+            .direct => |operand_type| {
+                try self.generator.instructions.append(.{ .Compare = .{ .op = op, .operand_type = operand_type } });
+            },
+            .boxed_member => |bm| {
+                if (op != .Eq and op != .Ne) {
+                    self.generator.reporter.reportCompileError(
+                        bin.left.?.base.location(),
+                        ErrorCode.TYPE_MISMATCH,
+                        "Cannot order a {s} value; narrow it with 'as' or match first",
+                        .{@tagName(if (bm.boxed_on_left) left else right)},
+                    );
+                    return ErrorList.TypeMismatch;
+                }
+                try self.emitBoxedMemberEquality(bin, bm.boxed_on_left, bm.member_type, op);
+            },
+        }
+    }
+
+    /// `box == member_value` for a box whose member is an enum or an int: the
+    /// box is stripped to its payload word and the words are compared. The
+    /// operands are on the stack in source order.
+    ///
+    /// TODO(B015, plan/type-authority.md Phase C): this compares payloads
+    /// without first checking that the box holds `member_type`, so two enum
+    /// members of one group whose variants share an index compare equal. The
+    /// check cannot be emitted yet: a group value that has passed through a
+    /// union or an array has had its member index overwritten by the outer
+    /// box's (`retagBoxedValue`), so `MemberCheck` would reject the common
+    /// `result == std.error.IO.InvalidData` after narrowing. Restore the
+    /// member check here once a box keeps its group member index.
+    fn emitBoxedMemberEquality(
+        self: *BinaryExpressionHandler,
+        bin: ast.Binary,
+        boxed_on_left: bool,
+        member_type: HIRType,
+        op: CompareOp,
+    ) ErrorList!void {
+        const g = self.generator;
+        switch (member_type) {
+            .Enum, .Int => {},
+            else => {
+                g.reporter.reportCompileError(
+                    bin.left.?.base.location(),
+                    ErrorCode.TYPE_MISMATCH,
+                    "Cannot compare a union or group value with a {s} directly; narrow it with 'as' or match first",
+                    .{@tagName(member_type)},
+                );
+                return ErrorList.TypeMismatch;
+            },
+        }
+        // Bring the box to the top, strip it, and compare two plain words.
+        // Equality does not care which side each operand ended up on.
+        if (boxed_on_left) try g.instructions.append(.Swap);
+        try g.instructions.append(.{ .UnboxPayload = .{} });
+        try g.instructions.append(.{ .Compare = .{ .op = op, .operand_type = member_type } });
     }
 };

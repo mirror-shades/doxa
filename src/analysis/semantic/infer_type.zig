@@ -428,11 +428,22 @@ fn inferBuiltinCallInner(
     return type_info;
 }
 
-pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInfo {
+/// The type of `expr`. Every answer is recorded in `type_cache` under the
+/// expression's node id, whichever arm of the inference produced it and
+/// whether or not that arm reported an error: later stages read an
+/// expression's type from the cache instead of deriving it again
+/// (plan/type-authority.md), so an arm that returned without recording would
+/// leave them nothing to read.
+pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticError!*ast.TypeInfo {
     if (self.type_cache.get(expr.base.id)) |cached| {
         return cached;
     }
+    const inferred = try inferTypeFromExprUncached(self, expr);
+    try self.type_cache.put(expr.base.id, inferred);
+    return inferred;
+}
 
+fn inferTypeFromExprUncached(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticError!*ast.TypeInfo {
     var type_info = try ast.TypeInfo.createDefault(self.allocator);
     errdefer self.allocator.destroy(type_info);
 
@@ -2400,7 +2411,6 @@ const op: []const u8 = switch (bin.operator.type) {
         },
     }
 
-    try self.type_cache.put(expr.base.id, type_info);
     return type_info;
 }
 

@@ -2170,8 +2170,28 @@ pub const HIRGenerator = struct {
         try self.type_system.registerStructType(struct_name, fields);
     }
 
-    pub fn inferComparisonOperandType(self: *HIRGenerator, left_expr: *ast.Expr, right_expr: *ast.Expr) HIRType {
-        return self.type_system.inferComparisonOperandType(left_expr, right_expr, &self.symbol_table);
+    /// The type of `expr`, as the semantic analyzer inferred it.
+    ///
+    /// This is the one place lowering learns an expression's type
+    /// (plan/type-authority.md). The analyzer has visited every expression of
+    /// a program that reached this stage and recorded its type per node, with
+    /// narrowing already applied to that occurrence, so the generator lowers
+    /// the answer instead of deriving a second one from the expression's
+    /// shape. An expression the analyzer never typed is a compiler bug and
+    /// fails the compile here; there is no fallback type.
+    pub fn typeOf(self: *HIRGenerator, expr: *ast.Expr) ErrorList!HIRType {
+        if (self.semantic_analyzer) |semantic| {
+            if (semantic.getCachedExprType(expr)) |type_info| {
+                return self.type_system.convertTypeInfo(type_info.*);
+            }
+        }
+        const location = expr.base.location();
+        self.reporter.reportInternal(
+            "no analyzed type for the {s} expression at {s}:{d}:{d}. This is a compiler bug, not an error in the program",
+            .{ @tagName(std.meta.activeTag(expr.data)), location.file, location.range.start_line, location.range.start_col },
+            @src(),
+        );
+        return ErrorList.MissingExpressionType;
     }
 
     fn inferParameterType(self: *HIRGenerator, param_name: []const u8, function_body: []ast.Stmt, function_name: []const u8) !HIRType {

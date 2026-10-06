@@ -1749,7 +1749,13 @@ self.fatal_error = true;
                 .Break, .Continue, .Lift => {
                     prev_was_terminator = true;
                 },
-                .ZigDecl, .EnumDecl, .GroupDecl, .Module, .Path, .Import, .Assert, .Cast, .Defer => {},
+                // A deferred expression runs at scope exit like any other
+                // statement, so it is type-checked like one. Lowering reads its
+                // operand types from this pass (plan/type-authority.md).
+                .Defer => |deferred| {
+                    _ = try infer_type.inferTypeFromExpr(self, deferred);
+                },
+                .ZigDecl, .EnumDecl, .GroupDecl, .Module, .Path, .Import, .Assert, .Cast => {},
             }
         }
     }

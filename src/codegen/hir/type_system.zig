@@ -1122,33 +1122,6 @@ pub const TypeSystem = struct {
         return result_type;
     }
 
-    pub fn inferComparisonOperandType(self: *TypeSystem, left_expr: *ast.Expr, right_expr: *ast.Expr, symbol_table: *SymbolTable) HIRType {
-        const left_type = self.inferTypeFromExpression(left_expr, symbol_table);
-        const right_type = self.inferTypeFromExpression(right_expr, symbol_table);
-
-        if (left_type == .Enum or right_type == .Enum) {
-            return HIRType{ .Enum = 0 };
-        }
-
-        if (left_type == .String or right_type == .String) {
-            return .String;
-        }
-
-        if (left_type == .Float or right_type == .Float) {
-            return .Float;
-        }
-
-        if (left_type == .Int or right_type == .Int) {
-            return .Int;
-        }
-
-        if (left_type == .Byte or right_type == .Byte) {
-            return .Byte;
-        }
-
-        return .Int;
-    }
-
     /// Centralized numeric type promotion rules
     /// 1. Float dominance: If either operand is Float or operator is division (/), promote to Float
     /// 2. Int fallback: If either operand is Int, promote to Int
