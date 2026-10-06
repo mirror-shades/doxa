@@ -110,6 +110,31 @@ pub const expected_match_struct_results = [_]print_result{
     .{ .value = "other=second" },
 };
 
+pub const expected_match_enum_subject_forms_results = [_]print_result{
+    .{ .value = "local=100 param=100" },
+    .{ .value = "field=100 index=100 call=10" },
+    .{ .value = "field C" },
+    .{ .value = "index A" },
+    .{ .value = "each A" },
+    .{ .value = "each C" },
+};
+
+pub const expected_match_union_nothing_arm_results = [_]print_result{
+    .{ .value = "int nothing" },
+    .{ .value = "user 42" },
+    .{ .value = "no user" },
+};
+
+pub const expected_as_fallback_diverges_results = [_]print_result{
+    .{ .value = "42 kept 7" },
+};
+
+pub const expected_group_equals_member_results = [_]print_result{
+    .{ .value = "true false false true" },
+    .{ .value = "true false true" },
+    .{ .value = "branch taken" },
+};
+
 pub const expected_match_union_struct_results = [_]print_result{
     .{ .value = "a.txt" },
     .{ .value = "type-test" },

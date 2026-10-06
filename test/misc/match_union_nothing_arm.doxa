@@ -1,0 +1,37 @@
+# Regression (B009): over a union subject a `nothing` arm is the type test for
+# the `nothing` member, exactly as `int` or a struct name is for theirs. It used
+# to be lowered as a literal comparison of the whole boxed value against 0,
+# which is not valid LLVM IR.
+struct User { public id :: int }
+
+function findInt(i :: int) returns int | nothing {
+    if i == 1 then return 7
+    return nothing
+}
+
+function findUser(i :: int) returns User | nothing {
+    if i == 1 then return $User { id is 42 }
+    return nothing
+}
+
+function describeInt(v :: int | nothing) returns string {
+    return match v {
+        int then "int",
+        nothing then "nothing",
+    }
+}
+
+public entry function main() {
+    @print("{describeInt(findInt(1))} {describeInt(findInt(0))}\n")
+
+    const hit is findUser(1)
+    match hit {
+        User then @print("user {hit.id}\n"),
+        nothing then @print("no user\n"),
+    }
+    const miss is findUser(0)
+    match miss {
+        User then @print("user {miss.id}\n"),
+        nothing then @print("no user\n"),
+    }
+}

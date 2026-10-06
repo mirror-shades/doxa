@@ -148,6 +148,26 @@ const shared_cases = [_]Case{
         .expected_print = answers.expected_match_struct_results[0..],
     },
     .{
+        .name = "match on an enum subject of every expression form",
+        .path = "./test/misc/match_enum_subject_forms.doxa",
+        .expected_print = answers.expected_match_enum_subject_forms_results[0..],
+    },
+    .{
+        .name = "match with a nothing arm over a union",
+        .path = "./test/misc/match_union_nothing_arm.doxa",
+        .expected_print = answers.expected_match_union_nothing_arm_results[0..],
+    },
+    .{
+        .name = "as fallback block that diverges",
+        .path = "./test/misc/as_fallback_diverges.doxa",
+        .expected_print = answers.expected_as_fallback_diverges_results[0..],
+    },
+    .{
+        .name = "group value equals a member value",
+        .path = "./test/misc/group_equals_member.doxa",
+        .expected_print = answers.expected_group_equals_member_results[0..],
+    },
+    .{
         .name = "match on a union subject",
         .path = "./test/misc/match_union_struct.doxa",
         .expected_print = answers.expected_match_union_struct_results[0..],
