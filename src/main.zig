@@ -774,6 +774,7 @@ fn compileToNative(
         }
         const reflected_structs_ptr: ?*const std.StringHashMap(void) = if (hir_program.reflected_structs) |*reflected| reflected else null;
         var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getStructTable())), zig_fn_param_types, reflected_structs_ptr, hir_program.force_struct_descriptors, cli_options.opt.arithOverflow());
+        printer.reporter = reporter;
         try printer.emitToFile(hir_program, ir_path);
     }
 
@@ -1759,6 +1760,14 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
         exitIfCompileErrors(reporter);
         return err;
     };
+
+    // `--debug-hir`: one line per instruction, numbered the way the emitter's
+    // verifier (`ir_printer/verify.zig`) names the instruction it rejected.
+    if (cli_options.reporter_options.debug_hir or cli_options.reporter_options.debug_verbose) {
+        for (hir_program.instructions, 0..) |inst, index| {
+            std.debug.print("#{d} {any}\n", .{ index, inst });
+        }
+    }
     exitIfCompileErrors(reporter);
     profiler.end();
 

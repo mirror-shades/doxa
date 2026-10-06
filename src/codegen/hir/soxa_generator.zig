@@ -824,10 +824,11 @@ pub const HIRGenerator = struct {
                         is_instance_method = !mi.is_static;
                     }
                 }
-                if (!is_instance_method) {
-                    const func_info = function_body.function_info;
-                    is_instance_method = func_info.arity > 0 and func_info.param_is_alias.len > 0 and func_info.param_is_alias[0];
-                }
+                // A dotted name is not evidence of a receiver: a module function
+                // is spelled `<module prefix>.<name>` too. Only a function whose
+                // arity exceeds its declared parameters has an implicit `this`
+                // argument to bind.
+                if (!is_instance_method) is_instance_method = is_method;
 
                 if (is_instance_method) {
                     try self.trackVariableType("this", HIRType{ .Struct = 0 });

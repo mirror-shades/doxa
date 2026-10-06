@@ -638,12 +638,12 @@ pub fn Methods(comptime Ctx: type) type {
             var idx_usize: usize = 0;
             while (idx_usize < @as(usize, @intCast(sn.field_count))) : (idx_usize += 1) {
                 // Pop field name
-                if (stack.items.len < 1) return error.StackUnderflow;
+                try self.requireStack(stack, 1);
                 const field_name_val = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
 
                 // Pop field value
-                if (stack.items.len < 1) return error.StackUnderflow;
+                try self.requireStack(stack, 1);
                 const field_val = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
 
@@ -794,7 +794,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn emitGetField(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gf: std.meta.fieldInfo(HIRInstruction, .GetField).type) !void {
-            if (stack.items.len < 1) return error.StackUnderflow;
+            try self.requireStack(stack, 1);
             var struct_val = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
             if (struct_val.ty != .PTR) {
@@ -922,7 +922,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn emitSetField(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sf: std.meta.fieldInfo(HIRInstruction, .SetField).type) !void {
-            if (stack.items.len < 2) return error.StackUnderflow;
+            try self.requireStack(stack, 2);
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
             var struct_val = stack.items[stack.items.len - 1];

@@ -273,7 +273,7 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_write_raw(ptr)\n");
             try w.writeAll("declare void @doxa_write_stderr(ptr, i64)\n");
             try w.writeAll("declare void @doxa_exit(i64) noreturn\n");
-            try w.writeAll("declare void @doxa_panic(ptr, i64)\n");
+            try w.writeAll("declare void @doxa_panic(ptr, i64) noreturn\n");
             try w.writeAll("declare void @doxa_trap_div_by_zero() noreturn\n");
             try w.writeAll("");
             try w.writeAll("declare void @doxa_print_i64(i64)\n");
@@ -756,7 +756,10 @@ pub fn Methods(comptime Ctx: type) type {
             self.var_range_blocks.clearRetainingCapacity();
             self.current_block = "entry";
             self.scope_depth = 0;
-            for (hir.instructions[0..top_level_end_idx]) |inst| {
+            var jump_targets = try self.collectLiveJumpTargets(hir.instructions[0..top_level_end_idx]);
+            defer jump_targets.deinit();
+            for (hir.instructions[0..top_level_end_idx], 0..) |inst, inst_index| {
+                self.verifyEnter("<top level>", inst_index, inst);
                 const tag = std.meta.activeTag(inst);
                 const requires_new_block = switch (tag) {
                     .Label => false,
@@ -811,11 +814,11 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .Pop => {
-                        self.handlePop(&stack);
+                        try self.handlePop(&stack);
                         last_instruction_was_terminator = false;
                     },
                     .Swap => {
-                        self.handleSwap(&stack);
+                        try self.handleSwap(&stack);
                         last_instruction_was_terminator = false;
                     },
                     .Arith => |a| {
@@ -836,6 +839,9 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .Label => |lbl| {
+                        // Not fallen into and not jumped to: unreachable code,
+                        // skipped up to the next live label.
+                        if (last_instruction_was_terminator and !jump_targets.contains(lbl.name)) continue;
                         if (!last_instruction_was_terminator) {
                             const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{lbl.name});
                             defer self.allocator.free(br_line);
@@ -885,7 +891,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .JumpCond => |jc| {
-                        if (stack.items.len < 1) continue;
+                        try self.requireStack(&stack, 1);
                         const v = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         const bool_val = try self.ensureBool(w, v, &id);
@@ -905,6 +911,16 @@ pub fn Methods(comptime Ctx: type) type {
                     .Call => |c| {
                         const call_range = self.computeCallResultRange(c, &stack);
                         try self.handleCall(w, &stack, &id, c, hir);
+                        if (IRPrinter.callDiverges(c)) {
+                            // `@panic` and `@exit` never return, so the block
+                            // ends here exactly as it does after `Return`: no
+                            // value reaches the merge point of an enclosing
+                            // `as`/`if`, and the dead tail is skipped.
+                            try w.writeAll("  unreachable\n");
+                            stack.items.len = 0;
+                            last_instruction_was_terminator = true;
+                            continue;
+                        }
                         if (call_range) |r| {
                             if (stack.items.len > 0) {
                                 const top = &stack.items[stack.items.len - 1];
@@ -1046,7 +1062,7 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .Return => |ret| {
                         if (ret.has_value) {
-                            if (stack.items.len < 1) continue;
+                            try self.requireStack(&stack, 1);
                             _ = stack.items[stack.items.len - 1];
                             stack.items.len -= 1;
                         }
@@ -1096,7 +1112,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .BindAlias => {
-                        if (stack.items.len < 1) continue;
+                        try self.requireStack(&stack, 1);
                         _ = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         // BindAlias is a no-op in global init — the alias target

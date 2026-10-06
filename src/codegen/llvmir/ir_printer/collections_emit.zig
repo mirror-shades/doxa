@@ -493,7 +493,7 @@ pub fn Methods(comptime Ctx: type) type {
             id: *usize,
             inst: std.meta.fieldInfo(HIRInstruction, .MapGet).type,
         ) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const key_val = stack.items[stack.items.len - 1];
             var map_val = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -709,7 +709,7 @@ pub fn Methods(comptime Ctx: type) type {
             id: *usize,
             inst: std.meta.fieldInfo(HIRInstruction, .MapSet).type,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const value = stack.items[stack.items.len - 1];
             const key_val = stack.items[stack.items.len - 2];
             var map_val = stack.items[stack.items.len - 3];
@@ -746,7 +746,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const value = stack.items[stack.items.len - 1];
             const idx_val = stack.items[stack.items.len - 2];
             const hdr_val = stack.items[stack.items.len - 3];
@@ -903,7 +903,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const idx_val = stack.items[stack.items.len - 1];
             const hdr_val = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -1071,7 +1071,7 @@ pub fn Methods(comptime Ctx: type) type {
             op: ArithOp,
             current_block: *[]const u8,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const value = stack.items[stack.items.len - 1];
             const idx_val = stack.items[stack.items.len - 2];
             const hdr_val = stack.items[stack.items.len - 3];
@@ -1346,7 +1346,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const value = stack.items[stack.items.len - 1];
             const hdr_val = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -1415,7 +1415,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const hdr_val = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
 
@@ -1438,7 +1438,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const hdr_val = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
             const len_info = try self.loadArrayLength(w, hdr_val, id);
@@ -1518,7 +1518,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const value = stack.items[stack.items.len - 1];
             const idx_val = stack.items[stack.items.len - 2];
             const target = stack.items[stack.items.len - 3];
@@ -1594,7 +1594,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const idx_val = stack.items[stack.items.len - 1];
             const target = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -1713,7 +1713,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const len_val = stack.items[stack.items.len - 1];
             const start_val = stack.items[stack.items.len - 2];
             const target = stack.items[stack.items.len - 3];
@@ -1757,20 +1757,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.allocator.free(debug_line);
             try w.writeAll(debug_line);
 
-            if (stack.items.len < 2) {
-                // If we don't have 2 items, try to generate a call anyway with dummy values
-                // This shouldn't happen in correct code, but let's be robust
-                const dummy_reg = try self.nextTemp(id);
-                const call_line = try std.fmt.allocPrint(
-                    self.allocator,
-                    "  {s} = call ptr @doxa_array_concat(ptr null, ptr null, i64 8, i64 0)\n",
-                    .{dummy_reg},
-                );
-                defer self.allocator.free(call_line);
-                try w.writeAll(call_line);
-                try stack.append(.{ .name = dummy_reg, .ty = .PTR, .region = self.currentRegionTag() });
-                return;
-            }
+            try self.requireStack(stack, 2);
             var rhs = stack.items[stack.items.len - 1];
             var lhs = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -1807,7 +1794,7 @@ pub fn Methods(comptime Ctx: type) type {
         ) !void {
             _ = inst;
 
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const end_val = stack.items[stack.items.len - 1];
             const start_val = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -2029,13 +2016,8 @@ pub fn Methods(comptime Ctx: type) type {
             rhs: StackVal,
             id: *usize,
         ) !StackVal {
-            // Guard against corrupted operand names causing huge allocations
             if (lhs.name.len > IRPrinter.MAX_SANE_NAME_LEN or rhs.name.len > IRPrinter.MAX_SANE_NAME_LEN) {
-                const result_name = try self.nextTemp(id);
-                const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
-                defer self.allocator.free(false_line);
-                try w.writeAll(false_line);
-                return .{ .name = result_name, .ty = .I1 };
+                return self.hirFault("comparison operand name is {d} bytes long; the value stack is corrupted", .{@max(lhs.name.len, rhs.name.len)});
             }
             var result_name: []const u8 = undefined;
             var operand_type = cmp.operand_type;
@@ -2057,12 +2039,19 @@ pub fn Methods(comptime Ctx: type) type {
                             .Gt => "sgt",
                             .Ge => "sge",
                         };
+                        // Integer comparison widens a byte or a tetra flag;
+                        // it does not reinterpret a float, a pointer, a string
+                        // or a boxed value as an integer.
+                        try self.requireReprIn("left", lhs, &.{ .I64, .I8, .I1, .I2 });
+                        try self.requireReprIn("right", rhs, &.{ .I64, .I8, .I1, .I2 });
                         const lhs_i64 = if (lhs.ty != .I64) try self.ensureI64(w, lhs, id) else lhs;
                         const rhs_i64 = if (rhs.ty != .I64) try self.ensureI64(w, rhs, id) else rhs;
                         result_name = try self.nextTemp(id);
                         break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i64 {s}, {s}\n", .{ result_name, pred, lhs_i64.name, rhs_i64.name });
                     },
                     .Byte => {
+                        try self.requireRepr("left", lhs, .I8);
+                        try self.requireRepr("right", rhs, .I8);
                         result_name = try self.nextTemp(id);
                         const pred = switch (cmp.op) {
                             .Eq => "eq",
@@ -2083,6 +2072,8 @@ pub fn Methods(comptime Ctx: type) type {
                             .Gt => "ogt",
                             .Ge => "oge",
                         };
+                        try self.requireReprIn("left", lhs, &.{ .F64, .I64, .I8 });
+                        try self.requireReprIn("right", rhs, &.{ .F64, .I64, .I8 });
                         const lhs_f64 = if (lhs.ty == .Value) lhs_blk: {
                             const payload = try self.ensureI64(w, lhs, id);
                             const tmp = try self.nextTemp(id);
@@ -2117,6 +2108,8 @@ pub fn Methods(comptime Ctx: type) type {
                         break :blk try std.fmt.allocPrint(self.allocator, "  {s} = fcmp {s} double {s}, {s}\n", .{ result_name, pred, lhs_f64.name, rhs_f64.name });
                     },
                     .Tetra => {
+                        try self.requireRepr("left", lhs, .I2);
+                        try self.requireRepr("right", rhs, .I2);
                         result_name = try self.nextTemp(id);
                         const pred = switch (cmp.op) {
                             .Eq => "eq",
@@ -2129,8 +2122,14 @@ pub fn Methods(comptime Ctx: type) type {
                         break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i2 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
                     },
                     .String => {
-                        const lhs_str = try self.ensureString(w, lhs, id);
-                        const rhs_str = try self.ensureString(w, rhs, id);
+                        // A string comparison compares strings. `ensureString`
+                        // would render any other operand as text and compare
+                        // that, which is how an enum subject matched against
+                        // a variant name came to compare "2" with "C".
+                        try self.requireRepr("left", lhs, .STRING);
+                        try self.requireRepr("right", rhs, .STRING);
+                        const lhs_str = lhs;
+                        const rhs_str = rhs;
                         const lhs_ptr_ext = try self.nextTemp(id);
                         const lhs_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ lhs_ptr_ext, lhs_str.name });
                         defer self.allocator.free(lhs_ptr_line);
@@ -2160,14 +2159,20 @@ pub fn Methods(comptime Ctx: type) type {
                                 result_name = try self.nextTemp(id);
                                 break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 {s}, 0\n", .{ result_name, tmp_name });
                             },
-                            else => {
-                                result_name = try self.nextTemp(id);
-                                const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
-                                break :blk false_line;
-                            },
+                            // Strings have no ordering in the language yet. The
+                            // analyzer accepts `<`/`<=`/`>`/`>=` on them, so the
+                            // instruction arrives here with nothing to lower to;
+                            // answering `false` would be a silent wrong result.
+                            else => return self.hirFault("ordered comparison ({s}) of strings has no lowering", .{@tagName(cmp.op)}),
                         }
                     },
                     else => {
+                        // Enum, Nothing and the remaining types compare as raw
+                        // `i64` words: a boxed, pointer or string operand here
+                        // means the generator annotated the comparison with a
+                        // type its operands do not have.
+                        try self.requireRepr("left", lhs, .I64);
+                        try self.requireRepr("right", rhs, .I64);
                         result_name = try self.nextTemp(id);
                         const pred = switch (cmp.op) {
                             .Eq => "eq",

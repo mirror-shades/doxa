@@ -51,6 +51,7 @@ pub const IRPrinter = struct {
     pub const recordStackForLabel = CoreMethods.recordStackForLabel;
     pub const restoreStackForLabel = CoreMethods.restoreStackForLabel;
     pub const mapBuiltinToRuntime = CoreMethods.mapBuiltinToRuntime;
+    pub const callDiverges = CoreMethods.callDiverges;
     pub const functionSymbol = CoreMethods.functionSymbol;
     pub const mangleGlobalName = CoreMethods.mangleGlobalName;
     pub const cloneHeapForStore = CoreMethods.cloneHeapForStore;
@@ -101,6 +102,14 @@ pub const IRPrinter = struct {
     pub const buildEnumPrintMap = FunctionEmitMethods.buildEnumPrintMap;
     pub const emitEnumPrint = FunctionEmitMethods.emitEnumPrint;
     pub const emitQuantifierWrappers = FunctionEmitMethods.emitQuantifierWrappers;
+
+    const VerifyMethods = @import("./ir_printer/verify.zig").Methods(Ctx);
+    pub const verifyEnter = VerifyMethods.verifyEnter;
+    pub const hirFault = VerifyMethods.hirFault;
+    pub const collectLiveJumpTargets = VerifyMethods.collectLiveJumpTargets;
+    pub const requireStack = VerifyMethods.requireStack;
+    pub const requireRepr = VerifyMethods.requireRepr;
+    pub const requireReprIn = VerifyMethods.requireReprIn;
 
     const ValueHelperMethods = @import("./ir_printer/value_helpers.zig").Methods(Ctx);
     pub const createEnumTypeNameGlobal = ValueHelperMethods.createEnumTypeNameGlobal;
@@ -307,6 +316,14 @@ pub const IRPrinter = struct {
     /// carries no `PeekEmitState` parameter, so the pass installs its state
     /// here and restores the previous value on exit.
     active_peek_state: ?*PeekEmitState = null,
+
+    /// Where an internal-error diagnostic is sent. Set by the driver; null in
+    /// isolated emitter tests, which fall back to stderr.
+    reporter: ?*@import("../../utils/reporting.zig").Reporter = null,
+    /// The instruction being emitted, for `hirFault` (Phase A verifier).
+    verify_function: []const u8 = "<top level>",
+    verify_index: usize = 0,
+    verify_tag: []const u8 = "",
 
     pub const EnumVariantMeta = struct {
         index: u32,

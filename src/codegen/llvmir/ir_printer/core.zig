@@ -1195,6 +1195,14 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
+        /// Whether a call unconditionally transfers control away. Mirrors
+        /// `expressionDiverges` in the analyzer (`infer_type.zig`), which is
+        /// what lets a fallback block ending in one of these type-check.
+        pub fn callDiverges(c: std.meta.fieldInfo(Ctx.HIRInstruction, .Call).type) bool {
+            if (c.call_kind != .BuiltinFunction) return false;
+            return std.mem.eql(u8, c.qualified_name, "panic") or std.mem.eql(u8, c.qualified_name, "exit");
+        }
+
         pub fn mapBuiltinToRuntime(name: []const u8) []const u8 {
             if (std.mem.eql(u8, name, "clear")) return "doxa_clear";
             if (std.mem.eql(u8, name, "exit")) return "doxa_exit";

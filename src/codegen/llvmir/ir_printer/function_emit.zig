@@ -323,7 +323,10 @@ pub fn Methods(comptime Ctx: type) type {
 
             // Process function body instructions
             self.scope_depth = 0;
-            for (hir.instructions[start_idx..end_idx]) |inst| {
+            var jump_targets = try self.collectLiveJumpTargets(hir.instructions[start_idx..end_idx]);
+            defer jump_targets.deinit();
+            for (hir.instructions[start_idx..end_idx], start_idx..) |inst, inst_index| {
+                self.verifyEnter(func.name, inst_index, inst);
                 const tag = std.meta.activeTag(inst);
                 const requires_new_block = switch (tag) {
                     .Label, .ExitScope => false,
@@ -351,6 +354,10 @@ pub fn Methods(comptime Ctx: type) type {
                     .Label => |lbl| {
                         // Only process function body labels, skip function start labels and invalid basic block names
                         const should_print = !std.mem.eql(u8, lbl.name, func.start_label) and !std.mem.startsWith(u8, lbl.name, "func_");
+                        // Not fallen into and not jumped to: the code under
+                        // this label is unreachable. Leaving the terminator
+                        // flag set skips it up to the next live label.
+                        if (should_print and last_instruction_was_terminator and !jump_targets.contains(lbl.name)) continue;
                         if (should_print and !last_instruction_was_terminator) {
                             const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{lbl.name});
                             defer self.allocator.free(br_line);
@@ -449,7 +456,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = true;
                     },
                     .JumpCond => |jc| {
-                        if (stack.items.len < 1) continue;
+                        try self.requireStack(&stack, 1);
                         const v = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         const bool_val = try self.ensureBool(w, v, &id);
@@ -803,7 +810,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .StoreAlias => |sa| {
-                        if (stack.items.len < 1) continue;
+                        try self.requireStack(&stack, 1);
                         var value = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         if (alias_slots.get(sa.slot_index)) |info| {
@@ -841,7 +848,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .BindAlias => |ba| {
-                        if (stack.items.len < 1) continue;
+                        try self.requireStack(&stack, 1);
                         const ptr_val = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         var struct_fields: ?[]HIR.HIRType = ptr_val.struct_field_types;
@@ -915,7 +922,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .Swap => {
-                        self.handleSwap(&stack);
+                        try self.handleSwap(&stack);
                         last_instruction_was_terminator = false;
                     },
                     .StoreFieldName => {
@@ -943,7 +950,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .Pop => {
-                        self.handlePop(&stack);
+                        try self.handlePop(&stack);
                         last_instruction_was_terminator = false;
                     },
                     .StoreDecl => |sd| {
@@ -1079,7 +1086,7 @@ pub fn Methods(comptime Ctx: type) type {
                         if (sv.scope_kind == .GlobalLocal or sv.scope_kind == .ModuleGlobal) {
                             try self.handleStoreVarGlobal(w, &stack, &id, sv);
                         } else {
-                            if (stack.items.len < 1) continue;
+                            try self.requireStack(&stack, 1);
                             var value = stack.items[stack.items.len - 1];
                             stack.items.len -= 1;
                             if (value.ty == .Nothing) continue;
@@ -1163,6 +1170,16 @@ pub fn Methods(comptime Ctx: type) type {
                     .Call => |c| {
                         const call_range = self.computeCallResultRange(c, &stack);
                         try self.handleCall(w, &stack, &id, c, hir);
+                        if (IRPrinter.callDiverges(c)) {
+                            // `@panic` and `@exit` never return, so the block
+                            // ends here exactly as it does after `Return`: no
+                            // value reaches the merge point of an enclosing
+                            // `as`/`if`, and the dead tail is skipped.
+                            try w.writeAll("  unreachable\n");
+                            stack.items.len = 0;
+                            last_instruction_was_terminator = true;
+                            continue;
+                        }
                         if (call_range) |r| {
                             if (stack.items.len > 0) {
                                 const top = &stack.items[stack.items.len - 1];

@@ -146,8 +146,8 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleDup(_: *IRPrinter, stack: *std.array_list.Managed(StackVal)) !void {
-            if (stack.items.len < 1) return;
+        pub fn handleDup(self: *IRPrinter, stack: *std.array_list.Managed(StackVal)) !void {
+            try self.requireStack(stack, 1);
             const top = stack.items[stack.items.len - 1];
             const duped: StackVal = .{
                 .name = top.name,
@@ -166,13 +166,13 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(duped);
         }
 
-        pub fn handlePop(_: *IRPrinter, stack: *std.array_list.Managed(StackVal)) void {
-            if (stack.items.len < 1) return;
+        pub fn handlePop(self: *IRPrinter, stack: *std.array_list.Managed(StackVal)) !void {
+            try self.requireStack(stack, 1);
             stack.items.len -= 1;
         }
 
-        pub fn handleSwap(_: *IRPrinter, stack: *std.array_list.Managed(StackVal)) void {
-            if (stack.items.len < 2) return;
+        pub fn handleSwap(self: *IRPrinter, stack: *std.array_list.Managed(StackVal)) !void {
+            try self.requireStack(stack, 2);
             const top_idx = stack.items.len - 1;
             // The region rides on the `StackVal` itself, so swapping the two
             // slots moves each value's provenance with it (A2); no clearing.
@@ -180,12 +180,14 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn handleArith(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, a: std.meta.fieldInfo(HIRInstruction, .Arith).type, current_block: *[]const u8) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             var rhs = stack.items[stack.items.len - 1];
             var lhs = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
             switch (a.operand_type) {
                 .Int => {
+                    try self.requireReprIn("left", lhs, &.{ .I64, .I8, .I1, .I2 });
+                    try self.requireReprIn("right", rhs, &.{ .I64, .I8, .I1, .I2 });
                     lhs = try self.ensureI64(w, lhs, id);
                     rhs = try self.ensureI64(w, rhs, id);
                     if (a.op == .Pow) {
@@ -273,6 +275,8 @@ pub fn Methods(comptime Ctx: type) type {
                     }
                 },
                 .Float => {
+                    try self.requireReprIn("left", lhs, &.{ .F64, .I64, .I8 });
+                    try self.requireReprIn("right", rhs, &.{ .F64, .I64, .I8 });
                     const lhs_double = if (lhs.ty == .F64) blk: {
                         break :blk lhs.name;
                     } else blk: {
@@ -335,6 +339,8 @@ pub fn Methods(comptime Ctx: type) type {
                     try stack.append(.{ .name = name, .ty = .F64 });
                 },
                 .Byte => {
+                    try self.requireRepr("left", lhs, .I8);
+                    try self.requireRepr("right", rhs, .I8);
                     const name = try std.fmt.allocPrint(self.allocator, "%{d}", .{id.*});
                     id.* += 1;
                     // A Doxa `byte` is unsigned, so the `i8` arithmetic here is
@@ -387,12 +393,12 @@ pub fn Methods(comptime Ctx: type) type {
                     try stack.append(.{ .name = name, .ty = .I8, .int_range = result_range });
                 },
                 // Only Int, Float, and Byte are valid arithmetic operand types.
-                else => {},
+                else => return self.hirFault("arithmetic annotated {s}; only Int, Float and Byte have a lowering", .{@tagName(a.operand_type)}),
             }
         }
 
         pub fn handleCompare(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, cmp: std.meta.fieldInfo(HIRInstruction, .Compare).type) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const rhs = stack.items[stack.items.len - 1];
             const lhs = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -402,7 +408,7 @@ pub fn Methods(comptime Ctx: type) type {
 
         pub fn handleLogicalOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, lop: std.meta.fieldInfo(HIRInstruction, .LogicalOp).type) !void {
             if (lop.op == .Not) {
-                if (stack.items.len < 1) return;
+                try self.requireStack(stack, 1);
                 const v = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
 
@@ -437,7 +443,7 @@ pub fn Methods(comptime Ctx: type) type {
                     try stack.append(.{ .name = not_result, .ty = .I1 });
                 }
             } else {
-                if (stack.items.len < 2) return;
+                try self.requireStack(stack, 2);
                 const rhs = stack.items[stack.items.len - 1];
                 const lhs = stack.items[stack.items.len - 2];
                 stack.items.len -= 2;
@@ -568,7 +574,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn handleConvert(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, conv: std.meta.fieldInfo(HIRInstruction, .Convert).type) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const arg = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
             switch (conv.to_type) {
@@ -604,7 +610,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn handleTypeCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, tc: std.meta.fieldInfo(HIRInstruction, .TypeCheck).type, peek_state: *PeekEmitState) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
 
@@ -711,7 +717,7 @@ pub fn Methods(comptime Ctx: type) type {
 
         pub fn handleStringOp(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sop: std.meta.fieldInfo(HIRInstruction, .StringOp).type, peek_state: *PeekEmitState) !void {
             if (sop.op == .Concat) {
-                if (stack.items.len < 2) return;
+                try self.requireStack(stack, 2);
                 const a = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
                 const b = stack.items[stack.items.len - 1];
@@ -748,7 +754,7 @@ pub fn Methods(comptime Ctx: type) type {
                 return;
             }
 
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const arg = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
 
@@ -1017,7 +1023,7 @@ pub fn Methods(comptime Ctx: type) type {
                     try stack.append(.{ .name = pop_name, .ty = .STRING, .region = self.currentRegionTag() });
                 },
                 .Substring => {
-                    if (stack.items.len < 2) return;
+                    try self.requireStack(stack, 2);
                     const length = stack.items[stack.items.len - 1];
                     const start = stack.items[stack.items.len - 2];
                     stack.items.len -= 2;
@@ -1167,7 +1173,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn handlePeek(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, pk: std.meta.fieldInfo(HIRInstruction, .Peek).type, peek_state: *PeekEmitState) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             var v = stack.items[stack.items.len - 1];
             self.hydrateStructMetadata(&v, pk.name);
             // When peeking a struct, prefer the concrete HIR `StructId`
@@ -1642,7 +1648,7 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn handlePeekStruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, ps: std.meta.fieldInfo(HIRInstruction, .PeekStruct).type, peek_state: *PeekEmitState) !void {
             // PeekStruct peeks a struct without popping it
             // Similar to Peek, but for structs
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const v = stack.items[stack.items.len - 1];
 
             // Emit peek debug info (type name and variable name prefix)
@@ -1680,7 +1686,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn handleMemberCheck(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, mc: std.meta.fieldInfo(HIRInstruction, .MemberCheck).type) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
 
@@ -1748,7 +1754,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn handleUnboxPayload(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
 
@@ -1765,7 +1771,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn handleUnionConstruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, uc: std.meta.fieldInfo(HIRInstruction, .UnionConstruct).type) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
             // Build a %DoxaValue for the union — same as buildDoxaValue
@@ -1940,7 +1946,7 @@ pub fn Methods(comptime Ctx: type) type {
 
         pub fn handleCall(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, c: std.meta.fieldInfo(HIRInstruction, .Call).type, hir: *const HIR.HIRProgram) !void {
             const argc: usize = @intCast(c.arg_count);
-            if (stack.items.len < argc) return;
+            try self.requireStack(stack, argc);
 
             var raw_args = std.array_list.Managed(StackVal).init(self.allocator);
             defer raw_args.deinit();
@@ -2055,8 +2061,11 @@ pub fn Methods(comptime Ctx: type) type {
                 // anything else, and both go through `StringOp.ToString`.
                 switch (arg.ty) {
                     .STRING => try self.writeStringValue(w, id, arg),
-                    else => unreachable,
+                    else => return self.hirFault("@print argument is {s}, expected STRING", .{@tagName(arg.ty)}),
                 }
+                // Every call leaves exactly one value, `nothing` included: the
+                // generator pops a call statement's result unconditionally.
+                try stack.append(.{ .name = "undef", .ty = .Nothing });
                 return;
             }
 
@@ -2074,6 +2083,7 @@ pub fn Methods(comptime Ctx: type) type {
                     const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_panic(ptr {s}, i64 {s})\n", .{ ptr_ext, len_ext });
                     defer self.allocator.free(line);
                     try w.writeAll(line);
+                    try stack.append(.{ .name = "undef", .ty = .Nothing });
                     return;
                 }
                 // Non-string runtime message (should not occur after type checking):
@@ -2082,6 +2092,7 @@ pub fn Methods(comptime Ctx: type) type {
                 const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_panic(ptr {s}, i64 0)\n", .{ptr.name});
                 defer self.allocator.free(line);
                 try w.writeAll(line);
+                try stack.append(.{ .name = "undef", .ty = .Nothing });
                 return;
             }
 
@@ -2592,7 +2603,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn handleStoreVarGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sv: std.meta.fieldInfo(HIRInstruction, .StoreVar).type) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             var value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
             if (value.ty == .Nothing) return;
