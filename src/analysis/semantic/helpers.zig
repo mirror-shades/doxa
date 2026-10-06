@@ -1,75 +1,55 @@
 const std = @import("std");
 const ast = @import("../../ast/ast.zig");
+const TypeRef = ast.TypeRef;
 const Reporting = @import("../../utils/reporting.zig");
 const SemanticAnalyzer = @import("semantic.zig").SemanticAnalyzer;
 const ErrorCode = @import("../../utils/errors.zig").ErrorCode;
-const Variable = @import("../../utils/memory.zig").Variable;
-const import_parser = @import("../../parser/import_parser.zig");
-const TokenLiteral = @import("../../types/types.zig").TokenLiteral;
-const TokenType = @import("../../types/token.zig").TokenType;
-const Token = @import("../../types/token.zig").Token;
+const ErrorList = @import("../../utils/errors.zig").ErrorList;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
-const EnumTable = @import("../../common/enum_table.zig").EnumTable;
 const GroupTable = @import("../../common/group_table.zig").GroupTable;
 const Types = @import("../../types/types.zig");
 const CustomTypeInfo = Types.CustomTypeInfo;
 const StructField = Types.StructField;
-const Memory = @import("../../utils/memory.zig");
 const HIRTypeModule = @import("../../codegen/hir/soxa_types.zig");
 const HIRType = HIRTypeModule.HIRType;
 const UnionId = HIRTypeModule.UnionId;
 const StructId = HIRTypeModule.StructId;
-const HIREnum = @import("../../codegen/hir/soxa_values.zig").HIREnum;
-const eval = @import("eval_utils.zig");
+const names = @import("names.zig");
+const graph_mod = @import("../../module/graph.zig");
 
-/// A custom type is identified by its bare name: `std.json.Node` and `Node`
-/// name the same type, matching the struct/enum/group tables, which are keyed
-/// by the name a declaration writes.
-fn bareTypeName(name: []const u8) []const u8 {
-    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return name;
-    return name[dot + 1 ..];
+/// The resolved identity of a named type, or null for an anonymous one.
+fn refOf(type_info: *const ast.TypeInfo) ?TypeRef {
+    const custom = type_info.custom_type orelse return null;
+    return custom.resolved();
 }
 
-fn resolvedTypeName(self: *const SemanticAnalyzer, name: []const u8) []const u8 {
-    return bareTypeName(self.resolveTypeAlias(name));
-}
-
-/// Helper: structural equality for TypeInfo (avoid collapsing by .base only)
+/// Structural equality for TypeInfo. Named types are equal exactly when they
+/// are the same declaration: two modules' `Node` are different types.
 pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
     if (a.base != b.base) return false;
 
     switch (a.base) {
         .Int, .Byte, .Float, .String, .Tetra, .Nothing => return true,
 
-        .Enum => {
-            // TODO: implement full enum type comparison beyond name matching
-            if (a.custom_type == null or b.custom_type == null) return false;
-            return std.mem.eql(u8, resolvedTypeName(self, a.custom_type.?), resolvedTypeName(self, b.custom_type.?));
-        },
-
-        .Struct => {
-            // TODO: implement full struct type comparison beyond name matching
-            if (a.custom_type == null or b.custom_type == null) return false;
-            return std.mem.eql(u8, resolvedTypeName(self, a.custom_type.?), resolvedTypeName(self, b.custom_type.?));
+        .Enum, .Struct => {
+            const ra = refOf(a) orelse return false;
+            const rb = refOf(b) orelse return false;
+            return ra.eql(rb);
         },
 
         .Custom => {
-            // If both have custom_type, they must match
-            if (a.custom_type != null and b.custom_type != null) {
-                return std.mem.eql(u8, resolvedTypeName(self, a.custom_type.?), resolvedTypeName(self, b.custom_type.?));
-            }
-            // If one has custom_type and the other doesn't, allow it for enum literals
-            // This handles cases like Color (enum type) vs .Blue (enum literal)
-            return true;
+            // A bare enum literal (`.Blue`) carries no type of its own and is
+            // compatible with any named type; otherwise names must agree.
+            const ra = refOf(a) orelse return true;
+            const rb = refOf(b) orelse return true;
+            return ra.eql(rb);
         },
 
         .Array => {
-            // If both have array_type, they must match
+            // An array literal without element type info is compatible with any array.
             if (a.array_type != null and b.array_type != null) {
                 return typesEqual(self, a.array_type.?, b.array_type.?);
             }
-            // If one or both don't have array_type, allow it for array literals
-            // This handles cases where array literals don't have element type info
             return true;
         },
 
@@ -90,72 +70,195 @@ pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *con
         },
 
         .Union => {
-            // Should be flattened before compare; compare as sets (order-independent)
+            // Flattened before compare; compared as sets (order-independent).
             if (a.union_type == null or b.union_type == null) return false;
             const au = a.union_type.?;
             const bu = b.union_type.?;
             if (au.types.len != bu.types.len) return false;
-
-            // For each a-member, find a structurally equal b-member
-            var matched: usize = 0;
             for (au.types) |amt| {
-                var found = false;
                 for (bu.types) |bmt| {
-                    if (typesEqual(self, amt, bmt)) {
-                        found = true;
-                        break;
-                    }
-                }
-                if (found) matched += 1 else return false;
+                    if (typesEqual(self, amt, bmt)) break;
+                } else return false;
             }
-            return matched == au.types.len;
+            return true;
         },
     }
 }
 
-fn typeLabel(type_info: *const ast.TypeInfo) []const u8 {
-    if (type_info.custom_type) |name| {
-        return name;
-    }
+/// The name a diagnostic shows for a type.
+pub fn typeLabel(type_info: *const ast.TypeInfo) []const u8 {
+    if (type_info.custom_type) |custom| return custom.displayName();
     return @tagName(type_info.base);
+}
+
+/// The names a diagnostic shows for two types it compares. Two distinct types
+/// that share a declared name (`a.Node`, `b.Node`) are told apart by the
+/// stable names of the modules that declare them.
+pub fn typeLabels(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *const ast.TypeInfo) !struct { []const u8, []const u8 } {
+    const plain = .{ typeLabel(a), typeLabel(b) };
+    const ref_a = refOf(a) orelse return plain;
+    const ref_b = refOf(b) orelse return plain;
+    if (ref_a.eql(ref_b) or !std.mem.eql(u8, ref_a.name, ref_b.name)) return plain;
+    return .{ try qualifiedLabel(self, ref_a), try qualifiedLabel(self, ref_b) };
+}
+
+fn qualifiedLabel(self: *const SemanticAnalyzer, ref: TypeRef) ![]const u8 {
+    return std.fmt.allocPrint(self.allocator, "{s} (from {s})", .{ ref.name, self.graph.moduleName(ref.module) });
+}
+
+/// The group a type names, when it names one.
+fn groupOf(self: *const SemanticAnalyzer, type_info: *const ast.TypeInfo) ?TypeRef {
+    if (type_info.base != .Custom) return null;
+    const ref = refOf(type_info) orelse return null;
+    const custom = self.custom_types.get(ref) orelse return null;
+    return if (custom.kind == .Group) ref else null;
+}
+
+/// `.Red` names a variant of the enum its context expects, and nothing else
+/// types it. Retype the shorthand `expr`, inferred as `actual`, by the
+/// `expected` type of its position. A branching expression yields one of its
+/// branches and an array literal holds its elements, so each sits in the same
+/// position, and the enclosing expression takes the enum they agree on.
+pub fn contextualizeEnumMember(self: *const SemanticAnalyzer, expr: *const ast.Expr, actual: *ast.TypeInfo, expected: *const ast.TypeInfo) void {
+    if (expr.data == .Array) {
+        const element_expected = expected.array_type orelse return;
+        const element_actual = actual.array_type orelse return;
+        const ref = contextualizeAll(self, expr.data.Array, element_expected) orelse return;
+        retype(element_actual, ref);
+        return;
+    }
+    const ref = contextualize(self, expr, expected) orelse return;
+    retype(actual, ref);
+}
+
+/// Type every shorthand `expr` yields from `expected`, and return the enum
+/// `expr` then yields, or null when it yields none or its branches disagree.
+fn contextualize(self: *const SemanticAnalyzer, expr: *const ast.Expr, expected: *const ast.TypeInfo) ?TypeRef {
+    const ref = switch (expr.data) {
+        .EnumMember => |member| contextualEnum(self, expected, member.lexeme),
+        .If => |if_expr| agree(contextualizeBranch(self, if_expr.then_branch, expected), contextualizeBranch(self, if_expr.else_branch, expected)),
+        .Match => |match_expr| blk: {
+            var ref: ?TypeRef = null;
+            for (match_expr.cases, 0..) |case, i| {
+                const arm = contextualizeBranch(self, case.body, expected);
+                ref = if (i == 0) arm else agree(ref, arm);
+            }
+            break :blk ref;
+        },
+        .Block => |block| contextualizeBranch(self, block.value, expected),
+        .Grouping => |inner| contextualizeBranch(self, inner, expected),
+        else => null,
+    } orelse return null;
+    if (self.type_cache.get(expr.base.id)) |cached| retype(cached, ref);
+    return ref;
+}
+
+/// The enum a branch yields once contextualized: what its shorthands take,
+/// or the named type it already has.
+fn contextualizeBranch(self: *const SemanticAnalyzer, branch: ?*const ast.Expr, expected: *const ast.TypeInfo) ?TypeRef {
+    const expr = branch orelse return null;
+    if (contextualize(self, expr, expected)) |ref| return ref;
+    const inferred = self.type_cache.get(expr.base.id) orelse return null;
+    return refOf(inferred);
+}
+
+/// The enum every element of an array literal takes in `expected`'s element
+/// position, or null when they do not all agree.
+fn contextualizeAll(self: *const SemanticAnalyzer, elements: []const *ast.Expr, expected: *const ast.TypeInfo) ?TypeRef {
+    var ref: ?TypeRef = null;
+    for (elements, 0..) |element, i| {
+        const element_ref = contextualizeBranch(self, element, expected);
+        ref = if (i == 0) element_ref else agree(ref, element_ref);
+    }
+    return ref;
+}
+
+fn agree(a: ?TypeRef, b: ?TypeRef) ?TypeRef {
+    const left = a orelse return null;
+    const right = b orelse return null;
+    return if (left.eql(right)) left else null;
+}
+
+/// Report a shorthand `expr` whose `expected` enum does not declare it, and
+/// type it as that enum so it is not also reported as untyped. Returns whether
+/// it reported.
+pub fn reportUndeclaredVariant(self: *SemanticAnalyzer, expr: *const ast.Expr, actual: *ast.TypeInfo, expected: *const ast.TypeInfo, span: ast.SourceSpan) bool {
+    if (expr.data != .EnumMember or !isUntypedVariant(actual)) return false;
+    const ref = refOf(expected) orelse return false;
+    const custom = self.custom_types.get(ref) orelse return false;
+    if (custom.kind != .Enum) return false;
+    self.reporter.reportCompileError(
+        span.location,
+        ErrorCode.TYPE_MISMATCH,
+        "'{s}' has no variant '{s}'",
+        .{ ref.name, expr.data.EnumMember.lexeme },
+    );
+    self.fatal_error = true;
+    retype(actual, ref);
+    return true;
+}
+
+/// Give an untyped shorthand's type the enum its context chose. A type that
+/// is already named keeps its identity.
+fn retype(type_info: *ast.TypeInfo, ref: TypeRef) void {
+    if (!isUntypedVariant(type_info)) return;
+    type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref } };
+}
+
+/// The type of a `.Variant` shorthand its context has not typed yet.
+pub fn isUntypedVariant(type_info: *const ast.TypeInfo) bool {
+    return type_info.base == .Enum and type_info.custom_type == null;
+}
+
+/// The enum a `.variant` shorthand denotes where `expected` is wanted: the
+/// expected enum itself, or the single enum member of an expected group that
+/// declares the variant.
+fn contextualEnum(self: *const SemanticAnalyzer, expected: *const ast.TypeInfo, variant: []const u8) ?TypeRef {
+    const ref = refOf(expected) orelse return null;
+    const custom = self.custom_types.get(ref) orelse return null;
+    switch (custom.kind) {
+        .Enum => return if (declaresVariant(custom, variant)) ref else null,
+        .Group => {
+            const group_id = self.group_table.idOf(ref) orelse return null;
+            var found: ?TypeRef = null;
+            for (self.group_table.members(group_id) orelse &.{}) |member| {
+                if (member.kind != .Enum) continue;
+                const member_type = self.custom_types.get(member.ref) orelse continue;
+                if (!declaresVariant(member_type, variant)) continue;
+                if (found != null) return null; // two members declare it: ambiguous
+                found = member.ref;
+            }
+            return found;
+        },
+        .Struct => return null,
+    }
+}
+
+fn declaresVariant(custom: CustomTypeInfo, variant: []const u8) bool {
+    for (custom.enum_variants orelse &.{}) |declared| {
+        if (std.mem.eql(u8, declared.name, variant)) return true;
+    }
+    return false;
 }
 
 fn typeMatchesUnionMember(self: *const SemanticAnalyzer, exp_member: *const ast.TypeInfo, actual_member: *const ast.TypeInfo) bool {
     if (typesEqual(self, exp_member, actual_member)) return true;
-    // Allow group member widening: if exp_member is a group, check membership
-    if (exp_member.base == .Custom and exp_member.custom_type != null) {
-        if (self.custom_types.get(exp_member.custom_type.?)) |ct| {
-            if (ct.kind == .Group) {
-                return typeWidensToGroup(self, exp_member.custom_type.?, actual_member);
-            }
-        }
+    // A group accepts each of its members.
+    if (groupOf(self, exp_member)) |group| return typeWidensToGroup(self, group, actual_member);
+    return false;
+}
+
+fn typeIsGroupMember(self: *const SemanticAnalyzer, group: TypeRef, actual: *const ast.TypeInfo) bool {
+    const actual_ref = refOf(actual) orelse return false;
+    const group_id = self.group_table.idOf(group) orelse return false;
+    for (self.group_table.members(group_id) orelse return false) |member| {
+        if (member.ref.eql(actual_ref)) return true;
     }
     return false;
 }
 
-fn typeIsGroupMember(self: *const SemanticAnalyzer, group_name: []const u8, actual: *const ast.TypeInfo) bool {
-    const group_id = self.group_table.getIdByName(group_name) orelse return false;
-    const members = self.group_table.members(group_id) orelse return false;
-
-    const actual_name = if (actual.custom_type) |n| self.resolveTypeAlias(n) else return false;
-
-    for (members) |member| {
-        const member_type_name = switch (member.kind) {
-            .Enum => if (self.enum_table.getName(member.id)) |n| n else continue,
-            .Struct => if (self.struct_table.getName(member.id)) |n| n else continue,
-            .Group => if (self.group_table.getName(member.id)) |n| n else continue,
-        };
-        if (std.mem.eql(u8, member_type_name, actual_name)) return true;
-        if (std.mem.lastIndexOfScalar(u8, member_type_name, '.')) |dot| {
-            if (std.mem.eql(u8, member_type_name[dot + 1 ..], actual_name)) return true;
-        }
-        if (std.mem.eql(u8, member.qualifier, actual_name)) return true;
-    }
-    return false;
-}
-
-/// True when `actual` is assignable to the group `group_name` on its own: it is
-/// one of the group's members, it is the group itself, or it is `Nothing`.
+/// True when `actual` is assignable to `group` on its own: it is one of the
+/// group's members, it is the group itself, or it is `Nothing`.
 ///
 /// The last two cases are why this exists separately from `typeIsGroupMember`.
 /// A function declared `returns SomeGroup` commonly has one path returning a
@@ -165,14 +268,12 @@ fn typeIsGroupMember(self: *const SemanticAnalyzer, group_name: []const u8, actu
 /// union — so a union is assignable to the group exactly when each of its
 /// members is, and asking only "is this member one of the group's members?"
 /// rejects the group itself and `Nothing`.
-fn typeWidensToGroup(self: *const SemanticAnalyzer, group_name: []const u8, actual: *const ast.TypeInfo) bool {
+fn typeWidensToGroup(self: *const SemanticAnalyzer, group: TypeRef, actual: *const ast.TypeInfo) bool {
     if (actual.base == .Nothing) return true;
     if (actual.base == .Custom) {
-        if (actual.custom_type) |n| {
-            if (std.mem.eql(u8, self.resolveTypeAlias(n), group_name)) return true;
-        }
+        if (refOf(actual)) |ref| if (ref.eql(group)) return true;
     }
-    return typeIsGroupMember(self, group_name, actual);
+    return typeIsGroupMember(self, group, actual);
 }
 
 /// §4.1: a `match` on a group must cover every flattened member. An arm covers
@@ -186,8 +287,8 @@ pub fn checkGroupMatchExhaustive(
     subject_type: *const ast.TypeInfo,
     location: Reporting.Location,
 ) !void {
-    const group_name = matchSubjectGroupName(self, subject_type) orelse return;
-    const group_id = self.group_table.getIdByName(group_name) orelse return;
+    const group = matchSubjectGroup(self, subject_type) orelse return;
+    const group_id = self.group_table.idOf(group) orelse return;
     const members = self.group_table.members(group_id) orelse return;
     if (members.len == 0) return;
     if (matchHasElseArm(match_expr)) return;
@@ -204,8 +305,7 @@ pub fn checkGroupMatchExhaustive(
 
     for (members, 0..) |member, index| {
         if (member.kind != .Enum) continue;
-        const enum_type = self.custom_types.get(member.qualifier) orelse continue;
-        if (enum_type.kind != .Enum) continue;
+        const enum_type = (try self.customType(member.ref)) orelse continue;
         const variants = enum_type.enum_variants orelse continue;
         const covered = try allocator.alloc(bool, variants.len);
         @memset(covered, false);
@@ -214,11 +314,11 @@ pub fn checkGroupMatchExhaustive(
 
     for (match_expr.cases) |case| {
         // The path patterns decide an arm whenever the case has any; the bare
-        // pattern list repeats their last token for backward compatibility.
+        // pattern list repeats their last token.
         if (case.path_patterns.len > 0) {
             for (case.path_patterns) |path_pattern| {
                 if (path_pattern.tokens.len == 0) continue;
-                const split = path_pattern.split(group_name);
+                const split = path_pattern.split(group.name);
                 const index = groupMemberIndexOf(members, split.member.lexeme) orelse continue;
                 const reaches_inside = !path_pattern.is_wildcard and
                     path_pattern.field_names.len == 0 and
@@ -253,7 +353,7 @@ pub fn checkGroupMatchExhaustive(
         location,
         ErrorCode.NON_EXHAUSTIVE_MATCH,
         "Match on group '{s}' is not exhaustive: '{s}' not covered. Cover every member or add an 'else' arm",
-        .{ group_name, listed },
+        .{ group.name, listed },
     );
     self.fatal_error = true;
 }
@@ -270,12 +370,9 @@ const MemberCoverage = struct {
     enum_coverage: ?EnumCoverage = null,
 };
 
-pub fn matchSubjectGroupName(self: *const SemanticAnalyzer, subject_type: *const ast.TypeInfo) ?[]const u8 {
-    if (subject_type.base != .Custom) return null;
-    const name = self.resolveTypeAlias(subject_type.custom_type orelse return null);
-    const custom_type = self.custom_types.get(name) orelse return null;
-    if (custom_type.kind != .Group) return null;
-    return name;
+/// The group a match subject's type names, when it names one.
+pub fn matchSubjectGroup(self: *const SemanticAnalyzer, subject_type: *const ast.TypeInfo) ?TypeRef {
+    return groupOf(self, subject_type);
 }
 
 fn matchHasElseArm(match_expr: ast.MatchExpr) bool {
@@ -287,9 +384,9 @@ fn matchHasElseArm(match_expr: ast.MatchExpr) bool {
     return false;
 }
 
-fn groupMemberIndexOf(members: []const GroupTable.Member, name: []const u8) ?usize {
+fn groupMemberIndexOf(members: []const GroupTable.Member, qualifier: []const u8) ?usize {
     for (members, 0..) |member, index| {
-        if (std.mem.eql(u8, member.qualifier, name)) return index;
+        if (std.mem.eql(u8, member.qualifier, qualifier)) return index;
     }
     return null;
 }
@@ -310,7 +407,13 @@ fn isMemberCovered(member_coverage: MemberCoverage) bool {
     return true;
 }
 
-/// Helper: canonicalize a slice of *TypeInfo (dedup + stable order)
+/// Order two named types deterministically: by defining record, then name.
+fn refLessThan(a: TypeRef, b: TypeRef) bool {
+    if (a.module != b.module) return a.module < b.module;
+    return std.mem.lessThan(u8, a.name, b.name);
+}
+
+/// Canonicalize a slice of *TypeInfo (dedup + stable order).
 fn canonicalizeUnion(
     self: *const SemanticAnalyzer,
     allocator: std.mem.Allocator,
@@ -319,29 +422,26 @@ fn canonicalizeUnion(
     var list: std.ArrayListUnmanaged(*ast.TypeInfo) = .empty;
     defer list.deinit(allocator);
 
-    // dedup (structural)
     outer: for (members) |m| {
         for (list.items) |e| if (typesEqual(self, e, m)) continue :outer;
         try list.append(allocator, m);
     }
 
-    // stable order by base enum value, with tie-breakers
     std.sort.pdq(*ast.TypeInfo, list.items, {}, struct {
         fn lessThan(_: void, a: *ast.TypeInfo, b: *ast.TypeInfo) bool {
             const ba = @intFromEnum(a.base);
             const bb = @intFromEnum(b.base);
             if (ba != bb) return ba < bb;
 
-            // tie-breakers for deterministic printing
             switch (a.base) {
-                .Enum => return std.mem.order(u8, a.custom_type orelse "", b.custom_type orelse "") == .lt,
-                .Custom => {
-                    if (a.custom_type == null or b.custom_type == null) return false;
-                    return std.mem.lessThan(u8, a.custom_type.?, b.custom_type.?);
+                .Enum, .Custom => {
+                    const ra = refOf(a) orelse return false;
+                    const rb = refOf(b) orelse return false;
+                    return refLessThan(ra, rb);
                 },
                 .Array => {
                     if (a.array_type == null or b.array_type == null) return false;
-                    // Not ideal, but keeps it deterministic: compare base of element
+                    // Keeps it deterministic: compare base of element.
                     return @intFromEnum(a.array_type.?.base) < @intFromEnum(b.array_type.?.base);
                 },
                 else => return false,
@@ -357,40 +457,37 @@ fn canonicalizeUnion(
 /// (after flattening/canonicalization), so structurally distinct unions get
 /// distinct ids.
 pub fn getOrAssignUnionId(self: *SemanticAnalyzer, ut: *ast.UnionType) !UnionId {
-    if (self.union_ids.get(ut)) |existing| {
-        return existing;
-    }
+    if (self.union_ids.get(ut)) |existing| return existing;
     const id: UnionId = self.next_union_id;
     self.next_union_id += 1;
     try self.union_ids.put(ut, id);
     return id;
 }
 
-pub fn structIdForName(self: *SemanticAnalyzer, type_name: []const u8) ?StructId {
-    const resolved = self.resolveTypeAlias(type_name);
-    return self.struct_table.getIdByName(resolved);
+/// The kind of declaration a named type is.
+fn declKind(self: *const SemanticAnalyzer, ref: TypeRef) ?Types.CustomTypeKind {
+    const decl = self.graph.declOf(.{ .module = ref.module, .name = ref.name, .kind = .Type }) orelse return null;
+    return switch (decl) {
+        .@"struct" => .Struct,
+        .@"enum" => .Enum,
+        .group => .Group,
+        else => null,
+    };
 }
 
-pub fn structIdFromTypeInfo(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) ?StructId {
-    switch (ti.base) {
-        .Struct, .Custom => {
-            if (ti.custom_type) |name| {
-                const resolved = self.resolveTypeAlias(name);
-                if (self.custom_types.get(resolved)) |ct| {
-                    if (ct.kind != .Struct) return null;
-                }
-                return self.struct_table.getIdByName(resolved);
-            }
-            return null;
-        },
-        else => return null,
-    }
+/// The struct id of a named struct type. Ids are allocated on first sight, so
+/// a struct whose module's types are not registered yet already has its final
+/// id.
+pub fn structIdFromTypeInfo(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !?StructId {
+    if (ti.base != .Struct and ti.base != .Custom) return null;
+    const ref = refOf(ti) orelse return null;
+    if (declKind(self, ref) != .Struct) return null;
+    return try self.struct_table.idFor(ref);
 }
 
 /// Centralized AST→HIR lowering. Recurses through array/map/union/function
-/// element types and resolves custom struct/enum/group references by ID against
-/// the tables. Safe to call once all declarations are registered; see
-/// `recomputeStructFieldHIRTypes`.
+/// element types and resolves named struct/enum/group types to their table
+/// ids, which are stable from first sight.
 pub fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRType {
     return switch (ti.base) {
         .Int => HIRType.Int,
@@ -401,113 +498,57 @@ pub fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRT
         .Nothing => HIRType.Nothing,
 
         .Array => blk: {
-            // If your HIRType.Array expects a pointer, create/own it accordingly.
-            // Fallback: if you only have HIRType.Array *without payload, adjust here.
-            if (ti.array_type) |elem| {
-                const elem_hir = try lowerAstTypeToHIR(self, elem);
-                const elem_ptr = try self.allocator.create(HIRType);
-                elem_ptr.* = elem_hir;
-                break :blk HIRType{ .Array = elem_ptr };
-            } else {
-                // No element info → leave as a generic Array; if you have Error, prefer it.
-                break :blk HIRType.Nothing; // or .Error if available
-            }
+            const elem = ti.array_type orelse break :blk HIRType.Nothing;
+            const elem_ptr = try self.allocator.create(HIRType);
+            elem_ptr.* = try lowerAstTypeToHIR(self, elem);
+            break :blk HIRType{ .Array = elem_ptr };
         },
 
         .Map => blk: {
-            if (ti.map_key_type != null and ti.map_value_type != null) {
-                const key_hir = try lowerAstTypeToHIR(self, ti.map_key_type.?);
-                const val_hir = try lowerAstTypeToHIR(self, ti.map_value_type.?);
-                const key_ptr = try self.allocator.create(HIRType);
-                key_ptr.* = key_hir;
-                const val_ptr = try self.allocator.create(HIRType);
-                val_ptr.* = val_hir;
-                break :blk HIRType{ .Map = .{ .key = key_ptr, .value = val_ptr } };
-            } else {
-                // Create generic map with unknown key/value types
-                const key_ptr = try self.allocator.create(HIRType);
-                key_ptr.* = .Unknown;
-                const val_ptr = try self.allocator.create(HIRType);
-                val_ptr.* = .Unknown;
-                break :blk HIRType{ .Map = .{ .key = key_ptr, .value = val_ptr } };
-            }
+            const key_ptr = try self.allocator.create(HIRType);
+            const val_ptr = try self.allocator.create(HIRType);
+            key_ptr.* = if (ti.map_key_type) |key| try lowerAstTypeToHIR(self, key) else .Unknown;
+            val_ptr.* = if (ti.map_value_type) |value| try lowerAstTypeToHIR(self, value) else .Unknown;
+            break :blk HIRType{ .Map = .{ .key = key_ptr, .value = val_ptr } };
         },
 
-        .Enum => blk: {
-            if (ti.custom_type) |name| {
-                const resolved = self.resolveTypeAlias(name);
-                if (self.enum_table.getIdByName(resolved)) |eid| {
-                    break :blk HIRType{ .Enum = eid };
-                }
-            }
-            break :blk HIRType{ .Enum = 0 };
-        },
-
-        .Custom => blk: {
-            if (ti.custom_type) |name| {
-                const resolved = self.resolveTypeAlias(name);
-                if (self.custom_types.get(resolved)) |ct| {
-                    switch (ct.kind) {
-                        .Struct => {
-                            if (structIdForName(self, resolved)) |sid| {
-                                break :blk HIRType{ .Struct = sid };
-                            }
-                            break :blk HIRType{ .Struct = 0 };
-                        },
-                        .Enum => break :blk HIRType{ .Enum = self.enum_table.getIdByName(resolved) orelse 0 },
-                        .Group => break :blk HIRType{ .Group = self.group_table.getIdByName(resolved) orelse 0 },
-                    }
-                }
-            }
-            break :blk HIRType.Nothing;
+        .Enum, .Custom, .Struct => blk: {
+            const ref = refOf(ti) orelse break :blk if (ti.base == .Enum) HIRType{ .Enum = 0 } else if (ti.base == .Struct) HIRType{ .Struct = 0 } else HIRType.Nothing;
+            break :blk switch (declKind(self, ref) orelse break :blk HIRType.Nothing) {
+                .Struct => HIRType{ .Struct = try self.struct_table.idFor(ref) },
+                .Enum => HIRType{ .Enum = try self.enum_table.idFor(ref) },
+                .Group => HIRType{ .Group = try self.group_table.idFor(ref) },
+            };
         },
 
         .Function => blk: {
-            if (ti.function_type) |ft| {
-                // Convert params & return
-                var params_list: std.ArrayList(*const HIRType) = .empty;
-                defer params_list.deinit(self.allocator);
-                for (ft.params) |p| {
-                    const ph = try lowerAstTypeToHIR(self, &p);
-                    const pptr = try self.allocator.create(HIRType);
-                    pptr.* = ph;
-                    try params_list.append(self.allocator, pptr);
-                }
-                const ret_h = try lowerAstTypeToHIR(self, ft.return_type);
-                const ret_ptr = try self.allocator.create(HIRType);
-                ret_ptr.* = ret_h;
-                break :blk HIRType{ .Function = .{
-                    .params = try params_list.toOwnedSlice(self.allocator),
-                    .ret = ret_ptr,
-                } };
+            const ft = ti.function_type orelse break :blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = &HIRType{ .Unknown = {} } } };
+            var params_list: std.ArrayList(*const HIRType) = .empty;
+            defer params_list.deinit(self.allocator);
+            for (ft.params) |p| {
+                const pptr = try self.allocator.create(HIRType);
+                pptr.* = try lowerAstTypeToHIR(self, &p);
+                try params_list.append(self.allocator, pptr);
             }
-            break :blk HIRType{ .Function = .{ .params = &[_]*const HIRType{}, .ret = &HIRType{ .Unknown = {} } } };
-        },
-
-        .Struct => blk: {
-            if (structIdFromTypeInfo(self, ti)) |sid| {
-                break :blk HIRType{ .Struct = sid };
-            }
-            break :blk HIRType{ .Struct = 0 };
+            const ret_ptr = try self.allocator.create(HIRType);
+            ret_ptr.* = try lowerAstTypeToHIR(self, ft.return_type);
+            break :blk HIRType{ .Function = .{
+                .params = try params_list.toOwnedSlice(self.allocator),
+                .ret = ret_ptr,
+            } };
         },
 
         .Union => blk: {
-            const ut = ti.union_type.?;
-            const flat = try flattenUnionType(self, ut);
-
-            // Lower members
+            const flat = try flattenUnionType(self, ti.union_type.?);
             var lowered: std.ArrayListUnmanaged(*const HIRType) = .empty;
             defer lowered.deinit(self.allocator);
             for (flat.types) |mt| {
-                const mh = try lowerAstTypeToHIR(self, mt);
                 const mptr = try self.allocator.create(HIRType);
-                mptr.* = mh;
+                mptr.* = try lowerAstTypeToHIR(self, mt);
                 try lowered.append(self.allocator, mptr);
             }
-            // Register union type and attach a stable id
             const union_id = try getOrAssignUnionId(self, flat);
-            const members_slice = try lowered.toOwnedSlice(self.allocator);
-            break :blk HIRType{ .Union = .{ .id = union_id, .members = members_slice } };
+            break :blk HIRType{ .Union = .{ .id = union_id, .members = try lowered.toOwnedSlice(self.allocator) } };
         },
     };
 }
@@ -540,7 +581,6 @@ pub fn flattenUnionType(self: *SemanticAnalyzer, union_type: *ast.UnionType) !*a
 }
 
 pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.TypeInfo {
-    // First flatten any unions inside inputs
     var flat: std.ArrayListUnmanaged(*ast.TypeInfo) = .empty;
     defer flat.deinit(self.allocator);
 
@@ -558,10 +598,7 @@ pub fn createUnionType(self: *SemanticAnalyzer, types: []*ast.TypeInfo) !*ast.Ty
     }
 
     const unique = try canonicalizeUnion(self, self.allocator, flat.items);
-
-    if (unique.len == 1) {
-        return unique[0];
-    }
+    if (unique.len == 1) return unique[0];
 
     const ut = try self.allocator.create(ast.UnionType);
     ut.* = .{ .types = unique, .current_type_index = null };
@@ -590,18 +627,14 @@ pub fn subtractTypeFromUnion(self: *SemanticAnalyzer, union_type_info: *const as
     var remaining: std.ArrayListUnmanaged(*ast.TypeInfo) = .empty;
     defer remaining.deinit(self.allocator);
     for (u.types) |member| {
-        if (!typesEqual(self, target, member)) {
-            try remaining.append(self.allocator, member);
-        }
+        if (!typesEqual(self, target, member)) try remaining.append(self.allocator, member);
     }
     if (remaining.items.len == 0) {
         const nothing = try ast.TypeInfo.createDefault(self.allocator);
         nothing.* = .{ .base = .Nothing };
         return nothing;
     }
-    if (remaining.items.len == 1) {
-        return remaining.items[0];
-    }
+    if (remaining.items.len == 1) return remaining.items[0];
     return try createUnionType(self, remaining.items);
 }
 
@@ -610,24 +643,21 @@ pub fn unifyTypes(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual
 }
 
 pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, actual_expr: ?*ast.Expr, span: ast.SourceSpan) !void {
+    if (actual_expr) |expr| contextualizeEnumMember(self, expr, actual, expected);
+
+    // Two shorthands with no context yet agree; their context types both.
+    if (isUntypedVariant(expected) and isUntypedVariant(actual)) return;
+    if (actual_expr) |expr| if (reportUndeclaredVariant(self, expr, actual, expected, span)) return;
+
     // ── Phase 1: Group widening ──
     // If expected is a group, any member type (or union of members) is assignable.
-    if (expected.base == .Custom and expected.custom_type != null) {
-        if (self.custom_types.get(expected.custom_type.?)) |ct| {
-            if (ct.kind == .Group) {
-                if (typeWidensToGroup(self, expected.custom_type.?, actual)) return;
-                if (actual.base == .Union) {
-                    if (actual.union_type) |act_u| {
-                        var all_allowed = true;
-                        for (act_u.types) |act_m| {
-                            if (!typeWidensToGroup(self, expected.custom_type.?, act_m)) {
-                                all_allowed = false;
-                                break;
-                            }
-                        }
-                        if (all_allowed) return;
-                    }
-                }
+    if (groupOf(self, expected)) |group| {
+        if (typeWidensToGroup(self, group, actual)) return;
+        if (actual.base == .Union) {
+            if (actual.union_type) |act_u| {
+                for (act_u.types) |act_m| {
+                    if (!typeWidensToGroup(self, group, act_m)) break;
+                } else return;
             }
         }
     }
@@ -639,25 +669,16 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
             if (actual.base == .Union) {
                 if (actual.union_type) |act_u| {
                     for (act_u.types) |act_m| {
-                        var allowed = false;
                         for (exp_u.types) |exp_m| {
-                            if (typeMatchesUnionMember(self, exp_m, act_m)) {
-                                allowed = true;
-                                break;
-                            }
-                        }
-                        if (!allowed) {
-                            var list: std.ArrayListUnmanaged(u8) = .empty;
-                            defer list.deinit(self.allocator);
-                            for (exp_u.types, 0..) |m, i| {
-                                if (i > 0) list.appendSlice(self.allocator, " | ") catch {}; // building error message; partial output ok on OOM
-                                list.appendSlice(self.allocator, typeLabel(m)) catch {};
-                            }
+                            if (typeMatchesUnionMember(self, exp_m, act_m)) break;
+                        } else {
+                            const listed = try unionLabel(self, exp_u);
+                            defer self.allocator.free(listed);
                             self.reporter.reportCompileError(
                                 span.location,
                                 ErrorCode.TYPE_MISMATCH,
                                 "Type mismatch: expected union ({s}), got member of kind {s}",
-                                .{ list.items, typeLabel(act_m) },
+                                .{ listed, typeLabel(act_m) },
                             );
                             self.fatal_error = true;
                             return;
@@ -669,17 +690,13 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
                 for (exp_u.types) |m| {
                     if (typeMatchesUnionMember(self, m, actual)) return;
                 }
-                var list: std.ArrayListUnmanaged(u8) = .empty;
-                defer list.deinit(self.allocator);
-                for (exp_u.types, 0..) |m, i| {
-                    if (i > 0) list.appendSlice(self.allocator, " | ") catch {};
-                    list.appendSlice(self.allocator, typeLabel(m)) catch {};
-                }
+                const listed = try unionLabel(self, exp_u);
+                defer self.allocator.free(listed);
                 self.reporter.reportCompileError(
                     span.location,
                     ErrorCode.TYPE_MISMATCH,
                     "Type mismatch: expected union ({s}), got {s}",
-                    .{ list.items, typeLabel(actual) },
+                    .{ listed, typeLabel(actual) },
                 );
                 self.fatal_error = true;
                 return;
@@ -694,7 +711,7 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
             span.location,
             ErrorCode.TYPE_MISMATCH,
             "{s} is not assignable to type {s}; use 'as' or 'match' to narrow the union",
-            .{ typeLabel(actual), typeLabel(expected) },
+            try typeLabels(self, actual, expected),
         );
         self.fatal_error = true;
         return;
@@ -772,38 +789,19 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
 
         // A named type is the same type however it is spelled: an enum
         // reference or value can arrive as `.Enum` or `.Custom` with the same
-        // `custom_type`, and the inline-Zig signature parser spells enums as
-        // `.Enum`. Names are unique across the custom-type table, so a matching
-        // name means a matching type.
+        // identity, and the inline-Zig signature parser spells enums as
+        // `.Enum`. Identity decides.
         const expected_named = expected.base == .Enum or expected.base == .Custom;
         const actual_named = actual.base == .Enum or actual.base == .Custom;
-        if (expected_named and actual_named and
-            expected.custom_type != null and actual.custom_type != null and
-            std.mem.eql(u8, expected.custom_type.?, actual.custom_type.?))
-        {
-            return;
-        }
-
-        if (expected.base == .Custom) {
-            if (expected.custom_type) |ct_name| {
-                if (!self.custom_types.contains(ct_name)) {
-                    self.reporter.reportCompileError(
-                        span.location,
-                        ErrorCode.TYPE_MISMATCH,
-                        "no type '{s}'",
-                        .{ct_name},
-                    );
-                    self.fatal_error = true;
-                    return;
-                }
-            }
+        if (expected_named and actual_named) {
+            if (refOf(expected)) |er| if (refOf(actual)) |ar| if (er.eql(ar)) return;
         }
 
         self.reporter.reportCompileError(
             span.location,
             ErrorCode.TYPE_MISMATCH,
             "{s} is not assignable to type {s}",
-            .{ typeLabel(actual), typeLabel(expected) },
+            try typeLabels(self, actual, expected),
         );
         self.fatal_error = true;
         return;
@@ -849,802 +847,140 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
     }
 }
 
-/// unchanged
-pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
-    if (self.current_scope) |scope| {
-        const result = scope.lookupVariable(name);
-        if (result != null) {
-            scope.markUsed(name);
-            return result;
-        }
+fn unionLabel(self: *SemanticAnalyzer, union_type: *const ast.UnionType) ![]u8 {
+    var list: std.ArrayListUnmanaged(u8) = .empty;
+    for (union_type.types, 0..) |m, i| {
+        if (i > 0) try list.appendSlice(self.allocator, " | ");
+        try list.appendSlice(self.allocator, typeLabel(m));
     }
-    if (self.parser) |parser| {
-        const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
-        _ = parser_mut.ensureImportedSymbol(name) catch |err| {
-            reportLazyModuleError(self, null, err);
-            return null;
-        };
-
-        if (parser.imported_symbols) |imported_symbols| {
-            if (imported_symbols.getPtr(name)) |imported_symbol| {
-                imported_symbol.used = true;
-                const variable = createImportedSymbolVariable(self, name, imported_symbol.*);
-                // The binding is created lazily on an actual reference, so it is
-                // used by construction; without this an imported type referenced
-                // only from a type position would warn as an unused variable.
-                if (variable) |v| v.used = true;
-                return variable;
-            }
-        }
-        _ = parser_mut.ensureModuleNamespace(name) catch |err| {
-            reportLazyModuleError(self, null, err);
-            return null;
-        };
-        if (parser.module_namespaces.contains(name)) {
-            return createModuleNamespaceVariable(self, name);
-        }
-    }
-    return null;
+    return list.toOwnedSlice(self.allocator);
 }
 
-pub fn createModuleNamespaceVariable(self: *SemanticAnalyzer, name: []const u8) ?*Variable {
-    const type_info = ast.TypeInfo.createDefault(self.allocator) catch return null;
-    errdefer self.allocator.destroy(type_info);
-
-    type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = name };
-    const token_type = eval.convertTypeToTokenType(type_info.base);
-
-    if (self.current_scope) |scope| {
-        const placeholder_value = TokenLiteral{ .nothing = {} };
-        const variable = scope.createValueBinding(name, placeholder_value, token_type, type_info, false) catch return null;
-        // The namespace binding is created lazily on an actual reference, so it
-        // is used by construction. Unused imports are reported separately via
-        // reportUnusedImports, so this never hides a real diagnostic.
-        variable.used = true;
-        return variable;
-    }
-    return null;
-}
-
-fn reportLazyModuleError(self: *SemanticAnalyzer, loc: ?Reporting.Location, err: anyerror) void {
-    switch (err) {
-        error.ModuleNotFound => {
-            self.reporter.reportCompileError(loc, ErrorCode.MODULE_NOT_FOUND, "Module could not be resolved during lazy loading", .{});
-            self.fatal_error = true;
-        },
-        error.CircularImport => {
-            self.reporter.reportCompileError(loc, ErrorCode.CIRCULAR_IMPORT, "Circular import detected during lazy loading", .{});
-            self.fatal_error = true;
-        },
-        else => {
-            self.reporter.reportCompileError(loc, ErrorCode.INTERNAL_ERROR, "Module resolution failed during lazy loading: {s}", .{@errorName(err)});
-            self.fatal_error = true;
-        },
-    }
-}
-
-pub fn isModuleNamespace(self: *SemanticAnalyzer, name: []const u8) bool {
-    if (self.parser) |parser| {
-        const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
-        _ = parser_mut.ensureModuleNamespace(name) catch |err| {
-            reportLazyModuleError(self, null, err);
-            return false;
-        };
-        if (parser.module_namespaces.contains(name)) return true;
-
-        if (std.mem.indexOfScalar(u8, name, '.')) |dot_idx| {
-            const root = name[0..dot_idx];
-            _ = parser_mut.ensureModuleNamespace(root) catch |err| {
-                reportLazyModuleError(self, null, err);
-                return false;
-            };
-            if (parser.module_namespaces.contains(root)) return true;
-            var it = parser.module_namespaces.iterator();
-            while (it.next()) |entry| {
-                const mi = entry.value_ptr.*;
-                if (std.mem.eql(u8, mi.name, root) or std.mem.eql(u8, mi.file_path, root)) return true;
-            }
-        }
-    }
-    return false;
-}
-
-/// The module a qualified access (`mod.field`) names. Imported symbols are
-/// keyed by the qualifier written at the use site, so the namespace map must be
-/// probed with exactly that qualifier. Falling back to the declared module name
-/// or file path keeps a re-exported alias resolvable when the qualifier differs
-/// from the key it was registered under.
-fn findModuleByQualifier(parser: *@import("../../parser/parser_types.zig").Parser, qualifier: []const u8) ?ast.ModuleInfo {
-    if (parser.module_namespaces.get(qualifier)) |module_info| return module_info;
-
-    var it = parser.module_namespaces.iterator();
-    while (it.next()) |entry| {
-        const module_info = entry.value_ptr.*;
-        if (std.mem.eql(u8, module_info.name, qualifier)) return module_info;
-        if (std.mem.eql(u8, module_info.file_path, qualifier)) return module_info;
-    }
-    return null;
-}
-
-/// unchanged domain logic (minor nits left as-is)
-pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8, field_name: []const u8, span: ast.SourceSpan) !*ast.TypeInfo {
-    var type_info = try ast.TypeInfo.createDefault(self.allocator);
-    errdefer self.allocator.destroy(type_info);
-
-    if (self.parser) |parser| {
-        const parser_mut: *@import("../../parser/parser_types.zig").Parser = @constCast(parser);
-        _ = parser_mut.ensureModuleNamespace(module_name) catch |err| {
-            reportLazyModuleError(self, span.location, err);
-            return err;
-        };
-        if (parser.module_namespaces.get(module_name)) |module_info| {
-            for (module_info.imports) |import_info| {
-                if (!import_info.is_public or import_info.import_type != .Module) continue;
-                if (import_info.namespace_alias) |alias| {
-                    if (std.mem.eql(u8, alias, field_name)) {
-                        _ = parser_mut.ensureNestedModuleNamespace(module_name, field_name) catch |err| {
-                            reportLazyModuleError(self, span.location, err);
-                            return err;
-                        };
-                        const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name });
-                        type_info.* = ast.TypeInfo{
-                            .base = .Custom,
-                            .is_mutable = false,
-                            .custom_type = qualified,
-                        };
-                        return type_info;
-                    }
-                }
-            }
-        }
-
-        const nested_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name }) catch null;
-        if (nested_name) |qualified| {
-            defer self.allocator.free(qualified);
-            _ = parser_mut.ensureNestedModuleNamespace(module_name, field_name) catch |err| {
-                reportLazyModuleError(self, span.location, err);
-                return err;
-            };
-            if (parser.module_namespaces.contains(qualified)) {
-                const owned = try self.allocator.dupe(u8, qualified);
-                type_info.* = ast.TypeInfo{
-                    .base = .Custom,
-                    .is_mutable = false,
-                    .custom_type = owned,
-                };
-                return type_info;
-            }
-        }
-
-        // Look for the field in the module's imported symbols
-        if (parser.imported_symbols) |imported_symbols| {
-            const full_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name }) catch {
-                self.reporter.reportCompileError(
-                    span.location,
-                    ErrorCode.INTERNAL_ERROR,
-                    "Internal error: Could not format module field name",
-                    .{},
-                );
-                self.fatal_error = true;
-                type_info.base = .Nothing;
-                return type_info;
-            };
-            defer self.allocator.free(full_name);
-
-            if (imported_symbols.getPtr(full_name)) |imported_symbol| {
-                imported_symbol.used = true;
-                // Return appropriate type based on the imported symbol kind
-                switch (imported_symbol.kind) {
-                    .Function => {
-                        // Prefer imported metadata when present (works for inline zig modules too).
-                        if (imported_symbol.param_count != null or imported_symbol.return_type_info != null) {
-                            const pc: usize = if (imported_symbol.param_count) |x| @intCast(x) else 0;
-                            var params_buf = try self.allocator.alloc(ast.TypeInfo, pc);
-                            if (imported_symbol.param_types) |pts| {
-                                const n = @min(pts.len, params_buf.len);
-                                @memcpy(params_buf[0..n], pts[0..n]);
-                                // Fill remainder with Nothing if needed
-                                for (params_buf[n..]) |*ti| ti.* = ast.TypeInfo{ .base = .Nothing };
-                            } else {
-                                for (params_buf) |*ti| ti.* = ast.TypeInfo{ .base = .Nothing };
-                            }
-                            const ret_ptr = try ast.TypeInfo.createDefault(self.allocator);
-                            ret_ptr.* = if (imported_symbol.return_type_info) |ri| ri else ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
-                            const ft_ptr = try self.allocator.create(ast.FunctionType);
-                            ft_ptr.* = ast.FunctionType{ .params = params_buf, .return_type = ret_ptr, .param_aliases = imported_symbol.param_aliases };
-                            type_info.* = ast.TypeInfo{ .base = .Function, .is_mutable = false, .function_type = ft_ptr };
-                            return type_info;
-                        }
-
-                        // Try to find the actual function definition to get its return type
-                        var found_func_type: ?*ast.FunctionType = null;
-
-                        // Search only the named module's AST. Matching by bare
-                        // field name across every loaded module silently binds
-                        // a qualified call (`a.fn`) to a same-named function in
-                        // an unrelated module.
-                        if (findModuleByQualifier(parser_mut, module_name)) |module_info| {
-                            if (module_info.ast) |module_ast| {
-                                if (module_ast.data == .Block) {
-                                    const stmts = module_ast.data.Block.statements;
-                                    for (stmts) |s| {
-                                        switch (s.data) {
-                                            .FunctionDecl => |f| {
-                                                if (!f.is_public) continue;
-                                                if (!std.mem.eql(u8, f.name.lexeme, field_name)) continue;
-
-                                                // Found matching function; construct FunctionType from its params/return
-                                                const ft = self.allocator.create(ast.FunctionType) catch break;
-
-                                                // Duplicate param TypeInfos into a flat slice
-                                                var params_list = std.array_list.Managed(ast.TypeInfo).init(self.allocator);
-                                                errdefer params_list.deinit();
-                                                for (f.params) |p| {
-                                                    const ti_ptr = if (p.type_expr) |texpr| (self.typeExprToTypeInfo(texpr) catch null) else null;
-                                                    const ti = if (ti_ptr) |tmp| tmp.* else ast.TypeInfo{ .base = .Nothing };
-                                                    params_list.append(ti) catch break;
-                                                }
-                                                const params_slice = params_list.toOwnedSlice() catch break;
-
-                                                // Carry each parameter's `^` alias flag so call
-                                                // validation can enforce the opt-in rules
-                                                // (docs/alias.md) for imported module functions.
-                                                const aliases = self.allocator.alloc(bool, f.params.len) catch break;
-                                                for (f.params, 0..) |p, pi| aliases[pi] = p.is_alias;
-
-                                                // Use the actual return type from the function declaration
-                                                const ret_ptr = ast.TypeInfo.createDefault(self.allocator) catch break;
-                                                ret_ptr.* = f.return_type_info;
-
-                                                ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr, .param_aliases = aliases };
-                                                found_func_type = ft;
-                                                break;
-                                            },
-                                            else => {},
-                                        }
-                                        if (found_func_type != null) break;
-                                    }
-                                }
-                            }
-                        }
-
-                        // Fallback if not found: zero params and nothing return (safer than Int)
-                        if (found_func_type == null) {
-                            const return_type = ast.TypeInfo.createDefault(self.allocator) catch return type_info;
-                            return_type.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
-                            const function_type = self.allocator.create(ast.FunctionType) catch return type_info;
-                            function_type.* = ast.FunctionType{ .params = &[_]ast.TypeInfo{}, .return_type = return_type };
-                            found_func_type = function_type;
-                        }
-
-                        type_info.* = ast.TypeInfo{
-                            .base = .Function,
-                            .is_mutable = false,
-                            .function_type = found_func_type,
-                        };
-                    },
-                    .Variable => {
-                        // Look up the actual variable type from the module's AST
-                        var found_var_type: ?ast.TypeInfo = null;
-
-                        // Search only the named module's AST (see the function
-                        // case above): a bare-name match across every loaded
-                        // module can bind `a.thing` to another module's value.
-                        if (findModuleByQualifier(parser_mut, module_name)) |module_info| {
-                            if (module_info.ast) |module_ast| {
-                                if (module_ast.data == .Block) {
-                                    const stmts = module_ast.data.Block.statements;
-                                    for (stmts) |s| {
-                                        switch (s.data) {
-                                            .VarDecl => |v| {
-                                                if (!v.is_public) continue;
-                                                if (!std.mem.eql(u8, v.name.lexeme, field_name)) continue;
-
-                                                // Found matching variable; use its type info
-                                                found_var_type = v.type_info;
-                                                break;
-                                            },
-                                            else => {},
-                                        }
-                                        if (found_var_type != null) break;
-                                    }
-                                }
-                            }
-                        }
-
-                        if (found_var_type) |var_type| {
-                            type_info.* = var_type;
-                        } else {
-                            // Fallback: unknown imported variable type should not coerce to int.
-                            type_info.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
-                        }
-                    },
-                    .Struct => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try self.allocator.dupe(u8, field_name) },
-                    // Carry the bare enum name so the type unifies with the same
-                    // enum spelled anywhere else (a local declaration, an
-                    // inline-Zig `.Enum{custom}` parameter, ...). Without it the
-                    // type is anonymous `.Enum` and cannot meet its parameter.
-                    .Enum => type_info.* = ast.TypeInfo{ .base = .Enum, .is_mutable = false, .custom_type = if (imported_symbol.enum_type_name) |n| try self.allocator.dupe(u8, n) else null },
-                    .Group => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-                    .Type => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false, .custom_type = try self.allocator.dupe(u8, field_name) },
-                    .Import => type_info.* = ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-                }
-                return type_info;
-            }
-        }
-    }
-
-    // Field not found in module
-    self.reporter.reportCompileError(
-        span.location,
-        ErrorCode.FIELD_NOT_FOUND,
-        "Field '{s}' not found in module '{s}'",
-        .{ field_name, module_name },
-    );
-    self.fatal_error = true;
-    type_info.base = .Nothing;
-    return error.NotImplemented;
-}
-
-pub fn createImportedSymbolVariable(self: *SemanticAnalyzer, name: []const u8, imported_symbol: import_parser.ImportedSymbol) ?*Variable {
-    // Create a TypeInfo based on the imported symbol kind
-    const type_info = ast.TypeInfo.createDefault(self.allocator) catch return null;
-    errdefer self.allocator.destroy(type_info);
-
-    const ti = switch (imported_symbol.kind) {
-        .Function => blk: {
-            // Build a best-effort function type using imported metadata when available;
-            // fall back to scanning module_namespaces.
-            var built_func_type: ?*ast.FunctionType = null;
-
-            // If import captured param_count/return_type_info, prefer that
-            const maybe_param_count = imported_symbol.param_count;
-            const maybe_return_info = imported_symbol.return_type_info;
-            if (maybe_param_count != null or maybe_return_info != null) {
-                const pc: usize = if (maybe_param_count) |x| @intCast(x) else 0;
-                if (self.allocator.alloc(ast.TypeInfo, pc) catch null) |params_buf| {
-                    // Default parameter types to Nothing when unknown
-                    for (params_buf) |*ti| ti.* = ast.TypeInfo{ .base = .Nothing };
-                    if (ast.TypeInfo.createDefault(self.allocator) catch null) |ret_ptr| {
-                        ret_ptr.* = if (maybe_return_info) |ri| ri else ast.TypeInfo{ .base = .Nothing };
-                        if (self.allocator.create(ast.FunctionType) catch null) |ft_ptr| {
-                            ft_ptr.* = ast.FunctionType{ .params = params_buf, .return_type = ret_ptr, .param_aliases = imported_symbol.param_aliases };
-                            built_func_type = ft_ptr;
-                        }
-                    }
-                }
-            }
-
-            if (built_func_type == null) {
-                if (self.parser) |parser| {
-                    var it = parser.module_namespaces.iterator();
-                    while (it.next()) |entry| {
-                        const module_info = entry.value_ptr.*;
-                        if (module_info.ast) |module_ast| {
-                            if (module_ast.data == .Block) {
-                                const stmts = module_ast.data.Block.statements;
-                                for (stmts) |s| {
-                                    switch (s.data) {
-                                        .FunctionDecl => |f| {
-                                            if (!f.is_public) continue;
-                                            if (!std.mem.eql(u8, f.name.lexeme, name)) continue;
-                                            // Found matching function; construct FunctionType from its params/return
-                                            const ft = self.allocator.create(ast.FunctionType) catch break;
-                                            // Duplicate param TypeInfos into a flat slice as FunctionType expects []TypeInfo
-                                            var params_list = std.array_list.Managed(ast.TypeInfo).init(self.allocator);
-                                            errdefer params_list.deinit();
-                                            for (f.params) |p| {
-                                                const ti_ptr = if (p.type_expr) |texpr| (self.typeExprToTypeInfo(texpr) catch null) else null;
-                                                const ti = if (ti_ptr) |tmp| tmp.* else ast.TypeInfo{ .base = .Nothing };
-                                                params_list.append(ti) catch break;
-                                            }
-                                            const params_slice = params_list.toOwnedSlice() catch break;
-                                            const aliases = self.allocator.alloc(bool, f.params.len) catch break;
-                                            for (f.params, 0..) |p, pi| aliases[pi] = p.is_alias;
-                                            const ret_ptr = ast.TypeInfo.createDefault(self.allocator) catch break;
-                                            ret_ptr.* = f.return_type_info;
-                                            ft.* = ast.FunctionType{ .params = params_slice, .return_type = ret_ptr, .param_aliases = aliases };
-                                            built_func_type = ft;
-                                            break;
-                                        },
-                                        else => {},
-                                    }
-                                }
-                            }
-                        }
-                        if (built_func_type != null) break;
-                    }
-                }
-            }
-
-            // Fallback if not found: zero params and nothing return (safer than Int)
-            if (built_func_type == null) {
-                const return_type = ast.TypeInfo.createDefault(self.allocator) catch return null;
-                return_type.* = ast.TypeInfo{ .base = .Nothing, .is_mutable = false };
-                const function_type = self.allocator.create(ast.FunctionType) catch return null;
-                function_type.* = ast.FunctionType{ .params = &[_]ast.TypeInfo{}, .return_type = return_type };
-                built_func_type = function_type;
-            }
-
-            break :blk ast.TypeInfo{ .base = .Function, .is_mutable = false, .function_type = built_func_type };
-        },
-        .Variable => ast.TypeInfo{ .base = .Nothing, .is_mutable = false },
-        .Struct => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-        .Enum => ast.TypeInfo{ .base = .Enum, .is_mutable = false, .custom_type = if (imported_symbol.enum_type_name) |n| (self.allocator.dupe(u8, n) catch null) else null },
-        .Group => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-        .Type => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-        .Import => ast.TypeInfo{ .base = .Custom, .is_mutable = false },
-    };
-
-    type_info.* = ti;
-
-    // Convert TypeInfo to TokenType
-    const token_type = eval.convertTypeToTokenType(type_info.base);
-
-    // Create a Variable object for the imported symbol using the scope's createValueBinding
-    if (self.current_scope) |scope| {
-        // Create a placeholder value for the imported symbol
-        const placeholder_value = TokenLiteral{ .nothing = {} };
-
-        const variable = scope.createValueBinding(name, placeholder_value, token_type, type_info, false) catch return null;
-        return variable;
-    }
-
-    return null;
-}
-
-pub fn registerStructType(self: *SemanticAnalyzer, struct_name: []const u8, fields: []const ast.StructFieldType) !void {
-    const already_registered = self.custom_types.contains(struct_name);
-
-    var struct_fields = try self.allocator.alloc(StructField, fields.len);
+/// Register the struct `ref` with its resolved fields: its description in
+/// `custom_types` and its table entry, with each field's HIR type and nested
+/// struct id (stable from first sight, so a field naming a struct of a module
+/// not yet registered lowers to that struct's final id).
+pub fn registerStructType(self: *SemanticAnalyzer, ref: TypeRef, fields: []const ast.StructFieldType) !void {
+    const struct_fields = try self.allocator.alloc(StructField, fields.len);
     for (fields, 0..) |field, index| {
-        var custom_type_name: ?[]const u8 = null;
-        if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
-            custom_type_name = try self.allocator.dupe(u8, field.type_info.custom_type.?);
-        }
-        const full_type_info = try ast.TypeInfo.createDefault(self.allocator);
-        full_type_info.* = field.type_info.*; // NOTE: shallow copy; deep-copy if needed
-        struct_fields[index] = StructField{
-            .name = try self.allocator.dupe(u8, field.name),
-            .field_type_info = full_type_info,
-            .custom_type_name = custom_type_name,
+        struct_fields[index] = .{
+            .name = field.name,
+            .field_type_info = field.type_info,
             .index = @intCast(index),
             .is_public = field.is_public,
         };
     }
+    try self.custom_types.put(ref, .{ .ref = ref, .kind = .Struct, .struct_fields = struct_fields });
 
-    if (!already_registered) {
-        const custom_type = CustomTypeInfo{
-            .name = try self.allocator.dupe(u8, struct_name),
-            .kind = .Struct,
-            .struct_fields = struct_fields,
-        };
-        try self.custom_types.put(struct_name, custom_type);
-    } else {
-        // Update existing placeholder with concrete struct fields and kind
-        if (self.custom_types.getPtr(struct_name)) |ct_ptr| {
-            ct_ptr.kind = .Struct;
-            ct_ptr.struct_fields = struct_fields;
-        }
-    }
-
-    var table_inputs = try self.allocator.alloc(StructTable.FieldInput, fields.len);
+    const table_inputs = try self.allocator.alloc(StructTable.FieldInput, fields.len);
     defer self.allocator.free(table_inputs);
     for (fields, 0..) |field, idx| {
-        table_inputs[idx] = .{
-            .name = field.name,
-            .type_info = field.type_info,
-        };
+        table_inputs[idx] = .{ .name = field.name, .type_info = field.type_info };
     }
-    const struct_id = try self.struct_table.registerStruct(struct_name, table_inputs);
+    const struct_id = try self.struct_table.registerStruct(ref, table_inputs);
 
-    // Runtime memory registration with proper HIR lowering
-    var mem_fields = try self.allocator.alloc(StructField, fields.len);
     for (fields, 0..) |field, i| {
-        const mapped_hir_type = try lowerAstTypeToHIR(self, field.type_info);
-        var ctn: ?[]const u8 = null;
-        if (field.type_info.base == .Custom and field.type_info.custom_type != null) {
-            ctn = try self.allocator.dupe(u8, field.type_info.custom_type.?);
-        }
-        mem_fields[i] = StructField{
-            .name = try self.allocator.dupe(u8, field.name),
-            .field_type_info = field.type_info,
-            .custom_type_name = ctn,
-            .index = @intCast(i),
-            .is_public = field.is_public,
-        };
-
-        self.struct_table.setFieldHIRType(struct_id, @intCast(i), mapped_hir_type);
-        if (structIdFromTypeInfo(self, field.type_info)) |nested_struct_id| {
+        self.struct_table.setFieldHIRType(struct_id, @intCast(i), try lowerAstTypeToHIR(self, field.type_info));
+        if (try structIdFromTypeInfo(self, field.type_info)) |nested_struct_id| {
             self.struct_table.setNestedStructId(struct_id, @intCast(i), nested_struct_id);
         }
     }
-
-    const mem_struct = CustomTypeInfo{
-        .name = try self.allocator.dupe(u8, struct_name),
-        .kind = .Struct,
-        .enum_variants = null,
-        .struct_fields = mem_fields,
-    };
-    try self.memory.registerCustomType(mem_struct);
 }
 
-pub fn registerCustomType(self: *SemanticAnalyzer, type_name: []const u8, kind: Types.CustomTypeKind) !void {
-    const custom_type = CustomTypeInfo{
-        .name = try self.allocator.dupe(u8, type_name),
-        .kind = kind,
-    };
-    try self.custom_types.put(type_name, custom_type);
-}
-
-pub fn registerEnumType(self: *SemanticAnalyzer, enum_name: []const u8, variants: []const []const u8) !void {
-    var enum_variants = try self.allocator.alloc(Types.EnumVariant, variants.len);
+pub fn registerEnumType(self: *SemanticAnalyzer, ref: TypeRef, variants: []const []const u8) !void {
+    const enum_variants = try self.allocator.alloc(Types.EnumVariant, variants.len);
     for (variants, 0..) |variant_name, index| {
-        enum_variants[index] = Types.EnumVariant{
-            .name = try self.allocator.dupe(u8, variant_name),
-            .index = @intCast(index),
-        };
+        enum_variants[index] = .{ .name = variant_name, .index = @intCast(index) };
     }
-
-    const custom_type = CustomTypeInfo{
-        .name = try self.allocator.dupe(u8, enum_name),
-        .kind = .Enum,
-        .enum_variants = enum_variants,
-    };
-
-    try self.custom_types.put(enum_name, custom_type);
-
-    // Mirror to VM memory
-    var mem_enum_variants = try self.allocator.alloc(Types.EnumVariant, variants.len);
-    for (variants, 0..) |variant_name, i| {
-        mem_enum_variants[i] = Types.EnumVariant{
-            .name = try self.allocator.dupe(u8, variant_name),
-            .index = @intCast(i),
-        };
-    }
-    const mem_enum = CustomTypeInfo{
-        .name = try self.allocator.dupe(u8, enum_name),
-        .kind = .Enum,
-        .enum_variants = mem_enum_variants,
-        .struct_fields = null,
-    };
-    try self.memory.registerCustomType(mem_enum);
-
-    // Also mirror into the global EnumTable so later stages (HIR/LLVM/VM)
-    // can refer to enums by ID in a uniform way, just like structs.
-    if (@hasField(@TypeOf(self.*), "enum_table")) {
-        // EnumTable is a best-effort mirror; the semantic analyzer owns the
-        // authoritative variant list. Silently discard registration errors.
-        _ = self.enum_table.registerEnum(enum_name, variants) catch {};
-    }
+    try self.custom_types.put(ref, .{ .ref = ref, .kind = .Enum, .enum_variants = enum_variants });
+    _ = try self.enum_table.registerEnum(ref, variants);
 }
 
-pub fn registerGroupType(self: *SemanticAnalyzer, group_name: []const u8, members: []const ast.GroupMember) !void {
+/// Register the group `ref`: each member path resolves, against the current
+/// record, to the type it names, and nested groups are flattened into the
+/// table's member list.
+pub fn registerGroupType(self: *SemanticAnalyzer, ref: TypeRef, members: []const ast.GroupMember) !void {
     if (members.len == 0) {
-        self.reporter.reportCompileError(
-            .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
-            ErrorCode.EXPECTED_EXPRESSION,
-            "Group '{s}' must have at least one member",
-            .{group_name},
-        );
+        self.reporter.reportCompileError(null, ErrorCode.EXPECTED_EXPRESSION, "Group '{s}' must have at least one member", .{ref.name});
         self.fatal_error = true;
         return;
     }
 
-    var member_infos = try self.allocator.alloc(Types.GroupMemberSource, members.len);
-    errdefer self.allocator.free(member_infos);
-
-    for (members, 0..) |member, mi| {
-        const qualified_name = try buildQualifiedName(self.allocator, member.path);
-        defer self.allocator.free(qualified_name);
-
-        member_infos[mi] = .{
-            .qualifier = try self.allocator.dupe(u8, member.qualifier),
-            .source_name = try self.allocator.dupe(u8, qualified_name),
+    const sources = try self.allocator.alloc(Types.GroupMemberSource, members.len);
+    for (members, sources) |member, *source| {
+        const location = if (member.path.len > 0) ast.SourceSpan.fromToken(member.path[0]).location else null;
+        const spelled = try qualifiedName(self.allocator, member.path);
+        const member_ref = (try names.resolveTypeName(self, spelled, self.current_module)) orelse {
+            self.reporter.reportCompileError(location, ErrorCode.UNKNOWN_TYPE, "Group member '{s}' is not a declared type", .{spelled});
+            self.fatal_error = true;
+            return error.UndefinedType;
         };
+        source.* = .{ .qualifier = member.qualifier, .ref = member_ref };
     }
+    try self.custom_types.put(ref, .{ .ref = ref, .kind = .Group, .group_members = sources });
 
-    const custom_type = CustomTypeInfo{
-        .name = try self.allocator.dupe(u8, group_name),
-        .kind = .Group,
-        .group_members = member_infos,
-    };
-    try self.custom_types.put(group_name, custom_type);
-
-    const mem_group = CustomTypeInfo{
-        .name = try self.allocator.dupe(u8, group_name),
-        .kind = .Group,
-        .group_members = member_infos,
-    };
-    try self.memory.registerCustomType(mem_group);
-
-    // Flatten and register in GroupTable
-    var flat_members: std.ArrayListUnmanaged(GroupTable.Member) = .empty;
-    defer flat_members.deinit(self.allocator);
-
-    var visited = std.StringHashMapUnmanaged(void).empty;
+    var flat: std.ArrayListUnmanaged(GroupTable.Member) = .empty;
+    defer flat.deinit(self.allocator);
+    var visited: std.ArrayListUnmanaged(TypeRef) = .empty;
     defer visited.deinit(self.allocator);
+    try visited.append(self.allocator, ref);
+    try flattenGroupMembers(self, sources, &flat, &visited);
 
-    var seen = std.AutoHashMapUnmanaged(MemberKey, void).empty;
-    defer seen.deinit(self.allocator);
-
-    try flattenGroupMembers(self, members, &flat_members, &visited, &seen);
-
-    // Check for duplicate qualifiers after flattening
-    var qualifiers = std.StringHashMapUnmanaged(void).empty;
-    defer qualifiers.deinit(self.allocator);
-    for (flat_members.items) |fm| {
-        if (qualifiers.contains(fm.qualifier)) {
-            self.reporter.reportCompileError(
-                .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
-                ErrorCode.TYPE_MISMATCH,
-                "Group '{s}' has duplicate qualifier '{s}'",
-                .{ group_name, fm.qualifier },
-            );
+    // A qualifier names one member after flattening.
+    for (flat.items, 0..) |member, i| {
+        for (flat.items[0..i]) |earlier| {
+            if (!std.mem.eql(u8, earlier.qualifier, member.qualifier)) continue;
+            self.reporter.reportCompileError(null, ErrorCode.TYPE_MISMATCH, "Group '{s}' has duplicate qualifier '{s}'", .{ ref.name, member.qualifier });
             self.fatal_error = true;
         }
-        try qualifiers.put(self.allocator, fm.qualifier, {});
     }
 
-    _ = try self.group_table.registerGroup(group_name, flat_members.items);
+    _ = try self.group_table.registerGroup(ref, flat.items);
 }
-
-const MemberKey = struct {
-    kind: GroupTable.MemberKind,
-    id: u32,
-};
 
 fn flattenGroupMembers(
     self: *SemanticAnalyzer,
-    members: []const ast.GroupMember,
+    sources: []const Types.GroupMemberSource,
     flat: *std.ArrayListUnmanaged(GroupTable.Member),
-    visited: *std.StringHashMapUnmanaged(void),
-    seen: *std.AutoHashMapUnmanaged(MemberKey, void),
+    visited: *std.ArrayListUnmanaged(TypeRef),
 ) !void {
-    for (members) |member| {
-        const qualified_name = try buildQualifiedName(self.allocator, member.path);
-        defer self.allocator.free(qualified_name);
-
-        // Resolve the member type
-        const ct = self.custom_types.get(qualified_name) orelse self.custom_types.get(member.qualifier);
-        if (ct == null) {
-            self.reporter.reportCompileError(
-                .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
-                ErrorCode.UNKNOWN_TYPE,
-                "Group member '{s}' is not a declared type",
-                .{qualified_name},
-            );
-            self.fatal_error = true;
-            continue;
-        }
-
-        switch (ct.?.kind) {
-            .Enum => {
-                const id = self.enum_table.getIdByName(qualified_name) orelse self.enum_table.getIdByName(member.qualifier) orelse 0;
-                const key = MemberKey{ .kind = .Enum, .id = id };
-                if (seen.contains(key)) continue;
-                try seen.put(self.allocator, key, {});
-                try flat.append(self.allocator, .{
-                    .qualifier = try self.allocator.dupe(u8, member.qualifier),
-                    .kind = .Enum,
-                    .id = id,
-                });
-            },
-            .Struct => {
-                const id = self.struct_table.getIdByName(qualified_name) orelse self.struct_table.getIdByName(member.qualifier) orelse 0;
-                const key = MemberKey{ .kind = .Struct, .id = id };
-                if (seen.contains(key)) continue;
-                try seen.put(self.allocator, key, {});
-                try flat.append(self.allocator, .{
-                    .qualifier = try self.allocator.dupe(u8, member.qualifier),
-                    .kind = .Struct,
-                    .id = id,
-                });
-            },
+    for (sources) |source| {
+        const kind = declKind(self, source.ref) orelse continue;
+        const member_kind: GroupTable.MemberKind = switch (kind) {
+            .Enum => .Enum,
+            .Struct => .Struct,
             .Group => {
-                // Cycle detection
-                if (visited.contains(qualified_name)) {
-                    self.reporter.reportCompileError(
-                        .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
-                        ErrorCode.TYPE_MISMATCH,
-                        "Cycle detected in group: '{s}' includes itself transitively",
-                        .{qualified_name},
-                    );
+                for (visited.items) |seen| {
+                    if (!seen.eql(source.ref)) continue;
+                    self.reporter.reportCompileError(null, ErrorCode.TYPE_MISMATCH, "Cycle detected in group: '{s}' includes itself transitively", .{source.ref.name});
                     self.fatal_error = true;
-                    continue;
+                    break;
+                } else {
+                    try visited.append(self.allocator, source.ref);
+                    const nested = (try self.customType(source.ref)) orelse continue;
+                    try flattenGroupMembers(self, nested.group_members orelse &.{}, flat, visited);
                 }
-                try visited.put(self.allocator, qualified_name, {});
-
-                if (ct.?.group_members) |nested_members| {
-                    try flattenGroupMemberSources(self, nested_members, flat, visited, seen);
-                }
+                continue;
             },
-        }
+        };
+        const id: u32 = switch (member_kind) {
+            .Enum => try self.enum_table.idFor(source.ref),
+            .Struct => try self.struct_table.idFor(source.ref),
+            .Group => unreachable,
+        };
+        for (flat.items) |existing| {
+            if (existing.ref.eql(source.ref)) break;
+        } else try flat.append(self.allocator, .{ .qualifier = source.qualifier, .kind = member_kind, .ref = source.ref, .id = id });
     }
 }
 
-fn flattenGroupMemberSources(
-    self: *SemanticAnalyzer,
-    members: []const Types.GroupMemberSource,
-    flat: *std.ArrayListUnmanaged(GroupTable.Member),
-    visited: *std.StringHashMapUnmanaged(void),
-    seen: *std.AutoHashMapUnmanaged(MemberKey, void),
-) !void {
-    for (members) |member| {
-        const qualified_name = member.source_name;
-
-        const ct = self.custom_types.get(qualified_name) orelse self.custom_types.get(member.qualifier);
-        if (ct == null) {
-            self.reporter.reportCompileError(
-                .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
-                ErrorCode.UNKNOWN_TYPE,
-                "Group member '{s}' is not a declared type",
-                .{qualified_name},
-            );
-            self.fatal_error = true;
-            continue;
-        }
-
-        switch (ct.?.kind) {
-            .Enum => {
-                const id = self.enum_table.getIdByName(qualified_name) orelse self.enum_table.getIdByName(member.qualifier) orelse 0;
-                const key = MemberKey{ .kind = .Enum, .id = id };
-                if (seen.contains(key)) continue;
-                try seen.put(self.allocator, key, {});
-                try flat.append(self.allocator, .{
-                    .qualifier = try self.allocator.dupe(u8, member.qualifier),
-                    .kind = .Enum,
-                    .id = id,
-                });
-            },
-            .Struct => {
-                const id = self.struct_table.getIdByName(qualified_name) orelse self.struct_table.getIdByName(member.qualifier) orelse 0;
-                const key = MemberKey{ .kind = .Struct, .id = id };
-                if (seen.contains(key)) continue;
-                try seen.put(self.allocator, key, {});
-                try flat.append(self.allocator, .{
-                    .qualifier = try self.allocator.dupe(u8, member.qualifier),
-                    .kind = .Struct,
-                    .id = id,
-                });
-            },
-            .Group => {
-                if (visited.contains(qualified_name)) {
-                    self.reporter.reportCompileError(
-                        .{ .file = "", .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 } },
-                        ErrorCode.TYPE_MISMATCH,
-                        "Cycle detected in group: '{s}' includes itself transitively",
-                        .{qualified_name},
-                    );
-                    self.fatal_error = true;
-                    continue;
-                }
-                try visited.put(self.allocator, qualified_name, {});
-
-                if (ct.?.group_members) |nested_members| {
-                    try flattenGroupMemberSources(self, nested_members, flat, visited, seen);
-                }
-            },
-        }
+fn qualifiedName(allocator: std.mem.Allocator, path: []const ast.Token) ![]const u8 {
+    var out = std.array_list.Managed(u8).init(allocator);
+    for (path, 0..) |token, i| {
+        if (i > 0) try out.append('.');
+        try out.appendSlice(token.lexeme);
     }
-}
-
-fn buildQualifiedName(allocator: std.mem.Allocator, path: []const Token) ![]const u8 {
-    if (path.len == 0) return "";
-    var total_len: usize = path[0].lexeme.len;
-    for (path[1..]) |token| {
-        total_len += 1 + token.lexeme.len;
-    }
-    var result = try allocator.alloc(u8, total_len);
-    @memcpy(result[0..path[0].lexeme.len], path[0].lexeme);
-    var offset: usize = path[0].lexeme.len;
-    for (path[1..]) |token| {
-        result[offset] = '.';
-        offset += 1;
-        @memcpy(result[offset .. offset + token.lexeme.len], token.lexeme);
-        offset += token.lexeme.len;
-    }
-    return result;
+    return out.toOwnedSlice();
 }
 
 pub fn getLocationFromBase(base: ast.Base) Reporting.Location {

@@ -113,15 +113,23 @@ pub const HeapCopyKind = enum {
 };
 
 pub const CallKind = enum {
-    LocalFunction,
-    ModuleFunction,
+    /// A Doxa function of the program, defined in its function table.
+    DoxaFunction,
+    /// A function of an inline `zig` block or a `.zig` file: an external
+    /// wrapper symbol called through the inline-Zig ABI.
+    ZigFunction,
     BuiltinFunction,
 };
 
-/// Metadata for a compiled user-defined or module function.
-/// Shared by HIRGenerator (codegen) and TypeSystem (type inference).
+/// Metadata for a compiled Doxa function: a top-level function or a struct
+/// method of any module. Shared by HIRGenerator (codegen) and TypeSystem (type
+/// inference).
 pub const FunctionInfo = struct {
+    /// The emitted link name (`ModuleGraph.mangle`).
     name: []const u8,
+    /// The struct whose instance method this is, which binds `this`; null for a
+    /// top-level function or a static method.
+    receiver: ?StructId = null,
     arity: u32,
     return_type: HIRType,
     start_label: []const u8,
@@ -133,9 +141,8 @@ pub const FunctionInfo = struct {
     param_types: []HIRType,
 };
 
-/// Signatures keyed by defining `(ModuleId, declared name)`. This is the
-/// authoritative store; `name` remains the temporary emitted link spelling
-/// until Phase 6 renders the versioned mangling from the same key.
+/// Signatures keyed by defining `(ModuleId, declared name)` — `fn` for a
+/// top-level function, `Struct.method` for a method.
 pub const FunctionSignatureMap = std.HashMap(
     module_graph.SymbolKey,
     FunctionInfo,
@@ -148,7 +155,6 @@ pub const HIRProgram = struct {
     constant_pool: []HIRValue,
     string_pool: [][]const u8,
     function_table: []HIRProgram.HIRFunction,
-    module_map: std.StringHashMap(ModuleInfo),
     allocator: std.mem.Allocator,
     /// B2: struct type names reaching a reflection site. Owned by the program
     /// (a copy of the generator's set) so it stays valid after the generator is
@@ -157,6 +163,15 @@ pub const HIRProgram = struct {
     reflected_structs: ?std.StringHashMap(void) = null,
     /// B2: a group/unknown reflection target disables per-type descriptor skips.
     force_struct_descriptors: bool = false,
+    /// The inline-Zig functions the program calls, each with the parameter
+    /// types its generated wrapper takes.
+    zig_functions: []const ZigFunction = &.{},
+
+    pub const ZigFunction = struct {
+        link_name: []const u8,
+        param_types: []const HIRType,
+        return_type: HIRType,
+    };
 
     pub fn deinit(self: *HIRProgram) void {
         self.allocator.free(self.instructions);
@@ -168,13 +183,16 @@ pub const HIRProgram = struct {
         self.allocator.free(self.string_pool);
 
         self.allocator.free(self.function_table);
-        self.module_map.deinit();
+        for (self.zig_functions) |function| self.allocator.free(function.param_types);
+        self.allocator.free(self.zig_functions);
         if (self.reflected_structs) |*reflected| reflected.deinit();
     }
 
     pub const HIRFunction = struct {
-        name: []const u8,
+        /// The emitted link name.
         qualified_name: []const u8,
+        /// The struct whose instance method this is (binds `this`).
+        receiver: ?StructId = null,
         arity: u32,
         return_type: HIRType,
         start_label: []const u8,
@@ -188,10 +206,4 @@ pub const HIRProgram = struct {
         param_types: []HIRType,
     };
 
-    pub const ModuleInfo = struct {
-        name: []const u8,
-        imports: [][]const u8,
-        exports: [][]const u8,
-        global_var_count: u32,
-    };
 };

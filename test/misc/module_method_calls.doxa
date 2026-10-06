@@ -1,5 +1,5 @@
-module a from "./moddata/method_mod_a.doxa"
-module b from "./moddata/method_mod_b.doxa"
+import Alpha from "./moddata/method_mod_a.doxa"
+import Beta from "./moddata/method_mod_b.doxa"
 
 # Regression: a struct method (or static struct function) defined in an imported
 # module must resolve a bare callee against its own module namespace. `Alpha.go`

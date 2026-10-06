@@ -19,7 +19,7 @@ struct Item {
     public name :: string,
     public val :: int
 
-    function new(name :: string, val :: int) returns Item {
+    public function new(name :: string, val :: int) returns Item {
         return $Item {
             name is name,
             val is val,

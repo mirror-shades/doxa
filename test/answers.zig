@@ -298,6 +298,10 @@ pub const expected_module_qualified_collision_results = [_]print_result{
     .{ .value = "105 211" },
 };
 
+pub const expected_module_type_identity_results = [_]print_result{
+    .{ .value = "a:1 b:two a:1 a:3" },
+};
+
 pub const expected_module_alias_owner_results = [_]print_result{
     .{ .value = "1 2" },
 };

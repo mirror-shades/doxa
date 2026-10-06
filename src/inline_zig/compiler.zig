@@ -1,26 +1,21 @@
 const std = @import("std");
 
 const ast = @import("../ast/ast.zig");
-const Parser = @import("../parser/parser_types.zig").Parser;
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
 const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 const MemoryManager = @import("../utils/memory.zig").MemoryManager;
 const Profiler = @import("../utils/profiler.zig").Profiler;
 const hashing = @import("../utils/hashing.zig");
-const EnumTable = @import("../common/enum_table.zig").EnumTable;
+const module_graph = @import("../module/graph.zig");
+const inline_zig = @import("../parser/inline_zig.zig");
+const ModuleGraph = module_graph.ModuleGraph;
+const ModuleRecord = module_graph.ModuleRecord;
 const generator_source = @embedFile("compiler.zig");
 
 fn cacheSeed() []const u8 {
     return generator_source;
 }
-
-const ZigDeclInfo = struct {
-    module_name: []const u8,
-    zig_source: []const u8,
-    location: Reporting.Location,
-    sigs: []ast.ZigFnSig,
-};
 
 const GeneratedModule = struct {
     zig_path: []const u8,
@@ -49,51 +44,16 @@ fn appendZigSourceSanitized(buf: *std.array_list.Managed(u8), source: []const u8
     }
 }
 
-pub fn collectInlineZigDecls(
-    allocator: std.mem.Allocator,
-    statements: []ast.Stmt,
-    parser: *Parser,
-) ![]ZigDeclInfo {
-    var seen = std.StringHashMap(void).init(allocator);
-    defer seen.deinit();
-
-    var out = std.array_list.Managed(ZigDeclInfo).init(allocator);
+/// The Zig units the program reached: every inline `zig` block and imported
+/// `.zig` file whose functions analysis registered.
+pub fn programZigUnits(allocator: std.mem.Allocator, graph: *const ModuleGraph) ![]const *ModuleRecord {
+    var out = std.array_list.Managed(*ModuleRecord).init(allocator);
     errdefer out.deinit();
-
-    for (statements) |s| {
-        if (s.data != .ZigDecl) continue;
-        const decl = s.data.ZigDecl;
-        if (seen.contains(decl.name.lexeme)) continue;
-        try seen.put(decl.name.lexeme, {});
-        try out.append(.{
-            .module_name = decl.name.lexeme,
-            .zig_source = decl.source,
-            .location = s.base.location(),
-            .sigs = decl.sigs,
-        });
+    for (graph.records.items) |record| {
+        if (record.zig == null or !record.status.atLeast(.Analyzed)) continue;
+        try out.append(record);
     }
-
-    var module_it = parser.module_namespaces.iterator();
-    while (module_it.next()) |entry| {
-        const module_info = entry.value_ptr.*;
-        if (module_info.ast) |module_ast| {
-            if (module_ast.data != .Block) continue;
-            for (module_ast.data.Block.statements) |s| {
-                if (s.data != .ZigDecl) continue;
-                const decl = s.data.ZigDecl;
-                if (seen.contains(decl.name.lexeme)) continue;
-                try seen.put(decl.name.lexeme, {});
-                try out.append(.{
-                    .module_name = decl.name.lexeme,
-                    .zig_source = decl.source,
-                    .location = s.base.location(),
-                    .sigs = decl.sigs,
-                });
-            }
-        }
-    }
-
-    return try out.toOwnedSlice();
+    return out.toOwnedSlice();
 }
 
 /// Compile-time description of an inline-Zig array: its innermost Zig type, how
@@ -248,44 +208,45 @@ fn arrayReturnPostlude(allocator: std.mem.Allocator, info: ArrayInfo) ![]u8 {
 /// types. Enums cross as `i64`, so the wrapper only needs the names to inject
 /// one `const DoxaEnum_<name> = i64;` alias per name the user's Zig source
 /// spells.
-fn collectEnumNames(t: ast.TypeInfo, names: *std.array_list.Managed([]const u8)) !void {
-    switch (t.base) {
-        .Enum => if (t.custom_type) |n| try names.append(n),
-        .Array => if (t.array_type) |inner| try collectEnumNames(inner.*, names),
-        else => {},
-    }
-}
-
+/// Write the wrapper for one Zig unit: the user's source, the ABI prologue, and
+/// one exported C-ABI bridge per function, named by its mangled link name so
+/// two units' same-named functions never meet at link time.
 fn generateWrapperZigFile(
     io: std.Io,
     allocator: std.mem.Allocator,
     reporter: *Reporter,
     cache_dir: []const u8,
-    enum_table: *const EnumTable,
-    decl: ZigDeclInfo,
+    graph: *const ModuleGraph,
+    record: *const ModuleRecord,
 ) !GeneratedModule {
     const Sha256 = std.crypto.hash.sha2.Sha256;
 
-    const sigs = decl.sigs;
+    const unit = record.zig.?;
+    const sigs = unit.sigs;
+    const location = unit.location;
 
+    // The wrapper's content is its source plus the link names it exports,
+    // which the record's mangling tag fixes.
     var h: [Sha256.digest_length]u8 = undefined;
     var hasher = Sha256.init(.{});
     hasher.update(cacheSeed());
     hasher.update("\n");
-    hasher.update(decl.module_name);
+    hasher.update(unit.name);
     hasher.update("\n");
-    hasher.update(decl.zig_source);
+    hasher.update(record.mangle_tag.?);
+    hasher.update("\n");
+    hasher.update(unit.source);
     hasher.final(&h);
 
     const hex_buf = std.fmt.bytesToHex(h, .lower);
     const short_hex = hex_buf[0..16];
 
     var zig_path_buf: [256]u8 = undefined;
-    const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/{s}-{s}.zig", .{ cache_dir, decl.module_name, short_hex });
+    const zig_path = try std.fmt.bufPrint(&zig_path_buf, "{s}/{s}-{s}.zig", .{ cache_dir, unit.name, short_hex });
 
     var file_buf = std.array_list.Managed(u8).init(allocator);
     defer file_buf.deinit();
-    try appendZigSourceSanitized(&file_buf, decl.zig_source);
+    try appendZigSourceSanitized(&file_buf, unit.source);
     try file_buf.appendSlice("\n\n");
 
     // Inline-Zig ABI prologue. String returns are cloned into the call-site
@@ -308,39 +269,28 @@ fn generateWrapperZigFile(
         "extern fn doxa_array_set_str(hdr: *__DoxaArrayHeader, idx: u64, str_ptr: ?[*]const u8, str_len: u64) callconv(.c) void;\n\n");
     try appendArrayAdapters(&file_buf);
 
-    // A Doxa enum crosses as its `i64` discriminant. Inject one
-    // `const DoxaEnum_<name> = i64;` per referenced enum so the user's Zig
-    // source can name the type, and reject a name the analyzer never registered.
+    // A Doxa enum crosses as its `i64` discriminant. Declare every
+    // `DoxaEnum_<path>` the source spells, as the quoted identifier it is, so
+    // the Zig author compares against integers; analysis resolved each path
+    // that appears in a signature.
     {
-        var enum_names = std.array_list.Managed([]const u8).init(allocator);
-        defer enum_names.deinit();
-        for (sigs) |sig| {
-            for (sig.param_types) |pt| try collectEnumNames(pt, &enum_names);
-            try collectEnumNames(sig.return_type, &enum_names);
-        }
-        var seen_enums = std.StringHashMap(void).init(allocator);
-        defer seen_enums.deinit();
-        for (enum_names.items) |name| {
-            if (seen_enums.contains(name)) continue;
-            try seen_enums.put(name, {});
-            if (enum_table.getIdByName(name) == null) {
-                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unknown enum 'DoxaEnum_{s}' in module '{s}'", .{ name, decl.module_name });
-                return error.NotImplemented;
-            }
-            try file_buf.appendSlice("const DoxaEnum_");
-            try file_buf.appendSlice(name);
-            try file_buf.appendSlice(" = i64;\n");
+        const spellings = try inline_zig.doxaEnumSpellings(allocator, unit.source);
+        defer allocator.free(spellings);
+        for (spellings) |spelling| {
+            try file_buf.appendSlice("const @\"");
+            try file_buf.appendSlice(spelling);
+            try file_buf.appendSlice("\" = i64;\n");
         }
     }
 
     for (sigs) |sig| {
-        const native_ident = try std.fmt.allocPrint(allocator, "__doxa_native__{s}_{s}", .{ decl.module_name, sig.name });
+        const native_ident = try std.fmt.allocPrint(allocator, "__doxa_native__{s}", .{sig.name});
         defer allocator.free(native_ident);
-        const native_sym = try std.fmt.allocPrint(allocator, "{s}.{s}", .{ decl.module_name, sig.name });
+        const native_sym = try graph.mangle(allocator, record.id, .function, &.{sig.name});
         defer allocator.free(native_sym);
 
         const native_ret_zig = nativeReturnType(sig.return_type) orelse {
-            reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in native bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+            reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });
             return error.NotImplemented;
         };
 
@@ -359,7 +309,7 @@ fn generateWrapperZigFile(
 
         for (sig.param_types, 0..) |pt, i| {
             const pt_zig = nativeParamType(pt) orelse {
-                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in native bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported param type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });
                 return error.NotImplemented;
             };
             if (i > 0) {
@@ -388,7 +338,7 @@ fn generateWrapperZigFile(
                 try native_buf.appendSlice("_len: u64");
             } else if (pt.base == .Array) {
                 const elem = arrayInfoFor(pt) orelse {
-                    reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported array element type in native bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                    reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported array element type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });
                     return error.NotImplemented;
                 };
                 const s_name = try std.fmt.allocPrint(allocator, "__doxa_s{}", .{i});
@@ -420,7 +370,7 @@ fn generateWrapperZigFile(
             try native_buf.appendSlice("    doxa_str_clone_current(__doxa_out.ptr, __doxa_out.len, out_ptr, out_len);\n");
         } else if (sig.return_type.base == .Array) {
             const elem = arrayInfoFor(sig.return_type) orelse {
-                reporter.reportCompileError(decl.location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported array element type in native bridge for '{s}.{s}'", .{ decl.module_name, sig.name });
+                reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported array element type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });
                 return error.NotImplemented;
             };
             try native_buf.appendSlice("    const __doxa_out = ");
@@ -457,8 +407,7 @@ fn generateWrapperZigFile(
 pub fn compileInlineZigObjects(
     io: std.Io,
     memoryManager: *MemoryManager,
-    statements: []ast.Stmt,
-    parser: *Parser,
+    graph: *const ModuleGraph,
     reporter: *Reporter,
     zig_exe_path: []const u8,
     cache_dir: []const u8,
@@ -468,11 +417,10 @@ pub fn compileInlineZigObjects(
     cpu_arg: []const u8,
     include_dirs: []const []const u8,
     toolchain: []const u8,
-    enum_table: *const EnumTable,
     profiler: *Profiler,
 ) ![]const []const u8 {
-    const zig_decls = try collectInlineZigDecls(memoryManager.getAllocator(), statements, parser);
-    defer memoryManager.getAllocator().free(zig_decls);
+    const units = try programZigUnits(memoryManager.getAllocator(), graph);
+    defer memoryManager.getAllocator().free(units);
 
     const zig_cache_path = try std.fmt.allocPrint(memoryManager.getAllocator(), "{s}/zig/cache", .{cache_dir});
     defer memoryManager.getAllocator().free(zig_cache_path);
@@ -484,9 +432,9 @@ pub fn compileInlineZigObjects(
         out_paths.deinit();
     }
 
-    for (zig_decls) |decl| {
+    for (units) |record| {
         profiler.begin("wrapper-gen");
-        var gen = try generateWrapperZigFile(io, memoryManager.getAllocator(), reporter, zig_cache_path, enum_table, decl);
+        var gen = try generateWrapperZigFile(io, memoryManager.getAllocator(), reporter, zig_cache_path, graph, record);
         profiler.end();
         defer gen.deinit(memoryManager.getAllocator());
 

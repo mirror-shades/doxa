@@ -7,6 +7,9 @@ pub const IRPrinter = struct {
     pub const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
     pub const CompareInstruction = std.meta.fieldInfo(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare).type;
     const Self = @This();
+    pub const GroupTable = @import("../../common/group_table.zig").GroupTable;
+    pub const EnumTable = @import("../../common/enum_table.zig").EnumTable;
+    pub const StructTable = @import("../../common/struct_table.zig").StructTable;
 
     const Ctx = struct {
         pub const IRPrinter = Self;
@@ -29,6 +32,9 @@ pub const IRPrinter = struct {
         pub const escapeLLVMString = Self.escapeLLVMString;
         pub const internPeekString = Self.internPeekString;
         pub const OverflowBehavior = Self.OverflowBehavior;
+        pub const GroupTable = Self.GroupTable;
+        pub const EnumTable = Self.EnumTable;
+        pub const StructTable = Self.StructTable;
 
         /// Function attributes every emitted `define` references. Clang's C
         /// frontend emits `"tune-cpu"="generic"` when only the CPU model is
@@ -146,6 +152,7 @@ pub const IRPrinter = struct {
     pub const emitArrayInsert = CollectionsEmitMethods.emitArrayInsert;
     pub const emitArrayRemove = CollectionsEmitMethods.emitArrayRemove;
     pub const emitArraySlice = CollectionsEmitMethods.emitArraySlice;
+    pub const emitArrayConcat = CollectionsEmitMethods.emitArrayConcat;
     pub const emitArrayLen = CollectionsEmitMethods.emitArrayLen;
     pub const emitFlatArrayPeek = CollectionsEmitMethods.emitFlatArrayPeek;
     pub const emitSyntheticArrayHeader = CollectionsEmitMethods.emitSyntheticArrayHeader;
@@ -176,7 +183,6 @@ pub const IRPrinter = struct {
     pub const handleUnboxPayload = SharedHandlers.handleUnboxPayload;
     pub const handleUnionConstruct = SharedHandlers.handleUnionConstruct;
     pub const handleAssertFail = SharedHandlers.handleAssertFail;
-    pub const handleArrayConcat = SharedHandlers.handleArrayConcat;
     pub const handleCall = SharedHandlers.handleCall;
     pub const handleStoreDeclGlobal = SharedHandlers.handleStoreDeclGlobal;
     pub const handleStoreVarGlobal = SharedHandlers.handleStoreVarGlobal;
@@ -215,7 +221,8 @@ pub const IRPrinter = struct {
 
     allocator: std.mem.Allocator,
     io: std.Io,
-    zig_fn_param_types: std.StringHashMap([]HIR.HIRType),
+    /// Each inline-Zig callee's wrapper parameter types, from the program.
+    zig_fn_param_types: std.StringHashMap([]const HIR.HIRType),
     peek_string_counter: usize,
     string_pool_len: usize = 0,
 
@@ -242,9 +249,10 @@ pub const IRPrinter = struct {
     enum_desc_globals_by_type: std.StringHashMap([]const u8),
     last_emitted_enum_value: ?u64 = null,
     enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
-    group_table: ?*anyopaque = null,
-    enum_table: ?*anyopaque = null,
-    struct_table: ?*anyopaque = null,
+    /// The analyzer's type tables: canonical keys, layouts, and members.
+    group_table: *const GroupTable,
+    enum_table: *const EnumTable,
+    struct_table: *const StructTable,
     entry_str_out_ptr: ?[]const u8 = null,
     entry_str_out_len: ?[]const u8 = null,
     /// Alloca lines discovered while emitting the current function/program body

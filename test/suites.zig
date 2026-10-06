@@ -1,35 +1,25 @@
 const std = @import("std");
 const testing = std.testing;
 
-const test_run = @import("test_run.zig");
-const test_compile = @import("test_compile.zig");
-const test_compile_errors = @import("test_compile_errors.zig");
-const test_build_script = @import("test_build_script.zig");
+const programs = @import("programs.zig");
 
-// The program suites drive the installed `doxa` binary through hundreds of
-// subprocesses and take about a minute. They live in their own test executable
-// which `build.zig` runs as a plain process rather than through the test
-// runner's `--listen` protocol: a suite that spends a minute spawning children
-// is a poor fit for the protocol's 60s response window between messages, and
-// any child that outlives the suite would hold the protocol pipes open and
-// stall the build runner. `platform.sealStdHandles` closes the second hole.
+// Everything that drives the installed `doxa` binary. `build.zig` runs this
+// executable as a plain process, after the unit and LSP roots, rather than
+// through the test runner's `--listen` protocol: its suites spawn children for
+// most of their runtime, and a protocol root's result is cached on its own
+// executable, which knows nothing of the binary under test. `process.zig` is
+// the only spawner, and the wiring check keeps it out of the protocol roots.
 
-test "run suite" {
-    const summary = try test_run.runAll(testing.allocator);
-    try testing.expect(summary.failed == 0 and summary.untested == 0);
+test "run pipeline" {
+    try programs.check(testing.allocator, .run);
 }
 
-test "compile suite" {
-    const summary = try test_compile.runAll(testing.allocator);
-    try testing.expect(summary.failed == 0 and summary.untested == 0);
+test "compile pipeline" {
+    try programs.check(testing.allocator, .compile);
 }
 
-test "compile errors suite" {
-    const summary = try test_compile_errors.runAll(testing.allocator);
-    try testing.expect(summary.failed == 0 and summary.untested == 0);
-}
-
-test "build script suite" {
-    const summary = try test_build_script.runAll(testing.allocator);
-    try testing.expect(summary.failed == 0 and summary.untested == 0);
+test {
+    _ = @import("test_build_script.zig");
+    _ = @import("test_emit.zig");
+    _ = @import("test_lsp_session.zig");
 }

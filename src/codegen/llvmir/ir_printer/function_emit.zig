@@ -1,7 +1,6 @@
 const std = @import("std");
+const module_graph = @import("../../../module/graph.zig");
 const DoxaTag = @import("../../../runtime/doxa_rt.zig").DoxaTag;
-const GroupTable = @import("../../../common/group_table.zig").GroupTable;
-const EnumTable = @import("../../../common/enum_table.zig").EnumTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -326,7 +325,7 @@ pub fn Methods(comptime Ctx: type) type {
             var jump_targets = try self.collectLiveJumpTargets(hir.instructions[start_idx..end_idx]);
             defer jump_targets.deinit();
             for (hir.instructions[start_idx..end_idx], start_idx..) |inst, inst_index| {
-                self.verifyEnter(func.name, inst_index, inst);
+                self.verifyEnter(module_graph.displayName(func.qualified_name), inst_index, inst);
                 const tag = std.meta.activeTag(inst);
                 const requires_new_block = switch (tag) {
                     .Label, .ExitScope => false,
@@ -490,104 +489,6 @@ pub fn Methods(comptime Ctx: type) type {
                         try w.writeAll(br_line);
                         stack.items.len = 0;
                         last_instruction_was_terminator = true;
-                    },
-                    .LoadModule => |lm| {
-                        const gname = lm.module_name;
-                        const fcount = lm.field_names.len;
-
-                        // Look up struct metadata (pre-populated by writeModule scan)
-                        const struct_fields = self.global_struct_field_types.get(gname);
-                        const struct_names = self.global_struct_field_names.get(gname);
-                        const struct_type_name = self.global_struct_type_names.get(gname);
-
-                        if (fcount == 0) {
-                            // Empty module struct — push a non-null sentinel pointer
-                            const sentinel = try self.nextTemp(&id);
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 1 to ptr\n", .{sentinel});
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                            try stack.append(.{ .name = sentinel, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
-                            last_instruction_was_terminator = false;
-                            continue;
-                        }
-
-                        const struct_type_llvm = try self.buildI64StructType(fcount * 2);
-                        defer self.allocator.free(struct_type_llvm);
-
-                        // Allocate struct on heap (each string field is ptr + len)
-                        const struct_size = fcount * 2 * @sizeOf(i64);
-                        const size_reg = try self.nextTemp(&id);
-                        const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_reg, struct_size });
-                        defer self.allocator.free(size_line);
-                        try w.writeAll(size_line);
-
-                        const malloc_reg = try self.nextTemp(&id);
-                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {s}, i64 8)\n", .{ malloc_reg, size_reg });
-                        defer self.allocator.free(malloc_line);
-                        try w.writeAll(malloc_line);
-
-                        // Cast to struct pointer
-                        const struct_ptr = try self.nextTemp(&id);
-                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast ptr {s} to ptr\n", .{ struct_ptr, malloc_reg });
-                        defer self.allocator.free(cast_line);
-                        try w.writeAll(cast_line);
-
-                        // Populate each field from module globals (raw C-strings).
-                        var fi: usize = 0;
-                        while (fi < fcount) : (fi += 1) {
-                            const field_name = lm.field_names[fi];
-                            const field_gptr = try self.mangleGlobalName(field_name);
-                            defer self.allocator.free(field_gptr);
-
-                            // Determine the module global's type and load accordingly
-                            const field_st = self.global_types.get(field_name) orelse .PTR;
-                            const field_llty = self.stackTypeToLLVMType(field_st);
-
-                            const loaded_val = try self.nextTemp(&id);
-                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ loaded_val, field_llty, field_gptr });
-                            defer self.allocator.free(load_line);
-                            try w.writeAll(load_line);
-
-                            // Recover (ptr, len) from the C-string and store both words.
-                            const out_ptr_slot = try self.nextTemp(&id);
-                            const out_len_slot = try self.nextTemp(&id);
-                            const alloca_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
-                            const alloca_len = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
-                            defer self.allocator.free(alloca_ptr);
-                            defer self.allocator.free(alloca_len);
-                            try w.writeAll(alloca_ptr);
-                            try w.writeAll(alloca_len);
-                            const init_null = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
-                            const init_zero = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
-                            defer self.allocator.free(init_null);
-                            defer self.allocator.free(init_zero);
-                            try w.writeAll(init_null);
-                            try w.writeAll(init_zero);
-                            const from_cstr = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_from_cstr(ptr {s}, ptr {s}, ptr {s})\n", .{ loaded_val, out_ptr_slot, out_len_slot });
-                            defer self.allocator.free(from_cstr);
-                            try w.writeAll(from_cstr);
-                            const cloned_ptr = try self.nextTemp(&id);
-                            const cloned_len = try self.nextTemp(&id);
-                            const load_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ cloned_ptr, out_ptr_slot });
-                            const load_len = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ cloned_len, out_len_slot });
-                            defer self.allocator.free(load_ptr);
-                            defer self.allocator.free(load_len);
-                            try w.writeAll(load_ptr);
-                            try w.writeAll(load_len);
-
-                            try self.storeStructStringField(w, struct_type_llvm, struct_ptr, fi * 2, cloned_ptr, cloned_len, &id);
-                        }
-
-                        // Store the module struct pointer to the global so subsequent
-                        // LoadModule instructions (in other functions) can reuse it.
-                        const module_gptr = try self.mangleGlobalName(gname);
-                        defer self.allocator.free(module_gptr);
-                        const store_module_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ struct_ptr, module_gptr });
-                        defer self.allocator.free(store_module_line);
-                        try w.writeAll(store_module_line);
-
-                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
-                        last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
                         if (lv.scope_kind == .GlobalLocal or lv.scope_kind == .ModuleGlobal) {
@@ -870,18 +771,9 @@ pub fn Methods(comptime Ctx: type) type {
                                     struct_field_names = self.struct_field_names_by_type.get(tn);
                                 }
                             }
-                            // Legacy name-based fallbacks for receivers/`this`.
-                            if (struct_fields == null) {
-                                if (std.mem.eql(u8, ba.alias_name, "this")) {
-                                    if (std.mem.indexOfScalar(u8, func.qualified_name, '.')) |dot_idx| {
-                                        const struct_name = func.qualified_name[0..dot_idx];
-                                        if (self.global_struct_field_types.get(struct_name)) |fts| {
-                                            struct_fields = fts;
-                                        }
-                                    }
-                                } else if (self.global_struct_field_types.get(ba.alias_name)) |fts| {
-                                    struct_fields = fts;
-                                }
+                            // A method's `this` is its receiver struct.
+                            if (struct_fields == null and std.mem.eql(u8, ba.alias_name, "this")) {
+                                if (func.receiver) |receiver| struct_fields = self.struct_fields_by_id.get(receiver);
                             }
                         }
                         const array_hint: ?HIR.HIRType = switch (ba.target_type) {
@@ -1238,7 +1130,7 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .StructNew => |sn| try self.emitStructNew(w, &stack, &id, sn, peek_state),
                     .ArrayConcat => {
-                        try self.handleArrayConcat(w, &stack, &id);
+                        try self.emitArrayConcat(w, &stack, &id);
                         last_instruction_was_terminator = false;
                     },
                     .AssertFail => |af| {
@@ -1393,20 +1285,13 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
-            if (self.group_table) |gt_opaque| {
-                if (self.enum_table) |et_opaque| {
-                    const gt: *const GroupTable = @ptrCast(@alignCast(gt_opaque));
-                    const et: *const EnumTable = @ptrCast(@alignCast(et_opaque));
-                    for (gt.entries.items) |group_entry| {
-                        const group_name = group_entry.qualified_name;
-                        for (group_entry.members) |member| {
-                            if (member.kind != .Enum) continue;
-                            _ = et.getName(member.id) orelse continue;
-                            const variants = et.variants(member.id) orelse continue;
-                            for (variants) |variant| {
-                                try registerVariant.add(self, group_name, variant.index, variant.name);
-                            }
-                        }
+            for (self.group_table.entries.items) |group_entry| {
+                const group_name = group_entry.key.?;
+                for (group_entry.members) |member| {
+                    if (member.kind != .Enum) continue;
+                    const variants = self.enum_table.variants(member.id) orelse continue;
+                    for (variants) |variant| {
+                        try registerVariant.add(self, group_name, variant.index, variant.name);
                     }
                 }
             }
@@ -1417,12 +1302,9 @@ pub fn Methods(comptime Ctx: type) type {
             // literal, so without this `@print` renders `<enum:N>`. Populating
             // the in-memory map costs nothing until `emitEnumPrint` interns the
             // names it actually needs.
-            if (self.enum_table) |et_opaque| {
-                const et: *const EnumTable = @ptrCast(@alignCast(et_opaque));
-                for (et.entries.items) |entry| {
-                    for (entry.variants) |variant| {
-                        try registerVariant.add(self, entry.qualified_name, variant.index, variant.name);
-                    }
+            for (self.enum_table.entries.items) |entry| {
+                for (entry.variants) |variant| {
+                    try registerVariant.add(self, entry.key.?, variant.index, variant.name);
                 }
             }
         }

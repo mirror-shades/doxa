@@ -3,7 +3,6 @@ const doxa_rt = @import("../../../runtime/doxa_rt.zig");
 const DoxaTag = doxa_rt.DoxaTag;
 const DoxaUnionMeta = doxa_rt.DoxaUnionMeta;
 const GroupTable = @import("../../../common/group_table.zig").GroupTable;
-const EnumTable = @import("../../../common/enum_table.zig").EnumTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -139,9 +138,7 @@ pub fn Methods(comptime Ctx: type) type {
             },
             else => return null,
         };
-        const et_opaque = self.enum_table orelse return null;
-        const et: *EnumTable = @ptrCast(@alignCast(et_opaque));
-        return et.getName(eid);
+        return self.enum_table.keyOf(eid);
     }
 
     pub fn createEnumTypeNameGlobal(self: *IRPrinter, type_name: []const u8, _: *usize) ![]const u8 {
@@ -379,11 +376,7 @@ pub fn Methods(comptime Ctx: type) type {
         return switch (target) {
             .Int => .{ .name = payload, .ty = .I64 },
             .Enum => blk: {
-                const enum_name: ?[]const u8 = if (self.enum_table) |et_opaque| blk_enum: {
-                    const et: *EnumTable = @ptrCast(@alignCast(et_opaque));
-                    break :blk_enum et.getName(target.Enum);
-                } else null;
-                break :blk StackVal{ .name = payload, .ty = .I64, .enum_type_name = enum_name };
+                break :blk StackVal{ .name = payload, .ty = .I64, .enum_type_name = self.enum_table.keyOf(target.Enum) };
             },
             .Float => blk: {
                 const as_f64 = try self.nextTemp(id);
@@ -515,15 +508,8 @@ pub fn Methods(comptime Ctx: type) type {
         return 0;
     }
 
-    fn asGroupTable(group_table: ?*anyopaque) ?*GroupTable {
-        const gt_opaque = group_table orelse return null;
-        return @constCast(@ptrCast(@alignCast(gt_opaque)));
-    }
-
-    fn groupHasEnumMember(group_table: ?*anyopaque, group_id: HIR.GroupId) bool {
-        const gt = asGroupTable(group_table) orelse return false;
-        const entry = gt.getEntryById(group_id) orelse return false;
-        for (entry.members) |member| {
+    fn groupHasEnumMember(group_table: *const GroupTable, group_id: HIR.GroupId) bool {
+        for (group_table.members(group_id) orelse return false) |member| {
             if (member.kind == .Enum) return true;
         }
         return false;
@@ -531,16 +517,25 @@ pub fn Methods(comptime Ctx: type) type {
 
     /// Index of `value`'s source type within group `group_id`'s flattened member
     /// list. A group value's identity is the member type it came from (`Color`,
-    /// `FileError`, ...), which is exactly the name the stack value carries, so
-    /// the name is the whole discriminator (docs/groups.md §6).
-    fn findGroupMemberIndex(group_table: ?*anyopaque, group_id: HIR.GroupId, value: StackVal) u32 {
-        const member_type_name = value.enum_type_name orelse value.struct_type_name orelse return 0;
-        const gt = asGroupTable(group_table) orelse return 0;
-        const members = gt.members(group_id) orelse return 0;
+    /// `FileError`, ...), whose canonical key the stack value carries, so the
+    /// key is the whole discriminator (docs/groups.md §6).
+    fn findGroupMemberIndex(self: *IRPrinter, group_id: HIR.GroupId, value: StackVal) u32 {
+        const member_key = value.enum_type_name orelse value.struct_type_name orelse return 0;
+        const members = self.group_table.members(group_id) orelse return 0;
         for (members, 0..) |member, idx| {
-            if (std.mem.eql(u8, member.qualifier, member_type_name)) return @intCast(idx);
+            const key = memberKey(self, member) orelse continue;
+            if (std.mem.eql(u8, key, member_key)) return @intCast(idx);
         }
         return 0;
+    }
+
+    /// The canonical key of a group member's type.
+    fn memberKey(self: *IRPrinter, member: GroupTable.Member) ?[]const u8 {
+        return switch (member.kind) {
+            .Enum => self.enum_table.keyOf(member.id),
+            .Struct => self.struct_table.keyOf(member.id),
+            .Group => self.group_table.keyOf(member.id),
+        };
     }
 
     /// Active member index for a boxed tagged-union value: unions pick the arm
@@ -548,7 +543,7 @@ pub fn Methods(comptime Ctx: type) type {
     pub fn findMemberIndex(self: *IRPrinter, target: HIR.HIRType, value: StackVal) u32 {
         return switch (target) {
             .Union => self.findUnionMemberIndex(target, value),
-            .Group => findGroupMemberIndex(self.group_table, target.Group, value),
+            .Group => findGroupMemberIndex(self, target.Group, value),
             else => 0,
         };
     }
@@ -605,8 +600,7 @@ pub fn Methods(comptime Ctx: type) type {
                     .Group => |id| id,
                     else => return null,
                 };
-                const gt = asGroupTable(self.group_table) orelse return null;
-                const members = gt.members(gid) orelse return null;
+                const members = self.group_table.members(gid) orelse return null;
                 for (members, 0..) |member, idx| {
                     if (member.kind == member_kind and member.id == member_id) return @intCast(idx);
                 }
@@ -864,18 +858,6 @@ pub fn Methods(comptime Ctx: type) type {
 
         const full = try std.fmt.allocPrint(self.allocator, "[{d} x {s}]", .{ size, result });
         return full;
-    }
-
-    pub fn fixedArrayRemainingLLVMType(
-        self: *IRPrinter,
-        base_llvm_type: []const u8,
-    ) ![]const u8 {
-        const open = std.mem.indexOfScalar(u8, base_llvm_type, '[') orelse return base_llvm_type;
-        const close = std.mem.indexOfScalarPos(u8, base_llvm_type, open + 1, 'x') orelse return base_llvm_type;
-        const inner = base_llvm_type[close + 1 ..];
-        const trimmed = std.mem.trim(u8, inner, " ");
-        const end = std.mem.indexOfScalar(u8, trimmed, ']') orelse return trimmed;
-        return try self.allocator.dupe(u8, trimmed[0..end]);
     }
 
     pub fn fixedArrayLevelLLVMType(

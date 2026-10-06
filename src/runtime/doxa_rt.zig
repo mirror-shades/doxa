@@ -540,8 +540,8 @@ pub export fn doxa_str_concat(a_ptr: ?[*]const u8, a_len: u64, b_ptr: ?[*]const 
 }
 
 /// Recover a DoxaString from a null-terminated C-string pointer. This is the
-/// one remaining raw C-string boundary: inline-Zig/module globals loaded via
-/// `LoadModule` and map string values still arrive as C-strings.
+/// one remaining raw C-string boundary: map string values still arrive as
+/// C-strings.
 pub export fn doxa_str_from_cstr(ptr: ?[*:0]const u8, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
     if (ptr) |p| {
         const slice = std.mem.span(p);

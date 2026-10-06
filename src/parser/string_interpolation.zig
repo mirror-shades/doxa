@@ -125,9 +125,7 @@ fn parsePlaceholderExpression(self: *Parser, content: []const u8, outer_span: as
     const tokens = try temp_lexer.lexTokens();
     defer tokens.deinit();
 
-    var temp_parser = Parser.init(self.io, self.allocator, tokens.items, self.current_file, self.current_file_uri, self.reporter, self.graph);
-    defer temp_parser.deinit();
-    temp_parser.owner_record = self.owner_record;
+    var temp_parser = Parser.init(self.io, self.allocator, tokens.items, self.current_file, self.current_file_uri, self.reporter);
 
     const expr = try expression_parser.parseExpression(&temp_parser) orelse {
         self.reporter.reportCompileError(

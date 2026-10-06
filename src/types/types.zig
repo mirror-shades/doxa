@@ -17,173 +17,8 @@ const ErrorCode = Errors.ErrorCode;
 pub const StructField = struct {
     name: []const u8,
     field_type_info: *ast.TypeInfo,
-    custom_type_name: ?[]const u8 = null,
     index: u32,
     is_public: bool = false,
-};
-
-pub const ZigModule = struct {
-    name: []const u8,
-    path: []const u8,
-    size: u32,
-    offset: u32,
-    functions: std.StringHashMap([]const u8),
-};
-
-pub const ModuleEnvironment = struct {
-    module_name: []const u8,
-    environment: *Environment,
-    imports: std.StringHashMap([]const u8),
-
-    pub fn init(allocator: std.mem.Allocator, module_name: []const u8, memory_manager: *MemoryManager, debug_enabled: bool) !*ModuleEnvironment {
-        const self = try allocator.create(ModuleEnvironment);
-        const env = try allocator.create(Environment);
-        env.* = .{
-            .values = std.StringHashMap(TokenLiteral).init(allocator),
-            .types = std.StringHashMap(ast.TypeInfo).init(allocator),
-            .enclosing = null,
-            .debug_enabled = debug_enabled,
-            .allocator = allocator,
-            .memory_manager = memory_manager,
-            .module = self,
-        };
-
-        self.* = .{
-            .module_name = module_name,
-            .environment = env,
-            .imports = std.StringHashMap([]const u8).init(allocator),
-        };
-
-        return self;
-    }
-
-    pub fn deinit(self: *ModuleEnvironment, allocator: std.mem.Allocator) void {
-        self.environment.deinit();
-        allocator.destroy(self.environment);
-        self.imports.deinit();
-        allocator.destroy(self);
-    }
-
-    pub fn addImport(self: *ModuleEnvironment, alias: []const u8, module_path: []const u8) !void {
-        try self.imports.put(alias, module_path);
-    }
-};
-
-pub const Environment = struct {
-    values: std.StringHashMap(TokenLiteral),
-    types: std.StringHashMap(ast.TypeInfo),
-    enclosing: ?*Environment,
-    debug_enabled: bool,
-    allocator: std.mem.Allocator,
-    memory_manager: *MemoryManager,
-    module: ?*ModuleEnvironment = null,
-
-    pub fn init(
-        allocator: std.mem.Allocator,
-        enclosing: ?*Environment,
-        debug_enabled: bool,
-        memory_manager: *MemoryManager,
-    ) Environment {
-        return .{
-            .values = std.StringHashMap(TokenLiteral).init(allocator),
-            .types = std.StringHashMap(ast.TypeInfo).init(allocator),
-            .enclosing = enclosing,
-            .debug_enabled = debug_enabled,
-            .allocator = allocator,
-            .memory_manager = memory_manager,
-        };
-    }
-
-    pub fn deinit(self: *Environment) void {
-        var it = self.values.iterator();
-        while (it.next()) |entry| {
-            switch (entry.value_ptr.*) {
-                .array => |arr| self.allocator.free(arr),
-                .function => |f| {
-                    self.allocator.free(f.params);
-                },
-                else => {},
-            }
-        }
-        self.values.deinit();
-        self.types.deinit();
-    }
-
-    pub fn define(self: *Environment, key: []const u8, value: TokenLiteral, type_info: ast.TypeInfo) !void {
-        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            const is_constant = !type_info.is_mutable;
-
-            const token_type = switch (type_info.base) {
-                .Int => TokenType.INT,
-                .Byte => TokenType.BYTE,
-                .Float => TokenType.FLOAT,
-                .String => TokenType.STRING,
-                .Tetra => TokenType.TETRA,
-                .Array => TokenType.ARRAY,
-                .Function => TokenType.FUNCTION,
-                .Struct => TokenType.STRUCT,
-                .Enum => TokenType.ENUM,
-                .Map => TokenType.MAP,
-                .Nothing => TokenType.NOTHING,
-                .Custom => TokenType.CUSTOM,
-                .Union => TokenType.UNION,
-            };
-
-            _ = try root_scope.createValueBinding(key, value, token_type, type_info, is_constant);
-            return;
-        }
-        return error.NoRootScope;
-    }
-
-    pub fn get(self: *Environment, name: []const u8) ErrorList!?TokenLiteral {
-        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            if (root_scope.lookupVariable(name)) |variable| {
-                if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    return storage.value;
-                }
-            }
-        }
-
-        if (self.enclosing) |enclosing| {
-            return enclosing.get(name);
-        }
-
-        return null;
-    }
-
-    pub fn assign(self: *Environment, name: []const u8, value: TokenLiteral) !void {
-        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            if (root_scope.lookupVariable(name)) |variable| {
-                if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    if (storage.constant) {
-                        return error.CannotAssignToConstant;
-                    }
-
-                    storage.value = value;
-
-                    return;
-                } else {
-                    return error.StorageNotFound;
-                }
-            }
-        }
-
-        return error.UndefinedVariable;
-    }
-
-    pub fn getTypeInfo(self: *Environment, name: []const u8) ErrorList!ast.TypeInfo {
-        if (self.memory_manager.scope_manager.root_scope) |root_scope| {
-            if (root_scope.lookupVariable(name)) |variable| {
-                if (self.memory_manager.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    return storage.type_info;
-                }
-            }
-        }
-        if (self.enclosing) |enclosing| {
-            return enclosing.getTypeInfo(name);
-        }
-        return error.UndefinedVariable;
-    }
 };
 
 pub const Tetra = enum {
@@ -201,19 +36,7 @@ pub const TokenLiteral = union(enum) {
     tetra: Tetra,
     nothing: void,
     array: []TokenLiteral,
-    struct_value: struct {
-        type_name: []const u8,
-        fields: []StructField,
-        path: ?[]const u8 = @as(?[]const u8, null),
-    },
     map: std.StringHashMap(TokenLiteral),
-    function: struct {
-        params: []FunctionParam,
-        body: []ast.Stmt,
-        closure: *Environment,
-        defining_module: ?*ModuleEnvironment,
-    },
-    enum_variant: []const u8,
 };
 
 pub const CustomTypeInstanceData = union {
@@ -227,9 +50,11 @@ pub const CustomTypeKind = enum {
     Group,
 };
 
+/// A group member as its declaration writes it: the qualifier the group uses
+/// for it and the identity of the member type.
 pub const GroupMemberSource = struct {
     qualifier: []const u8,
-    source_name: []const u8,
+    ref: ast.TypeRef,
 };
 
 pub const EnumVariant = struct {
@@ -252,7 +77,8 @@ pub fn structFieldIndex(fields: anytype, field_name: []const u8) ?u32 {
 }
 
 pub const CustomTypeInfo = struct {
-    name: []const u8,
+    /// The type's identity; `ref.name` is its declared name.
+    ref: ast.TypeRef,
     kind: CustomTypeKind,
     enum_variants: ?[]EnumVariant = null,
     struct_fields: ?[]StructField = null,

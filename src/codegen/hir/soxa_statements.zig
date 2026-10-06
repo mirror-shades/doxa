@@ -143,7 +143,16 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             var var_type: HIRType = .Nothing;
             var precreated_cast_idx: ?u32 = null;
 
-            var custom_type_name: ?[]const u8 = null;
+            // The binding's named type, as analysis typed it: its annotation,
+            // or else its initializer. Dispatch and peeks read it by key.
+            const binding_type: ?ast.TypeInfo = if (decl.type_info.base != .Nothing)
+                decl.type_info
+            else if (decl.initializer) |init_expr|
+                if (self.semantic.getCachedExprType(init_expr)) |init_type| init_type.* else null
+            else
+                null;
+            const binding_key: ?[]const u8 = if (binding_type) |t| self.typeKeyOf(t) else null;
+
             if (decl.type_info.base != .Nothing) {
                 var_type = switch (decl.type_info.base) {
                     .Int => .Int,
@@ -158,45 +167,12 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         }
                         break :blk .Unknown;
                     },
-                    .Enum => blk: {
-                        custom_type_name = decl.type_info.custom_type;
-                        break :blk HIRType{ .Enum = 0 };
-                    },
-                    .Struct => blk: {
-                        custom_type_name = decl.type_info.custom_type;
-                        break :blk HIRType{ .Struct = 0 };
-                    },
-                    .Custom => blk: {
-                        if (decl.type_info.custom_type) |type_name| {
-                            if (self.type_system.custom_types.get(type_name)) |custom_type| {
-                                if (custom_type.kind == .Enum) {
-                                    custom_type_name = type_name;
-                                    break :blk HIRType{ .Enum = 0 };
-                                } else if (custom_type.kind == .Struct) {
-                                    try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                                    break :blk HIRType{ .Struct = 0 };
-                                } else if (custom_type.kind == .Group) {
-                                    custom_type_name = type_name;
-                                    try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                                    const gid = if (self.type_system.group_table) |gt| gt.getIdByName(type_name) orelse 0 else 0;
-                                    break :blk HIRType{ .Group = gid };
-                                }
-                            }
-                            try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                            break :blk HIRType{ .Struct = 0 };
-                        }
-                        break :blk .Nothing;
-                    },
+                    .Enum, .Struct, .Custom => if (binding_key) |key| self.type_system.customTypeForName(key) else .Nothing,
                     else => .Nothing,
                 };
             }
 
             if (decl.initializer) |init_expr| {
-                const old_enum_context = self.current_enum_type;
-                if (custom_type_name != null) {
-                    self.current_enum_type = custom_type_name;
-                }
-
                 const previous_override = self.array_storage_override;
                 defer self.array_storage_override = previous_override;
                 const previous_element_override = self.array_element_type_override;
@@ -225,8 +201,6 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
                 self.cast_decl_var_index = null;
                 self.cast_decl_var_name = null;
-
-                self.current_enum_type = old_enum_context;
 
                 if (init_expr.data == .Array and decl.type_info.base == .Array) {
                     const elements_for_type_fix = init_expr.data.Array;
@@ -296,127 +270,23 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                     if (var_type == .Union) {
                         const union_members = var_type.Union.members;
                         const member_names = try self.allocator.alloc([]const u8, union_members.len);
-                        for (union_members, 0..) |member_type, i| {
-                            member_names[i] = switch (member_type.*) {
-                                .Byte => "byte",
-                                .Int => "int",
-                                .Float => "float",
-                                .String => "string",
-                                .Tetra => "tetra",
-                                .Nothing => "nothing",
-                                .Enum => |eid| blk: {
-                                    if (self.type_system.enum_table) |table| {
-                                        if (table.getName(eid)) |ename| break :blk ename;
-                                    }
-                                    break :blk "(enum)";
-                                },
-                                .Struct => |sid| blk: {
-                                    if (self.type_system.struct_table) |table| {
-                                        if (table.getName(sid)) |sname| break :blk sname;
-                                    }
-                                    break :blk "(struct)";
-                                },
-                                else => "unknown",
-                            };
+                        for (union_members, member_names) |member_type, *name| {
+                            name.* = try self.hirTypeToDisplayName(member_type.*);
                         }
 
                         const var_index = try self.getOrCreateVariable(decl.name.lexeme);
                         try self.symbol_table.trackVariableUnionMembers(self.symbol_table.isLocalVariable(decl.name.lexeme), var_index, member_names);
                     }
 
+                    // A named initializer type is the binding's type outright:
+                    // the inferred HIR type may only carry a placeholder id.
+                    if (binding_key) |key| var_type = self.type_system.customTypeForName(key);
+
                     if (var_type == .Group) {
                         const var_index = try self.getOrCreateVariable(decl.name.lexeme);
-                        var group_name: ?[]const u8 = null;
-                        if (self.symbol_table.getVariableCustomType(decl.name.lexeme)) |custom_name| {
-                            group_name = custom_name;
-                        } else if (var_type.Group != 0) {
-                            if (self.type_system.group_table) |table| {
-                                group_name = table.getName(var_type.Group);
-                            }
-                        }
-                        if (group_name) |gn| {
-                            const member_names = try self.type_system.getGroupMemberNames(gn);
-                            if (member_names.len > 0) {
-                                try self.symbol_table.trackVariableUnionMembers(self.symbol_table.isLocalVariable(decl.name.lexeme), var_index, member_names);
-                            }
-                        }
-                    }
-
-                    if (var_type == .Struct and init_expr.data == .StructLiteral) {
-                        const struct_lit = init_expr.data.StructLiteral;
-                        try self.trackVariableCustomType(decl.name.lexeme, struct_lit.name.lexeme);
-                    }
-
-                    // If the initializer is an `as`/cast expression targeting a custom struct
-                    // type, keep the concrete type name so peeks print `Employee` instead of
-                    // generic `struct`.
-                    if (var_type == .Struct and init_expr.data == .Cast) {
-                        const cast_expr = init_expr.data.Cast;
-                        if (cast_expr.target_type.data == .Custom) {
-                            try self.trackVariableCustomType(decl.name.lexeme, cast_expr.target_type.data.Custom.lexeme);
-                        }
-                    }
-
-                    // Track the enum type for `x is E.Variant` initializers even
-                    // when there is no explicit annotation. Without the tracked
-                    // type, `match x { E.Variant then ... }` cannot resolve the
-                    // variant patterns and silently falls through to `else`.
-                    if (init_expr.data == .FieldAccess) {
-                        const fa = init_expr.data.FieldAccess;
-                        if (fa.object.data == .Variable) {
-                            const enum_type_name = fa.object.data.Variable.lexeme;
-                            if (self.isCustomType(enum_type_name)) |ct_enum| {
-                                if (ct_enum.kind == .Enum) {
-                                    try self.trackVariableCustomType(decl.name.lexeme, enum_type_name);
-                                    var_type = HIRType{ .Enum = 0 };
-                                }
-                            }
-                        }
-                    }
-
-                    // A variable initialized from a struct static method call
-                    // (e.g. `var b is Builder.executable(...)`) must record the
-                    // concrete struct type so instance-method dispatch and struct
-                    // peeks resolve. The type is taken from the static method's
-                    // declared return type; `New`/`new` constructors fall back to
-                    // the receiver type. Without this, only literally-named
-                    // `New`/`new` constructors were tracked and every other
-                    // factory method left the receiver untyped, causing method
-                    // calls to be misclassified as internal (returning `this`).
-                    if (init_expr.data == .FunctionCall) {
-                        const call = init_expr.data.FunctionCall;
-                        if (call.callee.data == .FieldAccess) {
-                            const callee_field = call.callee.data.FieldAccess;
-                            const recv_type_name: ?[]const u8 = switch (callee_field.object.data) {
-                                .Variable => |v| v.lexeme,
-                                .FieldAccess => |inner| inner.field.lexeme,
-                                else => null,
-                            };
-                            if (recv_type_name) |type_name| {
-                                if (self.isCustomType(type_name)) |ct_recv| {
-                                    if (ct_recv.kind == .Struct) {
-                                        var tracked: ?[]const u8 = null;
-                                        if (self.struct_methods.get(type_name)) |method_table| {
-                                            if (method_table.get(callee_field.field.lexeme)) |mi| {
-                                                if (mi.signature.return_type.custom_type) |rt_name| {
-                                                    if (self.isCustomType(rt_name)) |rct| {
-                                                        if (rct.kind == .Struct) tracked = rt_name;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if (tracked == null and
-                                            (std.mem.eql(u8, callee_field.field.lexeme, "New") or std.mem.eql(u8, callee_field.field.lexeme, "new")))
-                                        {
-                                            tracked = type_name;
-                                        }
-                                        if (tracked) |tn| {
-                                            try self.trackVariableCustomType(decl.name.lexeme, tn);
-                                            var_type = HIRType{ .Struct = 0 };
-                                        }
-                                    }
-                                }
-                            }
+                        const member_names = try self.type_system.getGroupMemberNames(self.semantic.group_table.keyOf(var_type.Group).?);
+                        if (member_names.len > 0) {
+                            try self.symbol_table.trackVariableUnionMembers(self.symbol_table.isLocalVariable(decl.name.lexeme), var_index, member_names);
                         }
                     }
                 }
@@ -554,35 +424,10 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 try self.trackArrayElementType(decl.name.lexeme, var_type.Array.*);
             }
 
-            if (custom_type_name) |custom_type| {
-                try self.trackVariableCustomType(decl.name.lexeme, custom_type);
-            } else if (decl.initializer) |init_expr| {
-                // An unannotated declaration whose initialiser already has a
-                // concrete custom type (`const copy is original`, `const p is
-                // registry.first()`) has no annotation to name the type from.
-                // Method resolution reads the *name*, so the variable looked
-                // nameless and a call on it evaluated its receiver and dropped
-                // the call with no diagnostic (the `is_known_builtin` early
-                // return in `generateInternalMethodCall`). Recovering it from the
-                // HIR type is not enough either: the constructor path records a
-                // placeholder `HIRType{ .Struct = 0 }` that no table lookup
-                // resolves. Ask the same resolver call sites use, so a
-                // declaration and a call on it always agree.
-                if (self.type_system.resolveFieldAccessType(init_expr, &self.symbol_table)) |res| {
-                    if (res.custom_type_name) |name| {
-                        if (self.isCustomType(name) != null) {
-                            try self.trackVariableCustomType(decl.name.lexeme, name);
-                        }
-                    }
-                }
-            }
+            if (binding_key) |key| try self.trackVariableCustomType(decl.name.lexeme, key);
 
             const var_idx = precreated_cast_idx orelse try self.symbol_table.createVariable(decl.name.lexeme);
             const is_module_ctx = self.current_function == null and self.isModuleContext();
-            if (is_module_ctx and self.current_module_context != null) {
-                const module_id = self.current_module_context.?;
-                try self.trackModuleFieldSlot(module_id, decl.name.lexeme, var_idx);
-            }
 
             if (decl.type_info.base == .Union) {
                 if (decl.type_info.union_type) |ut| {
@@ -662,49 +507,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 try self.instructions.append(.{ .ExitScope = .{ .scope_id = scope_id } });
             }
         },
-        .EnumDecl => |enum_decl| {
-            var variant_names = try self.allocator.alloc([]const u8, enum_decl.variants.len);
-            for (enum_decl.variants, 0..) |variant_token, i| {
-                variant_names[i] = variant_token.lexeme;
-            }
-            try self.registerEnumType(enum_decl.name.lexeme, variant_names);
-
-            const var_idx = try self.getOrCreateVariable(enum_decl.name.lexeme);
-            try self.trackVariableType(enum_decl.name.lexeme, HIRType{ .Enum = 0 });
-
-            const enum_type_value = HIRValue{ .string = enum_decl.name.lexeme };
-            const const_idx = try self.addConstant(enum_type_value);
-            try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
-            try self.instructions.append(.{ .StoreDecl = .{
-                .var_index = var_idx,
-                .var_name = enum_decl.name.lexeme,
-                .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
-                .module_context = null,
-                .declared_type = HIRType{ .Enum = 0 },
-                .is_const = true,
-            } });
-        },
-        .GroupDecl => |group_decl| {
-            try self.registerGroupType(group_decl.name.lexeme, group_decl.members);
-
-            const var_idx = try self.getOrCreateVariable(group_decl.name.lexeme);
-            const gid = if (self.type_system.group_table) |gt| gt.getIdByName(group_decl.name.lexeme) orelse 0 else 0;
-            try self.trackVariableType(group_decl.name.lexeme, HIRType{ .Group = gid });
-
-            const group_type_value = HIRValue{ .string = group_decl.name.lexeme };
-            const const_idx = try self.addConstant(group_type_value);
-            try self.instructions.append(.{ .Const = .{ .value = group_type_value, .constant_id = const_idx } });
-            // The name binding is a string, not a group *value*: a group value
-            // would need a member index, which a bare group name has none of.
-            try self.instructions.append(.{ .StoreDecl = .{
-                .var_index = var_idx,
-                .var_name = group_decl.name.lexeme,
-                .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
-                .module_context = null,
-                .declared_type = HIRType{ .String = {} },
-                .is_const = true,
-            } });
-        },
+        // Type declarations are compile time only: analysis registered them.
+        .EnumDecl, .GroupDecl => {},
         .Assert => |assert_stmt| {
             try self.generateExpression(assert_stmt.condition, true, true);
 
@@ -772,13 +576,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
             try self.instructions.append(map_instruction);
         },
-        else => {
-            self.reporter.reportCompileError(
-                stmt.base.location(),
-                ErrorCode.UNHANDLED_STATEMENT_TYPE,
-                "Unhandled statement type: {}",
-                .{stmt.data},
-            );
-        },
+        // Imports were bound by the module loader: compile time only.
+        .Import => {},
     }
 }

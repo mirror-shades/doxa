@@ -9,19 +9,12 @@ const helpers = @import("./helpers.zig");
 const unifyTypes = helpers.unifyTypes;
 const getLocationFromBase = helpers.getLocationFromBase;
 const eval = @import("eval_utils.zig");
-const lookupVariable = helpers.lookupVariable;
+const names = @import("names.zig");
+const TypeRef = ast.TypeRef;
 const Scope = @import("../../utils/memory.zig").Scope;
 const builtin_methods = @import("../../runtime/builtin_methods.zig");
 
 const SemanticError = std.mem.Allocator.Error || ErrorList;
-
-fn structMethodName(self: *SemanticAnalyzer, custom_type: []const u8) []const u8 {
-    if (std.mem.lastIndexOfScalar(u8, custom_type, '.')) |dot| {
-        const namespace = custom_type[0..dot];
-        if (helpers.isModuleNamespace(self, namespace)) return custom_type[dot + 1 ..];
-    }
-    return custom_type;
-}
 
 /// The type of a builtin's subject argument. Expression inference can miss a
 /// variable's type (e.g. a global or an imported binding) even though its
@@ -29,7 +22,7 @@ fn structMethodName(self: *SemanticAnalyzer, custom_type: []const u8) []const u8
 fn inferBuiltinSubjectType(self: *SemanticAnalyzer, subject: *ast.Expr) SemanticError!*ast.TypeInfo {
     const subject_type = try inferTypeFromExpr(self, subject);
     if (subject_type.base != .Nothing or subject.data != .Variable) return subject_type;
-    if (lookupVariable(self, subject.data.Variable.lexeme)) |variable| {
+    if (try names.lookupVariable(self, subject.data.Variable.lexeme)) |variable| {
         if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
             return storage.type_info;
         }
@@ -129,6 +122,7 @@ fn inferBuiltinCallInner(
         if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@push")) return type_info;
             if (coll_t.array_type) |elem| {
+                helpers.contextualizeEnumMember(self, args[1], val_t, elem);
                 try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(args[1].base) });
             } else if (val_t.base == .Array and val_t.array_type != null) {
                 self.reporter.reportCompileError(
@@ -194,7 +188,10 @@ fn inferBuiltinCallInner(
         if (coll_t.base == .Array) {
             if (!self.ensureDynamicArrayStorage(coll_t, getLocationFromBase(args[0].base), "@insert")) return type_info;
             const val_t = try inferTypeFromExpr(self, args[2]);
-            if (coll_t.array_type) |elem| try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(args[2].base) });
+            if (coll_t.array_type) |elem| {
+                helpers.contextualizeEnumMember(self, args[2], val_t, elem);
+                try helpers.unifyTypes(self, elem, val_t, .{ .location = getLocationFromBase(args[2].base) });
+            }
         } else if (coll_t.base == .String) {
             // A string is not a byte array: only a string can be inserted.
             // `byte[]` crosses with `@pack`.
@@ -493,6 +490,14 @@ fn inferTypeFromExprUncached(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticE
         .Binary => |bin| {
             const left_type = try inferTypeFromExpr(self, bin.left.?);
             const right_type = try inferTypeFromExpr(self, bin.right.?);
+            // `x == .Red`: a shorthand compared against an enum is its variant.
+            if (bin.operator.type == .EQUALITY or bin.operator.type == .BANG_EQUAL) {
+                helpers.contextualizeEnumMember(self, bin.left.?, left_type, right_type);
+                helpers.contextualizeEnumMember(self, bin.right.?, right_type, left_type);
+                const span = ast.SourceSpan{ .location = getLocationFromBase(expr.base) };
+                _ = helpers.reportUndeclaredVariant(self, bin.left.?, left_type, right_type, span);
+                _ = helpers.reportUndeclaredVariant(self, bin.right.?, right_type, left_type, span);
+            }
 
             // The parser rewrites a compound assignment on an index or field target into
 // an `IndexAssign`/`FieldAssignment` whose value is a `Binary` holding the
@@ -723,7 +728,7 @@ const op: []const u8 = switch (bin.operator.type) {
             }
         },
         .Variable => |var_token| {
-            if (lookupVariable(self, var_token.lexeme)) |variable| {
+            if (try names.resolveVariableExpr(self, expr)) |variable| {
                 if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                     type_info.* = storage.type_info.*;
                 } else {
@@ -736,6 +741,15 @@ const op: []const u8 = switch (bin.operator.type) {
                     self.fatal_error = true;
                     type_info.base = .Nothing;
                 }
+            } else if (try names.namespaceOf(self, expr)) |_| {
+                self.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.MODULE_NAMESPACE_NOT_A_VALUE,
+                    "Module namespace '{s}' is not a value",
+                    .{var_token.lexeme},
+                );
+                self.fatal_error = true;
+                type_info.base = .Nothing;
             } else {
                 self.reporter.reportCompileError(
                     getLocationFromBase(expr.base),
@@ -762,205 +776,7 @@ const op: []const u8 = switch (bin.operator.type) {
         },
         .FunctionCall => |function_call| {
             if (function_call.callee.data == .FieldAccess) {
-                const field_access = function_call.callee.data.FieldAccess;
-                const object_type = try inferTypeFromExpr(self, field_access.object);
-                const method_name = field_access.field.lexeme;
-
-                if (field_access.object.data == .Variable) {
-                    const object_name = field_access.object.data.Variable.lexeme;
-
-                    if (object_type.base == .Custom) {
-                        if (object_type.custom_type) |ct_name| {
-                            const method_struct_name = structMethodName(self, ct_name);
-                            try self.ensureImportedStructRegistered(method_struct_name);
-                            if (self.struct_methods.get(method_struct_name)) |method_table| {
-                                if (method_table.get(method_name)) |method_info| {
-                                    if (!method_info.is_static) {
-                                        if (!try validateFunctionCallArguments(self, expr, function_call.arguments, method_info.signature)) {
-                                            type_info.base = .Nothing;
-                                            return type_info;
-                                        }
-                                        type_info.* = method_info.signature.return_type.*;
-                                        return type_info;
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    const imported_module_fn = blk: {
-                        if (self.parser) |p| {
-                            if (p.imported_symbols) |symbols| {
-                                const full_name = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ object_name, method_name }) catch break :blk false;
-                                defer self.allocator.free(full_name);
-                                if (symbols.get(full_name)) |sym| {
-                                    break :blk sym.kind == .Function;
-                                }
-                            }
-                        }
-                        break :blk false;
-                    };
-                    if (helpers.isModuleNamespace(self, object_name) or imported_module_fn) {
-                        const module_field_type = try helpers.handleModuleFieldAccess(self, object_name, method_name, .{ .location = getLocationFromBase(expr.base) });
-                        if (module_field_type.base == .Function and module_field_type.function_type != null) {
-                            if (!try validateFunctionCallArguments(self, expr, function_call.arguments, module_field_type.function_type.?)) {
-                                type_info.base = .Nothing;
-                                return type_info;
-                            }
-                            type_info.* = module_field_type.function_type.?.return_type.*;
-                            return type_info;
-                        }
-                        return module_field_type;
-                    }
-
-                    if (self.custom_types.get(object_name)) |custom_type| {
-                        if (custom_type.kind == .Struct) {
-                            if (self.struct_methods.get(object_name)) |method_table| {
-                                if (method_table.get(method_name)) |method_info| {
-                                    if (method_info.is_static) {
-                                        if (!try validateFunctionCallArguments(self, expr, function_call.arguments, method_info.signature)) {
-                                            type_info.base = .Nothing;
-                                            return type_info;
-                                        }
-                                        type_info.* = method_info.signature.return_type.*;
-                                        return type_info;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else if (field_access.object.data == .FieldAccess) {
-                    if (object_type.base == .Custom) {
-                        if (object_type.custom_type) |ct_name| {
-                            if (helpers.isModuleNamespace(self, ct_name)) {
-                                const module_field_type = try helpers.handleModuleFieldAccess(self, ct_name, method_name, .{ .location = getLocationFromBase(expr.base) });
-                                if (module_field_type.base == .Function and module_field_type.function_type != null) {
-                                    if (!try validateFunctionCallArguments(self, expr, function_call.arguments, module_field_type.function_type.?)) {
-                                        type_info.base = .Nothing;
-                                        return type_info;
-                                    }
-                                    type_info.* = module_field_type.function_type.?.return_type.*;
-                                    return type_info;
-                                }
-                                return module_field_type;
-                            }
-                        }
-                    }
-                }
-
-                switch (object_type.base) {
-                    .Array => {
-                        if (std.mem.eql(u8, method_name, "push")) {
-                            type_info.* = .{ .base = .Nothing };
-                        } else if (std.mem.eql(u8, method_name, "pop")) {
-                            if (object_type.array_type) |elem_type| {
-                                type_info.* = elem_type.*;
-                            } else {
-                                type_info.* = .{ .base = .Nothing };
-                            }
-                        } else if (std.mem.eql(u8, method_name, "length")) {
-                            type_info.* = .{ .base = .Int };
-                        } else {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.UNKNOWN_METHOD,
-                                "Unknown array method '{s}'",
-                                .{method_name},
-                            );
-                            self.fatal_error = true;
-                            type_info.base = .Nothing;
-                        }
-                    },
-                    .String => {
-                        if (std.mem.eql(u8, method_name, "length")) {
-                            type_info.* = .{ .base = .Int };
-                        } else if (std.mem.eql(u8, method_name, "bytes")) {
-                            type_info.* = .{ .base = .Array };
-                        } else {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.UNKNOWN_METHOD,
-                                "Unknown string method '{s}'",
-                                .{method_name},
-                            );
-                            self.fatal_error = true;
-                            type_info.base = .Nothing;
-                        }
-                    },
-                    .Map => {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.UNKNOWN_METHOD,
-                            "Maps do not have methods; use indexing (map[key]) or assignment (map[key] is value)",
-                            .{},
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                    },
-                    .Struct, .Custom => {
-                        var struct_name: ?[]const u8 = null;
-                        if (object_type.base == .Custom) {
-                            if (object_type.custom_type) |ct_name| {
-                                struct_name = ct_name;
-                            }
-                        } else if (object_type.base == .Struct) {
-                            if (object_type.custom_type) |ct_name| {
-                                struct_name = ct_name;
-                            }
-                        }
-
-                        // Prefer registered methods over fields when resolving a call
-                        if (struct_name) |name| {
-                            const method_struct_name = structMethodName(self, name);
-                            try self.ensureImportedStructRegistered(method_struct_name);
-                            if (self.struct_methods.get(method_struct_name)) |tbl| {
-                                if (tbl.get(method_name)) |mi| {
-                                    if (!try validateFunctionCallArguments(self, expr, function_call.arguments, mi.signature)) {
-                                        type_info.base = .Nothing;
-                                        return type_info;
-                                    }
-                                    type_info.* = mi.signature.return_type.*;
-                                    return type_info;
-                                }
-                            }
-                        }
-
-                        // Fallback: allow calling function-typed fields as methods (if any)
-                        if (object_type.struct_fields) |fields| {
-                            for (fields) |field| {
-                                if (std.mem.eql(u8, field.name, method_name) and field.type_info.base == .Function) {
-                                    if (!try validateFunctionCallArguments(self, expr, function_call.arguments, field.type_info.function_type.?)) {
-                                        type_info.base = .Nothing;
-                                        return type_info;
-                                    }
-                                    type_info.* = field.type_info.*;
-                                    return type_info;
-                                }
-                            }
-                        }
-
-                        // If we reach here, no method matched
-                        const display_name = struct_name orelse @as([]const u8, "<struct>");
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.UNKNOWN_METHOD,
-                            "Unknown method '{s}' on struct '{s}'",
-                            .{ method_name, display_name },
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                    },
-                    else => {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.CANNOT_CALL_METHOD_ON_TYPE,
-                            "Cannot call method '{s}' on type {s}",
-                            .{ method_name, @tagName(object_type.base) },
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                    },
-                }
+                return inferMemberCall(self, expr, function_call.callee, function_call.arguments, type_info);
             } else {
                 const callee_type = try inferTypeFromExpr(self, function_call.callee);
                 if (callee_type.base == .Function) {
@@ -1120,6 +936,11 @@ const op: []const u8 = switch (bin.operator.type) {
                     type_info.base = .Nothing;
                 }
             } else if (array_type.base == .Map) {
+                // `m[.Red]`: the map's key type is the shorthand's context.
+                if (array_type.map_key_type) |key_type| {
+                    helpers.contextualizeEnumMember(self, index.index, index_type, key_type);
+                    _ = helpers.reportUndeclaredVariant(self, index.index, index_type, key_type, .{ .location = getLocationFromBase(index.index.base) });
+                }
                 if (index_type.base != .String and index_type.base != .Int and index_type.base != .Enum and index_type.base != .Custom) {
                     if (index_type.base == .Union) {
                         self.reporter.reportCompileError(
@@ -1185,258 +1006,95 @@ const op: []const u8 = switch (bin.operator.type) {
             }
         },
         .FieldAccess => |field| {
+            // A member of a namespace: `ns.fn`, `ns.global`, `ns.Type`.
+            if (try names.namespaceOf(self, field.object)) |namespace| {
+                return memberOfNamespace(self, expr, namespace, field.field, type_info);
+            }
+
             const object_type = try inferTypeFromExpr(self, field.object);
-
-            if (object_type.base == .Union) {
-                self.reporter.reportCompileError(
-                    getLocationFromBase(expr.base),
-                    ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
-                    "Cannot access field '{s}' on union type; narrow it with 'as' or match first",
-                    .{field.field.lexeme},
-                );
-                self.fatal_error = true;
-                type_info.base = .Nothing;
-                return type_info;
-            }
-
-            var resolved_object_type = object_type;
-
-            if (resolved_object_type.base == .Custom) {
-                if (resolved_object_type.custom_type) |custom_type_name| {
-                    const resolved_custom_name = self.resolveTypeAlias(custom_type_name);
-                    var custom_type_lookup_name = resolved_custom_name;
-                    var module_struct_type_info: ?*ast.TypeInfo = null;
-
-                    if (!self.custom_types.contains(resolved_custom_name)) {
-                        if (self.parser) |parser| {
-                            var module_it = parser.module_namespaces.iterator();
-                            find_unqualified_struct: while (module_it.next()) |entry| {
-                                const module_info = entry.value_ptr.*;
-                                if (module_info.ast) |module_ast| {
-                                    if (module_ast.data == .Block) {
-                                        for (module_ast.data.Block.statements) |stmt| {
-                                            switch (stmt.data) {
-                                                .Expression => |expr_opt| {
-                                                    if (expr_opt) |stmt_expr| {
-                                                        if (stmt_expr.data == .StructDecl) {
-                                                            const sd = stmt_expr.data.StructDecl;
-                                                            if (!sd.is_public or !std.mem.eql(u8, sd.name.lexeme, resolved_custom_name)) continue;
-                                                            const struct_fields = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
-                                                            for (sd.fields, 0..) |decl_field, i| {
-                                                                struct_fields[i] = .{
-                                                                    .name = decl_field.name.lexeme,
-                                                                    .type_info = try self.typeExprToTypeInfo(decl_field.type_expr),
-                                                                    .is_public = decl_field.is_public,
-                                                                };
-                                                            }
-                                                            const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
-                                                            resolved_type_info.* = ast.TypeInfo{
-                                                                .base = .Custom,
-                                                                .custom_type = resolved_custom_name,
-                                                                .struct_fields = struct_fields,
-                                                                .is_mutable = object_type.is_mutable,
-                                                            };
-                                                            module_struct_type_info = resolved_type_info;
-                                                            break :find_unqualified_struct;
-                                                        }
-                                                    }
-                                                },
-                                                else => {},
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (std.mem.lastIndexOfScalar(u8, resolved_custom_name, '.')) |dot_idx| {
-                        const module_root = resolved_custom_name[0..dot_idx];
-                        const type_name = resolved_custom_name[dot_idx + 1 ..];
-                        if (helpers.isModuleNamespace(self, module_root) and self.custom_types.contains(type_name)) {
-                            custom_type_lookup_name = type_name;
-                        }
-
-                        if (helpers.isModuleNamespace(self, module_root) and !self.custom_types.contains(type_name)) {
-                            if (self.parser) |parser| {
-                                if (parser.module_namespaces.get(module_root)) |module_info| {
-                                    if (module_info.ast) |module_ast| {
-                                        if (module_ast.data == .Block) {
-                                            find_struct: for (module_ast.data.Block.statements) |stmt| {
-                                                switch (stmt.data) {
-                                                    .Expression => |expr_opt| {
-                                                        if (expr_opt) |stmt_expr| {
-                                                            if (stmt_expr.data == .StructDecl) {
-                                                                const sd = stmt_expr.data.StructDecl;
-                                                                if (!sd.is_public or !std.mem.eql(u8, sd.name.lexeme, type_name)) continue;
-                                                                const struct_fields = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
-                                                                for (sd.fields, 0..) |decl_field, i| {
-                                                                    struct_fields[i] = .{
-                                                                        .name = decl_field.name.lexeme,
-                                                                        .type_info = try self.typeExprToTypeInfo(decl_field.type_expr),
-                                                                        .is_public = decl_field.is_public,
-                                                                    };
-                                                                }
-                                                                const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
-                                                                resolved_type_info.* = ast.TypeInfo{
-                                                                    .base = .Custom,
-                                                                    .custom_type = resolved_custom_name,
-                                                                    .struct_fields = struct_fields,
-                                                                    .is_mutable = object_type.is_mutable,
-                                                                };
-                                                                module_struct_type_info = resolved_type_info;
-                                                                custom_type_lookup_name = type_name;
-                                                                break :find_struct;
-                                                            }
-                                                        }
-                                                    },
-                                                    else => {},
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Prefer struct field lookup when this is a known struct type (e.g. answers.peek_result),
-                    // so .kind/.value etc. resolve to struct fields, not module symbols.
-                    if (self.custom_types.get(custom_type_lookup_name)) |custom_type| {
-                        if (custom_type.kind == .Struct) {
-                            const struct_fields = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
-                            for (custom_type.struct_fields.?, 0..) |custom_field, i| {
-                                struct_fields[i] = .{
-                                    .name = custom_field.name,
-                                    .type_info = custom_field.field_type_info,
-                                    .is_public = custom_field.is_public,
-                                };
-                            }
-                            const resolved_type_info = try ast.TypeInfo.createDefault(self.allocator);
-                            resolved_type_info.* = ast.TypeInfo{
-                                .base = .Custom,
-                                .custom_type = resolved_custom_name,
-                                .struct_fields = struct_fields,
-                                .is_mutable = object_type.is_mutable,
-                            };
-                            resolved_object_type = resolved_type_info;
-                        } else {
-                            type_info.* = .{ .base = .Custom, .custom_type = resolved_custom_name };
-                            return type_info;
-                        }
-                    } else if (module_struct_type_info) |resolved_type_info| {
-                        resolved_object_type = resolved_type_info;
-                    } else if (helpers.isModuleNamespace(self, resolved_custom_name)) {
-                        return helpers.handleModuleFieldAccess(self, resolved_custom_name, field.field.lexeme, .{ .location = getLocationFromBase(expr.base) });
-                    } else {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.TYPE_MISMATCH,
-                            "Undefined type '{s}'",
-                            .{resolved_custom_name},
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                        return type_info;
-                    }
-                } else {
-                    type_info.* = .{ .base = .Enum, .custom_type = null };
-                    return type_info;
-                }
-            }
-
-            if (resolved_object_type.base == .Struct or resolved_object_type.base == .Custom) {
-                if (resolved_object_type.struct_fields) |fields| {
-                    for (fields) |struct_field| {
-                        if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
-                            type_info.* = struct_field.type_info.*;
-
-                            if (type_info.base == .Custom and type_info.custom_type != null) {
-                                if (self.custom_types.get(type_info.custom_type.?)) |custom_type| {
-                                    if (custom_type.kind == .Struct) {
-                                        const struct_fields_inner = try self.allocator.alloc(ast.StructFieldType, custom_type.struct_fields.?.len);
-                                        for (custom_type.struct_fields.?, 0..) |custom_field, i| {
-                                            struct_fields_inner[i] = .{
-                                                .name = custom_field.name,
-                                                .type_info = custom_field.field_type_info,
-                                                .is_public = custom_field.is_public,
-                                            };
-                                        }
-                                        type_info.* = .{ .base = .Custom, .custom_type = type_info.custom_type, .struct_fields = struct_fields_inner, .is_mutable = false };
-                                    }
-                                }
-                            }
-
-                            if (resolved_object_type.custom_type) |owner_name| {
-                                if (self.custom_types.get(owner_name)) |owner_ct| {
-                                    if (owner_ct.kind == .Struct and owner_ct.struct_fields != null) {
-                                        const owner_fields = owner_ct.struct_fields.?;
-                                        var is_public_field = false;
-                                        for (owner_fields) |ofld| {
-                                            if (std.mem.eql(u8, ofld.name, struct_field.name)) {
-                                                is_public_field = ofld.is_public;
-                                                break;
-                                            }
-                                        }
-                                        if (!is_public_field) {
-                                            const accessed_via_this = (field.object.data == .This);
-                                            // `private` is module-private, so the
-                                            // declaring module's own functions may
-                                            // read the field directly; only code
-                                            // outside it needs `this` or a method.
-                                            const same_module = self.canAccessPrivateField(owner_name);
-                                            if (!accessed_via_this and !same_module) {
-                                                self.reporter.reportCompileError(
-                                                    getLocationFromBase(expr.base),
-                                                    ErrorCode.PRIVATE_FIELD_ACCESS,
-                                                    "Cannot access private field '{s}' of struct '{s}'",
-                                                    .{ struct_field.name, owner_name },
-                                                );
-                                                self.fatal_error = true;
-                                                type_info.base = .Nothing;
-                                                return type_info;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            return type_info;
-                        }
-                    } else {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(expr.base),
-                            ErrorCode.FIELD_NOT_FOUND,
-                            "Field '{s}' not found in struct{s}",
-                            .{ field.field.lexeme, if (resolved_object_type.custom_type) |name| std.fmt.allocPrint(self.allocator, " '{s}'", .{name}) catch "" else "" },
-                        );
-                        self.fatal_error = true;
-                        type_info.base = .Nothing;
-                        return type_info;
-                    }
-                } else {
+            switch (object_type.base) {
+                .Union => {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
-                        ErrorCode.STRUCT_HAS_NO_FIELDS,
-                        "Struct{s} has no fields defined",
-                        .{if (resolved_object_type.custom_type) |name| std.fmt.allocPrint(self.allocator, " '{s}'", .{name}) catch "" else ""},
+                        ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
+                        "Cannot access field '{s}' on union type; narrow it with 'as' or match first",
+                        .{field.field.lexeme},
                     );
                     self.fatal_error = true;
                     type_info.base = .Nothing;
-                    return type_info;
-                }
-            } else if (resolved_object_type.base == .Enum) {
-                // Return the specific enum type, not just generic .Enum
-                type_info.* = .{ .base = .Custom, .custom_type = resolved_object_type.custom_type };
-            } else {
-                self.reporter.reportCompileError(
-                    getLocationFromBase(expr.base),
-                    ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
-                    "Cannot access field on non-struct type {s}",
-                    .{@tagName(resolved_object_type.base)},
-                );
-                self.fatal_error = true;
-                type_info.base = .Nothing;
-                return type_info;
+                },
+                .Custom => {
+                    const ref = if (object_type.custom_type) |custom| custom.resolved() else {
+                        // An anonymous enum value carries no named type.
+                        type_info.* = .{ .base = .Enum };
+                        return type_info;
+                    };
+                    const custom = (try self.customType(ref)) orelse {
+                        self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.TYPE_MISMATCH, "Undefined type '{s}'", .{ref.name});
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        return type_info;
+                    };
+                    switch (custom.kind) {
+                        .Struct => {
+                            const struct_field = findField(custom.struct_fields orelse &.{}, field.field.lexeme) orelse {
+                                self.reporter.reportCompileError(
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.FIELD_NOT_FOUND,
+                                    "Field '{s}' not found in struct '{s}'",
+                                    .{ field.field.lexeme, ref.name },
+                                );
+                                self.fatal_error = true;
+                                type_info.base = .Nothing;
+                                return type_info;
+                            };
+                            // A private field is read only through `this`.
+                            if (!struct_field.is_public and field.object.data != .This) {
+                                self.reporter.reportCompileError(
+                                    getLocationFromBase(expr.base),
+                                    ErrorCode.PRIVATE_FIELD_ACCESS,
+                                    "Cannot access private field '{s}' of struct '{s}'; a private field is reached only through `this`",
+                                    .{ struct_field.name, ref.name },
+                                );
+                                self.fatal_error = true;
+                                type_info.base = .Nothing;
+                                return type_info;
+                            }
+                            type_info.* = struct_field.field_type_info.*;
+                        },
+                        // `Color.Red`, `Group.Member`: the qualifier names the
+                        // value's type.
+                        .Enum, .Group => type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref } },
+                    }
+                },
+                .Struct => {
+                    const fields = object_type.struct_fields orelse &.{};
+                    for (fields) |struct_field| {
+                        if (std.mem.eql(u8, struct_field.name, field.field.lexeme)) {
+                            type_info.* = struct_field.type_info.*;
+                            return type_info;
+                        }
+                    }
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.FIELD_NOT_FOUND,
+                        "Field '{s}' not found in struct",
+                        .{field.field.lexeme},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                },
+                .Enum => type_info.* = .{ .base = .Custom, .custom_type = object_type.custom_type },
+                else => {
+                    self.reporter.reportCompileError(
+                        getLocationFromBase(expr.base),
+                        ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
+                        "Cannot access field on non-struct type {s}",
+                        .{@tagName(object_type.base)},
+                    );
+                    self.fatal_error = true;
+                    type_info.base = .Nothing;
+                },
             }
         },
         .Array => |elements| {
@@ -1568,13 +1226,19 @@ const op: []const u8 = switch (bin.operator.type) {
                 if (match_expr.value.data == .Variable) {
                     matched_var_name = match_expr.value.data.Variable.lexeme;
                 }
-                const group_name = helpers.matchSubjectGroupName(self, subject_type);
+                const group = helpers.matchSubjectGroup(self, subject_type);
+                const subject_enum: ?ast.TypeRef = blk: {
+                    const custom = subject_type.custom_type orelse break :blk null;
+                    const ct = (try self.customType(custom.resolved())) orelse break :blk null;
+                    break :blk if (ct.kind == .Enum) custom.resolved() else null;
+                };
 
                 var union_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
                 defer union_types.deinit();
 
-                for (match_expr.cases) |case| {
-                    const case_type = try self.inferMatchCaseTypeWithNarrow(case, matched_var_name, group_name);
+                for (match_expr.cases) |*case| {
+                    try self.resolveMatchPatterns(case, group, subject_enum);
+                    const case_type = try self.inferMatchCaseTypeWithNarrow(case.*, matched_var_name);
                     try union_types.append(case_type);
                 }
 
@@ -1616,13 +1280,13 @@ const op: []const u8 = switch (bin.operator.type) {
                 type_info.* = .{ .base = .Nothing };
             }
         },
-        .Assignment => |assign| {
+        .Assignment => |*assign| {
             if (assign.value) |value| {
                 const prev_bve = self.block_value_expected;
                 self.block_value_expected = true;
                 defer self.block_value_expected = prev_bve;
                 const value_type = try inferTypeFromExpr(self, value);
-                if (lookupVariable(self, assign.name.lexeme)) |variable| {
+                if (try names.resolveAssignmentTarget(self, &assign.name)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         if (storage.constant) {
                             self.reporter.reportCompileError(
@@ -1651,10 +1315,10 @@ const op: []const u8 = switch (bin.operator.type) {
             }
             type_info.* = .{ .base = .Nothing };
         },
-        .CompoundAssign => |compound_assign| {
+        .CompoundAssign => |*compound_assign| {
             if (compound_assign.value) |value| {
                 const value_type = try inferTypeFromExpr(self, value);
-                if (lookupVariable(self, compound_assign.name.lexeme)) |variable| {
+                if (try names.resolveAssignmentTarget(self, &compound_assign.name)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         if (storage.constant) {
                             self.reporter.reportCompileError(
@@ -1705,7 +1369,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 const prev_bve = self.block_value_expected;
                 self.block_value_expected = true;
                 defer self.block_value_expected = prev_bve;
-                type_info.* = (try inferTypeFromExpr(self, value)).*;
+                type_info.* = (try self.checkReturnValue(value, getLocationFromBase(expr.base))).*;
             } else {
                 type_info.* = .{ .base = .Nothing };
             }
@@ -1722,17 +1386,11 @@ const op: []const u8 = switch (bin.operator.type) {
             }
             return try inferBuiltinCall(self, expr, method_name, method_call.receiver, method_call.arguments);
         },
-        .EnumMember => |member_token| {
-            // Resolve the enum member to its parent enum type
-            const parent_enum_name = try self.resolveEnumMemberToParentEnum(member_token.lexeme);
-            if (parent_enum_name) |enum_name| {
-                // Referencing a variant counts as using its parent enum.
-                _ = lookupVariable(self, enum_name);
-                type_info.* = .{ .base = .Custom, .custom_type = enum_name };
-            } else {
-                // If we can't resolve the enum member, treat it as a generic enum
-                type_info.* = .{ .base = .Enum };
-            }
+        .EnumMember => {
+            // Untyped until its context names the enum; checked when the
+            // record's analysis ends (`reportUntypedVariants`).
+            try self.bare_variants.append(self.allocator, expr);
+            type_info.* = .{ .base = .Enum };
         },
         .DefaultArgPlaceholder => {
             type_info.* = .{ .base = .Nothing };
@@ -1812,6 +1470,7 @@ const op: []const u8 = switch (bin.operator.type) {
             }
 
             if (array_type.array_type) |elem_type| {
+                helpers.contextualizeEnumMember(self, index_assign.value, value_type, elem_type);
                 try helpers.unifyTypes(self, elem_type, value_type, .{ .location = getLocationFromBase(expr.base) });
             }
 
@@ -1821,80 +1480,54 @@ const op: []const u8 = switch (bin.operator.type) {
             const object_type = try inferTypeFromExpr(self, field_assign.object);
             const value_type = try inferTypeFromExpr(self, field_assign.value);
 
-            if (object_type.base != .Struct and object_type.base != .Custom) {
-                self.reporter.reportCompileError(
-                    getLocationFromBase(expr.base),
-                    ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
-                    "Cannot assign to field of non-struct type {s}",
-                    .{@tagName(object_type.base)},
-                );
-                self.fatal_error = true;
-                type_info.base = .Nothing;
-                return type_info;
-            }
-
-            if ((object_type.base == .Struct or object_type.base == .Custom) and object_type.struct_fields != null) {
-                const fields = object_type.struct_fields.?;
-                for (fields) |struct_field| {
-                    if (std.mem.eql(u8, struct_field.name, field_assign.field.lexeme)) {
-                        try helpers.unifyTypesExpr(self, struct_field.type_info, value_type, field_assign.value, .{ .location = getLocationFromBase(expr.base) });
-                        break;
-                    }
-                } else {
+            const fields: []const ast.StructFieldType = switch (object_type.base) {
+                .Struct => object_type.struct_fields orelse &.{},
+                .Custom => blk: {
+                    const ref = (object_type.custom_type orelse break :blk &.{}).resolved();
+                    const custom = (try self.customType(ref)) orelse break :blk &.{};
+                    if (custom.kind != .Struct) break :blk &.{};
+                    break :blk try structFieldTypes(self, custom.struct_fields orelse &.{});
+                },
+                else => {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
-                        ErrorCode.FIELD_NOT_FOUND,
-                        "Field '{s}' not found in struct",
-                        .{field_assign.field.lexeme},
+                        ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
+                        "Cannot assign to field of non-struct type {s}",
+                        .{@tagName(object_type.base)},
                     );
                     self.fatal_error = true;
                     type_info.base = .Nothing;
                     return type_info;
-                }
-            } else if (object_type.base == .Custom and object_type.custom_type != null) {
-                const custom_type_name = object_type.custom_type.?;
-                if (self.custom_types.get(custom_type_name)) |custom_type| {
-                    if (custom_type.kind == .Struct and custom_type.struct_fields != null) {
-                        const fields = custom_type.struct_fields.?;
-                        for (fields) |struct_field| {
-                            if (std.mem.eql(u8, struct_field.name, field_assign.field.lexeme)) {
-                                // For field assignment, we just need to validate that the value type is compatible
-                                // We can't do full type unification since we don't have the full type info
-                                break;
-                            }
-                        } else {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(expr.base),
-                                ErrorCode.FIELD_NOT_FOUND,
-                                "Field '{s}' not found in struct '{s}'",
-                                .{ field_assign.field.lexeme, custom_type_name },
-                            );
-                            self.fatal_error = true;
-                            type_info.base = .Nothing;
-                            return type_info;
-                        }
-                    } else {
+                },
+            };
+
+            for (fields) |struct_field| {
+                if (std.mem.eql(u8, struct_field.name, field_assign.field.lexeme)) {
+                    // A private field is written only through `this`.
+                    if (!struct_field.is_public and field_assign.object.data != .This) {
                         self.reporter.reportCompileError(
                             getLocationFromBase(expr.base),
-                            ErrorCode.CANNOT_ACCESS_FIELD_ON_TYPE,
-                            "Cannot assign to field of non-struct type {s}",
-                            .{@tagName(object_type.base)},
+                            ErrorCode.PRIVATE_FIELD_ACCESS,
+                            "Cannot assign private field '{s}'; a private field is reached only through `this`",
+                            .{struct_field.name},
                         );
                         self.fatal_error = true;
                         type_info.base = .Nothing;
                         return type_info;
                     }
-                } else {
-                    self.reporter.reportCompileError(
-                        getLocationFromBase(expr.base),
-                        ErrorCode.FIELD_NOT_FOUND,
-                        "Undefined type '{s}'",
-                        .{custom_type_name},
-                    );
-                    self.fatal_error = true;
-                    type_info.base = .Nothing;
-                    return type_info;
+                    try helpers.unifyTypesExpr(self, struct_field.type_info, value_type, field_assign.value, .{ .location = getLocationFromBase(expr.base) });
+                    break;
                 }
+            } else {
+                self.reporter.reportCompileError(
+                    getLocationFromBase(expr.base),
+                    ErrorCode.FIELD_NOT_FOUND,
+                    "Field '{s}' not found in struct",
+                    .{field_assign.field.lexeme},
+                );
+                self.fatal_error = true;
+                type_info.base = .Nothing;
+                return type_info;
             }
 
             type_info.* = .{ .base = .Nothing };
@@ -2057,72 +1690,78 @@ const op: []const u8 = switch (bin.operator.type) {
             type_info.* = .{ .base = .Struct };
         },
         .StructLiteral => |struct_lit| {
-            const bare_name = self.materializeQualifiedTypeName(struct_lit.name.lexeme);
-            if (lookupVariable(self, bare_name)) |variable| {
-                if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                    if (storage.type_info.base == .Custom) {
-                        type_info.* = storage.type_info.*;
+            const ref = (try names.resolveTypeName(self, struct_lit.name.lexeme, self.current_module)) orelse {
+                self.reporter.reportCompileError(
+                    ast.SourceSpan.fromToken(struct_lit.name).location,
+                    ErrorCode.UNKNOWN_TYPE,
+                    "Unknown type '{s}'",
+                    .{struct_lit.name.lexeme},
+                );
+                self.fatal_error = true;
+                type_info.base = .Nothing;
+                return type_info;
+            };
+            try names.annotate(self, expr, .{ .type = ref });
+            const custom = (try self.customType(ref)) orelse return error.UndefinedType;
+            if (custom.kind != .Struct) {
+                self.reporter.reportCompileError(
+                    ast.SourceSpan.fromToken(struct_lit.name).location,
+                    ErrorCode.TYPE_MISMATCH,
+                    "'{s}' is not a struct",
+                    .{ref.name},
+                );
+                self.fatal_error = true;
+                type_info.base = .Nothing;
+                return type_info;
+            }
+            const decl_fields = try structFieldTypes(self, custom.struct_fields orelse &.{});
+            type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref }, .struct_fields = decl_fields, .is_mutable = false };
 
-                        if (type_info.struct_fields) |decl_fields| {
-                            if (decl_fields.len != struct_lit.fields.len) {
-                                self.reporter.reportCompileError(
-                                    ast.SourceSpan.fromToken(struct_lit.name).location,
-                                    ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
-                                    "struct '{s}' expects {d} field{s}, but this literal provides {d}",
-                                    .{
-                                        struct_lit.name.lexeme,
-                                        decl_fields.len,
-                                        if (decl_fields.len == 1) "" else "s",
-                                        struct_lit.fields.len,
-                                    },
-                                );
-                                self.fatal_error = true;
-                            }
+            if (decl_fields.len != struct_lit.fields.len) {
+                self.reporter.reportCompileError(
+                    ast.SourceSpan.fromToken(struct_lit.name).location,
+                    ErrorCode.STRUCT_FIELD_COUNT_MISMATCH,
+                    "struct '{s}' expects {d} field{s}, but this literal provides {d}",
+                    .{ ref.name, decl_fields.len, if (decl_fields.len == 1) "" else "s", struct_lit.fields.len },
+                );
+                self.fatal_error = true;
+            }
 
-                            for (struct_lit.fields) |lit_field| {
-                                var found = false;
-                                for (decl_fields) |decl_field| {
-                                    if (std.mem.eql(u8, decl_field.name, lit_field.name.lexeme)) {
-                                        found = true;
-                                        const lit_type = try inferTypeFromExpr(self, lit_field.value);
-                                        try helpers.unifyTypesExpr(
-                                            self,
-                                            decl_field.type_info,
-                                            lit_type,
-                                            lit_field.value,
-                                            ast.SourceSpan.fromToken(lit_field.name),
-                                        );
-                                        break;
-                                    }
-                                }
-                                if (!found) {
-                                    const declared_list = try declaredFieldList(self, decl_fields);
-                                    defer self.allocator.free(declared_list);
-                                    self.reporter.reportCompileError(
-                                        ast.SourceSpan.fromToken(lit_field.name).location,
-                                        ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
-                                        "struct '{s}' has no field '{s}'; declared fields: {s}",
-                                        .{ struct_lit.name.lexeme, lit_field.name.lexeme, declared_list },
-                                    );
-                                    self.fatal_error = true;
-                                }
-                            }
-                        }
-                    } else {
-                        type_info.* = .{ .base = .Custom, .custom_type = bare_name };
+            for (struct_lit.fields) |lit_field| {
+                for (decl_fields) |decl_field| {
+                    if (!std.mem.eql(u8, decl_field.name, lit_field.name.lexeme)) continue;
+                    // A private field is set only by the struct itself.
+                    const inside = if (self.enclosing) |enclosing| enclosing.ref.eql(ref) else false;
+                    if (!decl_field.is_public and !inside) {
+                        self.reporter.reportCompileError(
+                            ast.SourceSpan.fromToken(lit_field.name).location,
+                            ErrorCode.PRIVATE_FIELD_ACCESS,
+                            "Cannot set private field '{s}' of struct '{s}' outside the struct",
+                            .{ decl_field.name, ref.name },
+                        );
+                        self.fatal_error = true;
                     }
+                    const lit_type = try inferTypeFromExpr(self, lit_field.value);
+                    try helpers.unifyTypesExpr(self, decl_field.type_info, lit_type, lit_field.value, ast.SourceSpan.fromToken(lit_field.name));
+                    break;
                 } else {
-                    type_info.* = .{ .base = .Custom, .custom_type = bare_name };
+                    const declared_list = try declaredFieldList(self, decl_fields);
+                    defer self.allocator.free(declared_list);
+                    self.reporter.reportCompileError(
+                        ast.SourceSpan.fromToken(lit_field.name).location,
+                        ErrorCode.STRUCT_FIELD_NAME_MISMATCH,
+                        "struct '{s}' has no field '{s}'; declared fields: {s}",
+                        .{ ref.name, lit_field.name.lexeme, declared_list },
+                    );
+                    self.fatal_error = true;
                 }
-            } else {
-                type_info.* = .{ .base = .Custom, .custom_type = bare_name };
             }
         },
         .EnumDecl => {
             type_info.* = .{ .base = .Enum };
         },
         .GroupDecl => {
-            type_info.* = .{ .base = .Enum, .custom_type = expr.data.GroupDecl.name.lexeme };
+            type_info.* = .{ .base = .Enum, .custom_type = .{ .ref = .{ .module = self.current_module, .name = expr.data.GroupDecl.name.lexeme } } };
         },
         .ArrayType => {
             type_info.* = .{ .base = .Array };
@@ -2158,9 +1797,7 @@ const op: []const u8 = switch (bin.operator.type) {
             }
         },
         .TypeExpr => |type_expr| {
-            const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-            type_info.* = type_info_ptr.*;
-            self.allocator.destroy(type_info_ptr);
+            type_info.* = (try self.typeExprToTypeInfo(type_expr)).*;
         },
         .Cast => |cast| {
             if (cast.else_branch == null) {
@@ -2185,10 +1822,7 @@ const op: []const u8 = switch (bin.operator.type) {
                         getLocationFromBase(expr.base),
                         ErrorCode.INVALID_OPERAND_TYPE,
                         "'{s}' is not a member of group '{s}'",
-                        .{
-                            if (target_type_info.custom_type) |name| name else @tagName(target_type_info.base),
-                            value_type.custom_type orelse @tagName(value_type.base),
-                        },
+                        try helpers.typeLabels(self, target_type_info, value_type),
                     );
                 } else {
                     self.reporter.reportCompileError(
@@ -2269,7 +1903,7 @@ const op: []const u8 = switch (bin.operator.type) {
             if (else_type) |et| {
                 const label = struct {
                     fn run(t: *ast.TypeInfo) []const u8 {
-                        if (t.custom_type) |ct| return ct;
+                        if (t.custom_type) |ct| return ct.displayName();
                         return switch (t.base) {
                             .Int => "int",
                             .Byte => "byte",
@@ -2364,18 +1998,20 @@ const op: []const u8 = switch (bin.operator.type) {
             type_info.* = .{ .base = .Nothing };
         },
         .This => {
-            // Resolve 'this' type based on current method context
-            if (self.current_struct_type) |struct_name| {
-                // Look up the struct type information
-                if (self.custom_types.get(struct_name)) |custom_type| {
-                    if (custom_type.kind == .Struct) {
-                        type_info.* = .{ .base = .Custom, .custom_type = struct_name, .is_mutable = false };
-                        return type_info;
-                    }
-                }
+            // `this` is the receiver of the method whose body is being checked.
+            const enclosing = self.enclosing orelse {
+                self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.INVALID_THIS, "`this` is only available inside a method", .{});
+                self.fatal_error = true;
+                type_info.base = .Nothing;
+                return type_info;
+            };
+            if (!enclosing.has_this) {
+                self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.INVALID_THIS, "`this` is only available inside a method; '{s}' functions have no receiver", .{enclosing.ref.name});
+                self.fatal_error = true;
+                type_info.base = .Nothing;
+                return type_info;
             }
-            // Fallback: return generic struct type
-            type_info.* = .{ .base = .Struct };
+            type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = enclosing.ref }, .is_mutable = false };
         },
         .Range => |range| {
             const start_type = try inferTypeFromExpr(self, range.start);
@@ -2635,7 +2271,6 @@ fn statementDiverges(stmt: ast.Stmt) bool {
     return switch (stmt.data) {
         .Return, .Break, .Continue => true,
         .Expression => |maybe_expr| if (maybe_expr) |e| expressionDiverges(e) else false,
-        .Block => |stmts| blockDiverges(stmts),
         else => false,
     };
 }
@@ -2647,20 +2282,12 @@ fn statementDiverges(stmt: ast.Stmt) bool {
 const GroupCast = enum { not_a_group, valid, not_a_member };
 
 fn classifyGroupCast(self: *SemanticAnalyzer, value_type: *ast.TypeInfo, target_type: *ast.TypeInfo) GroupCast {
-    if (value_type.base != .Custom) return .not_a_group;
-    const group_name = value_type.custom_type orelse return .not_a_group;
-    const group = self.custom_types.get(group_name) orelse return .not_a_group;
-    if (group.kind != .Group) return .not_a_group;
-
-    const member_name = if (target_type.base == .Custom) target_type.custom_type else null;
-    if (member_name == null) return .not_a_member;
-    const members = group.group_members orelse return .not_a_member;
-    for (members) |member| {
-        if (std.mem.eql(u8, member.qualifier, member_name.?) or
-            std.mem.eql(u8, member.source_name, member_name.?))
-        {
-            return .valid;
-        }
+    const group = helpers.matchSubjectGroup(self, value_type) orelse return .not_a_group;
+    if (target_type.base != .Custom) return .not_a_member;
+    const target = (target_type.custom_type orelse return .not_a_member).resolved();
+    const group_id = self.group_table.idOf(group) orelse return .not_a_member;
+    for (self.group_table.members(group_id) orelse &.{}) |member| {
+        if (member.ref.eql(target)) return .valid;
     }
     return .not_a_member;
 }
@@ -2679,13 +2306,14 @@ fn castValueBindingName(cast_value: *ast.Expr) ?[]const u8 {
 
 fn bindNarrowedName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInfo) !void {
     const token_type = eval.convertTypeToTokenType(narrowed_type.base);
-    _ = scope.createValueBinding(
+    const view = scope.createValueBinding(
         name,
         TokenLiteral{ .nothing = {} },
         token_type,
         narrowed_type,
         false,
-    ) catch {};
+    ) catch return;
+    view.is_view = true;
 }
 
 fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast.Expr, narrowed_type: *ast.TypeInfo) !void {
@@ -2696,22 +2324,15 @@ fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast
         if (field_access.object.data == .Variable) {
             const obj_name = field_access.object.data.Variable.lexeme;
             const fld_name = field_access.field.lexeme;
-            if (lookupVariable(self, obj_name)) |variable| {
+            if (try names.lookupVariable(self, obj_name)) |variable| {
                 if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                     const original_type = storage.type_info.*;
-                    var struct_fields: ?[]ast.StructFieldType = null;
+                    var struct_fields: ?[]const ast.StructFieldType = null;
                     if (original_type.base == .Struct and original_type.struct_fields != null) {
                         struct_fields = original_type.struct_fields.?;
                     } else if (original_type.base == .Custom and original_type.custom_type != null) {
-                        if (self.custom_types.get(original_type.custom_type.?)) |custom_type| {
-                            if (custom_type.kind == .Struct and custom_type.struct_fields != null) {
-                                const ct_fields = custom_type.struct_fields.?;
-                                const new_sf = try self.allocator.alloc(ast.StructFieldType, ct_fields.len);
-                                for (ct_fields, 0..) |ct_field, i| {
-                                    new_sf[i] = .{ .name = ct_field.name, .type_info = ct_field.field_type_info };
-                                }
-                                struct_fields = new_sf;
-                            }
+                        if (try self.customType(original_type.custom_type.?.resolved())) |custom_type| {
+                            if (custom_type.kind == .Struct) struct_fields = try structFieldTypes(self, custom_type.struct_fields orelse &.{});
                         }
                     }
                     if (struct_fields) |fields_arr| {
@@ -2725,13 +2346,14 @@ fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast
                         }
                         const narrowed_struct = try ast.TypeInfo.createDefault(self.allocator);
                         narrowed_struct.* = .{ .base = .Struct, .struct_fields = dup_fields };
-                        _ = scope.createValueBinding(
+                        const view = scope.createValueBinding(
                             obj_name,
                             TokenLiteral{ .nothing = {} },
                             .STRUCT,
                             narrowed_struct,
                             false,
-                        ) catch {};
+                        ) catch return;
+                        view.is_view = true;
                     }
                 }
             }
@@ -2750,4 +2372,258 @@ fn declaredFieldList(self: *SemanticAnalyzer, fields: []const ast.StructFieldTyp
     }
     if (fields.len == 0) try list.appendSlice("(none)");
     return list.toOwnedSlice();
+}
+
+fn findField(fields: []const @import("../../types/types.zig").StructField, name: []const u8) ?@import("../../types/types.zig").StructField {
+    for (fields) |field| {
+        if (std.mem.eql(u8, field.name, name)) return field;
+    }
+    return null;
+}
+
+/// A registered struct's fields in the shape a `TypeInfo` carries them.
+fn structFieldTypes(self: *SemanticAnalyzer, fields: []const @import("../../types/types.zig").StructField) SemanticError![]ast.StructFieldType {
+    const out = try self.allocator.alloc(ast.StructFieldType, fields.len);
+    for (fields, out) |field, *dest| {
+        dest.* = .{ .name = field.name, .type_info = field.field_type_info, .is_public = field.is_public };
+    }
+    return out;
+}
+
+/// The type of `namespace`'s member `name` in value position: a function, a
+/// global, or a type. The access is recorded as a resolution. A namespace is
+/// not a value.
+fn memberOfNamespace(self: *SemanticAnalyzer, expr: *ast.Expr, namespace: @import("../../module/ids.zig").ModuleId, name: ast.Token, type_info: *ast.TypeInfo) SemanticError!*ast.TypeInfo {
+    const bound = try names.member(self, namespace, name);
+    const symbol = switch (bound.binding) {
+        .symbol => |symbol| symbol,
+        .namespace => {
+            self.reporter.reportCompileError(
+                getLocationFromBase(expr.base),
+                ErrorCode.MODULE_NAMESPACE_NOT_A_VALUE,
+                "Module namespace '{s}' is not a value",
+                .{name.lexeme},
+            );
+            self.fatal_error = true;
+            type_info.base = .Nothing;
+            return type_info;
+        },
+    };
+    const resolved = names.symbolResolution(self, symbol).?;
+    try names.annotate(self, expr, resolved);
+    if (resolved == .global) {
+        try self.recordGlobalSite(.{ .symbol = symbol, .place = .{ .member = expr } });
+    }
+    const variable = (try names.declaredVariable(self, symbol)) orelse {
+        // The defining record bound the name but registered nothing under it:
+        // its registration is still active (a declaration cycle).
+        self.reporter.reportCompileError(
+            getLocationFromBase(expr.base),
+            ErrorCode.CIRCULAR_IMPORT,
+            "'{s}' is used before its module finished declaring it",
+            .{name.lexeme},
+        );
+        self.fatal_error = true;
+        type_info.base = .Nothing;
+        return type_info;
+    };
+    const storage = self.memory.scope_manager.value_storage.get(variable.storage_id) orelse return error.StorageNotFound;
+    type_info.* = storage.type_info.*;
+    return type_info;
+}
+
+/// The type an expression names in value position — a bare type name or a
+/// namespace-qualified one — recorded as a type resolution; null when the
+/// expression is not a type name.
+fn typeNamed(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticError!?TypeRef {
+    switch (expr.data) {
+        .Variable => |tok| {
+            const result = try names.resolveName(self, tok.lexeme);
+            const symbol = result.symbol orelse return null;
+            if (symbol.kind != .Type) return null;
+            try names.annotate(self, expr, .{ .type = symbol.typeRef() });
+            return symbol.typeRef();
+        },
+        .FieldAccess => |field| {
+            const namespace = (try names.namespaceOf(self, field.object)) orelse return null;
+            const bound = try names.member(self, namespace, field.field);
+            const symbol = switch (bound.binding) {
+                .symbol => |symbol| symbol,
+                .namespace => return null,
+            };
+            if (symbol.kind != .Type) return null;
+            try names.annotate(self, expr, .{ .type = symbol.typeRef() });
+            return symbol.typeRef();
+        },
+        else => return null,
+    }
+}
+
+/// A method or function of `owner` called through `receiver` (null when it is
+/// called through the type, `T.f()`). A private one is reachable only from
+/// inside the struct: through `this`, or through the type from the struct's own
+/// functions and methods.
+fn methodOf(self: *SemanticAnalyzer, expr: *ast.Expr, owner: TypeRef, name: []const u8, receiver: ?*const ast.Expr) SemanticError!?@import("semantic.zig").StructMethodInfo {
+    const methods = (try self.methodsOf(owner)) orelse return null;
+    const method = methods.get(name) orelse return null;
+    const reachable = if (receiver) |r|
+        r.data == .This
+    else if (self.enclosing) |enclosing|
+        enclosing.ref.eql(owner)
+    else
+        false;
+    if (!method.is_public and !reachable) {
+        self.reporter.reportCompileError(
+            getLocationFromBase(expr.base),
+            ErrorCode.PRIVATE_FIELD_ACCESS,
+            "Cannot call private {s} '{s}' of struct '{s}' outside the struct",
+            .{ if (method.is_static) "function" else "method", name, owner.name },
+        );
+        self.fatal_error = true;
+        return null;
+    }
+    return method;
+}
+
+/// A call through a field access: a module function (`ns.fn(...)`), a static
+/// method or constructor (`T.m(...)`), or a method on a value (`x.m(...)`).
+/// The callee is recorded as a resolution, so codegen dispatches without
+/// re-deriving any of this.
+fn inferMemberCall(self: *SemanticAnalyzer, expr: *ast.Expr, callee: *ast.Expr, arguments: []const ast.CallArgument, type_info: *ast.TypeInfo) SemanticError!*ast.TypeInfo {
+    const field_access = callee.data.FieldAccess;
+    const method_name = field_access.field.lexeme;
+
+    if (try names.namespaceOf(self, field_access.object)) |namespace| {
+        const function_type = try memberOfNamespace(self, callee, namespace, field_access.field, try ast.TypeInfo.createDefault(self.allocator));
+        try self.type_cache.put(callee.base.id, function_type);
+        if (function_type.base != .Function or function_type.function_type == null) {
+            if (function_type.base != .Nothing) {
+                self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.INVALID_FUNCTION_CALL, "'{s}' is not a function", .{method_name});
+                self.fatal_error = true;
+            }
+            type_info.base = .Nothing;
+            return type_info;
+        }
+        if (!try validateFunctionCallArguments(self, expr, arguments, function_type.function_type.?)) {
+            type_info.base = .Nothing;
+            return type_info;
+        }
+        type_info.* = function_type.function_type.?.return_type.*;
+        return type_info;
+    }
+
+    if (try typeNamed(self, field_access.object)) |owner| {
+        const method = (try methodOf(self, expr, owner, method_name, null)) orelse {
+            if (!self.fatal_error) {
+                self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.UNKNOWN_METHOD, "Unknown method '{s}' on struct '{s}'", .{ method_name, owner.name });
+                self.fatal_error = true;
+            }
+            type_info.base = .Nothing;
+            return type_info;
+        };
+        if (!method.is_static) {
+            self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.UNKNOWN_METHOD, "Method '{s}' of '{s}' needs a receiver; call it on a value", .{ method_name, owner.name });
+            self.fatal_error = true;
+            type_info.base = .Nothing;
+            return type_info;
+        }
+        try names.annotate(self, callee, .{ .static_method = .{ .owner = owner, .name = method.name } });
+        if (!try validateFunctionCallArguments(self, expr, arguments, method.signature)) {
+            type_info.base = .Nothing;
+            return type_info;
+        }
+        type_info.* = method.signature.return_type.*;
+        return type_info;
+    }
+
+    const object_type = try inferTypeFromExpr(self, field_access.object);
+    switch (object_type.base) {
+        // A built-in type has no methods of its own: a compiler method is
+        // `@`-prefixed (`xs.@push(1)`, `@push(xs, 1)`), so `xs.push(1)` is
+        // never one (docs/methods.md).
+        .Array, .String => {
+            self.reporter.reportCompileError(
+                getLocationFromBase(expr.base),
+                ErrorCode.UNKNOWN_METHOD,
+                "{s} has no method '{s}'; compiler methods are `@`-prefixed: `.@{s}(...)`",
+                .{ if (object_type.base == .Array) "An array" else "A string", method_name, method_name },
+            );
+            self.fatal_error = true;
+            type_info.base = .Nothing;
+        },
+        .Map => {
+            self.reporter.reportCompileError(
+                getLocationFromBase(expr.base),
+                ErrorCode.UNKNOWN_METHOD,
+                "Maps do not have methods; use indexing (map[key]) or assignment (map[key] is value)",
+                .{},
+            );
+            self.fatal_error = true;
+            type_info.base = .Nothing;
+        },
+        .Struct, .Custom => {
+            if (object_type.custom_type) |custom| {
+                const owner = custom.resolved();
+                if (try methodOf(self, expr, owner, method_name, field_access.object)) |method| {
+                    // A struct's function called through `this` takes no
+                    // receiver; any other value cannot stand in for the type.
+                    if (method.is_static and field_access.object.data != .This) {
+                        self.reporter.reportCompileError(getLocationFromBase(expr.base), ErrorCode.UNKNOWN_METHOD, "'{s}' is a function of '{s}'; call it as {s}.{s}()", .{ method_name, owner.name, owner.name, method_name });
+                        self.fatal_error = true;
+                        type_info.base = .Nothing;
+                        return type_info;
+                    }
+                    try names.annotate(self, callee, if (method.is_static)
+                        .{ .static_method = .{ .owner = owner, .name = method.name } }
+                    else
+                        .{ .method = .{ .owner = owner, .name = method.name } });
+                    if (!try validateFunctionCallArguments(self, expr, arguments, method.signature)) {
+                        type_info.base = .Nothing;
+                        return type_info;
+                    }
+                    type_info.* = method.signature.return_type.*;
+                    return type_info;
+                }
+                if (self.fatal_error) {
+                    type_info.base = .Nothing;
+                    return type_info;
+                }
+            }
+
+            // A function-typed field called like a method.
+            if (object_type.struct_fields) |fields| {
+                for (fields) |field| {
+                    if (std.mem.eql(u8, field.name, method_name) and field.type_info.base == .Function) {
+                        if (!try validateFunctionCallArguments(self, expr, arguments, field.type_info.function_type.?)) {
+                            type_info.base = .Nothing;
+                            return type_info;
+                        }
+                        type_info.* = field.type_info.function_type.?.return_type.*;
+                        return type_info;
+                    }
+                }
+            }
+
+            const display_name = if (object_type.custom_type) |custom| custom.displayName() else "<struct>";
+            self.reporter.reportCompileError(
+                getLocationFromBase(expr.base),
+                ErrorCode.UNKNOWN_METHOD,
+                "Unknown method '{s}' on struct '{s}'",
+                .{ method_name, display_name },
+            );
+            self.fatal_error = true;
+            type_info.base = .Nothing;
+        },
+        else => {
+            self.reporter.reportCompileError(
+                getLocationFromBase(expr.base),
+                ErrorCode.CANNOT_CALL_METHOD_ON_TYPE,
+                "Cannot call method '{s}' on type {s}",
+                .{ method_name, @tagName(object_type.base) },
+            );
+            self.fatal_error = true;
+            type_info.base = .Nothing;
+        },
+    }
+    return type_info;
 }

@@ -1,0 +1,5 @@
+import y from "./icycle_b.doxa"
+
+public function x() returns int {
+    return 1
+}

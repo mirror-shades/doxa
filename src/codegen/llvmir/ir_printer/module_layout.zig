@@ -1,6 +1,4 @@
 const std = @import("std");
-const StructTable = @import("../../../common/struct_table.zig").StructTable;
-const EnumTable = @import("../../../common/enum_table.zig").EnumTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -194,18 +192,12 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        fn asStructTable(struct_table: ?*anyopaque) ?*StructTable {
-            const st_opaque = struct_table orelse return null;
-            return @constCast(@ptrCast(@alignCast(st_opaque)));
-        }
-
         /// Backfill layout metadata for every struct the program did not
         /// construct. An entry whose field HIR types are not fully resolved is
         /// skipped: a half-known layout would silently mis-size a GEP, and the
         /// single-word fallback stays in effect instead.
         pub fn registerStructTableLayouts(self: *IRPrinter) !void {
-            const table = asStructTable(self.struct_table) orelse return;
-            for (table.entries.items) |entry| {
+            for (self.struct_table.entries.items) |entry| {
                 const field_types = try self.allocator.alloc(HIR.HIRType, entry.fields.len);
                 defer self.allocator.free(field_types);
 
@@ -216,21 +208,21 @@ pub fn Methods(comptime Ctx: type) type {
                 }
                 if (!resolved) continue;
 
-                if (!self.global_struct_field_types.contains(entry.qualified_name)) {
-                    _ = try self.global_struct_field_types.put(entry.qualified_name, try self.allocator.dupe(HIR.HIRType, field_types));
+                if (!self.global_struct_field_types.contains(entry.key.?)) {
+                    _ = try self.global_struct_field_types.put(entry.key.?, try self.allocator.dupe(HIR.HIRType, field_types));
                 }
                 if (!self.struct_fields_by_id.contains(entry.id)) {
                     _ = try self.struct_fields_by_id.put(entry.id, try self.allocator.dupe(HIR.HIRType, field_types));
                 }
                 if (!self.struct_type_names_by_id.contains(entry.id)) {
-                    _ = try self.struct_type_names_by_id.put(entry.id, entry.qualified_name);
+                    _ = try self.struct_type_names_by_id.put(entry.id, entry.key.?);
                 }
                 // `IRPrinter.deinit` frees every inner string of
                 // `struct_field_names_by_type` unconditionally, so each one must
                 // be printer-owned. The table's names belong to the analysis
                 // arena — copying here (rather than borrowing `field.name`)
                 // keeps that free from releasing the table's storage.
-                if (!self.struct_field_names_by_type.contains(entry.qualified_name)) {
+                if (!self.struct_field_names_by_type.contains(entry.key.?)) {
                     const owned_names = try self.allocator.alloc([]const u8, entry.fields.len);
                     var built: usize = 0;
                     errdefer {
@@ -240,7 +232,7 @@ pub fn Methods(comptime Ctx: type) type {
                     while (built < entry.fields.len) : (built += 1) {
                         owned_names[built] = try self.allocator.dupe(u8, entry.fields[built].name);
                     }
-                    _ = try self.struct_field_names_by_type.put(entry.qualified_name, owned_names);
+                    _ = try self.struct_field_names_by_type.put(entry.key.?, owned_names);
                 }
                 // Enum field type names must be known before the descriptor is
                 // first created. A fixed-array default fill can construct an
@@ -248,23 +240,21 @@ pub fn Methods(comptime Ctx: type) type {
                 // `StructNew` for that type, so relying on the construction site
                 // alone would cache a descriptor whose enum fields render as bare
                 // discriminants. Names are borrowed from the analysis arena.
-                if (!self.struct_field_enum_type_names_by_type.contains(entry.qualified_name)) {
+                if (!self.struct_field_enum_type_names_by_type.contains(entry.key.?)) {
                     const enum_names = try self.allocator.alloc(?[]const u8, entry.fields.len);
                     for (entry.fields, 0..) |field, i| {
                         enum_names[i] = null;
                         if (field.type_info.base != .Custom) continue;
-                        const ct = field.type_info.custom_type orelse continue;
-                        if (self.enum_table) |et_opaque| {
-                            const et: *EnumTable = @ptrCast(@alignCast(et_opaque));
-                            if (et.getIdByName(ct) != null) enum_names[i] = ct;
-                        }
+                        const custom = field.type_info.custom_type orelse continue;
+                        if (self.enum_table.idOf(custom.resolved())) |eid| enum_names[i] = self.enum_table.keyOf(eid);
                     }
-                    _ = try self.struct_field_enum_type_names_by_type.put(entry.qualified_name, enum_names);
+                    _ = try self.struct_field_enum_type_names_by_type.put(entry.key.?, enum_names);
                 }
             }
         }
 
         pub fn writeModule(self: *IRPrinter, hir: *const HIR.HIRProgram, w: anytype) !void {
+            for (hir.zig_functions) |function| try self.zig_fn_param_types.put(function.link_name, function.param_types);
             try self.computeDescriptorSkips(hir);
             // Phase D-1 follow-on: compute loop-head variable ranges before any
             // body is emitted, so `varRange` can answer for loop-carried values.
@@ -379,55 +369,35 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll("declare { i64, i1 } @llvm.smul.with.overflow.i64(i64, i64)\n");
             }
 
-            // Inline zig module functions (external): declare with typed parameters
-            // for correct ABI on all architectures.
-            var declared_inline = std.StringHashMap(void).init(self.allocator);
-            defer declared_inline.deinit();
-            for (hir.instructions) |inst| {
-                if (inst != .Call) continue;
-                const c = inst.Call;
-                if (c.call_kind != .ModuleFunction) continue;
-                if (std.mem.indexOfScalar(u8, c.qualified_name, '.') == null) continue;
-                if (c.qualified_name.len == 0) continue;
-
-                var is_defined = false;
-                for (hir.function_table) |ft| {
-                    if (std.mem.eql(u8, ft.qualified_name, c.qualified_name)) {
-                        is_defined = true;
-                        break;
-                    }
-                }
-                if (is_defined) continue;
-                if (declared_inline.contains(c.qualified_name)) continue;
-                try declared_inline.put(c.qualified_name, {});
-
-                const ret_ty = if (c.return_type == .String) "void" else self.hirTypeToLLVMType(c.return_type, false);
+            // The program's inline-Zig callees are external: declare each with
+            // typed parameters for the correct ABI on every architecture.
+            for (hir.zig_functions) |function| {
+                const ret_ty = if (function.return_type == .String) "void" else self.hirTypeToLLVMType(function.return_type, false);
 
                 var params_buf = std.array_list.Managed(u8).init(self.allocator);
                 defer params_buf.deinit();
-                if (self.zig_fn_param_types.get(c.qualified_name)) |param_types| {
-                    for (param_types, 0..) |pt, i| {
-                        if (i > 0) try params_buf.appendSlice(", ");
-                        switch (pt) {
-                            .String => try params_buf.appendSlice("ptr, i64"),
-                            .Int => try params_buf.appendSlice("i64"),
-                            .Float => try params_buf.appendSlice("double"),
-                            .Byte => try params_buf.appendSlice("i8"),
-                            .Tetra => try params_buf.appendSlice("i1"),
-                            .Nothing => try params_buf.appendSlice("void"),
-                            // Arrays cross the inline-Zig ABI as a single opaque
-                            // pointer, matching the generated wrapper's signature.
-                            .Array => try params_buf.appendSlice("ptr"),
-                            else => try params_buf.appendSlice("i64"),
-                        }
+                for (function.param_types, 0..) |pt, i| {
+                    if (i > 0) try params_buf.appendSlice(", ");
+                    switch (pt) {
+                        .String => try params_buf.appendSlice("ptr, i64"),
+                        .Int => try params_buf.appendSlice("i64"),
+                        .Float => try params_buf.appendSlice("double"),
+                        .Byte => try params_buf.appendSlice("i8"),
+                        .Tetra => try params_buf.appendSlice("i1"),
+                        .Nothing => try params_buf.appendSlice("void"),
+                        // Arrays cross the inline-Zig ABI as a single opaque
+                        // pointer, matching the generated wrapper's signature.
+                        .Array => try params_buf.appendSlice("ptr"),
+                        else => try params_buf.appendSlice("i64"),
                     }
                 }
-                if (c.return_type == .String) {
+                // A string return is written through two out-pointers.
+                if (function.return_type == .String) {
                     if (params_buf.items.len > 0) try params_buf.appendSlice(", ");
                     try params_buf.appendSlice("ptr, ptr");
                 }
 
-                const decl = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ ret_ty, c.qualified_name, params_buf.items });
+                const decl = try std.fmt.allocPrint(self.allocator, "declare {s} @{s}({s})\n", .{ ret_ty, function.link_name, params_buf.items });
                 defer self.allocator.free(decl);
                 try w.writeAll(decl);
             }
@@ -540,17 +510,6 @@ pub fn Methods(comptime Ctx: type) type {
                         _ = try self.struct_type_names_by_id.put(sn.struct_id, sn.type_name);
                     }
                 }
-                if (inst == .LoadModule) {
-                    const lm = inst.LoadModule;
-                    if (!self.global_struct_field_types.contains(lm.module_name)) {
-                        const fcount = lm.field_names.len;
-                        const field_types = try self.allocator.alloc(HIR.HIRType, fcount);
-                        @memset(field_types, HIR.HIRType{ .String = {} });
-                        _ = try self.global_struct_field_types.put(lm.module_name, field_types);
-                        _ = try self.global_struct_field_names.put(lm.module_name, try self.allocator.dupe([]const u8, lm.field_names));
-                        _ = try self.global_struct_type_names.put(lm.module_name, lm.module_name);
-                    }
-                }
             }
 
             // `StructNew` is the usual source of struct layout, but a struct can
@@ -566,9 +525,8 @@ pub fn Methods(comptime Ctx: type) type {
             }
 
             // Pre-scan all function instructions to discover referenced globals
-            // before the global declaration pass. Functions may reference globals
-            // (e.g. module names via LoadModule) that need to be declared in the
-            // IR ahead of use.
+            // before the global declaration pass, so each is declared in the IR
+            // ahead of use.
             for (hir.function_table) |func| {
                 const range = self.getFunctionRange(hir, func, &func_start_labels) orelse continue;
                 for (hir.instructions[range.start..range.end]) |inst| {
@@ -587,12 +545,6 @@ pub fn Methods(comptime Ctx: type) type {
                                     _ = try self.global_types.put(lv.var_name, .PTR);
                                     _ = try self.defined_globals.put(lv.var_name, true);
                                 }
-                            }
-                        },
-                        .LoadModule => |lm| {
-                            if (!self.defined_globals.contains(lm.module_name)) {
-                                _ = try self.global_types.put(lm.module_name, .PTR);
-                                _ = try self.defined_globals.put(lm.module_name, true);
                             }
                         },
                         else => {},
@@ -937,113 +889,6 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.handleStringOp(w, &stack, &id, sop, peek_state);
                         last_instruction_was_terminator = false;
                     },
-                    .LoadModule => |lm| {
-                        const gname = lm.module_name;
-                        const fcount = lm.field_names.len;
-
-                        // Look up struct metadata (pre-populated by writeModule scan)
-                        const struct_fields = self.global_struct_field_types.get(gname);
-                        const struct_names = self.global_struct_field_names.get(gname);
-                        const struct_type_name = self.global_struct_type_names.get(gname);
-
-                        if (fcount == 0) {
-                            // Empty module struct — push a non-null sentinel pointer
-                            const sentinel = try self.nextTemp(&id);
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 1 to ptr\n", .{sentinel});
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-
-                            // Store the sentinel to the global so functions can load it
-                            const module_gptr = try self.mangleGlobalName(gname);
-                            defer self.allocator.free(module_gptr);
-                            const store_module_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ sentinel, module_gptr });
-                            defer self.allocator.free(store_module_line);
-                            try w.writeAll(store_module_line);
-
-                            try stack.append(.{ .name = sentinel, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
-                            last_instruction_was_terminator = false;
-                            continue;
-                        }
-
-                        const struct_type_llvm = try self.buildI64StructType(fcount * 2);
-                        defer self.allocator.free(struct_type_llvm);
-
-                        // Allocate struct on heap (each string field is ptr + len)
-                        const struct_size = fcount * 2 * @sizeOf(i64);
-                        const size_reg = try self.nextTemp(&id);
-                        const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_reg, struct_size });
-                        defer self.allocator.free(size_line);
-                        try w.writeAll(size_line);
-
-                        const malloc_reg = try self.nextTemp(&id);
-                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {s}, i64 8)\n", .{ malloc_reg, size_reg });
-                        defer self.allocator.free(malloc_line);
-                        try w.writeAll(malloc_line);
-
-                        // Cast to struct pointer
-                        const struct_ptr = try self.nextTemp(&id);
-                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast ptr {s} to ptr\n", .{ struct_ptr, malloc_reg });
-                        defer self.allocator.free(cast_line);
-                        try w.writeAll(cast_line);
-
-                        // Populate each field from module globals (raw C-strings).
-                        var fi: usize = 0;
-                        while (fi < fcount) : (fi += 1) {
-                            const field_name = lm.field_names[fi];
-                            const field_gptr = try self.mangleGlobalName(field_name);
-                            defer self.allocator.free(field_gptr);
-
-                            // Determine the module global's type and load accordingly
-                            const field_st = self.global_types.get(field_name) orelse .PTR;
-                            const field_llty = self.stackTypeToLLVMType(field_st);
-
-                            const loaded_val = try self.nextTemp(&id);
-                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ loaded_val, field_llty, field_gptr });
-                            defer self.allocator.free(load_line);
-                            try w.writeAll(load_line);
-
-                            // Recover (ptr, len) from the C-string and store both words.
-                            const out_ptr_slot = try self.nextTemp(&id);
-                            const out_len_slot = try self.nextTemp(&id);
-                            const alloca_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
-                            const alloca_len = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
-                            defer self.allocator.free(alloca_ptr);
-                            defer self.allocator.free(alloca_len);
-                            try w.writeAll(alloca_ptr);
-                            try w.writeAll(alloca_len);
-                            const init_null = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
-                            const init_zero = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
-                            defer self.allocator.free(init_null);
-                            defer self.allocator.free(init_zero);
-                            try w.writeAll(init_null);
-                            try w.writeAll(init_zero);
-                            const from_cstr = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_from_cstr(ptr {s}, ptr {s}, ptr {s})\n", .{ loaded_val, out_ptr_slot, out_len_slot });
-                            defer self.allocator.free(from_cstr);
-                            try w.writeAll(from_cstr);
-                            const cloned_ptr = try self.nextTemp(&id);
-                            const cloned_len = try self.nextTemp(&id);
-                            const load_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ cloned_ptr, out_ptr_slot });
-                            const load_len = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ cloned_len, out_len_slot });
-                            defer self.allocator.free(load_ptr);
-                            defer self.allocator.free(load_len);
-                            try w.writeAll(load_ptr);
-                            try w.writeAll(load_len);
-
-                            try self.storeStructStringField(w, struct_type_llvm, struct_ptr, fi * 2, cloned_ptr, cloned_len, &id);
-                        }
-
-                        // Store the module struct pointer to the global so functions
-                        // can load it when they encounter LoadModule for this module
-                        // (critical for lazy-loaded modules accessed inside function bodies).
-                        const module_gptr = try self.mangleGlobalName(gname);
-                        defer self.allocator.free(module_gptr);
-                        const store_module_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ struct_ptr, module_gptr });
-                        defer self.allocator.free(store_module_line);
-                        try w.writeAll(store_module_line);
-
-                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
-                        last_instruction_was_terminator = false;
-                    },
                     .LoadVar => |lv| {
                         try self.handleLoadVarGlobal(w, &stack, &id, lv.var_name);
                         last_instruction_was_terminator = false;
@@ -1136,7 +981,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = true;
                     },
                     .ArrayConcat => {
-                        try self.handleArrayConcat(w, &stack, &id);
+                        try self.emitArrayConcat(w, &stack, &id);
                         last_instruction_was_terminator = false;
                     },
                 }

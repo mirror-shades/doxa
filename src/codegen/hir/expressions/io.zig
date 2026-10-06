@@ -62,14 +62,12 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
             }
         }
 
-        // Without a name the backend falls back to raw integers, which prints
+        // Without its enum the backend falls back to raw integers, which prints
         // `enum = <enum>`. A variable narrowed by `as` tracks the member type
-        // itself, so the name comes from the enum table rather than from a
-        // field-access path.
+        // itself, so the enum's key comes from the enum table rather than from
+        // a field-access path.
         if (enum_type_name == null and inferred_type == .Enum) {
-            if (self.generator.type_system.enum_table) |table| {
-                enum_type_name = table.getName(inferred_type.Enum);
-            }
+            enum_type_name = self.generator.semantic.enum_table.keyOf(inferred_type.Enum);
         }
 
         // New: include union member list for variables declared as unions or expressions that return unions
@@ -104,10 +102,8 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                 }
             }
             if (union_members == null) {
-                if (self.generator.type_system.group_table) |table| {
-                    if (table.getName(inferred_type.Group)) |group_name| {
-                        union_members = try self.generator.type_system.getGroupMemberNames(group_name);
-                    }
+                if (self.generator.semantic.group_table.keyOf(inferred_type.Group)) |group_key| {
+                    union_members = try self.generator.type_system.getGroupMemberNames(group_key);
                 }
             }
         }
@@ -218,7 +214,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
         };
 
         const peek_struct_type = if (peek_data.expr.data == .StructLiteral)
-            self.generator.type_system.structTypeForName(struct_info.name)
+            try self.generator.typeOf(peek_data.expr)
         else
             self.generator.inferTypeFromExpression(peek_data.expr);
         const peek_sid: u32 = if (peek_struct_type == .Struct) peek_struct_type.Struct else 0;
@@ -241,23 +237,20 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
     fn populateStructInfoFromType(self: *IOHandler, info: *StructPeekInfo, hir_type: HIRType) !void {
         if (hir_type != .Struct) return;
         const struct_id = hir_type.Struct;
-        if (self.generator.type_system.struct_table) |table| {
-            if (@constCast(table).getEntryById(struct_id)) |entry| {
-                const fields = entry.fields;
-                const names = try self.generator.allocator.alloc([]const u8, fields.len);
-                const types_arr = try self.generator.allocator.alloc(HIRType, fields.len);
-                for (fields, 0..) |field_info, idx| {
-                    names[idx] = field_info.name;
-                    types_arr[idx] = field_info.hir_type;
-                }
-                self.generator.allocator.free(info.field_names);
-                self.generator.allocator.free(info.field_types);
-                info.field_names = names;
-                info.field_types = types_arr;
-                info.field_count = @intCast(fields.len);
-                info.name = entry.qualified_name;
-            }
+        const table = &self.generator.semantic.struct_table;
+        const fields = table.fields(struct_id) orelse return;
+        const names = try self.generator.allocator.alloc([]const u8, fields.len);
+        const types_arr = try self.generator.allocator.alloc(HIRType, fields.len);
+        for (fields, 0..) |field_info, idx| {
+            names[idx] = field_info.name;
+            types_arr[idx] = field_info.hir_type;
         }
+        self.generator.allocator.free(info.field_names);
+        self.generator.allocator.free(info.field_types);
+        info.field_names = names;
+        info.field_types = types_arr;
+        info.field_count = @intCast(fields.len);
+        info.name = table.keyOf(struct_id).?;
     }
 
     /// Generate HIR for input expressions
@@ -281,7 +274,6 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                     .qualified_name = "input",
                     .arg_count = 1, // Has 1 argument (the prompt)
                     .call_kind = .BuiltinFunction,
-                    .target_module = null,
                     .return_type = .String,
                 },
             });
@@ -293,7 +285,6 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                     .qualified_name = "input",
                     .arg_count = 0, // No arguments
                     .call_kind = .BuiltinFunction,
-                    .target_module = null,
                     .return_type = .String,
                 },
             });

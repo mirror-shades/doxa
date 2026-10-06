@@ -1,4 +1,6 @@
 module std from "std/std.doxa"
+import Message, ServerRequest, WsOp from "std/http/http.doxa"
+module error from "std/error.doxa"
 
 /* Bind both listeners before the declarations below: an imported module's types
    become visible only after the first call into it, so `Message`, `WsOp`, and

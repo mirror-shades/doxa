@@ -155,6 +155,20 @@ const Tokenizer = struct {
                 return Token{ .kind = .symbol, .lexeme = s[start..self.i] };
             }
 
+            // Quoted identifier: `@"name"` is the identifier `name`, which
+            // lets a Doxa path be spelled (`@"DoxaEnum_error.Method"`).
+            if (ch == '@' and next_ch == '"') {
+                const start = self.i + 2;
+                self.i = start;
+                while (self.i < s.len and s[self.i] != '"') : (self.i += 1) {
+                    if (s[self.i] == '\\' or s[self.i] == '\n') return error.InlineZigNotValid;
+                }
+                if (self.i >= s.len) return error.InlineZigNotValid;
+                const name = s[start..self.i];
+                self.i += 1;
+                return Token{ .kind = .ident, .lexeme = name };
+            }
+
             // Identifier (including builtins like @import)
             if (ch == '@' or ch == '_' or std.ascii.isAlphabetic(ch)) {
                 const start = self.i;
@@ -220,7 +234,7 @@ fn parseSliceAfterOpen(allocator: std.mem.Allocator, ts: *Tokenizer, which: Type
         if (std.mem.eql(u8, elem.lexeme, "f64")) return makeArrayType(allocator, .{ .base = .Float, .is_mutable = false });
         // `[]const DoxaEnum_<name>` is a Doxa `enum[]`; the discriminant is i64.
         if (std.mem.startsWith(u8, elem.lexeme, "DoxaEnum_")) {
-            return makeArrayType(allocator, .{ .base = .Enum, .is_mutable = false, .custom_type = elem.lexeme["DoxaEnum_".len..] });
+            return makeArrayType(allocator, .{ .base = .Enum, .is_mutable = false, .custom_type = .{ .written = elem.lexeme["DoxaEnum_".len..] } });
         }
     }
     if (elem.kind == .symbol and std.mem.eql(u8, elem.lexeme, "[")) {
@@ -254,7 +268,7 @@ fn parseAllowedType(allocator: std.mem.Allocator, ts: *Tokenizer, which: TypeWhi
         // `.Custom`) so the wrapper can tell it apart from a struct spelling,
         // which would otherwise be lowered as an `i64` discriminant.
         if (std.mem.startsWith(u8, tok.lexeme, "DoxaEnum_")) {
-            return .{ .base = .Enum, .is_mutable = false, .custom_type = tok.lexeme["DoxaEnum_".len..] };
+            return .{ .base = .Enum, .is_mutable = false, .custom_type = .{ .written = tok.lexeme["DoxaEnum_".len..] } };
         }
     }
 
@@ -587,6 +601,21 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8, lenient: 
     if (depth != 0 and !lenient) return error.InlineZigNotValid;
 
     return try out.toOwnedSlice();
+}
+
+/// Every `DoxaEnum_<path>` identifier `source` spells, plain or quoted, once
+/// each, in order of first appearance. The wrapper declares each as `i64`.
+pub fn doxaEnumSpellings(allocator: std.mem.Allocator, source: []const u8) ErrorList![]const []const u8 {
+    var spellings = std.array_list.Managed([]const u8).init(allocator);
+    errdefer spellings.deinit();
+    var ts = Tokenizer.init(source);
+    while (try ts.next()) |tok| {
+        if (tok.kind != .ident or !std.mem.startsWith(u8, tok.lexeme, "DoxaEnum_")) continue;
+        for (spellings.items) |seen| {
+            if (std.mem.eql(u8, seen, tok.lexeme)) break;
+        } else try spellings.append(tok.lexeme);
+    }
+    return spellings.toOwnedSlice();
 }
 
 pub fn sanitizeAndExtract(allocator: std.mem.Allocator, input: []const u8, lenient: bool) ErrorList![]ast.ZigFnSig {

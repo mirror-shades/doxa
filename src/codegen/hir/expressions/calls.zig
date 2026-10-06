@@ -1,5 +1,6 @@
 const std = @import("std");
 const ast = @import("../../../ast/ast.zig");
+const module_graph = @import("../../../module/graph.zig");
 const types = @import("../../../types/types.zig");
 const Location = @import("../../../utils/reporting.zig").Location;
 const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
@@ -60,95 +61,58 @@ pub const CallsHandler = struct {
         const target = ModuleCall.classifyCallTarget(self.generator, call_data.callee) catch {
             self.generator.reporter.reportCompileError(
                 call_data.callee.base.location(),
-                ErrorCode.UNSUPPORTED_FUNCTION_CALL_TYPE,
-                "Unsupported function call type",
+                ErrorCode.INTERNAL_ERROR,
+                "call target was not resolved by analysis. This is a compiler bug, not an error in the program",
                 .{},
             );
             return ErrorList.UnsupportedFunctionCallType;
         };
 
         switch (target) {
-            .function => |resolved| {
-                return try self.emitResolvedFunctionCall(resolved, function_call, preserve_result, should_pop_after_use);
-            },
-            .struct_static => |ss| {
-                for (call_data.arguments) |arg| {
-                    try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
-                }
-                const return_type = self.generator.inferCallReturnType(ss.qualified_name, .LocalFunction) catch .Nothing;
-                try self.generator.instructions.append(.{ .Call = .{
-                    .function_index = ss.function_index,
-                    .qualified_name = ss.qualified_name,
-                    .arg_count = @intCast(call_data.arguments.len),
-                    .call_kind = .LocalFunction,
-                    .target_module = null,
-                    .return_type = return_type,
-                } });
-                if (!preserve_result) {
-                    try self.generator.instructions.append(.Pop);
-                }
-            },
-            .struct_method => |sm| {
-                try self.emitStructMethodCall(sm.field_access, sm.struct_name, call_data.arguments);
-            },
-            .struct_constructor => |type_name| {
-                try self.generateStructConstructorCall(type_name, call_data.arguments);
-            },
-            .internal_method => |fa| {
-                try self.generator.generateInternalMethodCall(fa.field, fa.object, call_data.callee, call_data.arguments, should_pop_after_use);
-            },
+            .function => |callee| try self.emitResolvedFunctionCall(callee, function_call, preserve_result, should_pop_after_use),
+            .static_method => |callee| try self.emitResolvedFunctionCall(callee, function_call, preserve_result, should_pop_after_use),
+            .method => |method| try self.emitMethodCall(method.callee, method.receiver, call_data.arguments, preserve_result),
         }
     }
 
-    fn emitStructMethodCall(
+    /// An instance method call: the receiver (as an alias) and then the
+    /// arguments.
+    fn emitMethodCall(
         self: *CallsHandler,
-        field_access: ast.FieldAccess,
-        struct_name: []const u8,
+        callee: ModuleCall.Callee,
+        receiver: *ast.Expr,
         arguments: []const ast.CallArgument,
+        preserve_result: bool,
     ) !void {
-        const method_name = field_access.field.lexeme;
-        const mi = self.generator.struct_methods.get(struct_name).?.get(method_name).?;
-
-        const qualified_name = try std.fmt.allocPrint(self.generator.allocator, "{s}.{s}", .{ struct_name, method_name });
-
-        if (!mi.is_static) {
-            try self.generator.pushStructReceiver(field_access.object);
-        }
-
+        try self.generator.pushStructReceiver(receiver);
         for (arguments) |arg| {
             try self.generator.generateExpression(arg.expr, true, false);
         }
-
-        const ret_type: HIRType = self.generator.inferCallReturnType(qualified_name, .LocalFunction) catch
-            self.generator.convertTypeInfo(mi.signature.return_type.*);
-        const fn_index: ?u32 = self.generator.getFunctionIndex(qualified_name);
-
-        var arg_count: u32 = @intCast(arguments.len);
-        if (!mi.is_static) arg_count += 1;
-
         try self.generator.instructions.append(.{
             .Call = .{
-                .function_index = fn_index,
-                .qualified_name = qualified_name,
-                .arg_count = arg_count,
-                .call_kind = .LocalFunction,
-                .target_module = null,
-                .return_type = ret_type,
+                .function_index = callee.index,
+                .qualified_name = callee.link_name,
+                .arg_count = @intCast(arguments.len + 1),
+                .call_kind = .DoxaFunction,
+                .return_type = self.generator.functionInfoByLink(callee.link_name).?.return_type,
             },
         });
+        if (!preserve_result) {
+            try self.generator.instructions.append(.Pop);
+        }
     }
 
     fn emitResolvedFunctionCall(
         self: *CallsHandler,
-        resolved: ModuleCall.ResolvedCall,
+        callee: ModuleCall.Callee,
         function_call: ast.Expr.Data,
         preserve_result: bool,
         should_pop_after_use: bool,
     ) !void {
         const call_data = function_call.FunctionCall;
-        const function_name = resolved.qualified_name;
-        const call_kind = resolved.call_kind;
-        const function_index: ?u32 = resolved.function_index;
+        const function_name = callee.link_name;
+        const call_kind = callee.kind;
+        const function_index: ?u32 = callee.index;
 
         var arg_emitted_count: u32 = 0;
 
@@ -158,7 +122,7 @@ pub const CallsHandler = struct {
         // reference, and a plain variable's storage is not a `%DoxaValue` box,
         // so the callee cannot read or write the union layout directly.
         const finfo_opt = switch (call_kind) {
-            .LocalFunction, .ModuleFunction => self.generator.functionInfoByLink(function_name),
+            .DoxaFunction, .ZigFunction => self.generator.functionInfoByLink(function_name),
             .BuiltinFunction => null,
         };
         const AliasWriteback = struct {
@@ -282,26 +246,15 @@ pub const CallsHandler = struct {
                         return ErrorList.InvalidAliasArgument;
                     }
                 } else {
-                    if (arg.expr.data == .EnumMember) {
-                        if (try self.expectedEnumTypeForArg(function_name, call_kind, arg_index)) |expected_enum| {
-                            const previous = self.generator.current_enum_type;
-                            self.generator.current_enum_type = expected_enum;
-                            try self.generator.generateExpression(arg.expr, true, false);
-                            self.generator.current_enum_type = previous;
-                        } else {
-                            try self.generator.generateExpression(arg.expr, true, false);
-                        }
-                    } else {
-                        try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
-                    }
+                    try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
                     arg_emitted_count += 1;
                 }
             }
         }
 
-        const return_type = self.generator.inferCallReturnType(function_name, call_kind) catch .String;
+        const return_type = self.generator.calleeReturnType(callee);
 
-        if (call_kind == .LocalFunction) {
+        if (call_kind == .DoxaFunction) {
             if (try self.tryInlineFunction(function_name, call_kind)) {
                 if (!preserve_result) {
                     try self.generator.instructions.append(.Pop);
@@ -310,14 +263,12 @@ pub const CallsHandler = struct {
             }
         }
 
-        const target_module = try self.generator.computeTargetModule(function_name, call_kind);
         try self.generator.instructions.append(.{
             .Call = .{
                 .function_index = function_index,
                 .qualified_name = function_name,
                 .arg_count = arg_emitted_count,
                 .call_kind = call_kind,
-                .target_module = target_module,
                 .return_type = return_type,
             },
         });
@@ -370,45 +321,6 @@ pub const CallsHandler = struct {
         };
     }
 
-    fn expectedEnumTypeForArg(self: *CallsHandler, function_name: []const u8, call_kind: CallKind, arg_index: usize) !?[]const u8 {
-        // First preference: function bodies/signatures collected from source modules.
-        for (self.generator.function_bodies.items) |func_body| {
-            if (!std.mem.eql(u8, func_body.function_name, function_name)) continue;
-            if (arg_index >= func_body.function_params.len) return null;
-
-            const param = func_body.function_params[arg_index];
-            if (param.type_expr) |type_expr| {
-                const ti = try ast.typeInfoFromExpr(self.generator.allocator, type_expr);
-                if (ti.custom_type) |custom_name| {
-                    if (self.generator.type_system.custom_types.get(custom_name)) |ct| {
-                        if (ct.kind == .Enum) return custom_name;
-                    }
-                }
-            }
-            return null;
-        }
-
-        // Fallback: imported symbol metadata for module functions.
-        if (call_kind == .ModuleFunction) {
-            if (self.generator.imported_symbols) |symbols| {
-                if (symbols.get(function_name)) |sym| {
-                    if (sym.kind == .Function and sym.param_types != null) {
-                        const params = sym.param_types.?;
-                        if (arg_index < params.len) {
-                            if (params[arg_index].custom_type) |custom_name| {
-                                if (self.generator.type_system.custom_types.get(custom_name)) |ct| {
-                                    if (ct.kind == .Enum) return custom_name;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return null;
-    }
-
     /// Helper function to convert AST type to HIR type
     fn astTypeToHIRType(self: *CallsHandler, ast_type: ast.Type) HIRType {
         _ = self; // self not used but kept for consistency
@@ -450,7 +362,6 @@ pub const CallsHandler = struct {
                 .qualified_name = name,
                 .arg_count = @intCast(arguments.len),
                 .call_kind = .BuiltinFunction,
-                .target_module = null,
                 .return_type = return_type,
             } });
             return return_type;
@@ -479,38 +390,9 @@ pub const CallsHandler = struct {
             try self.validateBuiltinArgCount(name, args.len);
             const arg = args[0];
 
-            // For FieldAccess and EnumMember expressions, try to get the custom type name
-            const inferred_type = self.generator.inferTypeFromExpression(arg);
-            var custom_type_name: ?[]const u8 = null;
-
-            if (arg.data == .FieldAccess) {
-                if (self.generator.type_system.resolveFieldAccessType(arg, &self.generator.symbol_table)) |resolve_result| {
-                    custom_type_name = resolve_result.custom_type_name;
-                }
-            } else if (arg.data == .EnumMember) {
-                // For enum members, we need to find the parent enum type
-                // This is a bit tricky because we don't have direct access to the parent enum name
-                // We'll need to infer it from the context or use a different approach
-                // TODO: infer parent enum name from context rather than inferred type
-                if (inferred_type == .Enum) {
-                    // Try to find the enum type that contains this variant
-                    var enum_type_iter = self.generator.type_system.custom_types.iterator();
-                    while (enum_type_iter.next()) |entry| {
-                        if (entry.value_ptr.kind == .Enum) {
-                            if (entry.value_ptr.enum_variants) |variants| {
-                                for (variants) |variant| {
-                                    if (std.mem.eql(u8, variant.name, arg.data.EnumMember.lexeme)) {
-                                        custom_type_name = entry.key_ptr.*;
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            const type_name = switch (inferred_type) {
+            // The analyzer's type for the operand, shown by its declared name.
+            const type_info = self.generator.semantic.getCachedExprType(arg) orelse return ErrorList.MissingExpressionType;
+            const type_name: []const u8 = if (type_info.custom_type) |custom| custom.displayName() else switch (type_info.base) {
                 .Int => "int",
                 .Float => "float",
                 .String => "string",
@@ -519,101 +401,11 @@ pub const CallsHandler = struct {
                 .Nothing => "nothing",
                 .Array => "array",
                 .Union => "union",
-                .Poison => "poison",
-                .Struct => blk: {
-                    if (arg.data == .Variable) {
-                        const var_name = arg.data.Variable.lexeme;
-                        if (self.generator.isCustomType(var_name)) |custom_type| {
-                            if (custom_type.kind == .Struct) break :blk "struct";
-                        }
-                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |var_custom_type_name| {
-                            break :blk var_custom_type_name;
-                        }
-                    }
-                    if (arg.data == .FieldAccess) {
-                        const field_access = arg.data.FieldAccess;
-                        if (field_access.object.data == .Variable) {
-                            const obj_name = field_access.object.data.Variable.lexeme;
-                            if (self.generator.symbol_table.getVariableCustomType(obj_name)) |var_custom_type_name| {
-                                if (self.generator.isCustomType(var_custom_type_name)) |custom_type| {
-                                    if (custom_type.kind == .Struct) {
-                                        if (custom_type.struct_fields) |fields| {
-                                            for (fields) |f| {
-                                                if (std.mem.eql(u8, f.name, field_access.field.lexeme)) {
-                                                    if (f.custom_type_name) |ctn| break :blk ctn;
-                                                    // Fallback to the field's HIR type
-                                                    const ft = f.field_type;
-                                                    break :blk switch (ft) {
-                                                        .Int => "int",
-                                                        .Float => "float",
-                                                        .String => "string",
-                                                        .Tetra => "tetra",
-                                                        .Byte => "byte",
-                                                        .Nothing => "nothing",
-                                                        .Array => "array",
-                                                        .Poison => "poison",
-                                                        .Union => "union",
-                                                        .Struct => "struct",
-                                                        .Map => "map",
-                                                        .Enum => "enum",
-                                                        .Group => "group",
-                                                        .Function => "function",
-                                                        .Unknown => "unknown",
-                                                    };
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    break :blk "struct";
-                },
                 .Map => "map",
-                .Enum => blk: {
-                    if (custom_type_name) |ctn| break :blk ctn;
-                    if (arg.data == .Variable) {
-                        const var_name = arg.data.Variable.lexeme;
-                        if (self.generator.isCustomType(var_name)) |custom_type| {
-                            if (custom_type.kind == .Enum) break :blk var_name;
-                        }
-                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |var_custom_type_name| break :blk var_custom_type_name;
-                    }
-                    if (arg.data == .FieldAccess) {
-                        const field_access = arg.data.FieldAccess;
-                        if (field_access.object.data == .Variable) {
-                            const obj_name = field_access.object.data.Variable.lexeme;
-                            if (self.generator.isCustomType(obj_name)) |custom_type| {
-                                if (custom_type.kind == .Enum) break :blk obj_name;
-                            }
-                            if (self.generator.symbol_table.getVariableCustomType(obj_name)) |var_custom_type_name| {
-                                if (self.generator.isCustomType(var_custom_type_name)) |ct| {
-                                    if (ct.kind == .Struct) {
-                                        if (ct.struct_fields) |fields| {
-                                            for (fields) |f| {
-                                                if (std.mem.eql(u8, f.name, field_access.field.lexeme)) {
-                                                    if (f.custom_type_name) |ctn| break :blk ctn;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    break :blk "enum";
-                },
                 .Function => "function",
-                .Unknown => "unknown",
-                .Group => blk: {
-                    if (custom_type_name) |ctn| break :blk ctn;
-                    if (arg.data == .Variable) {
-                        const var_name = arg.data.Variable.lexeme;
-                        if (self.generator.symbol_table.getVariableCustomType(var_name)) |var_custom_type_name| break :blk var_custom_type_name;
-                    }
-                    break :blk "group";
-                },
+                .Struct => "struct",
+                .Enum => "enum",
+                .Custom => "custom",
             };
             const type_value = HIRValue{ .string = type_name };
             const const_idx = try self.generator.addConstant(type_value);
@@ -710,14 +502,13 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Swap);
                 const container_type = self.generator.inferTypeFromExpression(fa.object);
                 var structs_handler = StructsHandler.init(self.generator);
-                const resolved = structs_handler.resolveFieldIndexAndStructName(fa.object, fa.field.lexeme);
-                const struct_id = structs_handler.resolveStructIdFromType(container_type, resolved.struct_name);
+                const slot = try structs_handler.fieldSlot(fa.object, fa.field);
                 try self.generator.instructions.append(.{
                     .SetField = .{
                         .field_name = fa.field.lexeme,
                         .container_type = container_type,
-                        .struct_id = struct_id,
-                        .field_index = resolved.field_index,
+                        .struct_id = slot.struct_id,
+                        .field_index = slot.index,
                         .field_type = .Unknown,
                         .nested_struct_id = null,
                     },
@@ -821,7 +612,6 @@ pub const CallsHandler = struct {
                         .qualified_name = "clear",
                         .arg_count = 1,
                         .call_kind = .BuiltinFunction,
-                        .target_module = null,
                         .return_type = .Nothing,
                     },
                 });
@@ -850,7 +640,6 @@ pub const CallsHandler = struct {
                     .qualified_name = "find",
                     .arg_count = 2,
                     .call_kind = .BuiltinFunction,
-                    .target_module = null,
                     .return_type = .Int,
                 },
             });
@@ -870,7 +659,6 @@ pub const CallsHandler = struct {
                     .qualified_name = "print",
                     .arg_count = 1,
                     .call_kind = .BuiltinFunction,
-                    .target_module = null,
                     .return_type = .Nothing,
                 },
             });
@@ -879,13 +667,9 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.Pop);
             }
         } else if (std.mem.eql(u8, name, "std")) {
-            const exe_dir = std.process.executableDirPathAlloc(
-                self.generator.io,
-                self.generator.allocator,
-            ) catch return error.PermissionDenied;
-            defer self.generator.allocator.free(exe_dir);
-            const std_path = try std.fs.path.join(self.generator.allocator, &.{ exe_dir, "..", "lib", "std", "std.doxa" });
-            const path_value = HIRValue{ .string = std_path };
+            // `@std()` is the standard library's specifier, importable like
+            // any other; it names no install location.
+            const path_value = HIRValue{ .string = module_graph.std_specifier };
             const const_idx = try self.generator.addConstant(path_value);
             try self.generator.instructions.append(.{ .Const = .{ .value = path_value, .constant_id = const_idx } });
         } else {
@@ -899,58 +683,8 @@ pub const CallsHandler = struct {
         }
     }
 
-    fn generateStructConstructorCall(self: *CallsHandler, type_name: []const u8, arguments: []ast.CallArgument) !void {
-        if (self.generator.isCustomType(type_name)) |ct| {
-            const fields_info = ct.struct_fields orelse &[_]@import("../type_system.zig").TypeSystem.CustomTypeInfo.StructField{};
-            const field_count: usize = fields_info.len;
-
-            var field_types = try self.generator.allocator.alloc(HIRType, field_count);
-            defer self.generator.allocator.free(field_types);
-            var field_names = try self.generator.allocator.alloc([]const u8, field_count);
-            defer self.generator.allocator.free(field_names);
-
-            var remaining = field_count;
-            while (remaining > 0) {
-                remaining -= 1;
-                const field_index = remaining;
-                if (field_index >= arguments.len) continue;
-                const arg_expr = arguments[field_index].expr;
-                try self.generator.generateExpression(arg_expr, true, false);
-                field_types[field_index] = self.generator.inferTypeFromExpression(arg_expr);
-                const fname = fields_info[field_index].name;
-                field_names[field_index] = fname;
-                const fname_const = try self.generator.addConstant(HIRValue{ .string = fname });
-                try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
-            }
-
-            var i = arguments.len;
-            while (i < field_count) : (i += 1) {
-                const nothing_id = try self.generator.addConstant(HIRValue.nothing);
-                try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_id } });
-                field_types[i] = .Unknown;
-                const fname = fields_info[i].name;
-                field_names[i] = fname;
-                const fname_const = try self.generator.addConstant(HIRValue{ .string = fname });
-                try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue{ .string = fname }, .constant_id = fname_const } });
-            }
-
-            const struct_t = self.generator.type_system.structTypeForName(type_name);
-            const resolved_struct_id: u32 = if (struct_t == .Struct) struct_t.Struct else 0;
-
-            try self.generator.instructions.append(.{
-                .StructNew = .{
-                    .type_name = type_name,
-                    .struct_id = resolved_struct_id,
-                    .field_count = @intCast(field_count),
-                    .field_names = try self.generator.allocator.dupe([]const u8, field_names),
-                    .field_types = try self.generator.allocator.dupe(HIRType, field_types),
-                },
-            });
-        }
-    }
-
     fn tryInlineFunction(self: *CallsHandler, function_name: []const u8, call_kind: CallKind) !bool {
-        if (call_kind != .LocalFunction) return false;
+        if (call_kind != .DoxaFunction) return false;
         const func_body = self.generator.findFunctionBody(function_name) orelse return false;
         if (!self.shouldInlineFunction(func_body)) return false;
 

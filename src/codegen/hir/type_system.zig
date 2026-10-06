@@ -15,39 +15,36 @@ const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 const Reporting = @import("../../utils/reporting.zig");
 const Location = Reporting.Location;
-const StructTable = @import("../../common/struct_table.zig").StructTable;
-const EnumTable = @import("../../common/enum_table.zig").EnumTable;
-const GroupTable = @import("../../common/group_table.zig").GroupTable;
+const SemanticAnalyzer = @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer;
+const TypeRef = ast.TypeRef;
 
+/// Codegen's view of the program's types. Named types are keyed by their
+/// canonical key (`ModuleGraph.typeKey`), never by a spelling; an expression's
+/// type is the analyzer's answer wherever the analyzer recorded one.
 pub const TypeSystem = struct {
     custom_types: std.StringHashMap(CustomTypeInfo),
     allocator: std.mem.Allocator,
     reporter: *Reporting.Reporter,
-    semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
-    struct_table: ?*const StructTable = null,
-    enum_table: ?*const EnumTable = null,
-    group_table: ?*const GroupTable = null,
+    semantic: *const SemanticAnalyzer,
     union_id_map: std.StringHashMap(u32),
     next_union_id: u32,
-    function_signatures: ?*const SoxaTypes.FunctionSignatureMap = null,
-    /// Owner-aware return-type resolution for function-call expressions. The
-    /// generator installs this so nested calls (`m.s() == m.s()`, `m.f() + 1`)
-    /// resolve through the module graph's owner-scoped bindings and link
-    /// prefixes rather than a source-written dotted alias. Null in isolated
-    /// `TypeSystem` tests, which fall back to the dotted-name lookup below.
-    call_return_resolver: ?*const fn (ctx: *anyopaque, call_expr: *ast.Expr) HIRType = null,
-    call_return_ctx: ?*anyopaque = null,
 
     pub const CustomTypeInfo = struct {
         name: []const u8,
         kind: Types.CustomTypeKind,
         enum_variants: ?[]Types.EnumVariant = null,
         struct_fields: ?[]StructField = null,
-        group_members: ?[]Types.GroupMemberSource = null,
+        group_members: ?[]GroupMemberSource = null,
 
         pub const CustomTypeKind = Types.CustomTypeKind;
-        pub const GroupMemberSource = Types.GroupMemberSource;
         pub const EnumVariant = Types.EnumVariant;
+
+        /// A group member: the qualifier the group writes and the member
+        /// type's canonical key.
+        pub const GroupMemberSource = struct {
+            qualifier: []const u8,
+            key: []const u8,
+        };
 
         pub const StructField = struct {
             name: []const u8,
@@ -71,90 +68,53 @@ pub const TypeSystem = struct {
 
     pub const FieldResolveResult = struct { t: HIRType, custom_type_name: ?[]const u8 = null };
 
-    pub fn structTypeForName(self: *TypeSystem, name: []const u8) HIRType {
-        if (self.struct_table) |table| {
-            if (table.getIdByName(name)) |id| {
-                return HIRType{ .Struct = id };
-            }
-        }
-        return HIRType{ .Struct = 0 };
+    /// The struct type a canonical key names.
+    pub fn structTypeForName(self: *TypeSystem, key: []const u8) HIRType {
+        return HIRType{ .Struct = self.semantic.struct_table.idByKey(key) orelse 0 };
     }
 
-    pub fn enumTypeForName(self: *TypeSystem, name: []const u8) HIRType {
-        if (self.enum_table) |table| {
-            if (table.getIdByName(name)) |id| {
-                return HIRType{ .Enum = id };
-            }
-        }
-        return HIRType{ .Enum = 0 };
+    /// The enum type a canonical key names.
+    pub fn enumTypeForName(self: *TypeSystem, key: []const u8) HIRType {
+        return HIRType{ .Enum = self.semantic.enum_table.idByKey(key) orelse 0 };
     }
 
-    pub fn customTypeForName(self: *TypeSystem, name: []const u8) HIRType {
-        if (self.custom_types.get(name)) |custom_type| {
-            return switch (custom_type.kind) {
-                .Struct => self.structTypeForName(name),
-                .Enum => self.enumTypeForName(name),
-                .Group => blk: {
-                    if (self.group_table) |table| {
-                        if (table.getIdByName(name)) |id| break :blk HIRType{ .Group = id };
-                    }
-                    break :blk HIRType{ .Group = 0 };
-                },
-            };
-        }
-
-        // Qualified AST names (`error.IO`) vs per-module registration keys (`IO`).
-        if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| {
-            const short = name[dot + 1 ..];
-            if (short.len > 0) {
-                if (self.custom_types.get(short)) |custom_type| {
-                    return switch (custom_type.kind) {
-                        .Struct => self.structTypeForName(short),
-                        .Enum => self.enumTypeForName(short),
-                        .Group => blk: {
-                            if (self.group_table) |table| {
-                                if (table.getIdByName(short)) |id| break :blk HIRType{ .Group = id };
-                            }
-                            break :blk HIRType{ .Group = 0 };
-                        },
-                    };
-                }
-            }
-        }
-
-        if (self.enum_table) |etable| {
-            if (etable.getIdByName(name) != null) return self.enumTypeForName(name);
-            if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| {
-                const short = name[dot + 1 ..];
-                if (short.len > 0 and etable.getIdByName(short) != null) return self.enumTypeForName(short);
-            }
-        }
-        if (self.struct_table) |stable| {
-            if (stable.getIdByName(name) != null) return self.structTypeForName(name);
-            if (std.mem.lastIndexOfScalar(u8, name, '.')) |dot| {
-                const short = name[dot + 1 ..];
-                if (short.len > 0 and stable.getIdByName(short) != null) return self.structTypeForName(short);
-            }
-        }
-        return self.structTypeForName(name);
+    /// The HIR type a canonical key names.
+    pub fn customTypeForName(self: *TypeSystem, key: []const u8) HIRType {
+        const custom_type = self.custom_types.get(key) orelse return .Unknown;
+        return switch (custom_type.kind) {
+            .Struct => self.structTypeForName(key),
+            .Enum => self.enumTypeForName(key),
+            .Group => HIRType{ .Group = self.semantic.group_table.idByKey(key) orelse 0 },
+        };
     }
 
-    fn customTypeFromOptional(self: *TypeSystem, maybe_name: ?[]const u8) HIRType {
-        if (maybe_name) |name| {
-            return self.customTypeForName(name);
-        }
-        return .Unknown;
+    /// The canonical key of a named type, read from the table that registered
+    /// it.
+    pub fn refKey(self: *const TypeSystem, ref: TypeRef) ?[]const u8 {
+        const custom = self.semantic.custom_types.get(ref) orelse return null;
+        return switch (custom.kind) {
+            .Struct => self.semantic.struct_table.keyOf(self.semantic.struct_table.idOf(ref) orelse return null),
+            .Enum => self.semantic.enum_table.keyOf(self.semantic.enum_table.idOf(ref) orelse return null),
+            .Group => self.semantic.group_table.keyOf(self.semantic.group_table.idOf(ref) orelse return null),
+        };
     }
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *Reporting.Reporter, semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer) TypeSystem {
+    /// The HIR type of a named type.
+    pub fn typeForRef(self: *const TypeSystem, ref: TypeRef) HIRType {
+        const custom = self.semantic.custom_types.get(ref) orelse return .Unknown;
+        return switch (custom.kind) {
+            .Struct => HIRType{ .Struct = self.semantic.struct_table.idOf(ref) orelse 0 },
+            .Enum => HIRType{ .Enum = self.semantic.enum_table.idOf(ref) orelse 0 },
+            .Group => HIRType{ .Group = self.semantic.group_table.idOf(ref) orelse 0 },
+        };
+    }
+
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporting.Reporter, semantic: *const SemanticAnalyzer) TypeSystem {
         return TypeSystem{
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
             .allocator = allocator,
             .reporter = reporter,
-            .semantic_analyzer = semantic_analyzer,
-            .struct_table = if (semantic_analyzer) |sa| sa.getStructTable() else null,
-            .enum_table = if (semantic_analyzer) |sa| sa.getEnumTable() else null,
-            .group_table = if (semantic_analyzer) |sa| sa.getGroupTable() else null,
+            .semantic = semantic,
             .union_id_map = std.StringHashMap(u32).init(allocator),
             .next_union_id = 1,
         };
@@ -169,115 +129,8 @@ pub const TypeSystem = struct {
         self.custom_types.deinit();
     }
 
-    pub fn registerCustomType(self: *TypeSystem, type_name: []const u8, kind: CustomTypeInfo.CustomTypeKind) !void {
-        const custom_type = CustomTypeInfo{
-            .name = type_name,
-            .kind = kind,
-        };
-        try self.custom_types.put(type_name, custom_type);
-    }
-
-    pub fn registerEnumType(self: *TypeSystem, enum_name: []const u8, variants: []const []const u8) !void {
-        var enum_variants = try self.allocator.alloc(CustomTypeInfo.EnumVariant, variants.len);
-        for (variants, 0..) |variant_name, index| {
-            enum_variants[index] = CustomTypeInfo.EnumVariant{
-                .name = try self.allocator.dupe(u8, variant_name),
-                .index = @intCast(index),
-            };
-        }
-
-        const custom_type = CustomTypeInfo{
-            .name = try self.allocator.dupe(u8, enum_name),
-            .kind = .Enum,
-            .enum_variants = enum_variants,
-        };
-        try self.custom_types.put(enum_name, custom_type);
-    }
-
-    pub fn registerGroupType(self: *TypeSystem, group_name: []const u8, members: []const ast.GroupMember) !void {
-        var group_member_sources = try self.allocator.alloc(CustomTypeInfo.GroupMemberSource, members.len);
-        for (members, 0..) |member, i| {
-            var qualified: std.ArrayListUnmanaged(u8) = .empty;
-            for (member.path, 0..) |token, j| {
-                if (j > 0) try qualified.appendSlice(self.allocator, ".");
-                try qualified.appendSlice(self.allocator, token.lexeme);
-            }
-            group_member_sources[i] = .{
-                .qualifier = try self.allocator.dupe(u8, member.qualifier),
-                .source_name = try qualified.toOwnedSlice(self.allocator),
-            };
-        }
-
-        const custom_type = CustomTypeInfo{
-            .name = try self.allocator.dupe(u8, group_name),
-            .kind = .Group,
-            .group_members = group_member_sources,
-        };
-        try self.custom_types.put(group_name, custom_type);
-
-        // Also populate the GroupTable so MemberCheck instructions can resolve members
-        if (self.group_table) |gtable| {
-            if (gtable.getIdByName(group_name) != null) return;
-            var flat_members: std.ArrayListUnmanaged(GroupTable.Member) = .empty;
-            defer flat_members.deinit(self.allocator);
-            for (members) |member| {
-                var q: std.ArrayListUnmanaged(u8) = .empty;
-                for (member.path, 0..) |tok, j| {
-                    if (j > 0) try q.appendSlice(self.allocator, ".");
-                    try q.appendSlice(self.allocator, tok.lexeme);
-                }
-                const qname = try q.toOwnedSlice(self.allocator);
-                defer self.allocator.free(qname);
-
-                if (self.enum_table) |etable| {
-                    if (etable.getIdByName(qname)) |eid| {
-                        try flat_members.append(self.allocator, .{ .qualifier = try self.allocator.dupe(u8, member.qualifier), .kind = .Enum, .id = eid });
-                        continue;
-                    }
-                }
-                if (self.struct_table) |stable| {
-                    if (stable.getIdByName(qname)) |sid| {
-                        try flat_members.append(self.allocator, .{ .qualifier = try self.allocator.dupe(u8, member.qualifier), .kind = .Struct, .id = sid });
-                        continue;
-                    }
-                }
-                if (gtable.getIdByName(qname)) |gid| {
-                    try flat_members.append(self.allocator, .{ .qualifier = try self.allocator.dupe(u8, member.qualifier), .kind = .Group, .id = gid });
-                    continue;
-                }
-            }
-            _ = (@constCast(gtable)).registerGroup(group_name, flat_members.items) catch {};
-        }
-    }
-
-    pub fn registerStructType(self: *TypeSystem, struct_name: []const u8, fields: []const []const u8) !void {
-        if (self.custom_types.contains(struct_name)) return;
-
-        var struct_fields = try self.allocator.alloc(CustomTypeInfo.StructField, fields.len);
-        for (fields, 0..) |field_name, index| {
-            struct_fields[index] = CustomTypeInfo.StructField{
-                .name = try self.allocator.dupe(u8, field_name),
-                .field_type = .Unknown,
-                .index = @intCast(index),
-                .custom_type_name = null,
-            };
-        }
-
-        const custom_type = CustomTypeInfo{
-            .name = try self.allocator.dupe(u8, struct_name),
-            .kind = .Struct,
-            .struct_fields = struct_fields,
-        };
-        try self.custom_types.put(struct_name, custom_type);
-    }
-
-    pub fn isCustomType(self: *TypeSystem, name: []const u8) ?CustomTypeInfo {
-        return self.custom_types.get(name);
-    }
-
-    pub fn getGroupMemberNames(self: *TypeSystem, group_name: []const u8) ![][]const u8 {
-        const name_to_lookup = if (std.mem.lastIndexOfScalar(u8, group_name, '.')) |dot| group_name[dot + 1 ..] else group_name;
-        const ct = self.custom_types.get(name_to_lookup) orelse self.custom_types.get(group_name);
+    pub fn getGroupMemberNames(self: *TypeSystem, group_key: []const u8) ![][]const u8 {
+        const ct = self.custom_types.get(group_key);
         if (ct == null or ct.?.kind != .Group) return &[_][]const u8{};
 
         if (ct.?.group_members) |members| {
@@ -291,19 +144,8 @@ pub const TypeSystem = struct {
 
         var names = try self.allocator.alloc([]const u8, 2);
         names[0] = "nothing";
-        names[1] = name_to_lookup;
+        names[1] = group_key;
         return names;
-    }
-
-    pub fn getCustomTypeHIRType(self: *TypeSystem, name: []const u8) HIRType {
-        if (self.custom_types.get(name)) |custom_type| {
-            return switch (custom_type.kind) {
-                .Struct => .Struct,
-                .Enum => .Enum,
-                .Group => .Group,
-            };
-        }
-        return .Unknown;
     }
 
     fn appendTypeLabel(self: *TypeSystem, buf: *std.ArrayListUnmanaged(u8), ti: *const ast.TypeInfo) !void {
@@ -348,7 +190,10 @@ pub const TypeSystem = struct {
                 }
             },
             else => {
-                const label = if (ti.custom_type) |name| name else @tagName(ti.base);
+                // A union's key is its members' identities: a named member is
+                // spelled by its canonical key, so two modules' `Node` never
+                // make the same union.
+                const label = if (ti.custom_type) |custom| self.refKey(custom.resolved()) orelse custom.displayName() else @tagName(ti.base);
                 try buf.appendSlice(self.allocator, label);
             },
         }
@@ -448,16 +293,11 @@ pub const TypeSystem = struct {
                 }
                 break :blk .Unknown;
             },
-            .Struct => {
-                if (type_info.custom_type) |cn| {
-                    return self.customTypeFromOptional(cn);
-                }
-                return .Nothing;
-            },
-            .Custom => self.customTypeFromOptional(type_info.custom_type),
-            // A resolved enum may arrive as `.Enum{custom}`; resolve by name.
-            // `.Enum` with no name keeps the prior `.Nothing` answer.
-            .Enum => if (type_info.custom_type != null) self.customTypeFromOptional(type_info.custom_type) else .Nothing,
+            .Struct => if (type_info.custom_type) |custom| self.typeForRef(custom.resolved()) else .Nothing,
+            .Custom => if (type_info.custom_type) |custom| self.typeForRef(custom.resolved()) else .Unknown,
+            // A resolved enum may arrive as `.Enum{custom}`; an anonymous
+            // `.Enum` has no type to lower to.
+            .Enum => if (type_info.custom_type) |custom| self.typeForRef(custom.resolved()) else .Nothing,
             else => .Nothing,
         };
     }
@@ -467,14 +307,18 @@ pub const TypeSystem = struct {
     /// so the semantic layer (`inferBuiltinCall`) owns the rules and HIR only
     /// lowers the answer.
     fn hirTypeFromSemanticCache(self: *TypeSystem, expr: *ast.Expr) ?HIRType {
-        const semantic = self.semantic_analyzer orelse return null;
-        const type_info = semantic.getCachedExprType(expr) orelse return null;
+        const type_info = self.semantic.getCachedExprType(expr) orelse return null;
         return self.convertTypeInfo(type_info.*);
     }
 
-    /// Return type for internal / receiver method calls not handled by `module_call`.
-    pub fn inferInternalMethodCallReturnType(self: *TypeSystem, expr: *ast.Expr) HIRType {
-        return self.hirTypeFromSemanticCache(expr) orelse .Unknown;
+    /// The type an expression names in value position (`Color` in
+    /// `Color.Red`, a constructor's receiver), as analysis resolved it.
+    fn namedType(self: *TypeSystem, expr: *ast.Expr) ?TypeRef {
+        const resolved = self.semantic.resolutionOf(expr) orelse return null;
+        return switch (resolved) {
+            .type => |ref| ref,
+            else => null,
+        };
     }
 
     pub fn inferTypeFromLiteral(_: *TypeSystem, literal: TokenLiteral) HIRType {
@@ -502,8 +346,8 @@ pub const TypeSystem = struct {
     /// it, so exactly one member may declare `field_name`; two members that
     /// disagree mean we cannot answer and the read stays unresolved.
     pub fn groupMemberStructForField(self: *TypeSystem, group_id: u32, field_name: []const u8) ?u32 {
-        const const_table = self.struct_table orelse return null;
-        const members = (self.group_table orelse return null).members(group_id) orelse return null;
+        const const_table = &self.semantic.struct_table;
+        const members = self.semantic.group_table.members(group_id) orelse return null;
         var found: ?u32 = null;
         for (members) |member| {
             if (member.kind != .Struct) continue;
@@ -523,84 +367,39 @@ pub const TypeSystem = struct {
     pub fn resolveFieldAccessType(self: *TypeSystem, e: *ast.Expr, symbol_table: *SymbolTable) ?FieldResolveResult {
         return switch (e.data) {
             .Variable => |var_token| blk: {
-                // 1. Prefer explicit custom-type tracking from the HIR symbol table
-                if (symbol_table.getVariableCustomType(var_token.lexeme)) |ctype| {
-                    break :blk FieldResolveResult{ .t = self.customTypeForName(ctype), .custom_type_name = ctype };
+                // A variable whose declaration tracked its named type.
+                if (symbol_table.getVariableCustomType(var_token.lexeme)) |key| {
+                    break :blk FieldResolveResult{ .t = self.customTypeForName(key), .custom_type_name = key };
                 }
-
-                // 2. Treat bare type names (e.g. Point) as struct/enum types
-                if (self.isCustomType(var_token.lexeme)) |ct| {
-                    switch (ct.kind) {
-                        .Struct => break :blk FieldResolveResult{ .t = self.structTypeForName(var_token.lexeme), .custom_type_name = var_token.lexeme },
-                        .Enum => break :blk FieldResolveResult{ .t = self.enumTypeForName(var_token.lexeme), .custom_type_name = var_token.lexeme },
-                        .Group => {
-                            const id = if (self.group_table) |table| table.getIdByName(var_token.lexeme) orelse @as(u32, 0) else 0;
-                            break :blk FieldResolveResult{ .t = HIRType{ .Group = id }, .custom_type_name = var_token.lexeme };
-                        },
-                    }
+                // A type named in value position (`Point` in `Point.origin`).
+                if (self.namedType(e)) |ref| {
+                    break :blk FieldResolveResult{ .t = self.typeForRef(ref), .custom_type_name = self.refKey(ref) };
                 }
-
-                // 3. FALLBACK: Ask the semantic analyzer for the precise type, including the
-                //    concrete struct/enum name. This covers cases where the variable's
-                //    type was inferred (e.g. from a function call) and we never called
-                //    trackVariableCustomType in the HIR generator.
-                if (self.semantic_analyzer) |semantic| {
-                    if (semantic.current_scope) |scope| {
-                        if (scope.lookupVariable(var_token.lexeme)) |variable| {
-                            if (semantic.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                                const type_info = storage.type_info.*;
-                                const hir_type = self.convertTypeInfo(type_info);
-
-                                var custom_type_name: ?[]const u8 = null;
-                                switch (type_info.base) {
-                                    .Struct, .Enum, .Custom => {
-                                        if (type_info.custom_type) |ct_name| {
-                                            custom_type_name = ct_name;
-                                        }
-                                    },
-                                    else => {},
-                                }
-
-                                break :blk FieldResolveResult{
-                                    .t = hir_type,
-                                    .custom_type_name = custom_type_name,
-                                };
-                            }
-                        }
-                    }
+                // Otherwise the analyzer's type for this occurrence.
+                if (self.semantic.getCachedExprType(e)) |type_info| {
+                    break :blk FieldResolveResult{
+                        .t = self.convertTypeInfo(type_info.*),
+                        .custom_type_name = if (type_info.custom_type) |custom| self.refKey(custom.resolved()) else null,
+                    };
                 }
-
-                // 4. Last resort: fall back to whatever HIR type tracking we have, but
-                //    with no concrete custom type name. This means downstream code
-                //    must treat the field index as best-effort only.
                 break :blk FieldResolveResult{
                     .t = symbol_table.getTrackedVariableType(var_token.lexeme) orelse .Unknown,
                     .custom_type_name = null,
                 };
             },
             .This => blk: {
-                // 'this' refers to the current struct type in instance methods
-                // Try to get the struct type from the symbol table's current function context
-                if (symbol_table.current_function) |func_name| {
-                    // Extract struct name from method name (e.g., "Point.getX" -> "Point")
-                    if (std.mem.indexOfScalar(u8, func_name, '.')) |dot_idx| {
-                        const struct_name = func_name[0..dot_idx];
-                        if (self.isCustomType(struct_name)) |ct| {
-                            if (ct.kind == .Struct) {
-                                break :blk FieldResolveResult{ .t = self.structTypeForName(struct_name), .custom_type_name = struct_name };
-                            }
-                        }
-                    }
+                // `this` is the receiver the method bound on entry.
+                if (symbol_table.getVariableCustomType("this")) |key| {
+                    break :blk FieldResolveResult{ .t = self.structTypeForName(key), .custom_type_name = key };
                 }
-                // Fallback: return generic struct type
                 break :blk FieldResolveResult{ .t = HIRType{ .Struct = 0 }, .custom_type_name = null };
             },
             .FieldAccess => |fa| blk: {
-                if (fa.object.data == .Variable) {
-                    const base_name = fa.object.data.Variable.lexeme;
-                    if (self.isCustomType(base_name)) |ct| {
-                        if (ct.kind == .Enum) {
-                            return FieldResolveResult{ .t = HIRType{ .Enum = 0 }, .custom_type_name = base_name };
+                // `Color.Red`: the qualifier names an enum.
+                if (self.namedType(fa.object)) |ref| {
+                    if (self.semantic.custom_types.get(ref)) |custom| {
+                        if (custom.kind == .Enum) {
+                            return FieldResolveResult{ .t = self.typeForRef(ref), .custom_type_name = self.refKey(ref) };
                         }
                     }
                 }
@@ -630,60 +429,52 @@ pub const TypeSystem = struct {
                 // Fallback: if we know the object's HIR type is a struct via the
                 // semantic struct table (e.g., for array-of-struct indexing like
                 // zoo[0].name), use the struct_id and field metadata from there.
-                if (self.struct_table) |const_table| {
-                    switch (obj_type) {
-                        .Struct => |sid| {
+                const const_table = &self.semantic.struct_table;
+                switch (obj_type) {
+                    .Struct => |sid| {
+                        if (const_table.fields(sid)) |fields| {
+                            for (fields) |f| {
+                                if (std.mem.eql(u8, f.name, fa.field.lexeme)) {
+                                    // Prefer enum type name when this field is an enum,
+                                    // so that peek on zoo[0].animal_type can report
+                                    // "Species" instead of generic "enum".
+                                    var result_name: ?[]const u8 = null;
+
+                                    // For enum-typed fields, use the AST custom_type
+                                    // when available (e.g., "Species").
+                                    const ti = f.type_info.*;
+                                    if (f.hir_type == .Enum) {
+                                        if (ti.custom_type) |custom| result_name = self.refKey(custom.resolved());
+                                    } else if (f.nested_struct_id) |nested_id| {
+                                        result_name = const_table.keyOf(nested_id);
+                                    }
+
+                                    return FieldResolveResult{
+                                        .t = f.hir_type,
+                                        .custom_type_name = result_name,
+                                    };
+                                }
+                            }
+                        }
+                    },
+                    .Group => |gid| {
+                        // Semantic narrows the binding to the matched member, so
+                        // exactly one member declares the field. Report ambiguity
+                        // by not resolving rather than guessing which member.
+                        if (self.groupMemberStructForField(gid, fa.field.lexeme)) |sid| {
                             if (const_table.fields(sid)) |fields| {
                                 for (fields) |f| {
                                     if (std.mem.eql(u8, f.name, fa.field.lexeme)) {
-                                        // Prefer enum type name when this field is an enum,
-                                        // so that peek on zoo[0].animal_type can report
-                                        // "Species" instead of generic "enum".
-                                        var result_name: ?[]const u8 = null;
-
-                                        // For enum-typed fields, use the AST custom_type
-                                        // when available (e.g., "Species").
-                                        const ti = f.type_info.*;
-                                        if (f.hir_type == .Enum) {
-                                            if (ti.custom_type) |ct_name| {
-                                                result_name = ct_name;
-                                            }
-                                        } else if (f.nested_struct_id) |nested_id| {
-                                            // Otherwise, for nested structs, recover the
-                                            // nested struct's qualified name.
-                                            var table = const_table.*;
-                                            if (table.getEntryById(nested_id)) |nested_entry| {
-                                                result_name = nested_entry.qualified_name;
-                                            }
-                                        }
-
-                                        return FieldResolveResult{
+                                        break :blk FieldResolveResult{
                                             .t = f.hir_type,
-                                            .custom_type_name = result_name,
+                                            .custom_type_name = const_table.keyOf(sid),
                                         };
                                     }
                                 }
                             }
-                        },
-                        .Group => |gid| {
-                            // Semantic narrows the binding to the matched member, so
-                            // exactly one member declares the field. Report ambiguity
-                            // by not resolving rather than guessing which member.
-                            if (self.groupMemberStructForField(gid, fa.field.lexeme)) |sid| {
-                                if (const_table.fields(sid)) |fields| {
-                                    for (fields) |f| {
-                                        if (std.mem.eql(u8, f.name, fa.field.lexeme)) {
-                                            break :blk FieldResolveResult{
-                                                .t = f.hir_type,
-                                                .custom_type_name = const_table.getName(sid),
-                                            };
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        else => {},
-                    }
+                        }
+                    },
+                    else => {},
                 }
 
                 break :blk null;
@@ -698,11 +489,7 @@ pub const TypeSystem = struct {
             .InterpolatedString => .String,
             .Exists => .Tetra,
             .ForAll => .Tetra,
-            .StructLiteral => |struct_lit| blk: {
-                // Struct literals evaluate to the concrete struct type.
-                // Prefer semantic struct IDs when available.
-                break :blk self.structTypeForName(struct_lit.name.lexeme);
-            },
+            .StructLiteral => if (self.namedType(expr)) |ref| self.typeForRef(ref) else HIRType{ .Struct = 0 },
             .Map => |map_expr| {
                 const entries = map_expr.entries;
                 const key_type_ptr = self.allocator.create(HIRType) catch return .Unknown;
@@ -727,13 +514,8 @@ pub const TypeSystem = struct {
                 return HIRType{ .Map = .{ .key = key_type_ptr, .value = value_type_ptr } };
             },
             .Variable => |var_token| {
-                if (self.isCustomType(var_token.lexeme)) |custom_type| {
-                    return switch (custom_type.kind) {
-                        .Struct => self.structTypeForName(var_token.lexeme),
-                        .Enum => HIRType{ .Enum = 0 },
-                        .Group => HIRType{ .Group = if (self.group_table) |gt| gt.getIdByName(var_token.lexeme) orelse 0 else 0 },
-                    };
-                }
+                // A type named in value position.
+                if (self.namedType(expr)) |ref| return self.typeForRef(ref);
 
                 // An active `as`/match narrowing lives only in the symbol
                 // table; it narrows the variable for the branch and must win
@@ -750,94 +532,24 @@ pub const TypeSystem = struct {
                     }
                 }
 
-                if (self.semantic_analyzer) |semantic| {
-                    if (semantic.current_scope) |scope| {
-                        if (scope.lookupVariable(var_token.lexeme)) |variable| {
-                            if (semantic.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                                const hir_type = self.convertTypeInfo(storage.type_info.*);
-                                return hir_type;
-                            }
-                        }
-                    }
-                }
-                const var_type = symbol_table.getTrackedVariableType(var_token.lexeme) orelse .Unknown;
-                return var_type;
+                if (self.hirTypeFromSemanticCache(expr)) |analyzed| return analyzed;
+                return symbol_table.getTrackedVariableType(var_token.lexeme) orelse .Unknown;
             },
-            .FieldAccess => |field| {
+            .FieldAccess => {
                 if (self.resolveFieldAccessType(expr, symbol_table)) |res| {
-                    return res.t;
+                    if (res.t != .Unknown) return res.t;
                 }
-                const obj_type = self.inferTypeFromExpression(field.object, symbol_table);
-                if (std.mem.eql(u8, field.field.lexeme, "token_type")) return HIRType{ .Enum = 0 };
-                switch (obj_type) {
-                    .Struct => return .Unknown,
-                    .String => return .String,
-                    .Int => return .Int,
-                    .Float => return .Float,
-                    .Byte => return .Byte,
-                    .Nothing => return .Nothing,
-                    else => return .Unknown,
-                }
+                return self.hirTypeFromSemanticCache(expr) orelse .Unknown;
             },
-            .EnumMember => |member| {
-                // For enum members, try to find the parent enum type
-                var enum_type_iter = self.custom_types.iterator();
-                while (enum_type_iter.next()) |entry| {
-                    if (entry.value_ptr.kind == .Enum) {
-                        if (entry.value_ptr.enum_variants) |variants| {
-                            for (variants) |variant| {
-                                if (std.mem.eql(u8, variant.name, member.lexeme)) {
-                                    return HIRType{ .Enum = 0 };
-                                }
-                            }
-                        }
-                    }
-                }
-                return .Unknown;
-            },
+            .EnumMember => self.hirTypeFromSemanticCache(expr) orelse .Unknown,
             .Binary => |binary| {
                 // Use the centralized binary operation result type inference
                 // which correctly handles division (always Float) and other type promotions
                 return self.inferBinaryOpResultType(binary.operator.type, binary.left.?, binary.right.?, symbol_table);
             },
-            .FunctionCall => |call| {
-                // The generator's owner-aware resolver is authoritative: it
-                // resolves the callee through the module graph. Without it
-                // (isolated TypeSystem tests), fall back to the registered
-                // signatures by source-written dotted name.
-                if (self.call_return_resolver) |resolver| {
-                    if (self.call_return_ctx) |ctx| return resolver(ctx, expr);
-                }
-                // Resolve a call's return type from the registered function signatures.
-                // The HIRGenerator wrapper handles top-level calls, but nested calls
-                // (e.g. `f() + g()`) recurse through here, so this must agree with it.
-                if (self.function_signatures) |sigs| {
-                    switch (call.callee.data) {
-                        // Local function: `foo()`
-                        .Variable => |v| {
-                            if (signatureByLink(sigs, v.lexeme)) |info| return info.return_type;
-                        },
-                        .FieldAccess => |fa| {
-                            // Module function (`m.sq`) or, via the last two segments,
-                            // a module-qualified struct static / constructor
-                            // (`rl.RGBA.new` -> `RGBA.new`).
-                            if (self.buildDottedName(call.callee)) |dotted| {
-                                defer self.allocator.free(dotted);
-                                if (signatureByLink(sigs, dotted)) |info| return info.return_type;
-                                if (lastTwoSegments(dotted)) |last2| {
-                                    if (signatureByLink(sigs, last2)) |info| return info.return_type;
-                                }
-                            }
-                            // Instance method on a struct receiver: `inst.method()`.
-                            if (self.instanceMethodReturnType(fa, sigs, symbol_table)) |ret| {
-                                return ret;
-                            }
-                        },
-                        else => {},
-                    }
-                }
-                return .Unknown;
-            },
+            // A call's type is its callee's declared return type, which the
+            // analyzer recorded for the call expression.
+            .FunctionCall => self.hirTypeFromSemanticCache(expr) orelse .Unknown,
             .Array => {
                 const elements = expr.data.Array;
                 if (elements.len > 0) {
@@ -974,104 +686,10 @@ pub const TypeSystem = struct {
                 }
                 return .Unknown;
             },
-            .This => blk: {
-                if (symbol_table.current_function) |func_name| {
-                    if (std.mem.indexOfScalar(u8, func_name, '.')) |dot_idx| {
-                        const struct_name = func_name[0..dot_idx];
-                        if (self.isCustomType(struct_name)) |ct| {
-                            if (ct.kind == .Struct) {
-                                break :blk self.structTypeForName(struct_name);
-                            }
-                        }
-                    }
-                }
-                break :blk .Unknown;
-            },
+            .This => if (symbol_table.getVariableCustomType("this")) |key| self.structTypeForName(key) else .Unknown,
             else => .String,
         };
         return result;
-    }
-
-    /// Build a dotted qualified name from a nested `Variable`/`FieldAccess`
-    /// callee (e.g. `m.sq` -> "m.sq", `rl.RGBA.new` -> "rl.RGBA.new").
-    /// Returns an allocator-owned slice the caller must free, or null.
-    fn buildDottedName(self: *TypeSystem, expr: *ast.Expr) ?[]const u8 {
-        return switch (expr.data) {
-            .Variable => |v| self.allocator.dupe(u8, v.lexeme) catch null,
-            .FieldAccess => |fa| blk: {
-                const parent = self.buildDottedName(fa.object) orelse break :blk null;
-                defer self.allocator.free(parent);
-                break :blk std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ parent, fa.field.lexeme }) catch null;
-            },
-            else => null,
-        };
-    }
-
-    /// The trailing `Type.method` of a 3+ segment dotted name (e.g.
-    /// "rl.RGBA.new" -> "RGBA.new"); null for names with fewer than two dots.
-    /// Returns a slice into `name` (no allocation).
-    fn lastTwoSegments(name: []const u8) ?[]const u8 {
-        const last_dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return null;
-        const before = name[0..last_dot];
-        const prev_dot = std.mem.lastIndexOfScalar(u8, before, '.') orelse return null;
-        return name[prev_dot + 1 ..];
-    }
-
-    /// The declared return type of an instance method `recv.method()`, or null
-    /// when the receiver is not known to be a struct or the method is not
-    /// registered. A variable's tracked type is `.Struct = 0` — id 0 is the
-    /// struct table's sentinel — so the concrete struct name is recovered from
-    /// the variable's tracked custom type, with field resolution and the struct
-    /// table's own name as fallbacks.
-    fn instanceMethodReturnType(
-        self: *TypeSystem,
-        fa: ast.FieldAccess,
-        sigs: *const SoxaTypes.FunctionSignatureMap,
-        symbol_table: *SymbolTable,
-    ) ?HIRType {
-        var recv_name: ?[]const u8 = null;
-        if (fa.object.data == .Variable) {
-            recv_name = symbol_table.getVariableCustomType(fa.object.data.Variable.lexeme);
-        }
-        if (recv_name == null) {
-            if (self.resolveFieldAccessType(fa.object, symbol_table)) |res| {
-                recv_name = res.custom_type_name;
-            }
-        }
-        if (recv_name == null) {
-            const recv_type = self.inferTypeFromExpression(fa.object, symbol_table);
-            if (recv_type == .Struct) {
-                if (self.struct_table) |st| recv_name = st.getName(recv_type.Struct);
-            }
-        }
-
-        const sname = recv_name orelse return null;
-        const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ sname, fa.field.lexeme }) catch return null;
-        defer self.allocator.free(qualified);
-        if (signatureByLink(sigs, qualified)) |info| return info.return_type;
-
-        // Method signatures are keyed by the bare struct name; a module-qualified
-        // receiver (`mod.Type`) needs its scope prefix stripped.
-        if (std.mem.lastIndexOfScalar(u8, sname, '.')) |dot| {
-            const bare = sname[dot + 1 ..];
-            if (bare.len > 0) {
-                const bare_qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ bare, fa.field.lexeme }) catch return null;
-                defer self.allocator.free(bare_qualified);
-                if (signatureByLink(sigs, bare_qualified)) |info| return info.return_type;
-            }
-        }
-        return null;
-    }
-
-    /// Look up a signature by its emitted link name. The store is keyed by
-    /// `(ModuleId, declared name)`; this scan is only the fallback used when the
-    /// generator's owner-aware resolver is not installed.
-    fn signatureByLink(sigs: *const SoxaTypes.FunctionSignatureMap, name: []const u8) ?FunctionInfo {
-        var it = sigs.valueIterator();
-        while (it.next()) |info| {
-            if (std.mem.eql(u8, info.name, name)) return info.*;
-        }
-        return null;
     }
 
     pub fn inferBinaryOpResultType(self: *TypeSystem, operator_type: TokenType, left_expr: *ast.Expr, right_expr: *ast.Expr, symbol_table: *SymbolTable) HIRType {
@@ -1171,19 +789,9 @@ pub const TypeSystem = struct {
     fn mapExpressionHasElse(self: *TypeSystem, expr: *ast.Expr) bool {
         return switch (expr.data) {
             .MapLiteral => |map_literal| map_literal.else_value != null,
-            .Variable => |var_token| blk: {
-                if (self.semantic_analyzer) |semantic| {
-                    if (semantic.current_scope) |scope| {
-                        if (scope.lookupVariable(var_token.lexeme)) |variable| {
-                            if (semantic.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                                if (storage.type_info.base == .Map) {
-                                    break :blk storage.type_info.map_has_else_value;
-                                }
-                            }
-                        }
-                    }
-                }
-                break :blk false;
+            .Variable => blk: {
+                const type_info = self.semantic.getCachedExprType(expr) orelse break :blk false;
+                break :blk type_info.base == .Map and type_info.map_has_else_value;
             },
             else => false,
         };
@@ -1242,9 +850,9 @@ pub const TypeSystem = struct {
                 }
                 break :blk "array";
             },
-            .Struct => info.custom_type orelse "struct",
-            .Enum => info.custom_type orelse "enum",
-            .Custom => info.custom_type orelse "custom",
+            .Struct => if (info.custom_type) |custom| custom.displayName() else "struct",
+            .Enum => if (info.custom_type) |custom| custom.displayName() else "enum",
+            .Custom => if (info.custom_type) |custom| custom.displayName() else "custom",
             .Map => "map",
             .Function => "function",
             .Union => "union",

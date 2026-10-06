@@ -1,4 +1,6 @@
 module std from "std/std.doxa"
+import Response from "std/http/http.doxa"
+module error from "std/error.doxa"
 
 zig Fixture {
     const std = @import("std");

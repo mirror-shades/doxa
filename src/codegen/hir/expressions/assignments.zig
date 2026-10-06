@@ -22,15 +22,7 @@ pub const AssignmentsHandler = struct {
 
     /// Generate HIR for assignment expressions
     pub fn generateAssignment(self: *AssignmentsHandler, assign: ast.Assignment, preserve_result: bool) !void {
-        // Set the current assignment target for enum type inference
-        const previous_target = self.generator.current_assignment_target;
-        self.generator.current_assignment_target = assign.name.lexeme;
-
-        // Generate the value expression
         try self.generator.generateExpression(assign.value.?, true, false);
-
-        // Restore the previous assignment target
-        self.generator.current_assignment_target = previous_target;
 
         // NEW: Track the variable's type from the assigned value
         const assigned_type = self.generator.inferTypeFromExpression(assign.value.?);

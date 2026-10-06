@@ -295,14 +295,13 @@ const Interp = struct {
                 if (!self.ok) return;
                 try self.push(.unknown());
             },
-            .LoadModule => try self.push(.unknown()),
             .EnterScope, .ExitScope, .ResetScope => {},
             .Call => |c| {
                 const n = c.arg_count;
                 if (self.stack.items.len < n) return self.fail();
                 const base = self.stack.items.len - n;
                 const args = self.stack.items[base..];
-                const result = if (c.call_kind == .LocalFunction)
+                const result = if (c.call_kind == .DoxaFunction)
                     returnRange(self.ctx, self.alloc, c.function_index orelse std.math.maxInt(usize), args, self.guard, self.depth + 1)
                 else
                     null;

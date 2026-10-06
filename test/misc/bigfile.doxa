@@ -491,11 +491,11 @@ struct Point {
         }
     }
 
-    public method getX() { # methods are always instance methods with implicit 'this'
+    public method getX() returns int { # methods are always instance methods with implicit 'this'
         return this.x
     }
 
-    public method getY() {
+    public method getY() returns int {
         return this.y
     }
 

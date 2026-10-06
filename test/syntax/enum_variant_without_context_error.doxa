@@ -1,0 +1,6 @@
+module a from "../misc/moddata/status_enum.doxa"
+
+# `a` is loaded by the call below, but a loaded enum does not type a bare
+# shorthand: only an explicit context does.
+const shown is a.show(.Fail)
+const v is .Fail

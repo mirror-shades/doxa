@@ -555,6 +555,13 @@ public struct Node {
         }
     }
 
+    public function parse(text :: string) returns Node | error.StdError {
+        const root is JSON.parseDocument(text)
+        const code is JSON.takeLastErrorCode()
+        if code == 0 then return Node.new(root)
+        return mapJSONError(code)
+    }
+
     public method kind() returns Kind {
         const code is JSON.nodeKind(this.handle)
         return match code {
@@ -616,13 +623,6 @@ public struct Node {
         if JSON.takeLastErrorCode() != 0 then return nothing
         return value
     }
-}
-
-public function parse(text :: string) returns Node | error.StdError {
-    const root is JSON.parseDocument(text)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return Node.new(root)
-    return mapJSONError(code)
 }
 
 public function beginObject() returns error.StdError {

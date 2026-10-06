@@ -115,7 +115,6 @@ pub fn Methods(comptime Ctx: type) type {
                 .Peek,
                 .PeekStruct,
                 .AssertFail,
-                .LoadModule,
                 => false,
             };
         }

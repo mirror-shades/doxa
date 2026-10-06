@@ -1,0 +1,31 @@
+module a from "./moddata/status_enum.doxa"
+module b from "./moddata/result_enum.doxa"
+
+# A `.Variant` shorthand takes the enum its position expects, and nothing
+# else types it. `a.Status` and `b.Result` both declare `.Ok`; every use below
+# names one of them through its context.
+struct Box {
+    public s :: a.Status,
+}
+
+map labels :: b.Result returns string {
+    .Ok then "fine",
+    .Err then "broken",
+}
+
+function pick(flag :: int) returns b.Result {
+    if flag > 0 {
+        return .Ok
+    }
+    return .Err
+}
+
+entry function main() {
+    var s :: a.Status is .Ok
+    s is .Fail
+    const known :: b.Result is .Ok
+    const box is $Box { s is .Fail }
+    const list :: a.Status[] is [.Ok, .Fail]
+    const chosen :: b.Result is if s == .Fail then .Err else .Ok
+    @print("{a.show(.Ok)} {b.show(.Err)} {s == .Fail} {known == .Ok} {pick(1) == .Ok} {box.s == .Fail} {list[1] == .Fail} {chosen == .Err} {labels[.Err]}\n")
+}

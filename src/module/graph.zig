@@ -1,4 +1,5 @@
-//! Module identity: the single authoritative identity for a module.
+//! The module graph: the single authoritative store of modules for one
+//! compilation, and the identity of each.
 //!
 //! A module carries two distinct identifiers, and conflating them is what lets
 //! absolute checkout paths leak into emitted `.ll`, caches, and diagnostics:
@@ -13,89 +14,30 @@
 //! into a stable key. Matching is physical (both sides are `realpath`d once)
 //! and component-wise, so a root `/pkg/foo` does not contain `/pkg/foobar`.
 //!
-//! This file is the identity layer of the module graph; the record store and
-//! the `ensure*` state machine land on top of it.
+//! Every file is a `ModuleRecord` — the entry file (record 0), each imported
+//! `.doxa` file, each inline `zig Name { … }` block, and each imported `.zig`
+//! file. A record owns its namespace (`bindings`), its public surface, and its
+//! declarations, and moves through the lazy stages Parse → Declarations →
+//! Types → Analysis. The graph drives the stage machine; the bodies come from
+//! the layers that own each stage (`loader.zig`, semantic analysis).
 
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
+const hashing = @import("../utils/hashing.zig");
+const ids = @import("ids.zig");
+const Reporting = @import("../utils/reporting.zig");
+const Location = Reporting.Location;
+const Reporter = Reporting.Reporter;
+const ErrorCode = @import("../utils/errors.zig").ErrorCode;
 
-pub const ModuleId = u32;
-pub const TypeId = u32;
-
-/// The internal identity of a symbol owned by a module: the *defining* record
-/// plus the declared local name (`fn` for a top-level function, `Struct.method`
-/// for a method). Never a source alias; a dependency-free stand-in for the
-/// eventual `(ModuleId, SymbolKind, components)` mangling key.
-pub const SymbolKey = struct {
-    module: ModuleId,
-    name: []const u8,
-};
-
-pub const SymbolKeyContext = struct {
-    pub fn hash(_: SymbolKeyContext, key: SymbolKey) u64 {
-        var h = std.hash.Wyhash.init(0);
-        h.update(std.mem.asBytes(&key.module));
-        h.update(key.name);
-        return h.final();
-    }
-
-    pub fn eql(_: SymbolKeyContext, a: SymbolKey, b: SymbolKey) bool {
-        return a.module == b.module and std.mem.eql(u8, a.name, b.name);
-    }
-};
-
-/// Semantic type identity: the defining module plus the declared name. Two
-/// modules' `Node` are distinct because `module` differs. Never a numeric id.
-pub const TypeRef = struct {
-    module: ModuleId,
-    name: []const u8,
-};
-
-pub const SymbolKind = enum { Function, Type, Variable, Constant };
-
-/// A reference to a symbol, naming its *defining* module, never the importer.
-pub const SymbolRef = struct {
-    module: ModuleId,
-    name: []const u8,
-    kind: SymbolKind,
-};
-
-pub const Visibility = enum { Private, Public };
-
-/// A bare name is either a symbol or a namespace. A namespace is always a
-/// `ModuleId`: inline `zig Name { … }` and `.zig` imports are synthetic
-/// records, so there is no second namespace species.
-pub const Binding = union(enum) {
-    symbol: SymbolRef,
-    namespace: ModuleId,
-};
-
-/// A name in a module's own namespace: what it binds, its visibility, and the
-/// span of the declaration that introduced it (pointing at the previous
-/// declaration for duplicate-binding diagnostics). The span is null while a
-/// binding is materialized lazily by resolution and the declaration site has
-/// not been scanned yet.
-pub const BoundName = struct {
-    binding: Binding,
-    visibility: Visibility,
-    span: ?ast.SourceSpan = null,
-};
-
-/// Stable key for the synthetic `builtin` module namespace.
-pub const builtin_key = "builtin";
-
-/// The compilation-local, deterministic link prefix for a module's symbols:
-/// `__doxa_m1_<16 hex>__`. It is derived from `stable_module_key` (never a
-/// source alias or an absolute path), so two modules can never share an
-/// internal codegen key, and the emitted `.ll` is independent of checkout
-/// directory and of discovery order. Phase 6 replaces this placeholder with the
-/// full versioned mangling; until then it is the temporary LLVM spelling.
-pub fn linkPrefix(allocator: std.mem.Allocator, stable_module_key: []const u8) ![]const u8 {
-    const hashing = @import("../utils/hashing.zig");
-    const digest = hashing.hashBytes(stable_module_key);
-    const hex = hashing.hexOf(digest);
-    return std.fmt.allocPrint(allocator, "__doxa_m1_{s}__", .{hex[0..16]});
-}
+pub const ModuleId = ids.ModuleId;
+pub const TypeRef = ids.TypeRef;
+pub const TypeRefContext = ids.TypeRefContext;
+pub const TypeRefHashMap = ids.TypeRefHashMap;
+pub const SymbolKind = ids.SymbolKind;
+pub const SymbolRef = ids.SymbolRef;
+pub const SymbolKey = ids.SymbolKey;
+pub const SymbolKeyContext = ids.SymbolKeyContext;
 
 /// Generated identities derive from their owner, never a bare `gen:<name>`.
 /// Each inline `zig Name { … }` is declared in exactly one file and duplicate
@@ -152,12 +94,25 @@ pub fn stableKey(allocator: std.mem.Allocator, tag: []const u8, relative: []cons
     return out.toOwnedSlice();
 }
 
-/// The canonical identity of a file: its real path once resolved, and the
-/// root-relative stable key derived from that path.
-pub const FileIdentity = struct {
-    physical_key: []const u8,
-    stable_module_key: []const u8,
+/// A specifier that names a file by its root, `<tag>//<relative>`: the
+/// spelling of a stable module key, so every module's key is also a way to
+/// import it. A tag is an identifier; anything else is an ordinary path.
+pub const RootSpecifier = struct {
+    tag: []const u8,
+    relative: []const u8,
 };
+
+pub fn rootSpecifier(specifier: []const u8) ?RootSpecifier {
+    const separator = std.mem.indexOf(u8, specifier, "//") orelse return null;
+    const tag = specifier[0..separator];
+    if (tag.len == 0) return null;
+    for (tag) |c| if (!std.ascii.isAlphanumeric(c) and c != '_') return null;
+    return .{ .tag = tag, .relative = specifier[separator + 2 ..] };
+}
+
+/// What `@std()` denotes: the standard library's entry file, named by its
+/// root. It imports like any other specifier.
+pub const std_specifier = "std//std.doxa";
 
 pub const Root = struct {
     tag: []const u8,
@@ -216,6 +171,14 @@ pub const RootRegistry = struct {
         self.arena.deinit();
     }
 
+    /// The real path of the root tagged `tag`, or null when none is.
+    pub fn pathOf(self: *const RootRegistry, tag: []const u8) ?[]const u8 {
+        for (self.roots) |root| {
+            if (std.mem.eql(u8, root.tag, tag)) return root.path;
+        }
+        return null;
+    }
+
     /// Classify a real path against the roots in priority order.
     pub fn classify(self: *const RootRegistry, real_path: []const u8) ?RootMatch {
         for (self.roots) |root| {
@@ -231,20 +194,12 @@ pub const RootRegistry = struct {
         const match = self.classify(real_path) orelse return null;
         return try stableKey(allocator, match.tag, match.relative);
     }
-
-    /// The full identity for a real path, or null when it matches no root.
-    pub fn identityFor(self: *const RootRegistry, allocator: std.mem.Allocator, real_path: []const u8) !?FileIdentity {
-        const stable = (try self.stableKeyFor(allocator, real_path)) orelse return null;
-        return .{
-            .physical_key = try allocator.dupe(u8, real_path),
-            .stable_module_key = stable,
-        };
-    }
 };
 
 /// Resolve `path` to its physical (real) path. This establishes filesystem
 /// identity: `./a.doxa`, `dir/../a.doxa`, and a symlink to the same file all
-/// collapse to one result, so they dedup to one module record.
+/// collapse to one result, so they dedup to one module record. A host without
+/// `realpath` is unsupported; there is no lexical fallback.
 pub fn physicalPath(io: std.Io, allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     // `realPath*Alloc` returns a sentinel-terminated slice; free that exact
     // allocation, then hand back a plain slice the caller frees normally.
@@ -258,11 +213,15 @@ pub fn physicalPath(io: std.Io, allocator: std.mem.Allocator, path: []const u8) 
 
 pub const DiagnosticIndex = u32;
 
-/// One stage of a module's lazy lifecycle. Each stage is a transition
-/// `NotLoaded → X → X_done`; a re-entry while the stage is active is a cycle.
+/// One stage of a record's lazy lifecycle. Each stage is a transition
+/// `X → X_active → X_done`; a re-entry while the stage is active is reported
+/// as `in_progress` carrying the stage, never as ready.
 pub const ModuleStage = enum { Parse, Declarations, Types, Analysis };
 
-pub const ModuleStatus = enum {
+/// Ordered: a status compares greater than every status of an earlier stage,
+/// so "is this stage done" is one comparison. `Failed` is sticky and is checked
+/// before the order is consulted.
+pub const ModuleStatus = enum(u8) {
     NotLoaded,
     Parsing,
     Parsed,
@@ -272,63 +231,165 @@ pub const ModuleStatus = enum {
     TypesRegistered,
     Analyzing,
     Analyzed,
-    /// Sticky; a stage reported an error. No later stage runs.
     Failed,
+
+    pub fn atLeast(self: ModuleStatus, other: ModuleStatus) bool {
+        return self != .Failed and @intFromEnum(self) >= @intFromEnum(other);
+    }
 };
+
+fn activeStatus(stage: ModuleStage) ModuleStatus {
+    return switch (stage) {
+        .Parse => .Parsing,
+        .Declarations => .CollectingDeclarations,
+        .Types => .RegisteringTypes,
+        .Analysis => .Analyzing,
+    };
+}
+
+fn doneStatus(stage: ModuleStage) ModuleStatus {
+    return switch (stage) {
+        .Parse => .Parsed,
+        .Declarations => .DeclarationsCollected,
+        .Types => .TypesRegistered,
+        .Analysis => .Analyzed,
+    };
+}
+
+/// The status a record must have reached before `stage` may run.
+fn requiredStatus(stage: ModuleStage) ModuleStatus {
+    return switch (stage) {
+        .Parse => .NotLoaded,
+        .Declarations => .Parsed,
+        .Types => .DeclarationsCollected,
+        .Analysis => .TypesRegistered,
+    };
+}
 
 /// Every `ensure*` returns this, so an active stage is never mistaken for a
-/// completed one: no `ensure*` returns `ready` while its own stage is active.
+/// completed one.
 pub const EnsureResult = union(enum) {
     ready: *ModuleRecord,
-    in_progress: *ModuleRecord,
+    /// The requested stage is active on this record — a cycle when reached
+    /// from its own body. The record's placeholders (declarations bound, types
+    /// allocated) are readable; its completed results are not.
+    in_progress: InProgress,
+    /// Sticky. `failed_stage` and `failure` on the record identify the first
+    /// diagnostic; a caller propagates it and never reports again.
     failed: *ModuleRecord,
+
+    pub const InProgress = struct {
+        record: *ModuleRecord,
+        stage: ModuleStage,
+    };
 };
 
-/// The outcome of a stage body invoked by an `ensure*`. `failed` carries the
-/// reporter's diagnostic index when the body emitted one; the body keeps the
-/// original error with its caller, since `EnsureResult` is infallible.
-pub const StageOutcome = union(enum) {
-    ok,
-    failed: ?DiagnosticIndex,
+/// A stage body. It performs the stage's work on `record`; `ctx` carries the
+/// owning layer's state (the loader for Parse/Declarations, the analyzer for
+/// Types/Analysis). Whether the stage failed is decided by `runStage`, from
+/// what the body reported, not by the body.
+pub const StageRunner = *const fn (ctx: *anyopaque, record: *ModuleRecord) anyerror!void;
+
+pub const Visibility = enum { Private, Public };
+
+/// A bare name is either a symbol or a namespace. A namespace is always a
+/// `ModuleId`: inline `zig Name { … }` and `.zig` imports are records too, so
+/// there is no second namespace species.
+pub const Binding = union(enum) {
+    symbol: SymbolRef,
+    namespace: ModuleId,
 };
 
-/// A stage body. It performs the stage's work and records the result on
-/// `record`; `ctx` carries the caller's own state (parser, source, error).
-pub const StageRunner = *const fn (ctx: *anyopaque, record: *ModuleRecord) StageOutcome;
+/// A name in a record's own namespace: what it binds, its visibility, and the
+/// span of the declaration that introduced it, for duplicate-binding
+/// diagnostics. A `.zig` file's functions have no Doxa declaration site.
+pub const BoundName = struct {
+    binding: Binding,
+    visibility: Visibility,
+    span: ?ast.SourceSpan = null,
+};
+
+/// One declared entity, pointing at its declaration in the defining record's
+/// own AST (or, for a Zig function, at its extracted signature). Cross-record
+/// references never hold a `Decl`; they hold a `SymbolRef` and look the decl up
+/// in its defining record.
+pub const Decl = union(enum) {
+    function: *ast.Stmt,
+    variable: *ast.Stmt,
+    @"struct": *ast.StructDecl,
+    @"enum": *ast.EnumDecl,
+    group: *ast.GroupDecl,
+    zig_function: *ast.ZigFnSig,
+
+    pub fn kind(self: Decl) SymbolKind {
+        return switch (self) {
+            .function, .zig_function => .Function,
+            .@"struct", .@"enum", .group => .Type,
+            .variable => |stmt| if (stmt.data.VarDecl.type_info.is_mutable) .Variable else .Constant,
+        };
+    }
+};
+
+pub const RecordKind = enum {
+    /// A `.doxa` source file, including the entry file.
+    doxa,
+    /// An inline `zig Name { … }` block, owned by the file that declares it.
+    inline_zig,
+    /// An imported `.zig` file.
+    zig_file,
+};
+
+/// The Zig source and extracted signatures behind an inline block or a `.zig`
+/// file. `name` is the block's declared name, or the file stem for a `.zig`
+/// file; it labels diagnostics and generated wrapper sources only — identity is
+/// the record.
+pub const ZigUnit = struct {
+    name: []const u8,
+    source: []const u8,
+    sigs: []ast.ZigFnSig,
+    location: ?Location = null,
+};
 
 pub const ModuleRecord = struct {
     id: ModuleId,
-    /// Real path; null for generated/inline-Zig records.
+    kind: RecordKind,
+    /// Real path; null for an inline `zig` block.
     physical_key: ?[]const u8,
-    /// Mangled/deterministic identity; never an absolute path.
+    /// `<root-tag>//<relative>` or `<owner>//zig/<name>`; never an absolute path.
     stable_module_key: []const u8,
-    /// Deterministic link prefix derived from `stable_module_key`, used for
-    /// internal codegen keys and the temporary LLVM spelling until Phase 6.
-    link_prefix: []const u8,
+    /// The declaring file of an inline `zig` block.
+    owner: ?ModuleId = null,
     status: ModuleStatus = .NotLoaded,
     /// Set iff `status == .Failed`.
     failed_stage: ?ModuleStage = null,
-    /// First diagnostic; reporter-owned.
+    /// The first error the failed stage reported; reporter-owned. Null unless
+    /// `status == .Failed`, and null then only when the reporter was at its
+    /// diagnostic limit and recorded nothing.
     failure: ?DiagnosticIndex = null,
-    /// MIGRATION (Phase 1 → removed once records own their AST/bindings):
-    /// the parsed module payload, keyed by this record's physical identity.
-    module_info: ?ast.ModuleInfo = null,
-    /// Owned source text and parsed body of this module. They are allocated in
-    /// the compilation's analysis arena for now, which outlives every record,
-    /// so the destruction order (lexer strings transferred before the lexer is
-    /// freed; AST never outlives its arena; graph arena torn down last) holds
-    /// without the record owning an arena yet. Per-record arenas land with
-    /// per-record analysis (Phase 5).
+    /// Source text and parsed body of a `.doxa` record (`ast` is a block). Both
+    /// live in the compilation's analysis arena, which outlives every record.
     source: ?[]const u8 = null,
     ast: ?*ast.Expr = null,
+    /// The Zig behind an `inline_zig` or `zig_file` record.
+    zig: ?ZigUnit = null,
     /// This file's own namespace: bare name → binding. Owner-scoped, so two
     /// files may bind the same name to different entities. Keys and symbol
     /// names are owned by the graph arena.
     bindings: std.StringHashMapUnmanaged(BoundName) = .empty,
-    /// The subset of `bindings` visible to importers (`public` declarations and
-    /// public re-exports). The single public surface; `import n from S` reads
+    /// The subset of `bindings` visible to importers. `import n from S` reads
     /// here.
     public_bindings: std.StringHashMapUnmanaged(BoundName) = .empty,
+    /// Declarations by name, in source order.
+    decls: std.StringArrayHashMapUnmanaged(Decl) = .empty,
+    /// The mangling tag (16 hex, collision-extended); set by
+    /// `finalizeMangling`.
+    mangle_tag: ?[]const u8 = null,
+
+    /// The statements of a `.doxa` record's body.
+    pub fn statements(self: *const ModuleRecord) []ast.Stmt {
+        const body = self.ast orelse return &.{};
+        return body.data.Block.statements;
+    }
 };
 
 pub const ModuleGraphError = error{
@@ -342,9 +403,19 @@ pub const ModuleGraphError = error{
     OutOfMemory,
 };
 
+/// The kind tag of a mangled symbol. A top-level function `S__m` and a method
+/// `S.m` differ by tag, so they can never coincide.
+pub const MangleKind = enum(u8) {
+    function = 'f',
+    type = 't',
+    global = 'g',
+    method = 'm',
+};
+
+const mangle_prefix = "__doxa_m1_";
+
 /// The single authoritative store of module records for one compilation. Every
-/// parser shares one graph; there is no per-parser map copying and no
-/// child→parent merge asymmetry.
+/// parser and the loader share one graph.
 ///
 /// Records are individually allocated in `arena` and `records` holds pointers.
 /// Appending a record never relocates an existing one, because recursive
@@ -355,13 +426,44 @@ pub const ModuleGraph = struct {
     records: std.ArrayListUnmanaged(*ModuleRecord) = .empty,
     by_physical_key: std.StringHashMapUnmanaged(ModuleId) = .empty,
     by_stable_key: std.StringHashMapUnmanaged(ModuleId) = .empty,
+    /// Records whose Declarations stage is active, innermost last. A
+    /// declaration-collection re-entry is an unresolvable import cycle, and
+    /// this is its diagnostic trail.
     import_stack: std.ArrayListUnmanaged(ModuleId) = .empty,
+    /// Set by `finalizeMangling`; no record may join the graph afterwards.
+    mangling_final: bool = false,
 
     pub fn init(io: std.Io, allocator: std.mem.Allocator, roots: []const Root) RootRegistryError!ModuleGraph {
         return .{
             .arena = std.heap.ArenaAllocator.init(allocator),
             .roots = try RootRegistry.init(io, allocator, roots),
         };
+    }
+
+    /// The graph for a compilation entered at `entry_path`, with its declared
+    /// roots in priority order: the entry file's directory (`pkg`), the
+    /// standard library (`std`, normally `install.stdDir`), then each include
+    /// directory (`inc0`, `inc1`, …). The compiler and the language server both
+    /// build their graph here, so a document resolves exactly as its
+    /// compilation would.
+    pub fn initForEntry(
+        io: std.Io,
+        allocator: std.mem.Allocator,
+        entry_path: []const u8,
+        std_dir: []const u8,
+        include_dirs: []const []const u8,
+    ) RootRegistryError!ModuleGraph {
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const scratch = arena.allocator();
+
+        const roots = try scratch.alloc(Root, 2 + include_dirs.len);
+        roots[0] = .{ .tag = "pkg", .path = std.fs.path.dirname(entry_path) orelse "." };
+        roots[1] = .{ .tag = "std", .path = std_dir };
+        for (include_dirs, roots[2..], 0..) |dir, *root, i| {
+            root.* = .{ .tag = try std.fmt.allocPrint(scratch, "inc{d}", .{i}), .path = dir };
+        }
+        return init(io, allocator, roots);
     }
 
     pub fn deinit(self: *ModuleGraph) void {
@@ -371,73 +473,79 @@ pub const ModuleGraph = struct {
         self.arena.deinit();
     }
 
-    /// Stable key for a physical path, or null when it matches no root.
-    pub fn stableKeyFor(self: *const ModuleGraph, allocator: std.mem.Allocator, physical: []const u8) !?[]const u8 {
-        return self.roots.stableKeyFor(allocator, physical);
-    }
-
     /// Ensure a record for a loaded file's physical identity. A second spelling,
-    /// alias, or symlink to the same file returns the same record rather than a
-    /// duplicate; a file matching no root is `ModuleRootUnknown`. The caller
-    /// fills `module_info` once parsing completes.
-    pub fn ensureRecord(self: *ModuleGraph, physical: []const u8) ModuleGraphError!*ModuleRecord {
+    /// alias, or symlink to the same file returns the same record; a file
+    /// matching no root is `ModuleRootUnknown`.
+    pub fn ensureRecord(self: *ModuleGraph, physical: []const u8, kind: RecordKind) ModuleGraphError!*ModuleRecord {
         if (self.findPhysical(physical)) |existing| return existing;
 
-        const allocator = self.arena.child_allocator;
-        const stable = (self.roots.stableKeyFor(allocator, physical) catch return error.OutOfMemory) orelse
+        const child = self.arena.child_allocator;
+        const stable = (self.roots.stableKeyFor(child, physical) catch return error.OutOfMemory) orelse
             return error.ModuleRootUnknown;
-        defer allocator.free(stable);
+        defer child.free(stable);
 
-        return self.addRecord(physical, stable);
+        return self.addRecord(physical, stable, kind);
     }
 
     /// Allocate a record and assign it an immutable id. Ids are compilation
-    /// local, assigned at creation (discovery order), and never renumbered, so
-    /// lazy discovery cannot invalidate references. Output order comes from
-    /// `stable_module_key` + declaration order, never from these values.
-    ///
-    /// A generated record (`physical_key == null`) is keyed by stable key
-    /// alone; a physical record is additionally indexed by its real path.
-    pub fn addRecord(self: *ModuleGraph, physical_key: ?[]const u8, stable_key: []const u8) ModuleGraphError!*ModuleRecord {
-        const allocator = self.arena.allocator();
+    /// local, assigned at creation (discovery order), and never renumbered.
+    /// Output order comes from `stable_module_key` + declaration order, never
+    /// from these values.
+    pub fn addRecord(self: *ModuleGraph, physical_key: ?[]const u8, stable_key: []const u8, kind: RecordKind) ModuleGraphError!*ModuleRecord {
+        std.debug.assert(!self.mangling_final);
+        const arena = self.arena.allocator();
 
         if (self.by_stable_key.contains(stable_key)) return error.DuplicateStableKey;
 
-        const new_record = try allocator.create(ModuleRecord);
+        const new_record = try arena.create(ModuleRecord);
         new_record.* = .{
             .id = @intCast(self.records.items.len),
-            .physical_key = if (physical_key) |key| try allocator.dupe(u8, key) else null,
-            .stable_module_key = try allocator.dupe(u8, stable_key),
-            .link_prefix = try linkPrefix(allocator, stable_key),
+            .kind = kind,
+            .physical_key = if (physical_key) |key| try arena.dupe(u8, key) else null,
+            .stable_module_key = try arena.dupe(u8, stable_key),
         };
 
-        try self.records.append(allocator, new_record);
-        try self.by_stable_key.put(allocator, new_record.stable_module_key, new_record.id);
+        try self.records.append(arena, new_record);
+        try self.by_stable_key.put(arena, new_record.stable_module_key, new_record.id);
         if (new_record.physical_key) |key| {
-            try self.by_physical_key.put(allocator, key, new_record.id);
+            try self.by_physical_key.put(arena, key, new_record.id);
         }
         return new_record;
     }
 
-    /// Register the synthetic record for an inline `zig Name { … }` block owned
-    /// by `owner`. Its stable key is `<owner-stable-key>//zig/<name>`, and since a
-    /// block name is unique within its file and each file is exactly one owner,
-    /// `(owner, name)` is a total identity. A second registration of the same
-    /// pair is a compiler bug and is reported as `DuplicateStableKey` rather than
-    /// silently merged. `allocator` is only for the transient key; the record's
-    /// copy lives in the graph arena.
+    /// Register the record for an inline `zig Name { … }` block owned by
+    /// `owner`. Its key is `<owner-stable-key>//zig/<name>`; a block name is
+    /// unique within its file, so `(owner, name)` is a total identity and a
+    /// second registration is `DuplicateStableKey`.
     pub fn addGeneratedRecord(self: *ModuleGraph, allocator: std.mem.Allocator, owner: *const ModuleRecord, decl_name: []const u8) ModuleGraphError!*ModuleRecord {
         const key = try generatedKey(allocator, owner.stable_module_key, decl_name);
         defer allocator.free(key);
-        return self.addRecord(null, key);
+        const generated = try self.addRecord(null, key, .inline_zig);
+        generated.owner = owner.id;
+        return generated;
     }
 
     pub fn record(self: *const ModuleGraph, id: ModuleId) *ModuleRecord {
         return self.records.items[id];
     }
 
-    /// Introduce (or replace) a binding in `record`'s own namespace. `name` and
-    /// the symbol name are copied into the graph arena, so the binding never
+    /// The file a record's specifiers resolve against and its diagnostics
+    /// point into: its own real path, or its owner's for an inline block.
+    pub fn filePath(self: *const ModuleGraph, id: ModuleId) []const u8 {
+        const rec = self.record(id);
+        if (rec.physical_key) |key| return key;
+        return self.filePath(rec.owner.?);
+    }
+
+    /// How diagnostics name a module: its stable key, never a path on this
+    /// machine.
+    pub fn moduleName(self: *const ModuleGraph, id: ModuleId) []const u8 {
+        return self.record(id).stable_module_key;
+    }
+
+    /// Introduce a binding in `target`'s own namespace. The caller has already
+    /// rejected a duplicate (reporting both spans); binding one name twice is a
+    /// compiler bug. Names are copied into the graph arena, so a binding never
     /// borrows a lexer buffer. A public binding is mirrored into the record's
     /// public surface.
     pub fn bindName(
@@ -448,99 +556,102 @@ pub const ModuleGraph = struct {
         visibility: Visibility,
         span: ?ast.SourceSpan,
     ) !void {
-        const allocator = self.arena.allocator();
-        const owned_name = try allocator.dupe(u8, name);
+        std.debug.assert(!target.bindings.contains(name));
+        const arena = self.arena.allocator();
+        const owned_name = try arena.dupe(u8, name);
         var owned_binding = binding;
         switch (binding) {
             .symbol => |symbol| owned_binding = .{ .symbol = .{
                 .module = symbol.module,
-                .name = try allocator.dupe(u8, symbol.name),
+                .name = try arena.dupe(u8, symbol.name),
                 .kind = symbol.kind,
             } },
             .namespace => {},
         }
         const bound = BoundName{ .binding = owned_binding, .visibility = visibility, .span = span };
-        try target.bindings.put(allocator, owned_name, bound);
+        try target.bindings.put(arena, owned_name, bound);
         if (visibility == .Public) {
-            try target.public_bindings.put(allocator, owned_name, bound);
+            try target.public_bindings.put(arena, owned_name, bound);
         }
     }
 
-    /// Bind a symbol declared in `target` itself (its defining module is the
-    /// record).
-    pub fn bindSymbol(
+    /// Record a declaration of `target` itself and bind its name, naming the
+    /// record as the defining module.
+    pub fn declare(
         self: *ModuleGraph,
         target: *ModuleRecord,
         name: []const u8,
-        kind: SymbolKind,
+        decl: Decl,
         visibility: Visibility,
         span: ?ast.SourceSpan,
     ) !void {
-        return self.bindName(target, name, .{ .symbol = .{ .module = target.id, .name = name, .kind = kind } }, visibility, span);
+        try self.bindName(target, name, .{ .symbol = .{
+            .module = target.id,
+            .name = name,
+            .kind = decl.kind(),
+        } }, visibility, span);
+        // The binding's key is the graph-owned copy of the name.
+        try target.decls.put(self.arena.allocator(), target.bindings.getKey(name).?, decl);
     }
 
-    /// Bind a namespace in `target`'s own namespace. The target is a namespace
-    /// record: an imported module, an inline `zig Name { … }`, or a `.zig`
-    /// file import.
-    pub fn bindNamespace(
-        self: *ModuleGraph,
-        target: *ModuleRecord,
-        name: []const u8,
-        namespace_id: ModuleId,
-        visibility: Visibility,
-        span: ?ast.SourceSpan,
-    ) !void {
-        return self.bindName(target, name, .{ .namespace = namespace_id }, visibility, span);
+    /// The declaration a symbol reference names, in its defining record.
+    pub fn declOf(self: *const ModuleGraph, symbol: SymbolRef) ?Decl {
+        return self.record(symbol.module).decls.get(symbol.name);
     }
 
-    /// Drive the Parse stage: `NotLoaded → Parsing → Parsed`. A re-entry while
-    /// `Parsing` returns `in_progress`, so a parse cycle is never mistaken for a
-    /// parsed record; the caller reports the cycle where it needs the body. A
-    /// `Failed` record returns `failed` without re-running `run`, so a second
-    /// `ensure*` emits no duplicate diagnostic. The record is pointer-stable
-    /// across `run`, which may append records for its own dependencies.
-    pub fn ensureParsed(self: *ModuleGraph, ctx: *anyopaque, run: StageRunner, target: *ModuleRecord) EnsureResult {
+    /// Drive `stage` on `target`. The previous stage must be done (the owning
+    /// layer's `ensure*` chains them). An active stage returns `in_progress`; a
+    /// done stage returns `ready` without running `run`; a failed record
+    /// returns `failed` without running `run`, so a second `ensure*` emits no
+    /// duplicate diagnostic. `target` is pointer-stable across `run`, which may
+    /// append records for its own dependencies.
+    ///
+    /// A stage fails when it reported an error — whether or not its body
+    /// returned one — and `failure` is the first. A body that returns an error
+    /// without reporting one is a compiler bug, surfaced as one internal
+    /// diagnostic rather than a silent failure.
+    pub fn runStage(self: *ModuleGraph, target: *ModuleRecord, stage: ModuleStage, reporter: *Reporter, ctx: *anyopaque, run: StageRunner) EnsureResult {
         _ = self;
-        switch (target.status) {
-            .Parsing => return .{ .in_progress = target },
-            .Failed => return .{ .failed = target },
-            .NotLoaded => {
-                target.status = .Parsing;
-                switch (run(ctx, target)) {
-                    .ok => {
-                        target.status = .Parsed;
-                        return .{ .ready = target };
-                    },
-                    .failed => |diagnostic| {
-                        target.status = .Failed;
-                        target.failed_stage = .Parse;
-                        if (diagnostic) |index| target.failure = index;
-                        return .{ .failed = target };
-                    },
-                }
-            },
-            else => return .{ .ready = target },
+        if (target.status == .Failed) return .{ .failed = target };
+        if (target.status == activeStatus(stage)) return .{ .in_progress = .{ .record = target, .stage = stage } };
+        if (target.status.atLeast(doneStatus(stage))) return .{ .ready = target };
+        std.debug.assert(target.status == requiredStatus(stage));
+
+        target.status = activeStatus(stage);
+        const start = reporter.diagnostics.items.len;
+        var errored = false;
+        run(ctx, target) catch |err| {
+            errored = true;
+            if (reporter.firstErrorSince(start) == null) {
+                reporter.reportCompileError(
+                    null,
+                    ErrorCode.INTERNAL_ERROR,
+                    "the {s} stage of '{s}' failed without a diagnostic ({s}). This is a compiler bug, not an error in the program",
+                    .{ @tagName(stage), target.stable_module_key, @errorName(err) },
+                );
+            }
+        };
+        const failure = reporter.firstErrorSince(start);
+        if (!errored and failure == null) {
+            target.status = doneStatus(stage);
+            return .{ .ready = target };
         }
+        target.status = .Failed;
+        target.failed_stage = stage;
+        target.failure = if (failure) |index| @intCast(index) else null;
+        return .{ .failed = target };
     }
 
     /// Complete the externally-driven Parse stage for the entry record. The
-    /// entry file is parsed by the pipeline rather than `ensureParsed`, so the
-    /// pipeline supplies the record's own source, AST, and parsed payload and
-    /// this performs the `NotLoaded → Parsed` transition. `Parsed` never means
-    /// `ast == null`; a record already marked `Failed` is left failed.
-    pub fn completeExternalParse(
-        self: *ModuleGraph,
-        target: *ModuleRecord,
-        source: []const u8,
-        module_ast: *ast.Expr,
-        module_info: ast.ModuleInfo,
-    ) void {
+    /// pipeline parses the entry file itself, then hands its source and body
+    /// here for the `NotLoaded → Parsed` transition, so `Parsed` never means
+    /// `ast == null`.
+    pub fn completeExternalParse(self: *ModuleGraph, target: *ModuleRecord, source: []const u8, body: *ast.Expr) void {
         _ = self;
-        if (target.status == .Failed) return;
+        std.debug.assert(target.status == .NotLoaded);
         target.status = .Parsed;
         target.source = source;
-        target.ast = module_ast;
-        target.module_info = module_info;
+        target.ast = body;
     }
 
     pub fn findPhysical(self: *const ModuleGraph, physical_key: []const u8) ?*ModuleRecord {
@@ -556,4 +667,101 @@ pub const ModuleGraph = struct {
     pub fn count(self: *const ModuleGraph) usize {
         return self.records.items.len;
     }
+
+    /// Fix every record's mangling tag. The tag is the first 64 bits of a
+    /// domain-separated SHA-256 of the stable key; colliding tags are then
+    /// extended (`disperseMangleTags`). Deterministic and path-independent.
+    /// Called once, by lowering (`SemanticAnalyzer.finalizeLinkIdentities`),
+    /// after analysis has materialized every record the program needs.
+    pub fn finalizeMangling(self: *ModuleGraph) !void {
+        std.debug.assert(!self.mangling_final);
+        const arena = self.arena.allocator();
+        for (self.records.items) |rec| {
+            rec.mangle_tag = try hexTag(arena, "doxa.mangle.m1.mod", rec.stable_module_key);
+        }
+        try self.disperseMangleTags();
+        self.mangling_final = true;
+    }
+
+    /// Extend every tag that two or more records share with `_<h2>`, a second,
+    /// independently domain-separated hash of each one's stable key. A unique
+    /// tag is left as it is; an extended tag is longer than any base tag, so it
+    /// cannot collide with one.
+    pub fn disperseMangleTags(self: *ModuleGraph) !void {
+        std.debug.assert(!self.mangling_final);
+        const arena = self.arena.allocator();
+
+        var tag_counts = std.StringHashMapUnmanaged(usize).empty;
+        for (self.records.items) |rec| {
+            const entry = try tag_counts.getOrPut(arena, rec.mangle_tag.?);
+            entry.value_ptr.* = if (entry.found_existing) entry.value_ptr.* + 1 else 1;
+        }
+        for (self.records.items) |rec| {
+            if (tag_counts.get(rec.mangle_tag.?).? < 2) continue;
+            const disperse = try hexTag(arena, "doxa.mangle.m1.disperse", rec.stable_module_key);
+            rec.mangle_tag = try std.fmt.allocPrint(arena, "{s}_{s}", .{ rec.mangle_tag.?, disperse });
+        }
+    }
+
+    /// The emitted spelling of a symbol owned by `module`:
+    /// `__doxa_m1_<tag>__<K><len>$<component>[<len>$<component>...]`.
+    ///
+    /// Every component is length-prefixed on its byte count, so a component can
+    /// never forge a delimiter: for a fixed kind the encoding is reversible,
+    /// hence injective within a module, and distinct (collision-extended) tags
+    /// make it injective across modules. Doxa identifiers are ASCII
+    /// `[A-Za-z0-9_]` and `$` is an LLVM identifier character, so a Doxa
+    /// symbol needs no quoting; a component from a quoted Zig identifier may
+    /// carry any bytes and is framed by its byte count like any other.
+    pub fn mangle(self: *const ModuleGraph, allocator: std.mem.Allocator, module: ModuleId, kind: MangleKind, components: []const []const u8) ![]u8 {
+        std.debug.assert(self.mangling_final);
+        var out = std.array_list.Managed(u8).init(allocator);
+        errdefer out.deinit();
+        try out.appendSlice(mangle_prefix);
+        try out.appendSlice(self.record(module).mangle_tag.?);
+        try out.appendSlice("__");
+        try out.append(@intFromEnum(kind));
+        for (components) |component| {
+            var len_buf: [20]u8 = undefined;
+            try out.appendSlice(std.fmt.bufPrint(&len_buf, "{d}", .{component.len}) catch unreachable);
+            try out.append('$');
+            try out.appendSlice(component);
+        }
+        return out.toOwnedSlice();
+    }
+
+    /// The canonical codegen key of a type: its `t`-kind mangled symbol.
+    pub fn typeKey(self: *const ModuleGraph, allocator: std.mem.Allocator, ref: TypeRef) ![]u8 {
+        return self.mangle(allocator, ref.module, .type, &.{ref.name});
+    }
 };
+
+fn hexTag(allocator: std.mem.Allocator, domain: []const u8, stable_key: []const u8) ![]const u8 {
+    var hasher = hashing.Sha256.init(.{});
+    hasher.update(domain);
+    hasher.update(&[_]u8{0});
+    hasher.update(stable_key);
+    var digest: hashing.Digest = undefined;
+    hasher.final(&digest);
+    const hex = hashing.hexOf(digest);
+    return allocator.dupe(u8, hex[0..16]);
+}
+
+/// The declared name a mangled symbol carries: its last component. Display
+/// sites (diagnostics, `peek`, reflection) show this; identity never does. A
+/// string that is not a mangled symbol is returned unchanged.
+pub fn displayName(name: []const u8) []const u8 {
+    if (!std.mem.startsWith(u8, name, mangle_prefix)) return name;
+    const tag_end = std.mem.indexOfPos(u8, name, mangle_prefix.len, "__") orelse return name;
+    var i = tag_end + 3; // "__" plus the kind tag
+    var last: []const u8 = name;
+    while (i < name.len) {
+        const dollar = std.mem.indexOfScalarPos(u8, name, i, '$') orelse return name;
+        const len = std.fmt.parseInt(usize, name[i..dollar], 10) catch return name;
+        const start = dollar + 1;
+        if (start + len > name.len) return name;
+        last = name[start .. start + len];
+        i = start + len;
+    }
+    return last;
+}

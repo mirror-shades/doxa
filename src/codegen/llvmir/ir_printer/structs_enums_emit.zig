@@ -1,6 +1,6 @@
 const std = @import("std");
+const module_graph = @import("../../../module/graph.zig");
 const DoxaUnionMeta = @import("../../../runtime/doxa_rt.zig").DoxaUnionMeta;
-const GroupTable = @import("../../../common/group_table.zig").GroupTable;
 
 fn resolveStructFieldIndex(field_name: []const u8, field_names: ?[]const []const u8, hir_index: u32) u32 {
     if (field_names) |names| {
@@ -117,13 +117,14 @@ pub fn Methods(comptime Ctx: type) type {
                     .Value => "value",
                 };
             };
+            // Named types travel by canonical key; a peek shows the declared name.
             const type_info = try internPeekString(
                 self.allocator,
                 &state.string_map,
                 &state.strings,
                 state.next_id_ptr,
                 &state.globals,
-                type_slice,
+                module_graph.displayName(type_slice),
             );
 
             var name_info: ?PeekStringInfo = null;
@@ -1539,7 +1540,7 @@ pub fn Methods(comptime Ctx: type) type {
                 &peek_state.strings,
                 peek_state.next_id_ptr,
                 &peek_state.globals,
-                type_name,
+                module_graph.displayName(type_name),
             );
 
             const type_gep_expr = try std.fmt.allocPrint(
@@ -1724,6 +1725,9 @@ pub fn Methods(comptime Ctx: type) type {
             return self.getOrCreateStructDescGlobal(peek_state, type_name, field_names, field_types, enum_type_names);
         }
 
+        /// The runtime finds an enum descriptor by its type name, so the name it
+        /// carries is the canonical key: two modules may declare the same enum
+        /// name. (A struct descriptor is found by instance and shows its name.)
         pub fn getOrCreateEnumDescGlobal(
             self: *IRPrinter,
             peek_state: *PeekEmitState,
@@ -1872,8 +1876,8 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 .Map => try allocator.dupe(u8, "map"),
                 .Struct => |sid| {
-                    if (self.struct_type_names_by_id.get(sid)) |tn| {
-                        return try allocator.dupe(u8, tn);
+                    if (self.struct_type_names_by_id.get(sid)) |key| {
+                        return try allocator.dupe(u8, module_graph.displayName(key));
                     }
                     return try allocator.dupe(u8, "struct");
                 },
@@ -1881,10 +1885,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .Function => try allocator.dupe(u8, "function"),
                 .Union => try allocator.dupe(u8, "union"),
                 .Group => |gid| try allocator.dupe(u8, blk: {
-                    if (self.group_table) |gt_opaque| {
-                        const gt: *GroupTable = @constCast(@ptrCast(@alignCast(gt_opaque)));
-                        if (gt.getName(gid)) |gname| break :blk gname;
-                    }
+                    if (self.group_table.displayName(gid)) |gname| break :blk gname;
                     break :blk "group";
                 }),
                 .Nothing => try allocator.dupe(u8, "nothing"),

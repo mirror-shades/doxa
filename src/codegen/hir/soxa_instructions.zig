@@ -253,10 +253,9 @@ pub const HIRInstruction = union(enum) {
     /// LLVM: LLVMBuildCall2 -> function_map[qualified_name]
     Call: struct {
         function_index: ?u32, // Direct function table index (null = zig module / builtin)
-        qualified_name: []const u8, // LLVM: Full function name with module prefix
+        qualified_name: []const u8, // LLVM: the callee's link name, or a builtin's name
         arg_count: u32, // Stack management
         call_kind: CallKind, // Resolution context
-        target_module: ?[]const u8, // For cross-module calls
         return_type: HIRType, // For stack type management and LLVM return handling
         tail: bool = false, // Tail call optimization
     },
@@ -455,14 +454,6 @@ pub const HIRInstruction = union(enum) {
     /// Program termination
     /// LLVM: LLVMBuildRet from main function
     Halt,
-
-    /// Load module as struct instance
-    /// LLVM: Generate struct with module variables
-    LoadModule: struct {
-        module_name: []const u8,
-        field_names: []const []const u8 = &[_][]const u8{},
-        field_slots: []const u32 = &[_]u32{},
-    },
 
     /// Map expression
     /// LLVM: Generate map creation and lookup

@@ -265,7 +265,6 @@ pub const CollectionsHandler = struct {
                 .qualified_name = "range",
                 .arg_count = 2,
                 .call_kind = .BuiltinFunction,
-                .target_module = null,
                 .return_type = HIRType{ .Array = int_type_ptr },
             },
         });
@@ -677,7 +676,6 @@ pub const CollectionsHandler = struct {
                 .qualified_name = operator_name,
                 .arg_count = 2, // array + comparison value
                 .call_kind = .BuiltinFunction,
-                .target_module = null,
                 .return_type = .Tetra,
             },
         });
@@ -840,7 +838,6 @@ pub const CollectionsHandler = struct {
                 .qualified_name = operator_name,
                 .arg_count = 2, // array + comparison value
                 .call_kind = .BuiltinFunction,
-                .target_module = null,
                 .return_type = .Tetra,
             },
         });

@@ -1,0 +1,8 @@
+public enum Status {
+    Ok,
+    Fail,
+}
+
+public function show(s :: Status) returns string {
+    return "status"
+}

@@ -644,11 +644,11 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn init(io: std.Io, allocator: std.mem.Allocator, group_table: ?*anyopaque, enum_table: ?*anyopaque, struct_table: ?*anyopaque, zig_fn_param_types: std.StringHashMap([]HIR.HIRType), reflected_structs: ?*const std.StringHashMap(void), force_struct_descriptors: bool, arith_overflow: Ctx.OverflowBehavior) IRPrinter {
+        pub fn init(io: std.Io, allocator: std.mem.Allocator, group_table: *const Ctx.GroupTable, enum_table: *const Ctx.EnumTable, struct_table: *const Ctx.StructTable, reflected_structs: ?*const std.StringHashMap(void), force_struct_descriptors: bool, arith_overflow: Ctx.OverflowBehavior) IRPrinter {
             return .{
                 .allocator = allocator,
                 .io = io,
-                .zig_fn_param_types = zig_fn_param_types,
+                .zig_fn_param_types = std.StringHashMap([]const HIR.HIRType).init(allocator),
                 .peek_string_counter = 0,
                 .global_types = std.StringHashMap(StackType).init(allocator),
                 .global_array_types = std.StringHashMap(HIR.HIRType).init(allocator),
@@ -764,10 +764,11 @@ pub fn Methods(comptime Ctx: type) type {
         /// produced inside a reusable loop scope die on the next iteration reset.
         ///
         /// The top-level program pass (module global initialization and
-        /// `doxa_program_main`) runs with no function frame, entirely inside the
-        /// never-exited root arena, so everything it allocates is `Root`.
+        /// `doxa_program_main`) runs with no function frame: its own level is the
+        /// never-exited root arena, but a block or loop it enters is a scope like
+        /// any other, exited or reset under the values made in it.
         pub fn currentRegionTag(self: *IRPrinter) Region {
-            if (!self.in_function_context) return .Root;
+            if (!self.in_function_context) return if (self.scope_depth == 0) .Root else .Deep;
             return if (self.scope_depth <= 1) .Func else .Deep;
         }
 
@@ -919,7 +920,7 @@ pub fn Methods(comptime Ctx: type) type {
         /// when the callee cannot be modelled; the caller leaves the result
         /// range as the emitter set it.
         pub fn computeCallResultRange(self: *IRPrinter, c: std.meta.fieldInfo(Ctx.HIRInstruction, .Call).type, stack: *const std.array_list.Managed(StackVal)) ?IntRange {
-            if (c.call_kind != .LocalFunction) return null;
+            if (c.call_kind != .DoxaFunction) return null;
             const fi = c.function_index orelse return null;
             const n = c.arg_count;
             if (stack.items.len < n) return null;
@@ -1210,22 +1211,12 @@ pub fn Methods(comptime Ctx: type) type {
             return name;
         }
 
-        /// Emitted LLVM symbol for a user-defined function. The generated Zig root
-        /// owns the `main` symbol and the runtime owns every `doxa_*` export, so a
-        /// non-entry function whose name would collide with either (e.g. a plain
-        /// `function main()`) is renamed into the reserved namespace. The entry
-        /// function is always renamed so `doxa_program_main` can call it without
-        /// shadowing the root's `main`. Caller owns the returned slice.
+        /// The emitted LLVM symbol for a Doxa function: its link name. Every Doxa
+        /// function links under a mangled name, which neither the root's `main`
+        /// nor a runtime `doxa_*` symbol can spell. Caller owns the returned
+        /// slice.
         pub fn functionSymbol(self: *IRPrinter, func: HIR.HIRProgram.HIRFunction) ![]const u8 {
-            const name = func.qualified_name;
-            if (func.is_entry) {
-                if (std.mem.eql(u8, name, "main")) return self.allocator.dupe(u8, "doxa_user_main");
-                return std.fmt.allocPrint(self.allocator, "doxa_entry_{s}", .{name});
-            }
-            if (std.mem.eql(u8, name, "main") or std.mem.startsWith(u8, name, "doxa_")) {
-                return std.fmt.allocPrint(self.allocator, "doxa_fn_{s}", .{name});
-            }
-            return self.allocator.dupe(u8, name);
+            return self.allocator.dupe(u8, func.qualified_name);
         }
 
         pub fn mangleGlobalName(self: *IRPrinter, name: []const u8) ![]const u8 {

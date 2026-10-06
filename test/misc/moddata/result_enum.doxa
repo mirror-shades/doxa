@@ -1,0 +1,8 @@
+public enum Result {
+    Ok,
+    Err,
+}
+
+public function show(r :: Result) returns string {
+    return "result"
+}

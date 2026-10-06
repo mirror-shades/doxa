@@ -1,0 +1,10 @@
+# A struct's function has no receiver.
+struct Box {
+    size :: int,
+
+    public function make() returns int {
+        return this.size
+    }
+}
+
+Box.make()?

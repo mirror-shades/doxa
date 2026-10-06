@@ -12,12 +12,9 @@ const MemoryManager = MemoryImport.MemoryManager;
 const Token = @import("./types/token.zig").Token;
 const TypesImport = @import("./types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
-const Environment = TypesImport.Environment;
 const AST = @import("./ast/ast.zig");
 const HIRGenerator = @import("./codegen/hir/soxa_generator.zig").HIRGenerator;
 const HIRProgram = @import("./codegen/hir/soxa_types.zig").HIRProgram;
-const HIRType = @import("./codegen/hir/soxa_types.zig").HIRType;
-const EnumTable = @import("./common/enum_table.zig").EnumTable;
 
 const ConstantFolder = @import("./analysis/constant_folder.zig").ConstantFolder;
 const Errors = @import("./utils/errors.zig");
@@ -27,11 +24,11 @@ const ArtifactCache = @import("./utils/artifact_cache.zig").ArtifactCache;
 const hashing = @import("./utils/hashing.zig");
 const source_cache = @import("./utils/source_cache.zig");
 const inline_zig_compiler = @import("./inline_zig/compiler.zig");
-const StructMethodInfo = @import("./analysis/semantic/semantic.zig").StructMethodInfo;
 const LspServer = @import("./lsp/server.zig");
-const Resolver = @import("./resolver/resolver.zig").Resolver;
 const platform = @import("./utils/platform.zig");
 const module_graph = @import("./module/graph.zig");
+const install = @import("./install.zig");
+const ModuleLoader = @import("./module/loader.zig").ModuleLoader;
 
 const constants = @import("common/constants.zig");
 const MAX_FILE_SIZE = constants.MAX_SOURCE_FILE_BYTES;
@@ -246,73 +243,33 @@ fn nativeOutputPath(allocator: std.mem.Allocator, cli: *const CLI, script_path: 
     return withExeSuffix(allocator, raw, is_windows);
 }
 
-fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter, profiler: *Profiler) !HIRProgram {
-    const root_scope = semantic_analyzer.memory.scope_manager.root_scope orelse return error.MissingRootScope;
-    var constant_folder = ConstantFolder.init(memoryManager.getAnalysisAllocator(), root_scope);
-    var folded_statements = std.array_list.Managed(AST.Stmt).init(memoryManager.getAnalysisAllocator());
-    defer folded_statements.deinit();
-
-    profiler.begin("constant-fold");
-    for (statements) |stmt| {
-        var mutable_stmt = stmt;
-        const folded_stmt = try constant_folder.foldStmt(&mutable_stmt);
-        try folded_statements.append(folded_stmt);
-    }
-    profiler.end();
-
-    profiler.begin("register-types");
-    // Enums, groups, and structs declared in dependency modules may not appear
-    // on the root parser's `imported_symbols` map (private structs are never
-    // direct imports, yet public structs reference them in fields). Register
-    // them from every parsed module record so HIR lowering resolves types like
-    // `error.IO` in return unions and `Node[]` in `LinkedList.nodes`.
-    try semantic_analyzer.registerMissingTypesFromImportedModules();
-
-    // Recompute struct field HIR types now that enums/groups/structs from every
-    // module are registered. The eager lowering in registerStructType ran before
-    // cross-module types were known and left Struct(0)/Unknown placeholders.
-    try semantic_analyzer.recomputeStructFieldHIRTypes();
-    profiler.end();
+/// Lower the program. Lowering first fixes the program's link identities, then
+/// the generator binds every global site to its link name; only then are
+/// constants folded in place — folding rewrites a reference's node, so no site
+/// may still point into it — and each file gets its own folder, which is
+/// syntax-local.
+fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter, profiler: *Profiler) !HIRProgram {
+    const allocator = memoryManager.getAnalysisAllocator();
 
     profiler.begin("hir-lower");
     defer profiler.end();
-    var hir_generator = HIRGenerator.init(io, memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer, parser.graph, if (parser.owner_record) |record| record.id else 0);
+    try semantic_analyzer.finalizeLinkIdentities();
+    var hir_generator = try HIRGenerator.init(io, allocator, reporter, semantic_analyzer);
     defer hir_generator.deinit();
 
-    hir_generator.type_system.function_signatures = &hir_generator.function_signatures;
-    hir_generator.type_system.call_return_resolver = HIRGenerator.resolveCallReturnTypeThunk;
-    hir_generator.type_system.call_return_ctx = &hir_generator;
-
-    const custom_types = semantic_analyzer.getCustomTypes();
-    var custom_types_iter = custom_types.iterator();
-    while (custom_types_iter.next()) |entry| {
-        const custom_type = entry.value_ptr.*;
-        const converted_type = try SemanticAnalyzer.convertCustomTypeInfo(semantic_analyzer, custom_type, memoryManager.getAnalysisAllocator());
-        try hir_generator.type_system.custom_types.put(custom_type.name, converted_type);
+    profiler.begin("constant-fold");
+    for (semantic_analyzer.graph.records.items) |record| {
+        if (record.kind != .doxa or !record.status.atLeast(.Analyzed)) continue;
+        var constant_folder = ConstantFolder.init(allocator);
+        defer constant_folder.deinit();
+        for (record.statements()) |*stmt| _ = try constant_folder.foldStmt(stmt);
     }
+    profiler.end();
 
-    const struct_methods = semantic_analyzer.getStructMethods();
-    var struct_methods_iter = struct_methods.iterator();
-    while (struct_methods_iter.next()) |entry| {
-        const struct_name = entry.key_ptr.*;
-        const method_table_src = entry.value_ptr.*;
-
-        var method_table_dst = std.StringHashMap(StructMethodInfo).init(memoryManager.getAnalysisAllocator());
-        var mi_it = method_table_src.iterator();
-        while (mi_it.next()) |mi_entry| {
-            const mname = mi_entry.key_ptr.*;
-            const mi = mi_entry.value_ptr.*;
-            try method_table_dst.put(mname, mi);
-        }
-
-        try hir_generator.struct_methods.put(struct_name, method_table_dst);
-    }
-
-    const hir_program = try hir_generator.generateProgram(folded_statements.items);
-    return hir_program;
+    return hir_generator.generateProgram();
 }
 
-fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, parser: *Parser, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8, toolchain: []const u8, enum_table: *const EnumTable, profiler: *Profiler) ![]const []const u8 {
+fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, graph: *const module_graph.ModuleGraph, reporter: *Reporter, cache_dir: []const u8, zig_opt_flag: []const u8, target: TargetTriple, include_dirs: []const []const u8, toolchain: []const u8, profiler: *Profiler) ![]const []const u8 {
     const zig_exe_path = try resolveBundledZigExecutable(io, memoryManager.getAllocator());
     defer memoryManager.getAllocator().free(zig_exe_path);
     // Match the runtime object and final link exactly: native builds also pass
@@ -325,7 +282,7 @@ fn compileInlineZigObjects(io: std.Io, memoryManager: *MemoryManager, statements
     // An explicit `-target` stops auto-detecting the host CPU, so the native
     // shim must ask for it explicitly, exactly as the runtime object does.
     const cpu_arg: []const u8 = if (target.isCross()) "" else "-mcpu=native";
-    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, statements, parser, reporter, zig_exe_path, cache_dir, zig_opt_flag, target_triple, target.os, cpu_arg, include_dirs, toolchain, enum_table, profiler);
+    return inline_zig_compiler.compileInlineZigObjects(io, memoryManager, graph, reporter, zig_exe_path, cache_dir, zig_opt_flag, target_triple, target.os, cpu_arg, include_dirs, toolchain, profiler);
 }
 
 fn openDirMaybeAbs(io: std.Io, path: []const u8, opts: std.Io.Dir.OpenOptions) !std.Io.Dir {
@@ -333,43 +290,6 @@ fn openDirMaybeAbs(io: std.Io, path: []const u8, opts: std.Io.Dir.OpenOptions) !
         std.Io.Dir.openDirAbsolute(io, path, opts)
     else
         std.Io.Dir.cwd().openDir(io, path, opts);
-}
-
-fn dirContainsFile(io: std.Io, dir: []const u8, name: []const u8) bool {
-    const joined = std.fs.path.join(std.heap.page_allocator, &.{ dir, name }) catch return false;
-    defer std.heap.page_allocator.free(joined);
-    const file = (if (std.fs.path.isAbsolute(joined))
-        std.Io.Dir.openFileAbsolute(io, joined, .{})
-    else
-        std.Io.Dir.cwd().openFile(io, joined, .{})) catch return false;
-    file.close(io);
-    return true;
-}
-
-// Locate the directory holding the Doxa runtime source (`doxa_rt.zig` and its
-// self-contained siblings). Tries the installed layout next to the executable
-// first, then repo-relative layouts, then a CWD-relative fallback (running from
-// the repo root). Returns an owned path to the directory.
-fn resolveRuntimeSourceDir(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
-    if (std.process.executableDirPathAlloc(io, allocator)) |exe_dir| {
-        defer allocator.free(exe_dir);
-        const candidates = [_][]const []const u8{
-            &.{ exe_dir, "..", "lib", "runtime" }, // installed / shipped
-            &.{ exe_dir, "..", "..", "src", "runtime" }, // exe under <repo>/doxa/bin
-            &.{ exe_dir, "..", "..", "..", "src", "runtime" },
-        };
-        for (candidates) |parts| {
-            const dir = try std.fs.path.join(allocator, parts);
-            if (dirContainsFile(io, dir, "doxa_rt.zig")) return dir;
-            allocator.free(dir);
-        }
-    } else |_| {}
-
-    const cwd_relative = try allocator.dupe(u8, "src/runtime");
-    if (dirContainsFile(io, cwd_relative, "doxa_rt.zig")) return cwd_relative;
-    allocator.free(cwd_relative);
-
-    return error.RuntimeSourceNotFound;
 }
 
 // A single runtime `.zig` source held in memory. The closure is read once so
@@ -506,11 +426,7 @@ fn userObjectKey(
 }
 
 fn resolveBundledZigExecutable(io: std.Io, allocator: std.mem.Allocator) ![]u8 {
-    const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
-    defer allocator.free(exe_dir);
-
-    const zig_exe_name = if (builtin.os.tag == .windows) "zig.exe" else "zig";
-    const zig_path = try std.fs.path.resolve(allocator, &.{ exe_dir, "..", "lib", "zig", zig_exe_name });
+    const zig_path = try install.zigExecutable(io, allocator);
     errdefer allocator.free(zig_path);
 
     const file = std.Io.Dir.openFileAbsolute(io, zig_path, .{}) catch |err| {
@@ -704,10 +620,8 @@ fn compileToNative(
     allocator: std.mem.Allocator,
     memoryManager: *MemoryManager,
     cli_options: *const CLI,
-    parsed_statements: []AST.Stmt,
-    parser: *Parser,
     reporter: *Reporter,
-    semantic_analyzer: *SemanticAnalyzer,
+    semantic_analyzer: *const SemanticAnalyzer,
     hir_program: *const HIRProgram,
     exe_path: []const u8,
     target: TargetTriple,
@@ -756,24 +670,8 @@ fn compileToNative(
     {
         profiler.begin("emit-ir");
         defer profiler.end();
-        var zig_fn_param_types = std.StringHashMap([]HIRType).init(memoryManager.getExecutionAllocator());
-        if (parser.imported_symbols) |imported_symbols| {
-            var it = imported_symbols.iterator();
-            while (it.next()) |entry| {
-                const sym = entry.value_ptr.*;
-                if (sym.kind != .Function) continue;
-                if (sym.param_types) |pt| {
-                    const hir_params = try memoryManager.getExecutionAllocator().alloc(HIRType, pt.len);
-                    for (pt, 0..) |ti, i| {
-                        hir_params[i] = try astTypeInfoToHir(memoryManager.getExecutionAllocator(), ti, semantic_analyzer.getEnumTable());
-                    }
-                    const key = try memoryManager.getExecutionAllocator().dupe(u8, entry.key_ptr.*);
-                    try zig_fn_param_types.put(key, hir_params);
-                }
-            }
-        }
         const reflected_structs_ptr: ?*const std.StringHashMap(void) = if (hir_program.reflected_structs) |*reflected| reflected else null;
-        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), @ptrFromInt(@intFromPtr(semantic_analyzer.getGroupTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getEnumTable())), @ptrFromInt(@intFromPtr(semantic_analyzer.getStructTable())), zig_fn_param_types, reflected_structs_ptr, hir_program.force_struct_descriptors, cli_options.opt.arithOverflow());
+        var printer = @import("./codegen/llvmir/ir_printer.zig").IRPrinter.init(io, memoryManager.getExecutionAllocator(), semantic_analyzer.getGroupTable(), semantic_analyzer.getEnumTable(), semantic_analyzer.getStructTable(), reflected_structs_ptr, hir_program.force_struct_descriptors, cli_options.opt.arithOverflow());
         printer.reporter = reporter;
         try printer.emitToFile(hir_program, ir_path);
     }
@@ -843,7 +741,7 @@ fn compileToNative(
     }
 
     profiler.begin("inline-zig");
-    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, parsed_statements, parser, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items, toolchain, semantic_analyzer.getEnumTable(), profiler);
+    const inline_zig_wrapper_paths = try compileInlineZigObjects(io, memoryManager, semantic_analyzer.graph, reporter, cli_options.cache_dir, cli_options.opt.zigFlag(), target, cli_options.include_dirs.items, toolchain, profiler);
     profiler.end();
     defer {
         for (inline_zig_wrapper_paths) |p| memoryManager.getAllocator().free(@constCast(p));
@@ -855,7 +753,7 @@ fn compileToNative(
     // is staged onto disk and cached; a hit skips `zig build-obj` entirely.
     profiler.begin("runtime");
     const runtime_obj_path = blk: {
-        const runtime_src_dir = try resolveRuntimeSourceDir(io, allocator);
+        const runtime_src_dir = try install.runtimeSourceDir(io, allocator);
         defer allocator.free(runtime_src_dir);
         const runtime_sources = try readRuntimeSources(io, allocator, runtime_src_dir);
         defer freeRuntimeSources(allocator, runtime_sources);
@@ -1491,30 +1389,6 @@ fn isDoxaFile(path: []const u8, path_uri: []const u8, reporter: *Reporter) void 
     }
 }
 
-/// Lower a parse-time type (as it appears in an inline-Zig signature) to HIR.
-/// Only the shapes the inline-Zig ABI accepts need to be meaningful; anything
-/// else becomes `.Nothing` / `.Unknown`.
-fn astTypeInfoToHir(allocator: std.mem.Allocator, ti: AST.TypeInfo, enum_table: *const EnumTable) error{OutOfMemory}!HIRType {
-    return switch (ti.base) {
-        .Int => .Int,
-        .Float => .Float,
-        .Byte => .Byte,
-        .Tetra => .Tetra,
-        .Nothing => .Nothing,
-        .String => .String,
-        .Array => blk: {
-            const elem = try allocator.create(HIRType);
-            elem.* = if (ti.array_type) |inner| try astTypeInfoToHir(allocator, inner.*, enum_table) else .Unknown;
-            break :blk HIRType{ .Array = elem };
-        },
-        // An enum crosses as its `i64` discriminant; resolve the spelling to the
-        // analyzer's enum id. An unknown name is reported by the wrapper
-        // generator (E8002) before Zig is invoked.
-        .Enum => HIRType{ .Enum = if (ti.custom_type) |name| (enum_table.getIdByName(name) orelse 0) else 0 },
-        else => .Nothing,
-    };
-}
-
 pub fn main(init: std.process.Init) !void {
     platform.enableUtf8Console();
 
@@ -1535,10 +1409,10 @@ pub fn main(init: std.process.Init) !void {
 
     switch (cli_options.lsp_mode) {
         .none => {},
-        .stdio => return LspServer.run(init.io, gpa, .{
+        .stdio => std.process.exit(try LspServer.run(init.io, gpa, .{
             .reporter_options = cli_options.reporter_options,
             .trace_io = cli_options.lsp_io_trace,
-        }),
+        })),
         .harness => return LspServer.runDebugHarness(init.io, gpa, .{
             .reporter_options = cli_options.reporter_options,
             .script_path = cli_options.lsp_debug_file orelse unreachable,
@@ -1604,30 +1478,12 @@ pub fn main(init: std.process.Init) !void {
     };
 }
 
-/// The compilation's declared roots, in priority order: the entry file's
-/// directory (`pkg`), the installed standard library (`std`), then each
-/// `--include=` directory (`inc0`, `inc1`, …). A file outside every root is a
-/// hard error at registration; there is no path- or content-derived fallback.
+/// The installed standard library and `--include=` directories become the
+/// graph's roots alongside the entry file's own directory.
 fn buildModuleGraph(io: std.Io, allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8) !module_graph.ModuleGraph {
-    var roots = std.array_list.Managed(module_graph.Root).init(allocator);
-    defer roots.deinit();
-
-    const entry_dir = std.fs.path.dirname(script_path) orelse ".";
-    try roots.append(.{ .tag = "pkg", .path = entry_dir });
-
-    const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
-    defer allocator.free(exe_dir);
-    const std_root = try std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "std" });
-    defer allocator.free(std_root);
-    try roots.append(.{ .tag = "std", .path = std_root });
-
-    for (cli_options.include_dirs.items, 0..) |dir, i| {
-        const tag = try std.fmt.allocPrint(allocator, "inc{d}", .{i});
-        defer allocator.free(tag);
-        try roots.append(.{ .tag = tag, .path = dir });
-    }
-
-    return module_graph.ModuleGraph.init(io, allocator, roots.items);
+    const std_dir = try install.stdDir(io, allocator);
+    defer allocator.free(std_dir);
+    return module_graph.ModuleGraph.initForEntry(io, allocator, script_path, std_dir, cli_options.include_dirs.items);
 }
 
 fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8, memoryManager: *MemoryManager, reporter: *Reporter, profiler: *Profiler, source: []const u8) !void {
@@ -1659,43 +1515,7 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     };
     defer graph_store.deinit();
 
-    // The entry file is record 0: register it before any import resolves, so
-    // root-file declarations have an owning record and no synthetic key is
-    // derived outside the graph. The root parse is driven below and completes
-    // the record.
-    const entry_physical = module_graph.physicalPath(io, allocator, script_path) catch |err| {
-        if (!reporter.hasCompileErrors()) {
-            reportPhaseFailure(reporter, "resolve", err);
-        }
-        exitIfCompileErrors(reporter);
-        return err;
-    };
-    defer allocator.free(entry_physical);
-    const entry_record = graph_store.ensureRecord(entry_physical) catch |err| {
-        switch (err) {
-            error.ModuleRootUnknown => reporter.reportCompileError(
-                null,
-                ErrorCode.MODULE_ROOT_UNKNOWN,
-                "Entry file '{s}' is outside every declared root",
-                .{script_path},
-            ),
-            error.DuplicateStableKey => reporter.reportCompileError(
-                null,
-                ErrorCode.DUPLICATE_STABLE_KEY,
-                "Two distinct modules claim the entry file's stable key for '{s}'",
-                .{script_path},
-            ),
-            error.OutOfMemory => {},
-        }
-        exitIfCompileErrors(reporter);
-        return err;
-    };
-
-    var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter, &graph_store);
-    defer parser.deinit();
-    // The entry record owns any inline `zig` synthetic records this parse
-    // generates, so no owner key is derived outside the graph.
-    parser.owner_record = entry_record;
+    var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter);
     const parsedStatements = parser.execute() catch |err| {
         if (!reporter.hasCompileErrors()) {
             parser.reportParseError(err);
@@ -1703,9 +1523,13 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
         exitIfCompileErrors(reporter);
         return err;
     };
-    parser.completeEntryRecord(entry_record, source, parsedStatements) catch |err| {
+
+    // The entry file is record 0, registered before any import resolves, so a
+    // module that imports it reaches this parse instead of a second one.
+    var loader = ModuleLoader.init(io, memoryManager.getAnalysisAllocator(), reporter, &graph_store);
+    const entry_record = loader.registerEntry(script_path, source, parsedStatements) catch |err| {
         if (!reporter.hasCompileErrors()) {
-            reportPhaseFailure(reporter, "parse", err);
+            reportPhaseFailure(reporter, "resolve", err);
         }
         exitIfCompileErrors(reporter);
         return err;
@@ -1720,22 +1544,10 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
         reporter.report(.Debug, .Hint, null, "AST", "{s}", .{ast_dump.written()});
     }
 
-    profiler.begin("resolve");
-    var resolver = Resolver.init(&parser);
-    resolver.resolve() catch |err| {
-        if (!reporter.hasCompileErrors()) {
-            reportPhaseFailure(reporter, "resolve", err);
-        }
-        exitIfCompileErrors(reporter);
-        return err;
-    };
-    profiler.end();
-    exitIfCompileErrors(reporter);
-
     profiler.begin("semantic");
-    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), reporter, memoryManager, &parser);
+    var semantic_analyzer = SemanticAnalyzer.init(memoryManager.getAnalysisAllocator(), reporter, memoryManager, &loader, entry_record.id, parser.entry_point_name);
     defer semantic_analyzer.deinit();
-    semantic_analyzer.analyze(parsedStatements) catch |err| {
+    semantic_analyzer.analyzeProgram() catch |err| {
         if (!reporter.hasCompileErrors()) {
             reportPhaseFailure(reporter, "semantic", err);
         }
@@ -1751,9 +1563,7 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
 
     profiler.begin("hir");
 
-    var reachable_modules = try parser.collectReachableModuleNamespaces(memoryManager.getAnalysisAllocator());
-    defer reachable_modules.deinit();
-    const hir_program = generateHIRProgram(io, memoryManager, parsedStatements, reachable_modules, &parser, &semantic_analyzer, reporter, profiler) catch |err| {
+    const hir_program = generateHIRProgram(io, memoryManager, &semantic_analyzer, reporter, profiler) catch |err| {
         if (!reporter.hasCompileErrors()) {
             reportPhaseFailure(reporter, "hir", err);
         }
@@ -1791,8 +1601,6 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
         allocator,
         memoryManager,
         &cli_options,
-        parsedStatements,
-        &parser,
         reporter,
         &semantic_analyzer,
         &hir_program,

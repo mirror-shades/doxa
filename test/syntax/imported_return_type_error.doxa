@@ -1,0 +1,5 @@
+module m from "../misc/moddata/bad_return_mod.doxa"
+
+# An imported module's bodies are type-checked like the entry file's: the
+# mismatch is reported in `bad_return_mod.doxa`, where it is written.
+const n is m.count()

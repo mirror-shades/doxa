@@ -16,14 +16,14 @@ public entry function main() {
     router.add("POST", "/users/:id/posts/:post", 3)
 
     const root is std.http.route(^router, "GET", "/")
-    root as Route then {
+    root as std.http.Route then {
         @print("root {root.id}\n")
     } else {
         @print("root miss\n")
     }
 
     const user is std.http.route(^router, "GET", "/users/42")
-    user as Route then {
+    user as std.http.Route then {
         const route is user
         const id is route.param("id")
         @print("user {route.id} {textOf(id)}\n")
@@ -32,7 +32,7 @@ public entry function main() {
     }
 
     const post is std.http.route(^router, "POST", "/users/7/posts/99")
-    post as Route then {
+    post as std.http.Route then {
         const route is post
         const id is route.param("id")
         const part is route.param("post")
@@ -42,21 +42,21 @@ public entry function main() {
     }
 
     const absent is std.http.route(^router, "GET", "/users/7/nope")
-    absent as Route then {
+    absent as std.http.Route then {
         @print("absent hit\n")
     } else {
         @print("absent miss\n")
     }
 
     const wrong_verb is std.http.route(^router, "DELETE", "/users/7")
-    wrong_verb as Route then {
+    wrong_verb as std.http.Route then {
         @print("verb hit\n")
     } else {
         @print("verb miss\n")
     }
 
     const extra is std.http.route(^router, "POST", "/users/7/posts/99")
-    extra as Route then {
+    extra as std.http.Route then {
         const route is extra
         const missing is route.param("absent")
         missing as string then {

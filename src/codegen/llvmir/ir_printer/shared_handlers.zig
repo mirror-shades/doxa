@@ -1275,23 +1275,9 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(call_val);
             } else if (val.ty == .Value) {
                 var printed_union_enum = false;
-                if (pk.value_type == .Union and pk.union_members != null) {
-                    const members = pk.union_members.?;
-                    var enum_member_idx: ?usize = null;
-                    var enum_member_name: ?[]const u8 = null;
-                    for (members, 0..) |member_name, member_idx| {
-                        if (self.enum_print_map.contains(member_name)) {
-                            if (enum_member_idx != null) {
-                                enum_member_idx = null;
-                                enum_member_name = null;
-                                break;
-                            }
-                            enum_member_idx = member_idx;
-                            enum_member_name = member_name;
-                        }
-                    }
-
-                    if (enum_member_name) |enum_name| {
+                if (pk.value_type == .Union) {
+                    // A union with a single enum arm can name the variant.
+                    if (self.enumTypeNameFor(pk.value_type, true)) |enum_name| {
                         // Decide whether the active union member is the enum by
                         // inspecting the canonical value's runtime tag rather than
                         // the baked member index. Narrowing (`as`) re-presents the
@@ -1834,30 +1820,6 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("  unreachable\n");
         }
 
-        pub fn handleArrayConcat(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize) !void {
-            // Pop the two arrays from stack
-            if (stack.items.len >= 2) {
-                const rhs = stack.items[stack.items.len - 1];
-                const lhs = stack.items[stack.items.len - 2];
-                stack.items.len -= 2;
-
-                const elem_type = lhs.array_type orelse rhs.array_type orelse HIR.HIRType{ .Int = {} };
-                const elem_size = self.arrayElementSize(elem_type);
-                const elem_tag = self.arrayElementTag(elem_type);
-
-                const concat_reg = try self.nextTemp(id);
-                const call_line = try std.fmt.allocPrint(
-                    self.allocator,
-                    "  {s} = call ptr @doxa_array_concat(ptr {s}, ptr {s}, i64 {d}, i64 {d})\n",
-                    .{ concat_reg, lhs.name, rhs.name, elem_size, elem_tag },
-                );
-                defer self.allocator.free(call_line);
-                try w.writeAll(call_line);
-
-                try stack.append(.{ .name = concat_reg, .ty = .PTR, .array_type = elem_type });
-            }
-        }
-
         /// Map an `ast.Type` to the corresponding `HIR.HIRType`. Array types
         /// carry an unknown element type here; the concrete element type is
         /// preserved on the StackVal.
@@ -2157,7 +2119,7 @@ pub fn Methods(comptime Ctx: type) type {
                     if (i < info.param_is_readonly.len) {
                         is_readonly = info.param_is_readonly[i];
                     }
-                } else if (c.call_kind == .ModuleFunction) {
+                } else if (c.call_kind == .ZigFunction) {
                     if (self.zig_fn_param_types.get(c.qualified_name)) |param_types| {
                         if (i < param_types.len) {
                             declared_type = param_types[i];
@@ -2247,7 +2209,7 @@ pub fn Methods(comptime Ctx: type) type {
                     }
                 }
 
-                if (c.call_kind == .ModuleFunction and arg.ty == .STRING) {
+                if (c.call_kind == .ZigFunction and arg.ty == .STRING) {
                     const ptr_ext = try self.nextTemp(id);
                     const len_ext = try self.nextTemp(id);
                     const ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ ptr_ext, arg.name });
@@ -2376,7 +2338,7 @@ pub fn Methods(comptime Ctx: type) type {
             // parameter order, matching the callee signature. This carries the
             // alias owner's frame distance across the call so a heap store
             // through the alias targets the true owner's arena.
-            if (c.call_kind == .LocalFunction or c.call_kind == .ModuleFunction) {
+            if (c.call_kind == .DoxaFunction or c.call_kind == .ZigFunction) {
                 if (alias_func_info) |info| {
                     for (info.param_types, 0..) |_, i| {
                         const is_alias = if (i < info.param_is_alias.len) info.param_is_alias[i] else false;
@@ -2408,7 +2370,7 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
-            const runtime_name_owned: ?[]const u8 = if (c.call_kind == .LocalFunction)
+            const runtime_name_owned: ?[]const u8 = if (c.call_kind == .DoxaFunction)
                 if (func_info) |info| try self.functionSymbol(info) else null
             else
                 null;
@@ -2420,7 +2382,7 @@ pub fn Methods(comptime Ctx: type) type {
                 // out-params for string returns (the inline-Zig ABI). Pure-Doxa
                 // module functions are defined with `%DoxaString` value returns
                 // and must go through the value-return path below.
-                if (c.call_kind == .ModuleFunction and c.function_index == null and actual_return_type == .String) {
+                if (c.call_kind == .ZigFunction and c.function_index == null and actual_return_type == .String) {
                     const out_ptr_slot = try self.nextTemp(id);
                     const out_len_slot = try self.nextTemp(id);
                     const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
@@ -2491,7 +2453,7 @@ pub fn Methods(comptime Ctx: type) type {
                 // return is likewise built in the call-site arena by its wrapper
                 // (`doxa_array_new` targets the current scope), so it too belongs
                 // to the current region.
-                const inline_zig_array_return = c.call_kind == .ModuleFunction and c.function_index == null and actual_return_type == .Array;
+                const inline_zig_array_return = c.call_kind == .ZigFunction and c.function_index == null and actual_return_type == .Array;
                 if (inline_zig_array_return or (c.function_index != null and (stack_ty == .STRING or stack_ty == .PTR))) {
                     pushed.region = self.currentRegionTag();
                 }

@@ -23,40 +23,8 @@ pub const BinaryExpressionHandler = struct {
         const left_type = try self.generator.typeOf(bin.left.?);
         const right_type = try self.generator.typeOf(bin.right.?);
 
-        // Special handling for equality/inequality with enum members lacking context.
-        // If one side is an enum-typed expression (or a field whose declared type is an enum),
-        // set enum context while lowering a bare EnumMember (e.g., `.NUMBER`) on the other side.
-        if (bin.operator.type == .EQUALITY or bin.operator.type == .BANG_EQUAL) {
-            var enum_ctx: ?[]const u8 = self.resolveEnumContextFromExpr(bin.left.?);
-            if (enum_ctx == null) {
-                enum_ctx = self.resolveEnumContextFromExpr(bin.right.?);
-            }
-
-            // Generate left with possible enum context if it is an EnumMember literal
-            if (bin.left.?.data == .EnumMember and enum_ctx != null) {
-                const prev = self.generator.current_enum_type;
-                const ctx = enum_ctx.?;
-                self.generator.current_enum_type = ctx;
-                try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
-                self.generator.current_enum_type = prev;
-            } else {
-                try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
-            }
-
-            // Generate right with possible enum context if it is an EnumMember literal
-            if (bin.right.?.data == .EnumMember and enum_ctx != null) {
-                const prev2 = self.generator.current_enum_type;
-                const ctx2 = enum_ctx.?;
-                self.generator.current_enum_type = ctx2;
-                try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
-                self.generator.current_enum_type = prev2;
-            } else {
-                try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
-            }
-        } else {
-            try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
-            try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
-        }
+        try self.generator.generateExpression(bin.left.?, true, should_pop_after_use);
+        try self.generator.generateExpression(bin.right.?, true, should_pop_after_use);
 
         switch (bin.operator.type) {
             .PLUS => try self.handlePlusOperator(left_type, right_type, bin),
@@ -82,29 +50,6 @@ pub const BinaryExpressionHandler = struct {
                 return ErrorList.UnsupportedOperator;
             },
         }
-    }
-
-    fn resolveEnumContextFromExpr(self: *BinaryExpressionHandler, expr: *ast.Expr) ?[]const u8 {
-        if (self.generator.resolveFieldAccessType(expr)) |res| {
-            if (res.t == .Enum and res.custom_type_name != null) {
-                return res.custom_type_name.?;
-            }
-        }
-
-        return switch (expr.data) {
-            .Variable => |var_tok| blk: {
-                if (self.generator.isCustomType(var_tok.lexeme)) |ct| {
-                    if (ct.kind == .Enum) break :blk var_tok.lexeme;
-                }
-                if (self.generator.symbol_table.getVariableCustomType(var_tok.lexeme)) |custom_name| {
-                    if (self.generator.type_system.custom_types.get(custom_name)) |ct2| {
-                        if (ct2.kind == .Enum) break :blk custom_name;
-                    }
-                }
-                break :blk null;
-            },
-            else => null,
-        };
     }
 
     pub fn generateLogical(self: *BinaryExpressionHandler, log: ast.Logical, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
@@ -392,11 +337,6 @@ pub const BinaryExpressionHandler = struct {
         return t == .Union or t == .Group;
     }
 
-    fn bareName(name: []const u8) []const u8 {
-        const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return name;
-        return name[dot + 1 ..];
-    }
-
     fn sameMemberType(a: HIRType, b: HIRType) bool {
         if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
         return switch (a) {
@@ -419,15 +359,9 @@ pub const BinaryExpressionHandler = struct {
                 return null;
             },
             .Group => |gid| {
-                const group_table = self.generator.type_system.group_table orelse return null;
-                const members = group_table.members(gid) orelse return null;
-                const member_name: []const u8 = switch (member) {
-                    .Enum => |id| (self.generator.type_system.enum_table orelse return null).getName(id) orelse return null,
-                    .Struct => |id| (self.generator.type_system.struct_table orelse return null).getName(id) orelse return null,
-                    else => return null,
-                };
+                const members = self.generator.semantic.group_table.members(gid) orelse return null;
                 for (members, 0..) |candidate, idx| {
-                    if (std.mem.eql(u8, candidate.qualifier, bareName(member_name))) return @intCast(idx);
+                    if (sameMemberType(self.generator.type_system.typeForRef(candidate.ref), member)) return @intCast(idx);
                 }
                 return null;
             },

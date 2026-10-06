@@ -1,20 +1,28 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
 const HIRTypes = @import("../codegen/hir/soxa_types.zig");
+const TypeIndex = @import("type_index.zig").TypeIndex;
+const ModuleGraph = @import("../module/graph.zig").ModuleGraph;
 
 const StructId = HIRTypes.StructId;
 const HIRType = HIRTypes.HIRType;
+const TypeRef = ast.TypeRef;
 
-/// Global registry that tracks every struct that appears during semantic analysis.
-/// The frontend owns this metadata and other stages (HIR/LLVM/VM) consume it by ID.
+/// Every struct type of the compilation, by identity. The frontend owns this
+/// metadata; HIR and the emitter consume it by id or canonical key.
 pub const StructTable = struct {
     allocator: std.mem.Allocator,
     entries: std.ArrayListUnmanaged(Entry) = .empty,
-    name_to_id: std.StringHashMapUnmanaged(StructId) = .empty,
+    index: TypeIndex(StructId) = .{},
 
     pub const Entry = struct {
         id: StructId,
-        qualified_name: []const u8,
+        ref: TypeRef,
+        /// Canonical codegen key (`ModuleGraph.typeKey`); set by `assignKeys`.
+        key: ?[]const u8 = null,
+        /// False while the id is allocated but the declaration has not been
+        /// registered yet.
+        declared: bool = false,
         fields: []Field,
     };
 
@@ -37,55 +45,33 @@ pub const StructTable = struct {
 
     pub fn deinit(self: *StructTable) void {
         for (self.entries.items) |entry| {
-            self.allocator.free(entry.qualified_name);
-            for (entry.fields) |field| {
-                self.allocator.free(field.name);
-            }
+            for (entry.fields) |field| self.allocator.free(field.name);
             self.allocator.free(entry.fields);
         }
         self.entries.deinit(self.allocator);
-        self.name_to_id.deinit(self.allocator);
+        self.index.deinit(self.allocator);
     }
 
-    pub fn registerStruct(self: *StructTable, qualified_name: []const u8, field_inputs: []const FieldInput) !StructId {
-        if (self.name_to_id.get(qualified_name)) |existing| {
-            return try self.refreshStruct(existing, field_inputs);
-        }
-
-        const owned_name = try self.allocator.dupe(u8, qualified_name);
-        // Reserve 0 as a sentinel for "unknown/unset", so real IDs start from 1.
+    /// The id of `ref`, allocating a placeholder entry the first time the type
+    /// is seen. Ids are stable from first sight, so a reference to a struct in a
+    /// module whose types are not registered yet lowers to its final id.
+    /// Id 0 is reserved for "unknown".
+    pub fn idFor(self: *StructTable, ref: TypeRef) !StructId {
+        if (self.index.get(ref)) |id| return id;
         const id: StructId = @intCast(self.entries.items.len + 1);
-
-        var new_fields = try self.allocator.alloc(Field, field_inputs.len);
-        for (field_inputs, 0..) |input, field_index| {
-            new_fields[field_index] = .{
-                .name = try self.allocator.dupe(u8, input.name),
-                .type_info = input.type_info,
-                .hir_type = .Unknown,
-                .index = @intCast(field_index),
-                .nested_struct_id = null,
-            };
-        }
-
-        try self.entries.append(self.allocator, Entry{
-            .id = id,
-            .qualified_name = owned_name,
-            .fields = new_fields,
-        });
-
-        try self.name_to_id.put(self.allocator, owned_name, id);
+        try self.entries.append(self.allocator, .{ .id = id, .ref = ref, .fields = &.{} });
+        try self.index.put(self.allocator, ref, id);
         return id;
     }
 
-    /// A struct is first registered while its field types are still
-    /// placeholders and again once they resolve. Replacing the fields in place
-    /// keeps the id — and every HIR detail already recorded against it — while
-    /// letting the resolved AST types land, so a reader of `fields` never sees
-    /// the placeholder the semantic analyzer has since moved past.
-    fn refreshStruct(self: *StructTable, id: StructId, field_inputs: []const FieldInput) !StructId {
-        const entry = self.getEntryById(id) orelse return id;
+    /// Record the declared fields of `ref`. A struct registered again (its
+    /// field types resolved since) keeps its id and every HIR detail already
+    /// recorded against a field of the same name.
+    pub fn registerStruct(self: *StructTable, ref: TypeRef, field_inputs: []const FieldInput) !StructId {
+        const id = try self.idFor(ref);
+        const entry = self.getEntryById(id).?;
 
-        var new_fields = try self.allocator.alloc(Field, field_inputs.len);
+        const new_fields = try self.allocator.alloc(Field, field_inputs.len);
         for (field_inputs, 0..) |input, field_index| {
             var hir_type: HIRType = .Unknown;
             var nested_struct_id: ?StructId = null;
@@ -105,7 +91,17 @@ pub const StructTable = struct {
         for (entry.fields) |field| self.allocator.free(field.name);
         self.allocator.free(entry.fields);
         entry.fields = new_fields;
+        entry.declared = true;
         return id;
+    }
+
+    /// Give every entry its canonical key. Called once the graph is final.
+    pub fn assignKeys(self: *StructTable, graph: *const ModuleGraph) !void {
+        for (self.entries.items) |*entry| {
+            const key = try graph.typeKey(self.allocator, entry.ref);
+            entry.key = key;
+            try self.index.putKey(self.allocator, key, entry.id);
+        }
     }
 
     pub fn getEntryById(self: *StructTable, id: StructId) ?*Entry {
@@ -113,8 +109,12 @@ pub const StructTable = struct {
         return &self.entries.items[id - 1];
     }
 
-    pub fn getIdByName(self: *const StructTable, qualified_name: []const u8) ?StructId {
-        return self.name_to_id.get(qualified_name);
+    pub fn idOf(self: *const StructTable, ref: TypeRef) ?StructId {
+        return self.index.get(ref);
+    }
+
+    pub fn idByKey(self: *const StructTable, key: []const u8) ?StructId {
+        return self.index.getByKey(key);
     }
 
     pub fn fields(self: *const StructTable, id: StructId) ?[]const Field {
@@ -122,24 +122,32 @@ pub const StructTable = struct {
         return self.entries.items[id - 1].fields;
     }
 
-    pub fn getName(self: *const StructTable, id: StructId) ?[]const u8 {
+    pub fn refOf(self: *const StructTable, id: StructId) ?TypeRef {
         if (id == 0 or id > self.entries.items.len) return null;
-        return self.entries.items[id - 1].qualified_name;
+        return self.entries.items[id - 1].ref;
+    }
+
+    /// The canonical key of `id` (codegen identity).
+    pub fn keyOf(self: *const StructTable, id: StructId) ?[]const u8 {
+        if (id == 0 or id > self.entries.items.len) return null;
+        return self.entries.items[id - 1].key;
+    }
+
+    /// The declared name of `id`, for display.
+    pub fn displayName(self: *const StructTable, id: StructId) ?[]const u8 {
+        const ref = self.refOf(id) orelse return null;
+        return ref.name;
     }
 
     pub fn setFieldHIRType(self: *StructTable, id: StructId, field_index: u32, ty: HIRType) void {
         if (self.getEntryById(id)) |entry| {
-            if (field_index < entry.fields.len) {
-                entry.fields[field_index].hir_type = ty;
-            }
+            if (field_index < entry.fields.len) entry.fields[field_index].hir_type = ty;
         }
     }
 
     pub fn setNestedStructId(self: *StructTable, id: StructId, field_index: u32, nested_id: StructId) void {
         if (self.getEntryById(id)) |entry| {
-            if (field_index < entry.fields.len) {
-                entry.fields[field_index].nested_struct_id = nested_id;
-            }
+            if (field_index < entry.fields.len) entry.fields[field_index].nested_struct_id = nested_id;
         }
     }
 };
