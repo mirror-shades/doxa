@@ -12,17 +12,11 @@ pub fn Methods(comptime Ctx: type) type {
     const range_flow = @import("./range_flow.zig");
 
     return struct {
+        /// A double constant as LLVM's hexadecimal bit pattern. Decimal text
+        /// cannot spell an infinity or NaN and is rounded when LLVM parses it;
+        /// the bit pattern is exact for every f64.
         pub fn formatFloatLiteral(self: *IRPrinter, value: f64) ![]u8 {
-            const raw = try std.fmt.allocPrint(self.allocator, "{d}", .{value});
-            const has_decimal = std.mem.indexOfScalar(u8, raw, '.') != null or
-                std.mem.indexOfScalar(u8, raw, 'e') != null or
-                std.mem.indexOfScalar(u8, raw, 'E') != null;
-            if (!has_decimal) {
-                const with_fraction = try std.fmt.allocPrint(self.allocator, "{s}.0", .{raw});
-                self.allocator.free(raw);
-                return with_fraction;
-            }
-            return raw;
+            return std.fmt.allocPrint(self.allocator, "0x{X:0>16}", .{@as(u64, @bitCast(value))});
         }
 
         pub fn paramTypeMatchesStack(self: *IRPrinter, param_type: HIR.HIRType, stack_type: StackType) bool {
@@ -622,6 +616,16 @@ pub fn Methods(comptime Ctx: type) type {
                         }
                     }
 
+                    // A merged box is still a box of one type: its member index
+                    // means the same thing on every arm, or the merge is wrong.
+                    var merged_boxed_type: ?HIR.HIRType = null;
+                    for (slot.items) |incoming_val| {
+                        const boxed = incoming_val.value.boxed_type orelse continue;
+                        if (merged_boxed_type) |merged| {
+                            if (!merged.eql(boxed)) return self.hirFault("a merge joins a {s} box with a {s} box", .{ @tagName(merged), @tagName(boxed) });
+                        } else merged_boxed_type = boxed;
+                    }
+
                     // A phi's value is one of its incoming values, so its range
                     // is their hull (Phase D).
                     var merged_range: IntRange = slot.items[0].value.int_range;
@@ -639,6 +643,7 @@ pub fn Methods(comptime Ctx: type) type {
                         .struct_field_types = merged_struct_field_types,
                         .struct_field_names = merged_struct_field_names,
                         .struct_type_name = merged_struct_type_name,
+                        .boxed_type = merged_boxed_type,
                     });
                 }
             }
@@ -676,15 +681,15 @@ pub fn Methods(comptime Ctx: type) type {
                 .entry_str_out_len = null,
                 .entry_allocas = std.array_list.Managed([]const u8).init(allocator),
                 .exited_scopes = std.AutoHashMap(u32, void).init(allocator),
-                .narrowed_vars = std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)).init(allocator),
-                .var_regions = std.StringHashMap(Region).init(allocator),
-                .var_ranges = std.StringHashMap(IntRange).init(allocator),
-                .var_range_blocks = std.StringHashMap([]const u8).init(allocator),
+                .narrowed_vars = std.AutoHashMap(HIR.Slot, std.ArrayListUnmanaged(HIR.HIRType)).init(allocator),
+                .var_regions = std.AutoHashMap(HIR.Slot, Region).init(allocator),
+                .var_ranges = std.AutoHashMap(HIR.Slot, IntRange).init(allocator),
+                .var_range_blocks = std.AutoHashMap(HIR.Slot, []const u8).init(allocator),
                 .reflected_structs = reflected_structs,
                 .force_struct_descriptors = force_struct_descriptors,
                 .skip_descriptor_structs = std.StringHashMap(void).init(allocator),
                 .arith_overflow = arith_overflow,
-                .loop_head_envs = std.StringHashMap(std.StringHashMap(IntRange)).init(allocator),
+                .loop_head_envs = std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)).init(allocator),
             };
         }
 
@@ -824,12 +829,12 @@ pub fn Methods(comptime Ctx: type) type {
         /// join) or a plain store could alias an object the loop reset is about
         /// to free. `Func`/`Root` only join upward — from `Unknown`/absent to
         /// the new class.
-        pub fn recordVarRegion(self: *IRPrinter, var_name: []const u8, region: Region) !void {
-            const merged = if (self.var_regions.get(var_name)) |cur|
+        pub fn recordVarRegion(self: *IRPrinter, slot: HIR.Slot, region: Region) !void {
+            const merged = if (self.var_regions.get(slot)) |cur|
                 if (cur == .Deep) .Deep else region
             else
                 region;
-            try self.var_regions.put(var_name, merged);
+            try self.var_regions.put(slot, merged);
         }
 
         /// Record the value range of a local variable after a store (Phase D).
@@ -853,20 +858,20 @@ pub fn Methods(comptime Ctx: type) type {
         /// would recover the precision, and an induction-variable analysis
         /// would recover the loop case, but both are strictly more analysis
         /// than this one walk can support.
-        pub fn recordVarRange(self: *IRPrinter, var_name: []const u8, range: IntRange) !void {
-            const recorded_block = self.var_range_blocks.get(var_name);
+        pub fn recordVarRange(self: *IRPrinter, slot: HIR.Slot, range: IntRange) !void {
+            const recorded_block = self.var_range_blocks.get(slot);
             const merged: IntRange = if (recorded_block) |block|
                 if (!std.mem.eql(u8, block, self.current_block))
                     .unknown()
-                else if (self.var_ranges.get(var_name)) |cur|
+                else if (self.var_ranges.get(slot)) |cur|
                     IntRange.hull(cur, range)
                 else
                     range
             else
                 range;
-            try self.var_ranges.put(var_name, merged);
+            try self.var_ranges.put(slot, merged);
             if (recorded_block == null) {
-                try self.var_range_blocks.put(var_name, self.current_block);
+                try self.var_range_blocks.put(slot, self.current_block);
             }
         }
 
@@ -881,17 +886,17 @@ pub fn Methods(comptime Ctx: type) type {
         /// like a non-negative `i` because the declaration said `0`. Requiring
         /// the same block makes the rule and the walk agree: a range travels
         /// exactly as far as this single pass can justify.
-        pub fn varRange(self: *IRPrinter, var_name: []const u8) IntRange {
+        pub fn varRange(self: *IRPrinter, slot: HIR.Slot) IntRange {
             // Inside an analysed loop the loop-head fixpoint range is a fact
             // valid at every point in the body (`range_flow.zig`), so it takes
             // precedence over the block-local walk, which cannot see the back
             // edge yet.
             if (self.active_loop_range) |m| {
-                if (m.get(var_name)) |r| return r;
+                if (m.get(slot)) |r| return r;
             }
-            const block = self.var_range_blocks.get(var_name) orelse return .unknown();
+            const block = self.var_range_blocks.get(slot) orelse return .unknown();
             if (!std.mem.eql(u8, block, self.current_block)) return .unknown();
-            return self.var_ranges.get(var_name) orelse .unknown();
+            return self.var_ranges.get(slot) orelse .unknown();
         }
 
         /// Phase D-1 follow-on: compute every function's loop-head variable

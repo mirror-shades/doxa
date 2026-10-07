@@ -2,6 +2,7 @@ const std = @import("std");
 const ast = @import("../../../ast/ast.zig");
 const builtin_methods = @import("../../../runtime/builtin_methods.zig");
 const DoxaUnionMeta = @import("../../../runtime/doxa_rt.zig").DoxaUnionMeta;
+const DoxaTag = @import("../../../runtime/doxa_rt.zig").DoxaTag;
 
 fn isQuantifierName(name: []const u8) bool {
     return std.mem.eql(u8, name, "exists_quantifier_gt") or
@@ -16,7 +17,6 @@ pub fn Methods(comptime Ctx: type) type {
     const HIRInstruction = Ctx.HIRInstruction;
     const HIRValue = Ctx.HIRValue;
     const PeekEmitState = Ctx.PeekEmitState;
-    const StackType = Ctx.StackType;
     const StackVal = Ctx.StackVal;
     const IntRange = Ctx.IntRange;
     const signFacts = @import("./int_range.zig").signFacts;
@@ -45,7 +45,8 @@ pub fn Methods(comptime Ctx: type) type {
                     id.* += 1;
                     const literal = try self.formatFloatLiteral(f);
                     defer self.allocator.free(literal);
-                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double 0.0, {s}\n", .{ name, literal });
+                    // -0.0 is the additive identity; `0.0 + -0.0` is +0.0.
+                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fadd double -0.0, {s}\n", .{ name, literal });
                     defer self.allocator.free(line);
                     try w.writeAll(line);
                     try stack.append(.{ .name = name, .ty = .F64 });
@@ -148,22 +149,8 @@ pub fn Methods(comptime Ctx: type) type {
 
         pub fn handleDup(self: *IRPrinter, stack: *std.array_list.Managed(StackVal)) !void {
             try self.requireStack(stack, 1);
-            const top = stack.items[stack.items.len - 1];
-            const duped: StackVal = .{
-                .name = top.name,
-                .ty = top.ty,
-                .region = top.region,
-                .int_range = top.int_range,
-                .array_type = top.array_type,
-                .enum_type_name = top.enum_type_name,
-                .struct_field_types = top.struct_field_types,
-                .struct_field_names = top.struct_field_names,
-                .struct_type_name = top.struct_type_name,
-                .string_literal_value = top.string_literal_value,
-                .fixed_array_depth = top.fixed_array_depth,
-                .fixed_array_sizes = top.fixed_array_sizes,
-            };
-            try stack.append(duped);
+            // A copy of the same value: every fact the stack carries holds for both.
+            try stack.append(stack.items[stack.items.len - 1]);
         }
 
         pub fn handlePop(self: *IRPrinter, stack: *std.array_list.Managed(StackVal)) !void {
@@ -1687,15 +1674,31 @@ pub fn Methods(comptime Ctx: type) type {
                 defer self.allocator.free(mask_line);
                 try w.writeAll(mask_line);
 
-                const expected = try self.nextTemp(id);
-                const expected_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ expected, mc.member_index });
-                defer self.allocator.free(expected_line);
-                try w.writeAll(expected_line);
+                // Every member this check names is a boxed union/group value,
+                // so its `reserved` word carries `is_union_bit`. A `nothing`
+                // that a union stores unboxed (`reserved == 0`) reports member
+                // index 0 and would otherwise satisfy the check for whichever
+                // member the union happens to lay down first. Require the bit
+                // before the index compare so a success arm cannot be read as a
+                // boxed member.
+                const union_bit = try self.nextTemp(id);
+                try w.print("  {s} = and i32 {s}, {d}\n", .{ union_bit, reserved_i32, DoxaUnionMeta.is_union_bit });
+                const is_boxed = try self.nextTemp(id);
+                try w.print("  {s} = icmp ne i32 {s}, 0\n", .{ is_boxed, union_bit });
 
+                // The box holds one of `members`: an `or` of one compare each.
+                // An empty set is a test no box passes.
+                var in_members = try self.nextTemp(id);
+                try w.print("  {s} = icmp ne i32 0, 0\n", .{in_members});
+                for (mc.members) |member| {
+                    const is_member = try self.nextTemp(id);
+                    try w.print("  {s} = icmp eq i32 {s}, {d}\n", .{ is_member, member_i32, member });
+                    const either = try self.nextTemp(id);
+                    try w.print("  {s} = or i1 {s}, {s}\n", .{ either, in_members, is_member });
+                    in_members = either;
+                }
                 var cond = try self.nextTemp(id);
-                const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i32 {s}, {s}\n", .{ cond, member_i32, expected });
-                defer self.allocator.free(cmp_line);
-                try w.writeAll(cmp_line);
+                try w.print("  {s} = and i1 {s}, {s}\n", .{ cond, is_boxed, in_members });
 
                 // A union whose member list does not give `nothing` its own
                 // index would let a nothing box satisfy a struct/enum member's
@@ -1756,13 +1759,20 @@ pub fn Methods(comptime Ctx: type) type {
             }
         }
 
-        pub fn handleUnionConstruct(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, uc: std.meta.fieldInfo(HIRInstruction, .UnionConstruct).type) !void {
+        pub fn handleBox(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, b: std.meta.fieldInfo(HIRInstruction, .Box).type) !void {
             try self.requireStack(stack, 1);
+            if (!IRPrinter.isBoxedMemberType(b.boxed_type)) return self.hirFault("Box into a {s}, which is not a union or a group", .{@tagName(b.boxed_type)});
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
-            // Build a %DoxaValue for the union — same as buildDoxaValue
-            const dv = try self.buildDoxaValue(w, value, uc.union_type, id);
-            try stack.append(dv);
+            try stack.append(try self.buildDoxaValue(w, value, b.boxed_type, id));
+        }
+
+        pub fn handleUnbox(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, u: std.meta.fieldInfo(HIRInstruction, .Unbox).type) !void {
+            try self.requireStack(stack, 1);
+            const value = stack.items[stack.items.len - 1];
+            if (value.ty != .Value) return self.hirFault("Unbox of a {s}, which is not a box", .{@tagName(value.ty)});
+            stack.items.len -= 1;
+            try stack.append(try self.unwrapDoxaValueToType(w, value, u.member_type, id));
         }
 
         pub fn handleAssertFail(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, af: std.meta.fieldInfo(HIRInstruction, .AssertFail).type, peek_state: *PeekEmitState) !void {
@@ -1904,6 +1914,134 @@ pub fn Methods(comptime Ctx: type) type {
             const line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_write_cstr(ptr {s}, i64 {s})\n", .{ ptr_ext, len_ext });
             defer self.allocator.free(line);
             try w.writeAll(line);
+        }
+
+        /// A fallible inline-Zig call (`DoxaError_<path>!<payload>`). The shim
+        /// returns an i64 sentinel — -1 for success, else the caught error's
+        /// variant discriminant — and writes any success payload through
+        /// out-parameters. Box the result as the union's payload member or its
+        /// enum member, so the call site is an ordinary union value.
+        pub fn emitFallibleZigCall(
+            self: *IRPrinter,
+            w: anytype,
+            stack: *std.array_list.Managed(StackVal),
+            id: *usize,
+            ut: HIR.HIRType,
+            runtime_name: []const u8,
+            args_str: []const u8,
+        ) !void {
+            var enum_index: u32 = 0;
+            var enum_key: ?[]const u8 = null;
+            var payload_index: u32 = 0;
+            var payload_ty: HIR.HIRType = .Nothing;
+            for (0..self.boxMemberCount(ut)) |member_index| {
+                const member = self.boxMember(ut, member_index).?;
+                if (member == .Enum) {
+                    enum_index = @intCast(member_index);
+                    enum_key = self.enum_table.keyOf(member.Enum);
+                } else {
+                    payload_index = @intCast(member_index);
+                    payload_ty = member;
+                }
+            }
+            if (enum_key == null)
+                return self.hirFault("a fallible inline-Zig return has no enum member to box", .{});
+            // TODO: a float/byte/tetra payload needs its own load and box word.
+            if (payload_ty != .Nothing and payload_ty != .String and payload_ty != .Array and payload_ty != .Int)
+                return self.hirFault("a fallible inline-Zig call has an unsupported payload shape", .{});
+
+            // Prepare the out-param slots the shim writes a payload into.
+            var out_args_buf: [96]u8 = undefined;
+            var out_args: []const u8 = "";
+            var slot0: []const u8 = "";
+            var slot1: []const u8 = "";
+            switch (payload_ty) {
+                .Nothing => {},
+                .String => {
+                    slot0 = try self.nextTemp(id);
+                    slot1 = try self.nextTemp(id);
+                    try w.print("  {s} = alloca ptr\n  {s} = alloca i64\n  store ptr null, ptr {s}\n  store i64 0, ptr {s}\n", .{ slot0, slot1, slot0, slot1 });
+                    out_args = try std.fmt.bufPrint(&out_args_buf, "ptr {s}, ptr {s}", .{ slot0, slot1 });
+                },
+                .Array => {
+                    slot0 = try self.nextTemp(id);
+                    try w.print("  {s} = alloca ptr\n  store ptr null, ptr {s}\n", .{ slot0, slot0 });
+                    out_args = try std.fmt.bufPrint(&out_args_buf, "ptr {s}", .{slot0});
+                },
+                .Int => {
+                    slot0 = try self.nextTemp(id);
+                    try w.print("  {s} = alloca i64\n  store i64 0, ptr {s}\n", .{ slot0, slot0 });
+                    out_args = try std.fmt.bufPrint(&out_args_buf, "ptr {s}", .{slot0});
+                },
+                else => unreachable,
+            }
+
+            const full_args = if (out_args.len == 0)
+                args_str
+            else if (args_str.len == 0)
+                out_args
+            else
+                try std.fmt.allocPrint(self.allocator, "{s}, {s}", .{ args_str, out_args });
+            defer if (full_args.ptr != args_str.ptr and full_args.ptr != out_args.ptr) self.allocator.free(full_args);
+
+            const raw = try self.nextTemp(id);
+            try w.print("  {s} = call i64 @{s}({s})\n", .{ raw, runtime_name, full_args });
+
+            // Load the success payload from its slot. A string or array payload
+            // is a pointer; the box's first word is an integer, so it is
+            // `ptrtoint`-ed (the inverse of how `buildDoxaValue` stores a
+            // pointer member).
+            var ok_a: []const u8 = "0";
+            var ok_b: []const u8 = "0";
+            switch (payload_ty) {
+                .Nothing => {},
+                .String => {
+                    const p = try self.nextTemp(id);
+                    ok_b = try self.nextTemp(id);
+                    ok_a = try self.nextTemp(id);
+                    try w.print("  {s} = load ptr, ptr {s}\n  {s} = load i64, ptr {s}\n  {s} = ptrtoint ptr {s} to i64\n", .{ p, slot0, ok_b, slot1, ok_a, p });
+                },
+                .Array => {
+                    const p = try self.nextTemp(id);
+                    ok_a = try self.nextTemp(id);
+                    try w.print("  {s} = load ptr, ptr {s}\n  {s} = ptrtoint ptr {s} to i64\n", .{ p, slot0, ok_a, p });
+                },
+                .Int => {
+                    ok_a = try self.nextTemp(id);
+                    try w.print("  {s} = load i64, ptr {s}\n", .{ ok_a, slot0 });
+                },
+                else => unreachable,
+            }
+
+            const union_id = ut.Union.id & (DoxaUnionMeta.union_id_mask >> DoxaUnionMeta.union_id_shift);
+            const header: u32 = DoxaUnionMeta.is_union_bit | (union_id << DoxaUnionMeta.union_id_shift);
+            const ok_tag: u32 = switch (payload_ty) {
+                .Nothing => @intFromEnum(DoxaTag.Nothing),
+                .String => @intFromEnum(DoxaTag.String),
+                .Array => @intFromEnum(DoxaTag.Array),
+                .Int => @intFromEnum(DoxaTag.Int),
+                else => @intFromEnum(DoxaTag.Nothing),
+            };
+
+            const is_err = try self.nextTemp(id);
+            try w.print("  {s} = icmp ne i64 {s}, -1\n", .{ is_err, raw });
+            const tag = try self.nextTemp(id);
+            try w.print("  {s} = select i1 {s}, i32 {d}, i32 {d}\n", .{ tag, is_err, @intFromEnum(DoxaTag.Enum), ok_tag });
+            const reserved = try self.nextTemp(id);
+            try w.print("  {s} = select i1 {s}, i32 {d}, i32 {d}\n", .{ reserved, is_err, header | enum_index, header | payload_index });
+            const word_a = try self.nextTemp(id);
+            try w.print("  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ word_a, is_err, raw, ok_a });
+            const word_b = try self.nextTemp(id);
+            try w.print("  {s} = select i1 {s}, i64 0, i64 {s}\n", .{ word_b, is_err, ok_b });
+            const boxed0 = try self.nextTemp(id);
+            try w.print("  {s} = insertvalue %DoxaValue undef, i32 {s}, 0\n", .{ boxed0, tag });
+            const boxed1 = try self.nextTemp(id);
+            try w.print("  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n", .{ boxed1, boxed0, reserved });
+            const boxed2 = try self.nextTemp(id);
+            try w.print("  {s} = insertvalue %DoxaValue {s}, i64 {s}, 2\n", .{ boxed2, boxed1, word_a });
+            const boxed3 = try self.nextTemp(id);
+            try w.print("  {s} = insertvalue %DoxaValue {s}, i64 {s}, 3\n", .{ boxed3, boxed2, word_b });
+            try stack.append(.{ .name = boxed3, .ty = .Value, .boxed_type = ut });
         }
 
         pub fn handleCall(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, c: std.meta.fieldInfo(HIRInstruction, .Call).type, hir: *const HIR.HIRProgram) !void {
@@ -2378,6 +2516,16 @@ pub fn Methods(comptime Ctx: type) type {
             const runtime_name = runtime_name_owned orelse IRPrinter.mapBuiltinToRuntime(c.qualified_name);
 
             if (actual_return_type != .Nothing) {
+                // A fallible inline-Zig call (`DoxaError_<path>!<payload>`)
+                // crosses the ABI as an i64 sentinel (-1 = success, else the
+                // variant discriminant) with any payload written through
+                // out-parameters. Box it as the union's payload or enum member,
+                // so the call site is an ordinary union value.
+                if (c.call_kind == .ZigFunction and c.function_index == null and actual_return_type == .Union) {
+                    try self.emitFallibleZigCall(w, stack, id, actual_return_type, runtime_name, args_str);
+                    return;
+                }
+
                 // Only inline-Zig module functions (function_index == null) use
                 // out-params for string returns (the inline-Zig ABI). Pure-Doxa
                 // module functions are defined with `%DoxaString` value returns
@@ -2497,21 +2645,12 @@ pub fn Methods(comptime Ctx: type) type {
             if (IRPrinter.isBoxedMemberType(sd.declared_type)) {
                 _ = try self.global_boxed_types.put(sd.var_name, sd.declared_type);
             }
-            if (stack.items.len < 1) {
-                const stack_type = self.hirTypeToStackType(sd.declared_type);
-                _ = try self.global_types.put(sd.var_name, stack_type);
-                _ = try self.defined_globals.put(sd.var_name, true);
-                const gptr = try self.mangleGlobalName(sd.var_name);
-                defer self.allocator.free(gptr);
-                return;
-            }
+            try self.requireStack(stack, 1);
             var value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
+            try self.verifyStore(value, sd.declared_type);
             if (sd.declared_type == .Array and value.array_type == null) {
                 value.array_type = sd.declared_type.Array.*;
-            }
-            if (IRPrinter.isBoxedMemberType(sd.declared_type)) {
-                value = try self.buildDoxaValue(w, value, sd.declared_type, id);
             }
             if (!sd.is_const) {
                 value = try self.rehomeForGlobalStore(w, id, value, sd.declared_type);
@@ -2527,8 +2666,7 @@ pub fn Methods(comptime Ctx: type) type {
                     }
                 }
             }
-            const declared_stack_type = self.hirTypeToStackType(sd.declared_type);
-            const target_ty: StackType = if (sd.declared_type == .Unknown) value.ty else declared_stack_type;
+            const target_ty = self.hirTypeToStackType(sd.declared_type);
             value = try self.coerceForStore(value, target_ty, id, w);
             const llvm_ty = self.stackTypeToLLVMType(target_ty);
             _ = try self.global_types.put(sd.var_name, target_ty);
@@ -2568,7 +2706,9 @@ pub fn Methods(comptime Ctx: type) type {
             try self.requireStack(stack, 1);
             var value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
-            if (value.ty == .Nothing) return;
+            try self.verifyStore(value, sv.expected_type);
+            // `nothing` is zero-sized: there is nothing to write.
+            if (sv.expected_type == .Nothing) return;
             const expected_array_type: ?HIR.HIRType = switch (sv.expected_type) {
                 .Array => |inner| inner.*,
                 else => null,
@@ -2576,27 +2716,11 @@ pub fn Methods(comptime Ctx: type) type {
             if (value.array_type == null and expected_array_type != null) {
                 value.array_type = expected_array_type.?;
             }
-            if (IRPrinter.isBoxedMemberType(sv.expected_type)) {
-                value = try self.buildDoxaValue(w, value, sv.expected_type, id);
-            }
             value = switch (sv.heap_copy) {
                 .keep => value,
                 .snapshot => try self.cloneHeapValue(w, id, value, sv.expected_type, .program_root, true, 0, null),
                 .rehome => try self.rehomeForGlobalStore(w, id, value, sv.expected_type),
             };
-            // The slot is a %DoxaValue but the value carried here is the member
-            // itself: re-pack its member index from the declaration, or the raw
-            // member is stored straight over the box's tag. `global_boxed_types` has
-            // exactly one writer — `handleStoreDeclGlobal`, the declaration — so a
-            // box with no recorded type means that declaration never ran: an emitter
-            // invariant broken, not a user error, and better failed than emitted.
-            if (value.ty != .Value) {
-                if (self.global_boxed_types.get(sv.var_name)) |box_type| {
-                    value = try self.buildDoxaValue(w, value, box_type, id);
-                } else if (self.global_types.get(sv.var_name)) |slot_type| {
-                    if (slot_type == .Value) return error.MissingGlobalBoxType;
-                }
-            }
             const llvm_ty = self.stackTypeToLLVMType(value.ty);
             _ = try self.global_types.put(sv.var_name, value.ty);
             if (value.array_type) |array_type| {
@@ -2634,18 +2758,17 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll(store_line);
         }
 
-        pub fn handleLoadVarGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gname: []const u8) !void {
+        pub fn handleLoadVarGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, slot: HIR.Slot, gname: []const u8) !void {
             const st = self.global_types.get(gname) orelse .I64;
             if (st == .Nothing) {
                 const result_name = try self.nextTemp(id);
                 try stack.append(.{ .name = result_name, .ty = .Nothing });
                 return;
             }
-            // A group or union global loads as its %DoxaValue box, even inside a
-            // narrowed branch: the local path unwraps the narrowed box at the load
-            // (`loadNarrowedUnion`), a global does not — its consumers (field access,
-            // arithmetic, argument coercion) read the payload out of the box — so
-            // nothing on this path may unwrap it.
+            // A group or union global loads as its %DoxaValue box; inside a
+            // narrowed branch it is read as the member the branch proved, exactly
+            // as a local is (`loadNarrowedUnion`): a member as its own
+            // representation, a group re-packed as the group's box.
             const llty = self.stackTypeToLLVMType(st);
             const gptr = try self.mangleGlobalName(gname);
             defer self.allocator.free(gptr);
@@ -2663,7 +2786,7 @@ pub fn Methods(comptime Ctx: type) type {
             const struct_names = self.global_struct_field_names.get(gname);
             const struct_type_name = self.global_struct_type_names.get(gname);
             const fixed_info = self.global_fixed_array_info.get(gname);
-            try stack.append(.{
+            const loaded: StackVal = .{
                 .name = result_name,
                 .ty = st,
                 .region = .Root,
@@ -2674,7 +2797,10 @@ pub fn Methods(comptime Ctx: type) type {
                 .struct_type_name = struct_type_name,
                 .fixed_array_depth = if (fixed_info) |fi| fi.depth else 0,
                 .fixed_array_sizes = if (fixed_info) |fi| fi.sizes else [_]u32{0} ** 4,
-            });
+                .boxed_type = self.global_boxed_types.get(gname),
+            };
+            if (try self.loadNarrowedUnion(w, loaded, slot, id)) |member| return stack.append(member);
+            try stack.append(loaded);
         }
 
         pub fn handlePushStorageIdGlobal(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gname: []const u8) !void {

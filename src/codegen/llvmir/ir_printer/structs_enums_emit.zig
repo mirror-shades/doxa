@@ -64,7 +64,8 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .Union => {
                         if (pk.union_members) |members| {
-                            const idx = self.findUnionMemberIndex(pk.value_type, value);
+                            const member_idx = self.findMemberIndex(pk.value_type, value);
+                            const idx = if (pk.member_slots) |slots| (if (member_idx < slots.len) slots[member_idx] else member_idx) else member_idx;
                             if (idx < members.len) {
                                 break :blk_type members[idx];
                             }
@@ -349,8 +350,27 @@ pub fn Methods(comptime Ctx: type) type {
                 }
 
                 if (active_index_var == null and pk.value_type == .Union) {
-                    const idx = self.findUnionMemberIndex(pk.value_type, value);
+                    const idx = self.findMemberIndex(pk.value_type, value);
                     active_index = @intCast(idx);
+                }
+
+                // The box names a member; the list may show several members as
+                // one written group, so the marker goes on that entry.
+                if (pk.member_slots) |slots| {
+                    if (active_index_var) |member_index| {
+                        var slot = try self.nextTemp(id);
+                        try w.print("  {s} = add i32 0, -1\n", .{slot});
+                        for (slots, 0..) |member_slot, member| {
+                            const is_member = try self.nextTemp(id);
+                            try w.print("  {s} = icmp eq i32 {s}, {d}\n", .{ is_member, member_index, member });
+                            const next = try self.nextTemp(id);
+                            try w.print("  {s} = select i1 {s}, i32 {d}, i32 {s}\n", .{ next, is_member, member_slot, slot });
+                            slot = next;
+                        }
+                        active_index_var = slot;
+                    } else if (active_index >= 0 and active_index < slots.len) {
+                        active_index = @intCast(slots[@intCast(active_index)]);
+                    }
                 }
 
                 // Create array of pointers to union member strings

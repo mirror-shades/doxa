@@ -3,6 +3,7 @@ const ast = @import("../../../ast/ast.zig");
 const types = @import("../../../types/types.zig");
 const HIRGenerator = @import("../soxa_generator.zig").HIRGenerator;
 const HIRValue = @import("../soxa_values.zig").HIRValue;
+const Slot = @import("../soxa_types.zig").Slot;
 const HIRType = @import("../soxa_types.zig").HIRType;
 const StructId = @import("../soxa_types.zig").StructId;
 const EnumId = @import("../soxa_types.zig").EnumId;
@@ -15,6 +16,7 @@ const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const TETRA_TRUE = @import("../soxa_generator.zig").TETRA_TRUE;
 const generateStatement = @import("../soxa_statements.zig").generateStatement;
 const GroupId = @import("../soxa_types.zig").GroupId;
+const GroupTable = @import("../../../common/group_table.zig").GroupTable;
 const DoxaTag = @import("../../../runtime/doxa_rt.zig").DoxaTag;
 const graph = @import("../../../module/graph.zig");
 
@@ -25,6 +27,15 @@ fn isNamedType(ty: HIRType, named: HIRType) bool {
         .Enum => |id| ty == .Enum and ty.Enum == id,
         .Group => |id| ty == .Group and ty.Group == id,
         else => false,
+    };
+}
+
+/// The type a group's flattened member names.
+fn groupMemberType(member: GroupTable.Member) HIRType {
+    return switch (member.kind) {
+        .Enum => .{ .Enum = member.id },
+        .Struct => .{ .Struct = member.id },
+        .Group => .{ .Group = member.id },
     };
 }
 
@@ -103,11 +114,50 @@ pub const ControlFlowHandler = struct {
         return ErrorList.TypeMismatch;
     }
 
+    /// The member type a box of type `boxed` holds at `index`: a union's
+    /// member, or a group's flattened member.
+    fn boxMember(self: *ControlFlowHandler, boxed: HIRType, index: usize) HIRType {
+        return switch (boxed) {
+            .Union => |u| u.members[index].*,
+            .Group => |gid| groupMemberType(self.generator.semantic.group_table.members(gid).?[index]),
+            else => unreachable,
+        };
+    }
+
+    fn boxMemberCount(self: *ControlFlowHandler, boxed: HIRType) usize {
+        return switch (boxed) {
+            .Union => |u| u.members.len,
+            .Group => |gid| if (self.generator.semantic.group_table.members(gid)) |members| members.len else 0,
+            else => 0,
+        };
+    }
+
+    /// Whether a box member of type `member` is a value of `named`: the named
+    /// type itself, or, for a group, one of the members it flattened into.
+    fn memberIsNamed(self: *ControlFlowHandler, member: HIRType, named: HIRType) bool {
+        if (isNamedType(member, named)) return true;
+        if (named != .Group) return false;
+        const group_members = self.generator.semantic.group_table.members(named.Group) orelse return false;
+        for (group_members) |group_member| {
+            if (isNamedType(member, groupMemberType(group_member))) return true;
+        }
+        return false;
+    }
+
+    /// The indexes of every member of box type `boxed` that is a `named`.
+    fn boxedMembersNamed(self: *ControlFlowHandler, boxed: HIRType, named: HIRType) ![]const u32 {
+        var indices: std.ArrayListUnmanaged(u32) = .empty;
+        for (0..self.boxMemberCount(boxed)) |idx| {
+            if (self.memberIsNamed(self.boxMember(boxed, idx), named)) try indices.append(self.generator.allocator, @intCast(idx));
+        }
+        return indices.toOwnedSlice(self.generator.allocator);
+    }
+
     /// Emit the member check for one arm: the subject must be boxed as a group
     /// value carrying `member_index`.
     fn emitGroupMemberCheck(self: *ControlFlowHandler, member_index: u32, body_label: []const u8, fail_label: []const u8) !void {
         try self.generator.instructions.append(.Dup);
-        try self.generator.instructions.append(.{ .MemberCheck = .{ .member_index = member_index } });
+        try self.generator.instructions.append(.{ .MemberCheck = .{ .members = try self.generator.allocator.dupe(u32, &.{member_index}) } });
         try self.generator.instructions.append(.{ .JumpCond = .{
             .label_true = body_label,
             .label_false = fail_label,
@@ -284,7 +334,8 @@ pub const ControlFlowHandler = struct {
     }
 
     /// Generate HIR for if expressions
-    pub fn generateIf(self: *ControlFlowHandler, if_expr: ast.If, preserve_result: bool, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
+    pub fn generateIf(self: *ControlFlowHandler, expr: *ast.Expr, preserve_result: bool, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
+        const if_expr = expr.data.If;
         // Special-case: if inside a loop and the then/else branch is a pure break/continue block,
         // emit a direct conditional jump to the loop label (so control flow skips subsequent body code).
         var handled_as_loop_control = false;
@@ -386,10 +437,19 @@ pub const ControlFlowHandler = struct {
                         },
                     });
 
+                    // A value `if` whose branches are different types is a union
+                    // of them: each branch boxes its value as that type, so the
+                    // two merge as one box.
+                    const result_box: ?HIRType = if (preserve_result) blk: {
+                        const result_type = try self.generator.typeOf(expr);
+                        break :blk if (result_type == .Union or result_type == .Group) result_type else null;
+                    } else null;
+
                     // THEN branch
                     try self.generator.instructions.append(.{ .Label = .{ .name = then_label } });
                     if (preserve_result) {
                         try self.generator.generateExpression(if_expr.then_branch.?, true, should_pop_after_use);
+                        if (result_box) |boxed_type| try self.generator.instructions.append(.{ .Box = .{ .boxed_type = boxed_type } });
                     } else {
                         // Statement context: do not produce a value
                         try self.generator.generateExpression(if_expr.then_branch.?, false, should_pop_after_use);
@@ -400,6 +460,7 @@ pub const ControlFlowHandler = struct {
                     try self.generator.instructions.append(.{ .Label = .{ .name = else_label } });
                     if (preserve_result) {
                         try self.generator.generateExpression(if_expr.else_branch.?, true, should_pop_after_use);
+                        if (result_box) |boxed_type| try self.generator.instructions.append(.{ .Box = .{ .boxed_type = boxed_type } });
                         // Terminate the value-bearing else arm with an explicit
                         // jump, mirroring the then arm. Without it the else path
                         // falls through into `end_label` and the emitter never
@@ -465,7 +526,9 @@ pub const ControlFlowHandler = struct {
     const UnionPattern = union(enum) {
         /// The subject's union boxes this type at `index`.
         member: struct {
-            index: u32,
+            /// The members that are the pattern's type: one, or every member
+            /// a group pattern flattened into.
+            indices: []const u32,
             /// The struct a destructuring pattern binds its fields from.
             struct_id: ?StructId,
             /// Runtime tag the boxed member must carry, when it is unambiguous
@@ -480,22 +543,20 @@ pub const ControlFlowHandler = struct {
     /// Resolve a pattern against the union the subject is typed as. Null when
     /// the subject is not a union or the pattern names no type — both are
     /// owned by the checks below.
-    fn unionPatternFor(self: *ControlFlowHandler, subject_type: HIRType, resolved: ast.MatchCase.Resolved) ?UnionPattern {
+    fn unionPatternFor(self: *ControlFlowHandler, subject_type: HIRType, resolved: ast.MatchCase.Resolved) !?UnionPattern {
         if (subject_type != .Union) return null;
         const named = switch (resolved) {
             .type => |ref| self.generator.type_system.typeForRef(ref),
             .token, .variant => return null,
         };
 
-        for (subject_type.Union.members, 0..) |member_ptr, idx| {
-            if (!isNamedType(member_ptr.*, named)) continue;
-            return .{ .member = switch (named) {
-                .Struct => |sid| .{ .index = @intCast(idx), .struct_id = sid, .tag = @intFromEnum(DoxaTag.Struct) },
-                .Enum => .{ .index = @intCast(idx), .struct_id = null, .tag = @intFromEnum(DoxaTag.Enum) },
-                else => .{ .index = @intCast(idx), .struct_id = null },
-            } };
-        }
-        return .never;
+        const indices = try self.boxedMembersNamed(subject_type, named);
+        if (indices.len == 0) return .never;
+        return .{ .member = switch (named) {
+            .Struct => |sid| .{ .indices = indices, .struct_id = sid, .tag = @intFromEnum(DoxaTag.Struct) },
+            .Enum => .{ .indices = indices, .struct_id = null, .tag = @intFromEnum(DoxaTag.Enum) },
+            else => .{ .indices = indices, .struct_id = null },
+        } };
     }
 
     /// What a type test asks for: a builtin type by its display name
@@ -508,7 +569,7 @@ pub const ControlFlowHandler = struct {
     /// Whether the union member `member` is what `type_test` asks for.
     fn memberPasses(self: *ControlFlowHandler, member: HIRType, type_test: TypeTest) !bool {
         return switch (type_test) {
-            .named => |named| isNamedType(member, named),
+            .named => |named| self.memberIsNamed(member, named),
             .builtin => |name| std.mem.eql(u8, try self.generator.hirTypeToDisplayName(member), name),
         };
     }
@@ -556,10 +617,24 @@ pub const ControlFlowHandler = struct {
         for (saved_type.Union.members) |member_ptr| {
             if (!try self.memberPasses(member_ptr.*, type_test)) continue;
             const view_members = try self.generator.allocator.alloc(*const HIRType, 1);
-            view_members[0] = member_ptr;
+            view_members[0] = try self.narrowedMember(member_ptr, type_test);
             return HIRType{ .Union = .{ .id = saved_type.Union.id, .members = view_members } };
         }
         return null;
+    }
+
+    /// What a value narrowed by `type_test` is, given that the union member
+    /// `member` passed it: that member, or for a group test the group itself —
+    /// the union holds the group's members, and the narrowed value is boxed as
+    /// the group's.
+    fn narrowedMember(self: *ControlFlowHandler, member: *const HIRType, type_test: TypeTest) !*const HIRType {
+        const group = switch (type_test) {
+            .named => |named| if (named == .Group) named else return member,
+            .builtin => return member,
+        };
+        const group_ptr = try self.generator.allocator.create(HIRType);
+        group_ptr.* = group;
+        return group_ptr;
     }
 
     /// The enum a pattern compares against as a variant, when it is one.
@@ -577,19 +652,19 @@ pub const ControlFlowHandler = struct {
         return fail_label orelse end_label;
     }
 
-    pub fn generateMatch(self: *ControlFlowHandler, match_expr: ast.MatchExpr, preserve_result: bool) ErrorList!void {
+    pub fn generateMatch(self: *ControlFlowHandler, expr: *ast.Expr, preserve_result: bool) ErrorList!void {
+        const match_expr = expr.data.Match;
         // The subject's type is the analyzer's answer for the subject
         // expression, whatever its form: a local, a field, an element, an
         // `each` binding or a call result all match the same way.
         const subject_type = try self.generator.typeOf(match_expr.value);
-
-        // TODO(plan/type-authority.md, Phase B step 3): a union's id and member
-        // order still come from two derivations, and a box is built with the
-        // generator's (the declared type of the slot or field it is stored
-        // in), not the analyzer's. Member indexes for a union subject
-        // therefore have to be read from the same derivation that boxed the
-        // value until declarations and fields are converted too.
-        const boxing_subject_type = self.generator.inferTypeFromExpression(match_expr.value);
+        // A match whose arms are different types is a union of them (or a group
+        // its context gave it): every arm boxes its value as that type, so the
+        // arms merge as one box whatever member each produced.
+        const result_box: ?HIRType = if (preserve_result) blk: {
+            const result_type = try self.generator.typeOf(expr);
+            break :blk if (result_type == .Union or result_type == .Group) result_type else null;
+        } else null;
 
         // A group subject is discriminated by its boxed member index, never by
         // an enum variant index.
@@ -672,11 +747,11 @@ pub const ControlFlowHandler = struct {
                 // A union subject decides the arm here: the pattern's type is
                 // compared against the member index it boxed, and a member the
                 // union never carries makes the arm dead code.
-                if (self.unionPatternFor(boxing_subject_type, resolved)) |union_pattern| {
+                if (try self.unionPatternFor(subject_type, resolved)) |union_pattern| {
                     switch (union_pattern) {
                         .member => |m| {
                             try self.generator.instructions.append(.Dup);
-                            try self.generator.instructions.append(.{ .MemberCheck = .{ .member_index = m.index, .expected_tag = m.tag } });
+                            try self.generator.instructions.append(.{ .MemberCheck = .{ .members = m.indices, .expected_tag = m.tag } });
                             try self.generator.instructions.append(.{ .JumpCond = .{
                                 .label_true = case_labels.items[i],
                                 .label_false = false_label,
@@ -762,11 +837,11 @@ pub const ControlFlowHandler = struct {
                     }
                     // Not this type: try the next pattern of the same arm.
                     continue;
-                } else if (self.unionPatternFor(boxing_subject_type, resolved)) |union_pattern| {
+                } else if (try self.unionPatternFor(subject_type, resolved)) |union_pattern| {
                     // A union subject is discriminated by the member index it
                     // boxed, never by an enum variant or a literal.
                     switch (union_pattern) {
-                        .member => |m| try self.generator.instructions.append(.{ .MemberCheck = .{ .member_index = m.index, .expected_tag = m.tag } }),
+                        .member => |m| try self.generator.instructions.append(.{ .MemberCheck = .{ .members = m.indices, .expected_tag = m.tag } }),
                         .never => {
                             // This type is not in the union, so the pattern can
                             // never select the arm: drop the copy under test and
@@ -822,7 +897,7 @@ pub const ControlFlowHandler = struct {
 
             // Struct destructuring: extract fields from matched value
             if (case.path_patterns.len > 0 and case.path_patterns[0].field_names.len > 0) {
-                try self.bindDestructuredFields(case, match_group != null or boxing_subject_type == .Union);
+                try self.bindDestructuredFields(case, match_group != null or subject_type == .Union);
             }
 
             // Drop the matched subject so the arm body starts with a clean stack.
@@ -843,14 +918,15 @@ pub const ControlFlowHandler = struct {
                 arm_saved_narrowing = self.generator.symbol_table.getVariableNarrowing(subject_name);
                 try self.generator.trackVariableType(subject_name, TypeSystem.memberView(view));
                 try self.generator.symbol_table.trackVariableNarrowing(subject_name, TypeSystem.memberView(view));
-                try self.generator.instructions.append(.{ .NarrowVar = .{ .var_name = subject_name, .narrowed_type = view } });
+                try self.generator.instructions.append(.{ .NarrowVar = .{ .slot = try self.generator.slotOf(&match_expr.value.base), .var_name = subject_name, .narrowed_type = view } });
             }
 
             try self.generator.generateExpression(case.body, preserve_result, !preserve_result);
+            if (result_box) |boxed_type| try self.generator.instructions.append(.{ .Box = .{ .boxed_type = boxed_type } });
 
             if (arm_view != null) {
                 const subject_name = match_expr.value.data.Variable.lexeme;
-                try self.generator.instructions.append(.{ .RestoreVar = .{ .var_name = subject_name } });
+                try self.generator.instructions.append(.{ .RestoreVar = .{ .slot = try self.generator.slotOf(&match_expr.value.base), .var_name = subject_name } });
                 try self.generator.trackVariableType(subject_name, arm_saved_type.?);
                 try self.generator.symbol_table.restoreVariableNarrowing(subject_name, arm_saved_narrowing);
             }
@@ -889,7 +965,7 @@ pub const ControlFlowHandler = struct {
         if (boxed) try self.generator.instructions.append(.{ .UnboxPayload = .{} });
         // The value is now a struct_instance — dup it so GetField doesn't consume it
         try self.generator.instructions.append(.Dup);
-        for (path.field_names) |field_token| {
+        for (path.field_names, path.field_storages) |field_token, storage| {
             const field = for (fields) |f| {
                 if (std.mem.eql(u8, f.name, field_token.lexeme)) break f;
             } else unreachable; // analysis bound only declared fields
@@ -903,14 +979,7 @@ pub const ControlFlowHandler = struct {
                 .field_for_peek = false,
                 .nested_struct_id = field.nested_struct_id,
             } });
-            const var_idx = try self.generator.getOrCreateVariable(field_token.lexeme);
-            try self.generator.instructions.append(.{ .StoreVar = .{
-                .var_index = var_idx,
-                .var_name = field_token.lexeme,
-                .scope_kind = .Local,
-                .module_context = null,
-                .expected_type = field.hir_type,
-            } });
+            try self.generator.storePlace(try self.generator.placeOf(storage, field_token.lexeme, false), field.hir_type, .rehome);
             // The body reads this binding by name; without a tracked type
             // every use of it would infer Unknown.
             try self.generator.trackVariableType(field_token.lexeme, field.hir_type);
@@ -1093,6 +1162,7 @@ pub const ControlFlowHandler = struct {
     /// The then branch narrows the variable to the target type; the else branch
     /// narrows it to the union remainder (full union minus target).
     const CastNarrowing = struct {
+        slot: Slot,
         var_name: []const u8,
         var_index: u32,
         is_local: bool,
@@ -1115,7 +1185,7 @@ pub const ControlFlowHandler = struct {
         try self.generator.symbol_table.trackVariableUnionMembers(nw.is_local, nw.var_index, members);
         // Tell the native backend that the variable's boxed value now denotes a
         // narrower member view, so loads inside the branch unwrap it.
-        try self.generator.instructions.append(.{ .NarrowVar = .{ .var_name = nw.var_name, .narrowed_type = ty } });
+        try self.generator.instructions.append(.{ .NarrowVar = .{ .slot = nw.slot, .var_name = nw.var_name, .narrowed_type = ty } });
     }
 
     fn restoreCastNarrowing(self: *ControlFlowHandler, nw: CastNarrowing) !void {
@@ -1126,7 +1196,7 @@ pub const ControlFlowHandler = struct {
         } else {
             self.generator.symbol_table.removeVariableUnionMembers(nw.is_local, nw.var_index);
         }
-        try self.generator.instructions.append(.{ .RestoreVar = .{ .var_name = nw.var_name } });
+        try self.generator.instructions.append(.{ .RestoreVar = .{ .slot = nw.slot, .var_name = nw.var_name } });
     }
 
     /// What an `as` target asks for, or null for a target no union member or
@@ -1155,6 +1225,7 @@ pub const ControlFlowHandler = struct {
     fn computeGroupCastNarrowing(
         self: *ControlFlowHandler,
         named: HIRType,
+        slot: Slot,
         var_name: []const u8,
         var_index: u32,
         is_local: bool,
@@ -1183,6 +1254,7 @@ pub const ControlFlowHandler = struct {
         then_members[0] = then.qualifier;
 
         return CastNarrowing{
+            .slot = slot,
             .var_name = var_name,
             .var_index = var_index,
             .is_local = is_local,
@@ -1202,13 +1274,14 @@ pub const ControlFlowHandler = struct {
     fn computeCastNarrowing(self: *ControlFlowHandler, cast_data: anytype) !?CastNarrowing {
         if (cast_data.value.data != .Variable) return null;
         const var_name = cast_data.value.data.Variable.lexeme;
+        const slot = try self.generator.slotOf(&cast_data.value.base);
         const var_index = self.generator.symbol_table.getVariable(var_name) orelse return null;
         const is_local = self.generator.symbol_table.isLocalVariable(var_name);
         const saved_type = self.generator.getTrackedVariableType(var_name) orelse return null;
         const type_test = self.castTypeTest(cast_data.target_type) orelse return null;
         if (saved_type == .Group) {
             return switch (type_test) {
-                .named => |named| self.computeGroupCastNarrowing(named, var_name, var_index, is_local, saved_type),
+                .named => |named| self.computeGroupCastNarrowing(named, slot, var_name, var_index, is_local, saved_type),
                 .builtin => null,
             };
         }
@@ -1217,14 +1290,23 @@ pub const ControlFlowHandler = struct {
         const member_ptrs = saved_type.Union.members;
         if (member_ptrs.len == 0) return null;
 
+        // A group target takes every member the group flattened into; any
+        // other target takes the one member it names.
+        const takes_all = switch (type_test) {
+            .named => |named| named == .Group,
+            .builtin => false,
+        };
         var then_member: ?struct { ptr: *const HIRType, name: []const u8 } = null;
         const remainder_ptrs = try self.generator.allocator.alloc(*const HIRType, member_ptrs.len);
         const remainder_names = try self.generator.allocator.alloc([]const u8, member_ptrs.len);
         var remainder_len: usize = 0;
         for (member_ptrs) |mp| {
             const name = try self.generator.hirTypeToDisplayName(mp.*);
-            if (then_member == null and try self.memberPasses(mp.*, type_test)) {
-                then_member = .{ .ptr = mp, .name = name };
+            if ((takes_all or then_member == null) and try self.memberPasses(mp.*, type_test)) {
+                if (then_member == null) {
+                    const narrowed = try self.narrowedMember(mp, type_test);
+                    then_member = .{ .ptr = narrowed, .name = try self.generator.hirTypeToDisplayName(narrowed.*) };
+                }
             } else {
                 remainder_ptrs[remainder_len] = mp;
                 remainder_names[remainder_len] = name;
@@ -1246,6 +1328,7 @@ pub const ControlFlowHandler = struct {
         const else_type = HIRType{ .Union = .{ .id = saved_type.Union.id, .members = remainder_ptrs[0..remainder_len] } };
 
         return CastNarrowing{
+            .slot = slot,
             .var_name = var_name,
             .var_index = var_index,
             .is_local = is_local,
@@ -1259,38 +1342,16 @@ pub const ControlFlowHandler = struct {
         };
     }
 
-    /// Index of the `named` type among the members of the group the analyzer
-    /// typed `subject` as, or null when the subject is not group-typed (or the
-    /// group does not contain it — reported during analysis).
-    fn resolveCastGroupMember(self: *ControlFlowHandler, subject: *ast.Expr, named: HIRType) ?u32 {
-        const group = self.resolveMatchGroup(subject) orelse return null;
-        const members = self.generator.semantic.group_table.members(group.id) orelse return null;
-        for (members, 0..) |member, idx| {
-            if (isNamedType(self.generator.type_system.typeForRef(member.ref), named)) return @intCast(idx);
-        }
-        return null;
-    }
-
     /// Generate HIR for cast expressions
-    pub fn generateCast(self: *ControlFlowHandler, cast_expr: ast.Expr.Data, preserve_result: bool) !void {
-        const cast_data = cast_expr.Cast;
+    pub fn generateCast(self: *ControlFlowHandler, cast_expr: *ast.Expr, preserve_result: bool) !void {
+        const cast_data = cast_expr.data.Cast;
+        // Every branch's value becomes the cast's: the subject read as the
+        // member it was proved to hold, or a branch's own value.
+        const cast_type = try self.generator.typeOf(cast_expr);
         const narrowing = try self.computeCastNarrowing(cast_data);
 
         // Generate the value to cast
         try self.generator.generateExpression(cast_data.value, true, false);
-
-        // If this cast initializes a declaration, consume the target so nested
-        // casts in the branches don't inherit it. The declared binding is written
-        // once, after the cast resolves, by the declaration's own `StoreDecl`
-        // (which narrows the subject to the declared type). An earlier attempt to
-        // also store the raw subject here, so the name was readable inside the
-        // then/else branches, emitted a full `DoxaValue` store into the
-        // scalar-typed global slot and corrupted adjacent globals; see
-        // TODO(branch-binding): reintroduce a correctly narrowed branch store.
-        if (self.generator.cast_decl_var_index != null) {
-            self.generator.cast_decl_var_index = null;
-            self.generator.cast_decl_var_name = null;
-        }
 
         // Duplicate it so we can keep original value on success path
         try self.generator.instructions.append(.Dup);
@@ -1335,16 +1396,21 @@ pub const ControlFlowHandler = struct {
             .Union => "union",
         };
 
-        // Check runtime type against target type using dedicated TypeCheck instruction
-        // A group subject is discriminated by its boxed member index instead: two
-        // members of the same runtime category (`enum`, `struct`) would otherwise
-        // be conflated by the broad categories `target_name` maps to.
-        const group_member_index: ?u32 = switch (cast_data.target_type.data) {
-            .Custom => |custom| self.resolveCastGroupMember(cast_data.value, self.generator.type_system.typeForRef(custom.ref.?)),
+        // Check runtime type against target type using dedicated TypeCheck instruction.
+        // A boxed subject is discriminated by the member it holds instead: two
+        // members of the same runtime category (`enum`, `struct`) would
+        // otherwise be conflated by the broad categories `target_name` maps
+        // to, and a group target is every member the group flattened into.
+        const subject_type = try self.generator.typeOf(cast_data.value);
+        const boxed_members: ?[]const u32 = switch (cast_data.target_type.data) {
+            .Custom => |custom| if (subject_type == .Union or subject_type == .Group)
+                try self.boxedMembersNamed(subject_type, self.generator.type_system.typeForRef(custom.ref.?))
+            else
+                null,
             else => null,
         };
-        if (group_member_index) |member_index| {
-            try self.generator.instructions.append(.{ .MemberCheck = .{ .member_index = member_index } });
+        if (boxed_members) |members| {
+            try self.generator.instructions.append(.{ .MemberCheck = .{ .members = members } });
         } else {
             try self.generator.instructions.append(.{ .TypeCheck = .{ .target_type = target_name } });
         }
@@ -1357,11 +1423,13 @@ pub const ControlFlowHandler = struct {
 
         // Else branch: drop original value and evaluate else expression
         try self.generator.instructions.append(.{ .Label = .{ .name = else_label } });
+        if (cast_data.decl_else) |binding| try self.bindCastDecl(cast_data.decl_name.?, binding, subject_type);
         try self.generator.instructions.append(.Pop);
         if (cast_data.else_branch) |else_expr| {
             // Preserve result only if requested by parent
             if (narrowing) |nw| try self.applyCastNarrowing(nw, nw.else_type, nw.else_members);
             try self.generator.generateExpression(else_expr, preserve_result, false);
+            if (preserve_result) try self.generator.convertValue(try self.generator.typeOf(else_expr), cast_type);
             if (narrowing) |nw| try self.restoreCastNarrowing(nw);
         } else {
             // No else branch: cast must fail -> halt program
@@ -1371,23 +1439,27 @@ pub const ControlFlowHandler = struct {
 
         // Success branch
         try self.generator.instructions.append(.{ .Label = .{ .name = ok_label } });
+        if (cast_data.decl_then) |binding| try self.bindCastDecl(cast_data.decl_name.?, binding, subject_type);
         if (cast_data.then_branch) |then_expr| {
             if (narrowing) |nw| try self.applyCastNarrowing(nw, nw.then_type, nw.then_members);
             if (then_expr.data == .Block) {
                 try self.generator.generateExpression(then_expr, true, false);
                 try self.generator.instructions.append(.Pop);
-                if (!preserve_result) {
+                if (preserve_result) {
+                    try self.generator.convertValue(subject_type, cast_type);
+                } else {
                     try self.generator.instructions.append(.Pop);
                 }
             } else {
                 try self.generator.instructions.append(.Pop);
                 try self.generator.generateExpression(then_expr, preserve_result, false);
+                if (preserve_result) try self.generator.convertValue(try self.generator.typeOf(then_expr), cast_type);
             }
             if (narrowing) |nw| try self.restoreCastNarrowing(nw);
+        } else if (preserve_result) {
+            try self.generator.convertValue(subject_type, cast_type);
         } else {
-            if (!preserve_result) {
-                try self.generator.instructions.append(.Pop);
-            }
+            try self.generator.instructions.append(.Pop);
         }
 
         // After the success path, explicitly jump to the common end label so that
@@ -1397,6 +1469,15 @@ pub const ControlFlowHandler = struct {
 
         // End merge point
         try self.generator.instructions.append(.{ .Label = .{ .name = end_label } });
+    }
+
+    /// Bind the name a cast declares for one of its branches to the subject on
+    /// top of the stack, of `subject_type`, read as the branch's narrowed type.
+    fn bindCastDecl(self: *ControlFlowHandler, name: []const u8, binding: ast.CastBinding, subject_type: HIRType) !void {
+        const narrowed = self.generator.type_system.convertTypeInfo(binding.type_info.*);
+        try self.generator.instructions.append(.Dup);
+        try self.generator.convertValue(subject_type, narrowed);
+        try self.generator.storePlace(try self.generator.placeOf(binding.storage, name, false), narrowed, .rehome);
     }
 
     /// The value of the variant of enum `enum_id` that `pattern` names.

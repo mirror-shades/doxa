@@ -34,11 +34,17 @@ pub fn lookupVariable(self: *SemanticAnalyzer, name: []const u8) ErrorList!?*Var
 }
 
 pub const NameResult = struct {
+    /// What the name denotes here: a narrowing view where one is active.
     variable: ?*Variable = null,
+    /// The storage beneath every view: what a store to the name writes.
+    binding: ?*Variable = null,
     /// Set when the name denotes a module-level entity: a top-level
     /// declaration of the current record or anything reached through its
     /// bindings.
     symbol: ?SymbolRef = null,
+    /// The binding is module-level storage: a global of this record or of
+    /// one it imports.
+    global: bool = false,
 };
 
 /// Resolve a bare name to its variable and, for a module-level entity, its
@@ -48,18 +54,22 @@ pub fn resolveName(self: *SemanticAnalyzer, name: []const u8) ErrorList!NameResu
     if (self.current_scope) |scope| {
         if (scope.lookupVariable(name)) |variable| {
             scope.markUsed(name);
-            const binding = underlyingBinding(scope, name) orelse
+            const binding = underlyingBinding(scope, name) orelse {
                 // A view of a name no scope binds: an imported global.
-                return .{ .variable = variable, .symbol = (try resolveBinding(self, name)).symbol };
+                const imported = try resolveBinding(self, name);
+                return .{ .variable = variable, .binding = imported.binding, .symbol = imported.symbol, .global = imported.global };
+            };
             const module_scope = self.moduleScope(self.current_module);
-            if (module_scope.lookupLocalVariable(name) != binding) return .{ .variable = variable };
+            if (module_scope.lookupLocalVariable(name) != binding) return .{ .variable = variable, .binding = binding };
             const bound = self.graph.record(self.current_module).bindings.get(name);
             return .{
                 .variable = variable,
+                .binding = binding,
                 .symbol = if (bound) |b| switch (b.binding) {
                     .symbol => |symbol| symbol,
                     .namespace => null,
                 } else null,
+                .global = true,
             };
         }
     }
@@ -86,12 +96,15 @@ fn resolveBinding(self: *SemanticAnalyzer, name: []const u8) ErrorList!NameResul
     // to a later global, which a declaration cannot see.
     if (symbol.module == self.current_module) return .{};
     markUsed(self, self.current_module, name);
-    return .{ .variable = try declaredVariable(self, symbol), .symbol = symbol };
+    const variable = try declaredVariable(self, symbol);
+    return .{ .variable = variable, .binding = variable, .symbol = symbol, .global = true };
 }
 
 /// Resolve a `Variable` expression and record what it denotes when it names a
 /// module-level entity — the record's own globals included, which become
-/// global sites. Locals are left to codegen's own storage tracking.
+/// global sites. Locals are left to codegen's own storage tracking. Every
+/// resolved name is recorded as a store target: a read-modify-write of the
+/// name stores the type beneath its view, not the view's.
 pub fn resolveVariableExpr(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList!?*Variable {
     const result = try resolveName(self, expr.data.Variable.lexeme);
     if (result.symbol) |symbol| {
@@ -101,19 +114,33 @@ pub fn resolveVariableExpr(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList!?
             try self.recordGlobalSite(.{ .symbol = symbol, .place = .{ .name = &expr.data.Variable } });
         }
     }
+    try recordStoreTarget(self, expr.base.id, result.variable, result.binding, result.global);
     return result.variable;
 }
 
-/// Resolve the target of an assignment (`x is ...`, `x += ...`). A
-/// module-level global is recorded as a global site.
-pub fn resolveAssignmentTarget(self: *SemanticAnalyzer, target: *ast.Token) ErrorList!?*Variable {
+/// Resolve the target of an assignment (`x is ...`, `x += ...`), recording
+/// it as the assignment's store target. A module-level global is recorded as
+/// a global site.
+pub fn resolveAssignmentTarget(self: *SemanticAnalyzer, assignment: *const ast.Expr, target: *ast.Token) ErrorList!?*Variable {
     const result = try resolveName(self, target.lexeme);
     if (result.symbol) |symbol| {
         if (symbol.kind == .Variable or symbol.kind == .Constant) {
             try self.recordGlobalSite(.{ .symbol = symbol, .place = .{ .name = target } });
         }
     }
+    try recordStoreTarget(self, assignment.base.id, result.variable, result.binding, result.global);
     return result.variable;
+}
+
+/// Record what a store through `node` writes — the storage beneath every
+/// view, `binding` — and what the name reads there, `variable`. `global` says
+/// the binding is module-level storage.
+pub fn recordStoreTarget(self: *SemanticAnalyzer, node: ast.NodeId, variable: ?*Variable, binding: ?*Variable, global: bool) ErrorList!void {
+    const storages = &self.memory.scope_manager.value_storage;
+    const storage = (binding orelse return).storage_id;
+    const slot = storages.get(storage) orelse return;
+    const read = storages.get((variable orelse return).storage_id) orelse return;
+    try self.store_targets.put(node, .{ .slot = slot.type_info, .read = read.type_info, .storage = storage, .global = global });
 }
 
 /// The resolution a module-level symbol earns at a use site.

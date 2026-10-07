@@ -47,9 +47,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
                 inferred_type = elem_type;
             }
         } else if (peek.expr.data == .Variable) {
-            if (self.generator.getTrackedVariableType(peek.expr.data.Variable.lexeme)) |tracked_type| {
-                inferred_type = tracked_type;
-            }
+            inferred_type = try self.generator.typeOf(peek.expr);
         } else if (peek.expr.data == .FieldAccess) {
             // For field accesses, try to recover the concrete enum type name
             // (e.g., "Species" for zoo[0].animal_type) so the LLVM backend
@@ -108,6 +106,18 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
             }
         }
 
+        // A union the source wrote with a group shows the group, not the
+        // members it flattened into.
+        var member_slots: ?[]const u32 = null;
+        if (union_members) |names| {
+            if (inferred_type == .Union) {
+                if (try self.collapseWrittenGroups(peek.expr, inferred_type, names)) |collapsed| {
+                    union_members = collapsed.names;
+                    member_slots = collapsed.slots;
+                }
+            }
+        }
+
         // Generate peek instruction with full path and correct type
         // B2: peeking a struct prints it through the descriptor registry.
         self.generator.markReflectedType(inferred_type);
@@ -116,6 +126,7 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
             .value_type = inferred_type,
             .location = peek.location,
             .union_members = union_members,
+            .member_slots = member_slots,
             .enum_type_name = enum_type_name,
         } });
 
@@ -127,6 +138,71 @@ const StructPeekInfo = HIRGenerator.StructPeekInfo;
         if (!preserve_result) {
             try self.generator.instructions.append(.Pop);
         }
+    }
+
+    const CollapsedMembers = struct {
+        names: [][]const u8,
+        slots: []const u32,
+    };
+
+    /// The display list of a union whose written type names groups: each
+    /// member flattened from a written group is shown as that group, once, at
+    /// the place of its first member. Null when the written type names no group.
+    fn collapseWrittenGroups(self: *IOHandler, expr: *ast.Expr, union_type: HIRType, member_names: [][]const u8) !?CollapsedMembers {
+        const g = self.generator;
+        const written = g.semantic.getCachedExprType(expr) orelse return null;
+        if (written.base != .Union) return null;
+        var groups: std.ArrayListUnmanaged(u32) = .empty;
+        try self.collectWrittenGroups(written, &groups);
+        if (groups.items.len == 0) return null;
+
+        const members = union_type.Union.members;
+        var names: std.ArrayListUnmanaged([]const u8) = .empty;
+        const slots = try g.allocator.alloc(u32, members.len);
+        var slot_groups: std.ArrayListUnmanaged(?u32) = .empty;
+        defer slot_groups.deinit(g.allocator);
+        for (members, member_names, slots) |member, member_name, *slot| {
+            const group = self.writtenGroupOf(member.*, groups.items);
+            const existing = if (group) |gid| for (slot_groups.items, 0..) |slot_group, idx| {
+                if (slot_group == gid) break idx;
+            } else null else null;
+            if (existing) |idx| {
+                slot.* = @intCast(idx);
+                continue;
+            }
+            slot.* = @intCast(names.items.len);
+            try names.append(g.allocator, if (group) |gid| g.semantic.group_table.displayName(gid).? else member_name);
+            try slot_groups.append(g.allocator, group);
+        }
+        return .{ .names = try names.toOwnedSlice(g.allocator), .slots = slots };
+    }
+
+    fn collectWrittenGroups(self: *IOHandler, written: *const ast.TypeInfo, groups: *std.ArrayListUnmanaged(u32)) !void {
+        const ut = written.union_type orelse return;
+        for (ut.types) |member| {
+            if (member.base == .Union) {
+                try self.collectWrittenGroups(member, groups);
+                continue;
+            }
+            const custom = member.custom_type orelse continue;
+            const gid = self.generator.semantic.group_table.idOf(custom.resolved()) orelse continue;
+            try groups.append(self.generator.allocator, gid);
+        }
+    }
+
+    /// The first of `groups` that flattened into the union member `member`.
+    fn writtenGroupOf(self: *IOHandler, member: HIRType, groups: []const u32) ?u32 {
+        for (groups) |gid| {
+            for (self.generator.semantic.group_table.members(gid) orelse &.{}) |group_member| {
+                const holds = switch (group_member.kind) {
+                    .Enum => member == .Enum and member.Enum == group_member.id,
+                    .Struct => member == .Struct and member.Struct == group_member.id,
+                    .Group => member == .Group and member.Group == group_member.id,
+                };
+                if (holds) return gid;
+            }
+        }
+        return null;
     }
 
     /// Generate HIR for struct peek expressions

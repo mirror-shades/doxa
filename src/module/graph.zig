@@ -348,6 +348,21 @@ pub const ZigUnit = struct {
     source: []const u8,
     sigs: []ast.ZigFnSig,
     location: ?Location = null,
+    /// One entry per distinct `DoxaError_<path>` a signature returns, filled in
+    /// by the analyzer's Types stage once the enum each path names is resolved.
+    /// The wrapper generator turns each into a Zig error set with these variant
+    /// names, so a shim body can `return error.<Variant>`.
+    error_sets: []const ZigErrorSet = &.{},
+};
+
+/// A fallible return's error set, resolved: the enum path exactly as written
+/// after `DoxaError_` (which names the generated Zig error set), the resolved
+/// enum identity (which lets each signature find its own set), and the enum's
+/// variant names in declaration order (which is the discriminant).
+pub const ZigErrorSet = struct {
+    path: []const u8,
+    ref: ast.TypeRef,
+    variants: []const []const u8,
 };
 
 pub const ModuleRecord = struct {

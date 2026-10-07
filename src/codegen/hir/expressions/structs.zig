@@ -431,35 +431,7 @@ pub const StructsHandler = struct {
 
             // Store the result back to the base variable/alias
             switch (outer_field.object.data) {
-                .Variable => |tok| {
-                    const var_name = tok.lexeme;
-                    const var_index = try self.generator.getOrCreateVariable(var_name);
-                    const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                    try self.generator.instructions.append(.{
-                        .StoreVar = .{
-                            .var_index = var_index,
-                            .var_name = var_name,
-                            .scope_kind = .Local,
-                            .module_context = null,
-                            .expected_type = expected_type,
-                            .heap_copy = .keep,
-                        },
-                    });
-                },
-                .This => {
-                    const var_index = try self.generator.getOrCreateVariable("this");
-                    // 'this' is always a struct alias in instance methods
-                    try self.generator.instructions.append(.{
-                        .StoreVar = .{
-                            .var_index = var_index,
-                            .var_name = "this",
-                            .scope_kind = .Local,
-                            .module_context = null,
-                            .expected_type = HIRType{ .Struct = 0 },
-                            .heap_copy = .keep,
-                        },
-                    });
-                },
+                .Variable, .This => try self.generator.storeTo(outer_field.object, try self.generator.convertForStoreBack(outer_field.object), .keep),
                 else => {},
             }
         } else {
@@ -489,58 +461,8 @@ pub const StructsHandler = struct {
 
             // If assigning to a variable/alias field, persist the modified struct back
             switch (assign_data.object.data) {
-                .Variable => |tok| {
-                    const var_name = tok.lexeme;
-                    const var_index = try self.generator.getOrCreateVariable(var_name);
-                    const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                    try self.generator.instructions.append(.{
-                        .StoreVar = .{
-                            .var_index = var_index,
-                            .var_name = var_name,
-                            .scope_kind = .Local,
-                            .module_context = null,
-                            .expected_type = expected_type,
-                            .heap_copy = .keep,
-                        },
-                    });
-                },
-                .This => {
-                    if (self.generator.symbol_table.isAliasParameter("this")) {
-                        if (self.generator.slot_manager.getAliasSlot("this")) |alias_slot| {
-                            try self.generator.instructions.append(.{
-                                .StoreAlias = .{
-                                    .slot_index = alias_slot,
-                                    .var_name = "this",
-                                    .expected_type = HIRType{ .Struct = 0 },
-                                },
-                            });
-                        } else {
-                            const var_index = try self.generator.getOrCreateVariable("this");
-                            try self.generator.instructions.append(.{
-                                .StoreVar = .{
-                                    .var_index = var_index,
-                                    .var_name = "this",
-                                    .scope_kind = .Local,
-                                    .module_context = null,
-                                    .expected_type = HIRType{ .Struct = 0 },
-                                    .heap_copy = .keep,
-                                },
-                            });
-                        }
-                    } else {
-                        const var_index = try self.generator.getOrCreateVariable("this");
-                        try self.generator.instructions.append(.{
-                            .StoreVar = .{
-                                .var_index = var_index,
-                                .var_name = "this",
-                                .scope_kind = .Local,
-                                .module_context = null,
-                                .expected_type = HIRType{ .Struct = 0 },
-                                .heap_copy = .keep,
-                            },
-                        });
-                    }
-                },
+                .Variable => try self.generator.storeTo(assign_data.object, try self.generator.convertForStoreBack(assign_data.object), .keep),
+                .This => try self.generator.storeTo(assign_data.object, try self.generator.convertForStoreBack(assign_data.object), .rehome),
                 else => {},
             }
         }

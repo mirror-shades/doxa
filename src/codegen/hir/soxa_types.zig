@@ -41,6 +41,33 @@ pub const HIRType = union(enum) {
 
     Unknown,
     Poison,
+
+    /// Structural equality. Named types are equal by table id and unions by
+    /// id: `UnionTable` interns every union, so equal unions share one.
+    pub fn eql(a: HIRType, b: HIRType) bool {
+        if (std.meta.activeTag(a) != std.meta.activeTag(b)) return false;
+        return switch (a) {
+            .Int, .Byte, .Float, .String, .Tetra, .Nothing, .Unknown, .Poison => true,
+            .Array => |element| element.eql(b.Array.*),
+            .Map => |map| map.key.eql(b.Map.key.*) and map.value.eql(b.Map.value.*),
+            .Struct => |id| id == b.Struct,
+            .Enum => |id| id == b.Enum,
+            .Group => |id| id == b.Group,
+            .Function => |function| {
+                if (function.params.len != b.Function.params.len) return false;
+                for (function.params, b.Function.params) |pa, pb| {
+                    if (!pa.eql(pb.*)) return false;
+                }
+                return function.ret.eql(b.Function.ret.*);
+            },
+            .Union => |u| u.id == b.Union.id,
+        };
+    }
+
+    /// A value of this type is a `%DoxaValue` box naming its member.
+    pub fn isBoxed(self: HIRType) bool {
+        return self == .Union or self == .Group;
+    }
 };
 
 pub fn arrayInnermostElementType(element_type: HIRType) ?HIRType {
@@ -89,6 +116,12 @@ pub const EnumTypeInfo = struct {
     name: []const u8,
     variants: [][]const u8,
 };
+
+/// A variable's storage identity: the analyzer's storage id for the binding
+/// (`StoreTarget.storage`, `FunctionParam.storage`), or, for a value only the
+/// generator introduces, an id `HIRGenerator.tempSlot` mints above every
+/// analyzer id.
+pub const Slot = u32;
 
 pub const ScopeKind = enum {
     Local,

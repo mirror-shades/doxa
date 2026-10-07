@@ -174,11 +174,22 @@ pub const StructDecl = struct {
     }
 };
 
+/// A name an `as` cast declares inside one of its branches: its storage and
+/// the narrowed type it holds there.
+pub const CastBinding = struct {
+    storage: u32,
+    type_info: *TypeInfo,
+};
+
 pub const FunctionParam = struct {
     name: Token,
     type_expr: ?*TypeExpr,
     default_value: ?*Expr = null,
     is_alias: bool = false,
+    /// The storage id of the parameter's binding, filled in place by analysis
+    /// when the function body is checked. Codegen keys the parameter's slot by
+    /// it, as it keys every other variable by its `StoreTarget.storage`.
+    storage: ?u32 = null,
 
     pub fn deinit(self: *FunctionParam, allocator: std.mem.Allocator) void {
         if (self.type_expr) |te| {
@@ -532,6 +543,10 @@ pub const MatchCase = struct {
         tokens: []const Token,
         is_wildcard: bool = false,
         field_names: []const Token = &[_]Token{},
+        /// The storage id of each destructured field's binding, parallel to
+        /// `field_names`, filled in place by analysis. Codegen stores each
+        /// field into its binding's slot.
+        field_storages: []u32 = &.{},
         /// The index, in the arm's `patterns`, of the pattern this path spells.
         pattern: u32,
 
@@ -670,6 +685,11 @@ pub const Expr = struct {
             // the declared name — so any analysis pass can narrow/expose that
             // binding inside the then/else branches.
             decl_name: ?[]const u8 = null,
+            /// The declared name's binding inside the then and the else
+            /// branch, filled in place by analysis. Codegen stores the
+            /// narrowed subject into it as the branch begins.
+            decl_then: ?CastBinding = null,
+            decl_else: ?CastBinding = null,
         },
         ReturnExpr: struct { value: ?*Expr },
         Unreachable: struct {

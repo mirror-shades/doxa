@@ -5,6 +5,7 @@ const SoxaTypes = @import("soxa_types.zig");
 const ScopeKind = SoxaTypes.ScopeKind;
 const ArrayStorageKind = SoxaTypes.ArrayStorageKind;
 const StructId = @import("soxa_types.zig").StructId;
+pub const Slot = SoxaTypes.Slot;
 pub const CallKind = @import("soxa_types.zig").CallKind;
 const Reporting = @import("../../utils/reporting.zig");
 const Expr = @import("../../ast/ast.zig").Expr;
@@ -63,12 +64,15 @@ pub const HIRInstruction = union(enum) {
     //==================================================================
     // VARIABLE OPERATIONS (Context-aware)
     //==================================================================
+    //
+    // Every variable instruction names its storage by `slot`, never by its
+    // spelling: two bindings that share a name never share storage.
 
     /// Load variable with full resolution context
     /// LLVM: LLVMBuildLoad -> symbol_table[var_name]
     LoadVar: struct {
-        var_index: u32, // Direct index into the current scope's variables
-        var_name: []const u8, // LLVM: Symbol table lookup
+        slot: Slot,
+        var_name: []const u8, // Display name; a global's link name
         scope_kind: ScopeKind, // Resolution context
         module_context: ?[]const u8, // For imported variables
     },
@@ -76,7 +80,7 @@ pub const HIRInstruction = union(enum) {
     /// Store to variable
     /// LLVM: LLVMBuildStore
     StoreVar: struct {
-        var_index: u32,
+        slot: Slot,
         var_name: []const u8,
         scope_kind: ScopeKind,
         module_context: ?[]const u8,
@@ -87,7 +91,7 @@ pub const HIRInstruction = union(enum) {
     /// Store variable declaration (var/const with initializer)
     /// LLVM: LLVMAddGlobal with proper type inference
     StoreDecl: struct {
-        var_index: u32,
+        slot: Slot,
         var_name: []const u8,
         scope_kind: ScopeKind,
         module_context: ?[]const u8,
@@ -97,13 +101,17 @@ pub const HIRInstruction = union(enum) {
 
     /// This is used for passing alias arguments by reference
     PushStorageId: struct {
-        var_index: u32,
+        slot: Slot,
         var_name: []const u8,
         scope_kind: ScopeKind,
+        /// Set when the variable is itself a `^` parameter: the storage is
+        /// re-passed from that alias slot, not from a local of this frame.
+        alias_slot: ?u32 = null,
     },
 
     /// Load value from an alias parameter
     LoadAlias: struct {
+        slot: Slot,
         var_name: []const u8,
         slot_index: u32,
     },
@@ -159,27 +167,34 @@ pub const HIRInstruction = union(enum) {
         target_type: []const u8, // The type name to check against
     },
 
-    /// Boxed member index check: unions and groups pack the active member into
-    /// the same `reserved` bits, so one instruction discriminates either.
+    /// Boxed member check: unions and groups pack the active member into the
+    /// same `reserved` bits, so one instruction discriminates either. True when
+    /// the box holds any of `members` — a set, because "is an `Error`" over
+    /// `string | Error` asks for every member the group flattened into.
     ///
     /// `expected_tag` additionally compares the box's runtime tag (its head
     /// word). A union whose member list has no distinct index for a `nothing`
     /// arm (or reorders members) would otherwise let a `nothing` box satisfy a
     /// struct member's index check; the tag is what separates the two.
     MemberCheck: struct {
-        member_index: u32,
+        members: []const u32,
         expected_tag: ?u32 = null,
     },
 
     /// Unwrap a boxed %DoxaValue, replacing it with the member payload.
     UnboxPayload: struct {},
 
-    /// Construct a union value from the current top-of-stack value.
-    /// LLVM: Build a canonical %DoxaValue with union_id + active member index
-    ///       encoded into the reserved field.
-    UnionConstruct: struct {
-        union_type: HIRType,
-        member_index: u32,
+    /// Box the top-of-stack value as `boxed_type`, a union or a group: the
+    /// box names the member the value is. A value already boxed as another
+    /// type is re-packed for `boxed_type`.
+    Box: struct {
+        boxed_type: HIRType,
+    },
+
+    /// Read the top-of-stack box as `member_type`, a member a check has proved
+    /// it holds: the inverse of `Box`.
+    Unbox: struct {
+        member_type: HIRType,
     },
 
     /// Narrow a union-typed variable to a member view for the following span of
@@ -187,12 +202,14 @@ pub const HIRInstruction = union(enum) {
     /// tracks; the LLVM backend uses it to unwrap the boxed `%DoxaValue` at the
     /// next `LoadVar`, so consumers see the concrete member representation.
     NarrowVar: struct {
+        slot: Slot,
         var_name: []const u8,
         narrowed_type: HIRType,
     },
 
     /// End the narrowing span started by `NarrowVar`.
     RestoreVar: struct {
+        slot: Slot,
         var_name: []const u8,
     },
 
@@ -433,6 +450,11 @@ pub const HIRInstruction = union(enum) {
         value_type: HIRType,
         location: ?Reporting.Location,
         union_members: ?[][]const u8 = null,
+        /// For each member of a union `value_type`, the entry of
+        /// `union_members` that names it, when they differ: a union written
+        /// with a group lists the group once for all the members it flattened
+        /// into (`string | >Error`). Null means member `i` is entry `i`.
+        member_slots: ?[]const u32 = null,
         /// Optional enum type name for enum peeks (e.g., "Species").
         /// This lets the LLVM backend print enums with their concrete type
         /// names independent of stack metadata.

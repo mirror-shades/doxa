@@ -33,14 +33,14 @@ public function mapIOError(code :: int) returns error.StdError {
     }
 }
 
-public function downloadUrl(url :: string, destination :: string) returns error.StdError {
+public function downloadUrl(url :: string, destination :: string) returns nothing | error.StdError {
     HTTP.downloadUrl(url, destination)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function download(url :: string) returns error.StdError {
+public function download(url :: string) returns nothing | error.StdError {
     HTTP.download(url)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -220,7 +220,7 @@ function wsOpFromCode(code :: int) returns WsOp {
 /* Accept the pending request's upgrade to a WebSocket (RFC 6455). Call after
    `readRequest`. The handshake is written in the background; `wsSend` may be
    called at once and its frames follow the handshake. */
-public function upgradeWebSocket(connection :: int) returns error.StdError {
+public function upgradeWebSocket(connection :: int) returns nothing | error.StdError {
     HTTP.upgradeWebSocket(connection)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -231,7 +231,7 @@ public function upgradeWebSocket(connection :: int) returns error.StdError {
    peer that is slow to read never blocks the caller. A peer that falls further
    behind than `Limit.OutboundBytes` is closed with `CloseReason.SlowConsumer`
    and the call returns `error.IO.WriteFailed`. */
-public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
     HTTP.wsSend(connection, wsOpCode(op), data)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -415,7 +415,7 @@ function limitCode(which :: Limit) returns int {
 }
 
 /* Set one limit for connections opened from now on. */
-public function setLimit(which :: Limit, value :: int) returns error.StdError {
+public function setLimit(which :: Limit, value :: int) returns nothing | error.StdError {
     HTTP.setLimit(limitCode(which), value)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -487,14 +487,14 @@ public struct Router {
     }
 }
 
-public function respond(connection :: int, status :: int, headers :: string, body :: string) returns error.StdError {
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | error.StdError {
     HTTP.respond(connection, status, headers, body)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function close(handle :: int) returns error.StdError {
+public function close(handle :: int) returns nothing | error.StdError {
     HTTP.close(handle)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -590,28 +590,28 @@ public function wsRead(connection :: int) returns Message | nothing | error.StdE
 }
 
 /* Send one frame with an explicit opcode. */
-public function wsWrite(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
     return wsSend(connection, op, data)
 }
 
-public function wsText(connection :: int, data :: string) returns error.StdError {
+public function wsText(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Text, data)
 }
 
-public function wsBinary(connection :: int, data :: string) returns error.StdError {
+public function wsBinary(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Binary, data)
 }
 
-public function wsPing(connection :: int, data :: string) returns error.StdError {
+public function wsPing(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Ping, data)
 }
 
-public function wsPong(connection :: int, data :: string) returns error.StdError {
+public function wsPong(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Pong, data)
 }
 
 /* Send a Close frame (empty payload) and drop the connection. */
-public function wsClose(connection :: int) returns error.StdError {
+public function wsClose(connection :: int) returns nothing | error.StdError {
     wsSend(connection, WsOp.Close, "")
     return close(connection)
 }

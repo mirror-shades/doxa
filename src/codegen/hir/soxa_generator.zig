@@ -15,6 +15,8 @@ pub const HIRValue = SoxaValues.HIRValue;
 const HIREnum = SoxaValues.HIREnum;
 pub const HIRMapEntry = SoxaValues.HIRMapEntry;
 const SoxaTypes = @import("soxa_types.zig");
+const Slot = SoxaTypes.Slot;
+const ScopeKind = SoxaTypes.ScopeKind;
 pub const HIRType = SoxaTypes.HIRType;
 const CallKind = SoxaTypes.CallKind;
 const HIRProgram = SoxaTypes.HIRProgram;
@@ -25,13 +27,13 @@ const LabelGenerator = ResourceManager.LabelGenerator;
 const ConstantManager = ResourceManager.ConstantManager;
 const SymbolTable = @import("symbol_table.zig").SymbolTable;
 const TypeSystem = @import("type_system.zig").TypeSystem;
-const SlotManager = @import("slot_manager.zig").SlotManager;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 const semantic_module = @import("../../analysis/semantic/semantic.zig");
 const SemanticAnalyzer = semantic_module.SemanticAnalyzer;
 const StructMethodInfo = semantic_module.StructMethodInfo;
+const StoreTarget = semantic_module.StoreTarget;
 const Resolution = @import("../../analysis/semantic/resolution.zig").Resolution;
 const BasicHandler = @import("expressions/basic.zig").BasicExpressionHandler;
 const BinaryHandler = @import("expressions/binary.zig").BinaryExpressionHandler;
@@ -42,85 +44,8 @@ const StructsHandler = @import("expressions/structs.zig").StructsHandler;
 const AssignmentsHandler = @import("expressions/assignments.zig").AssignmentsHandler;
 const IOHandler = @import("expressions/io.zig").IOHandler;
 const ModuleCall = @import("module_call.zig");
-const union_handling = @import("../../analysis/semantic/union_handling.zig");
 const module_graph = @import("../../module/graph.zig");
 const TypeRef = ast.TypeRef;
-
-/// Whether `return` with no value appears anywhere in the statement list (including inside expr trees).
-fn functionStmtsHaveBareReturn(stmts: []ast.Stmt) bool {
-    for (stmts) |stmt| {
-        if (stmtHasBareReturn(stmt)) return true;
-    }
-    return false;
-}
-
-fn stmtHasBareReturn(stmt: ast.Stmt) bool {
-    switch (stmt.data) {
-        .Return => |r| return r.value == null,
-        .Expression => |opt| {
-            if (opt) |e| return exprHasBareReturn(e);
-            return false;
-        },
-        .FunctionDecl => |f| return functionStmtsHaveBareReturn(f.body),
-        .VarDecl => |v| {
-            if (v.initializer) |init| return exprHasBareReturn(init);
-            return false;
-        },
-        else => return false,
-    }
-}
-
-fn exprHasBareReturn(expr: *ast.Expr) bool {
-    switch (expr.data) {
-        .If => |i| {
-            if (i.condition) |c| if (exprHasBareReturn(c)) return true;
-            if (i.then_branch) |t| if (exprHasBareReturn(t)) return true;
-            if (i.else_branch) |e| if (exprHasBareReturn(e)) return true;
-            return false;
-        },
-        .Block => |b| {
-            if (functionStmtsHaveBareReturn(b.statements)) return true;
-            if (b.value) |v| if (exprHasBareReturn(v)) return true;
-            return false;
-        },
-        .Grouping => |g| return if (g) |inner| exprHasBareReturn(inner) else false,
-        .Loop => |l| return exprHasBareReturn(l.body),
-        .Match => |m| {
-            if (exprHasBareReturn(m.value)) return true;
-            for (m.cases) |case| {
-                if (exprHasBareReturn(case.body)) return true;
-            }
-            return false;
-        },
-        .Binary => |bin| {
-            if (bin.left) |l| if (exprHasBareReturn(l)) return true;
-            if (bin.right) |r| if (exprHasBareReturn(r)) return true;
-            return false;
-        },
-        .Unary => |u| {
-            if (u.right) |r| if (exprHasBareReturn(r)) return true;
-            return false;
-        },
-        .Assignment => |a| {
-            if (a.value) |v| if (exprHasBareReturn(v)) return true;
-            return false;
-        },
-        .Array => |items| {
-            for (items) |item| {
-                if (exprHasBareReturn(item)) return true;
-            }
-            return false;
-        },
-        .FunctionCall => |c| {
-            if (exprHasBareReturn(c.callee)) return true;
-            for (c.arguments) |arg| {
-                if (exprHasBareReturn(arg.expr)) return true;
-            }
-            return false;
-        },
-        else => return false,
-    }
-}
 
 /// A declared parameter type as the signature table records it: primitives
 /// plus the container and marker types the call lowering passes through
@@ -132,46 +57,6 @@ fn sanitizeParamType(t: HIRType) HIRType {
         => t,
         else => .Int,
     };
-}
-
-/// Declared `returns A | B` with a bare `return` in the body is lowered as
-/// `nothing | A | B`; a declared group with a bare `return` likewise becomes
-/// `nothing | Group`.
-fn effectiveReturnTypeForSignature(generator: *HIRGenerator, declared: ast.TypeInfo, body: []ast.Stmt) !ast.TypeInfo {
-    const allocator = generator.allocator;
-    if (declared.base == .Custom and declared.custom_type != null) {
-        if (!functionStmtsHaveBareReturn(body)) return declared;
-        const custom = generator.customTypeOf(declared) orelse return declared;
-        if (custom.kind != .Group) return declared;
-        const nothing_ptr = try allocator.create(ast.TypeInfo);
-        nothing_ptr.* = .{ .base = .Nothing, .is_mutable = false };
-        const group_type = try allocator.create(ast.TypeInfo);
-        group_type.* = .{ .base = .Custom, .custom_type = declared.custom_type, .is_mutable = false };
-        const new_types = try allocator.alloc(*ast.TypeInfo, 2);
-        new_types[0] = nothing_ptr;
-        new_types[1] = group_type;
-        const new_ut = try allocator.create(ast.UnionType);
-        new_ut.* = .{ .types = new_types, .current_type_index = 0 };
-        return ast.TypeInfo{ .base = .Union, .union_type = new_ut, .is_mutable = declared.is_mutable };
-    }
-    if (declared.base != .Union or declared.union_type == null) return declared;
-    if (!functionStmtsHaveBareReturn(body)) return declared;
-
-    const flattened = try union_handling.flattenUnionType(allocator, declared.union_type.?);
-    for (flattened.types) |m| {
-        if (m.base == .Nothing) {
-            return ast.TypeInfo{ .base = .Union, .union_type = flattened, .is_mutable = declared.is_mutable };
-        }
-    }
-
-    const nothing_ptr = try allocator.create(ast.TypeInfo);
-    nothing_ptr.* = .{ .base = .Nothing, .is_mutable = false };
-    const new_types = try allocator.alloc(*ast.TypeInfo, flattened.types.len + 1);
-    new_types[0] = nothing_ptr;
-    @memcpy(new_types[1..], flattened.types);
-    const new_ut = try allocator.create(ast.UnionType);
-    new_ut.* = .{ .types = new_types, .current_type_index = flattened.current_type_index };
-    return ast.TypeInfo{ .base = .Union, .union_type = new_ut, .is_mutable = declared.is_mutable };
 }
 
 pub const TETRA_FALSE: u8 = 0;
@@ -213,7 +98,13 @@ pub const HIRGenerator = struct {
     type_system: TypeSystem,
     struct_methods: std.StringHashMap(std.StringHashMap(StructMethodInfo)),
 
-    slot_manager: SlotManager,
+    /// The `^` parameters of the function being lowered, by their binding's
+    /// slot: the alias slot `BindAlias` bound each one to.
+    alias_params: std.AutoHashMap(Slot, u32),
+    /// The slot of the receiver `this` of the method being lowered.
+    this_slot: ?Slot = null,
+    /// The next alias slot `BindAlias` binds a `^` parameter or `this` to.
+    next_alias_slot: u32 = 0,
 
     function_signatures: SoxaTypes.FunctionSignatureMap,
     function_bodies: std.array_list.Managed(FunctionBody),
@@ -240,25 +131,21 @@ pub const HIRGenerator = struct {
     /// The record whose body is currently being lowered.
     current_module: module_graph.ModuleId,
 
-    // When an `as` cast is a declaration initializer, the declared variable's
-    // slot is pre-created so the cast can store the subject value into it before
-    // running the then/else branches (making the binding readable inside them).
-    cast_decl_var_index: ?u32 = null,
-    cast_decl_var_name: ?[]const u8 = null,
-
     loop_context_stack: std.array_list.Managed(LoopContext),
     current_function_scope_id: ?u32 = null,
 
     deferred_stack: std.array_list.Managed(DeferredBlock),
     loop_deferred_boundaries: std.array_list.Managed(usize),
 
-    is_generating_nested_array: bool = false,
-
     next_scope_id: u32 = 0,
 
     // Serial number for unnamed temporary variables materialized during codegen
     // (e.g. a struct-method receiver that is not a plain variable).
     next_temp_id: u32 = 0,
+
+    /// The next slot `tempSlot` mints: above every storage id the analyzer
+    /// issued, so a generator temporary never shares a binding's storage.
+    next_temp_slot: Slot,
 
     pub const FunctionInfo = SoxaTypes.FunctionInfo;
 
@@ -334,7 +221,7 @@ pub const HIRGenerator = struct {
     /// A generator for the analyzed program. The module graph's mangling is
     /// final: every type gets its canonical key, every global site its link
     /// name, and the analyzer's type and method tables their codegen view.
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, reporter: *Reporter, semantic: *const SemanticAnalyzer) !HIRGenerator {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, reporter: *Reporter, semantic: *SemanticAnalyzer) !HIRGenerator {
         var self = HIRGenerator{
             .io = io,
             .allocator = allocator,
@@ -347,9 +234,9 @@ pub const HIRGenerator = struct {
             .symbol_table = SymbolTable.init(allocator),
             .constant_manager = ConstantManager.init(allocator),
             .label_generator = LabelGenerator.init(allocator),
-            .type_system = TypeSystem.init(allocator, reporter, semantic),
+            .type_system = TypeSystem.init(allocator, reporter, semantic, &semantic.union_table),
             .struct_methods = std.StringHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
-            .slot_manager = SlotManager.init(allocator),
+            .alias_params = std.AutoHashMap(Slot, u32).init(allocator),
             .function_signatures = SoxaTypes.FunctionSignatureMap.init(allocator),
             .function_bodies = std.array_list.Managed(FunctionBody).init(allocator),
             .function_indices = std.StringHashMap(u32).init(allocator),
@@ -367,6 +254,7 @@ pub const HIRGenerator = struct {
             .loop_context_stack = std.array_list.Managed(LoopContext).init(allocator),
             .deferred_stack = std.array_list.Managed(DeferredBlock).init(allocator),
             .loop_deferred_boundaries = std.array_list.Managed(usize).init(allocator),
+            .next_temp_slot = semantic.memory.scope_manager.next_storage_id,
         };
         try self.bindTypes();
         try self.bindGlobalLinkNames();
@@ -481,7 +369,7 @@ pub const HIRGenerator = struct {
         var methods_it = self.struct_methods.valueIterator();
         while (methods_it.next()) |tbl| tbl.*.deinit();
         self.struct_methods.deinit();
-        self.slot_manager.deinit();
+        self.alias_params.deinit();
         self.function_signatures.deinit();
         self.function_bodies.deinit();
         self.function_indices.deinit();
@@ -662,8 +550,7 @@ pub const HIRGenerator = struct {
         const link_name = try self.graph.mangle(self.allocator, module, .function, &.{func.name.lexeme});
         const signature = self.declaredSignature(module, func.name.lexeme);
 
-        const eff_rti = try effectiveReturnTypeForSignature(self, func.return_type_info, func.body);
-        var return_type = self.convertTypeInfo(eff_rti);
+        var return_type = self.convertTypeInfo(func.return_type_info);
         // A function without an explicit `returns` takes the analyzer's
         // inferred return type.
         if (func.return_type_info.base == .Nothing) {
@@ -698,7 +585,7 @@ pub const HIRGenerator = struct {
             .start_instruction_index = 0,
             .function_name = link_name,
             .function_params = func.params,
-            .return_type_info = eff_rti,
+            .return_type_info = func.return_type_info,
             .module_id = module,
             .key = key,
             .param_types = signature.params,
@@ -766,6 +653,8 @@ pub const HIRGenerator = struct {
             self.current_function_scope_id = function_scope_id;
             try self.instructions.append(.{ .EnterScope = .{ .scope_id = function_scope_id, .var_count = 0 } });
 
+            self.alias_params.clearRetainingCapacity();
+            self.this_slot = null;
             const params = function_body.function_params;
 
             const is_method = function_body.function_info.arity > params.len;
@@ -793,8 +682,8 @@ pub const HIRGenerator = struct {
                         if ((info.base == .Struct or info.base == .Enum) and info.custom_type == null) return error.InvalidAliasType;
                     }
 
-                    try self.symbol_table.trackAliasParameter(param.name.lexeme);
-                    const alias_slot = try self.slot_manager.allocateAliasSlot(param.name.lexeme, param_type);
+                    const alias_slot = self.allocAliasSlot();
+                    try self.alias_params.put(try self.paramSlot(param), alias_slot);
                     try self.instructions.append(.{
                         .BindAlias = .{
                             .alias_name = param.name.lexeme,
@@ -804,7 +693,7 @@ pub const HIRGenerator = struct {
                         },
                     });
                 } else {
-                    const var_idx = try self.symbol_table.createVariable(param.name.lexeme);
+                    _ = try self.symbol_table.createVariable(param.name.lexeme);
                     // A by-value heap parameter is deep-copied on entry so the
                     // callee cannot write through to the caller's object. When the
                     // body never writes through it, the copy is unobservable and
@@ -813,9 +702,9 @@ pub const HIRGenerator = struct {
                     // the signature metadata is built (`param_is_readonly`), not
                     // re-derived per binding here.
                     try self.instructions.append(.{ .StoreVar = .{
-                        .var_index = var_idx,
+                        .slot = try self.paramSlot(param),
                         .var_name = param.name.lexeme,
-                        .scope_kind = self.symbol_table.determineVariableScope(param.name.lexeme),
+                        .scope_kind = .Local,
                         .module_context = null,
                         .expected_type = param_type,
                         .heap_copy = if (function_body.function_info.param_is_readonly[alias_lookup]) .keep else .snapshot,
@@ -827,9 +716,11 @@ pub const HIRGenerator = struct {
             if (function_body.function_info.receiver) |struct_id| {
                 const receiver_type = HIRType{ .Struct = struct_id };
                 try self.trackVariableType("this", receiver_type);
-                try self.symbol_table.trackAliasParameter("this");
                 if (self.semantic.struct_table.keyOf(struct_id)) |key| try self.trackVariableCustomType("this", key);
-                const alias_slot = try self.slot_manager.allocateAliasSlot("this", receiver_type);
+                const alias_slot = self.allocAliasSlot();
+                const this_slot = self.tempSlot();
+                self.this_slot = this_slot;
+                try self.alias_params.put(this_slot, alias_slot);
                 try self.instructions.append(.{
                     .BindAlias = .{
                         .alias_name = "this",
@@ -1089,7 +980,7 @@ pub const HIRGenerator = struct {
             .This => try basic_handler.generateThis(),
             .Literal => |lit| try basic_handler.generateLiteral(lit, preserve_result, should_pop_after_use),
             .InterpolatedString => |template| try basic_handler.generateInterpolatedString(template, preserve_result, should_pop_after_use),
-            .Variable => |var_token| try basic_handler.generateVariable(var_token),
+            .Variable => |var_token| try self.loadName(&expr.base, var_token.lexeme),
             .Grouping => |grouping| try basic_handler.generateGrouping(grouping, preserve_result),
             .EnumMember => try basic_handler.generateEnumMember(expr),
             .DefaultArgPlaceholder => try basic_handler.generateDefaultArgPlaceholder(),
@@ -1098,21 +989,15 @@ pub const HIRGenerator = struct {
             .Logical => |log| try binary_handler.generateLogical(log, should_pop_after_use),
             .Unary => |unary| try binary_handler.generateUnary(unary),
 
-            .If => |if_expr| try control_flow_handler.generateIf(if_expr, preserve_result, should_pop_after_use),
-            .Match => |match_expr| try control_flow_handler.generateMatch(match_expr, preserve_result),
+            .If => try control_flow_handler.generateIf(expr, preserve_result, should_pop_after_use),
+            .Match => try control_flow_handler.generateMatch(expr, preserve_result),
             .Loop => |loop| try control_flow_handler.generateLoop(loop, preserve_result),
             .Block => try control_flow_handler.generateBlock(expr.data, preserve_result),
             .ReturnExpr => try control_flow_handler.generateReturn(expr.data),
             .Unreachable => try control_flow_handler.generateUnreachable(expr),
-            .Cast => try control_flow_handler.generateCast(expr.data, preserve_result),
+            .Cast => try control_flow_handler.generateCast(expr, preserve_result),
 
-            .Array => |elements| {
-                if (self.is_generating_nested_array) {
-                    try collections_handler.generateArrayInternal(elements, preserve_result);
-                } else {
-                    try collections_handler.generateArray(elements, preserve_result);
-                }
-            },
+            .Array => try collections_handler.generateArray(expr, preserve_result),
             .Map => |map_expr| try collections_handler.generateMap(map_expr.entries, null),
             .MapLiteral => |map_literal| try collections_handler.generateMap(map_literal.entries, map_literal.else_value),
             .Index => try collections_handler.generateIndex(expr, preserve_result, should_pop_after_use),
@@ -1131,8 +1016,8 @@ pub const HIRGenerator = struct {
             .FieldAssignment => try structs_handler.generateFieldAssignment(expr.data),
             .EnumDecl, .StructDecl, .GroupDecl => try structs_handler.generateTypeDecl(),
 
-            .Assignment => |assign| try assignments_handler.generateAssignment(assign, preserve_result),
-            .CompoundAssign => |compound| try assignments_handler.generateCompoundAssign(compound, preserve_result),
+            .Assignment => try assignments_handler.generateAssignment(expr, preserve_result),
+            .CompoundAssign => try assignments_handler.generateCompoundAssign(expr, preserve_result),
 
             .Print => unreachable, // @print is lowered to an InternalCall
             .Peek => |peek| try io_handler.generatePeek(peek, preserve_result),
@@ -1149,10 +1034,6 @@ pub const HIRGenerator = struct {
 
     pub fn addConstant(self: *HIRGenerator, value: HIRValue) std.mem.Allocator.Error!u32 {
         return self.constant_manager.addConstant(value);
-    }
-
-    pub fn getOrCreateVariable(self: *HIRGenerator, name: []const u8) !u32 {
-        return self.symbol_table.getOrCreateVariable(name);
     }
 
     pub fn generateLabel(self: *HIRGenerator, prefix: []const u8) ![]const u8 {
@@ -1178,7 +1059,6 @@ pub const HIRGenerator = struct {
             const info = methods.get(method.name.lexeme).?;
             const key_name = try methodKeyName(self.allocator, decl.name.lexeme, method.name.lexeme);
             const link_name = try self.graph.mangle(self.allocator, module, .method, &.{ decl.name.lexeme, method.name.lexeme });
-            const eff_rti = try effectiveReturnTypeForSignature(self, info.signature.return_type.*, method.body);
 
             var arity: u32 = @intCast(method.params.len);
             if (!method.is_static) arity += 1;
@@ -1205,7 +1085,7 @@ pub const HIRGenerator = struct {
                     .name = link_name,
                     .receiver = if (method.is_static) null else struct_id,
                     .arity = arity,
-                    .return_type = self.convertTypeInfo(eff_rti),
+                    .return_type = self.convertTypeInfo(info.signature.return_type.*),
                     .start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{link_name})),
                     .local_var_count = 0,
                     .is_entry = false,
@@ -1217,7 +1097,7 @@ pub const HIRGenerator = struct {
                 .start_instruction_index = 0,
                 .function_name = link_name,
                 .function_params = method.params,
-                .return_type_info = eff_rti,
+                .return_type_info = info.signature.return_type.*,
                 .module_id = module,
                 .key = .{ .module = module, .name = key_name },
                 .param_types = info.signature.params,
@@ -1275,52 +1155,27 @@ pub const HIRGenerator = struct {
         if (receiver.data == .Variable) {
             const var_token = receiver.data.Variable;
 
-            // An alias (`^`) parameter is not backed by a local slot; its storage
-            // pointer lives in the alias-slot table. Pushing its variable index
-            // would miss both slot maps and emit a null receiver, so dispatch on
-            // the alias slot exactly as `this` does for instance methods.
-            if (self.symbol_table.isAliasParameter(var_token.lexeme)) {
-                const alias_slot = self.slot_manager.getAliasSlot(var_token.lexeme) orelse
-                    return error.InvalidAliasArgument;
-                try self.instructions.append(.{
-                    .PushStorageId = .{
-                        .var_index = alias_slot,
-                        .var_name = var_token.lexeme,
-                        .scope_kind = .Local,
-                    },
-                });
-                return;
-            }
-
-            const var_idx = try self.getOrCreateVariable(var_token.lexeme);
-            const scope_kind = self.symbol_table.determineVariableScope(var_token.lexeme);
-            try self.instructions.append(.{
-                .PushStorageId = .{
-                    .var_index = var_idx,
-                    .var_name = var_token.lexeme,
-                    .scope_kind = scope_kind,
-                },
-            });
+            try self.pushStorageOfName(&receiver.base, var_token.lexeme);
             return;
         }
 
         const temp_id = self.next_temp_id;
         self.next_temp_id += 1;
         const temp_name = try std.fmt.allocPrint(self.allocator, "__recv_{d}", .{temp_id});
-        const temp_idx = try self.getOrCreateVariable(temp_name);
+        const temp_slot = self.tempSlot();
         try self.generateExpression(receiver, true, false);
         try self.instructions.append(.{
             .StoreVar = .{
-                .var_index = temp_idx,
+                .slot = temp_slot,
                 .var_name = temp_name,
                 .scope_kind = .Local,
                 .module_context = null,
-                .expected_type = HIRType{ .Struct = 0 },
+                .expected_type = try self.typeOf(receiver),
             },
         });
         try self.instructions.append(.{
             .PushStorageId = .{
-                .var_index = temp_idx,
+                .slot = temp_slot,
                 .var_name = temp_name,
                 .scope_kind = .Local,
             },
@@ -1428,10 +1283,6 @@ pub const HIRGenerator = struct {
 
     fn astTypeToLowerName(self: *HIRGenerator, base: ast.Type) []const u8 {
         return self.type_system.astTypeToLowerName(base);
-    }
-
-    pub fn collectUnionMemberNames(self: *HIRGenerator, ut: *ast.UnionType) ![][]const u8 {
-        return self.type_system.collectUnionMemberNames(ut);
     }
 
     pub fn collectUnionMemberNamesFromHIRType(self: *HIRGenerator, hir_type: HIRType) ![][]const u8 {
@@ -1570,6 +1421,192 @@ pub const HIRGenerator = struct {
             @src(),
         );
         return ErrorList.MissingExpressionType;
+    }
+
+    /// The type of the storage a store through `node` writes — a name, an
+    /// assignment or a variable declaration — as the analyzer resolved it,
+    /// beneath every narrowing view. A read of a name has `typeOf`; a store to
+    /// it produces this. There is no fallback type.
+    pub fn bindingTypeOf(self: *HIRGenerator, node: *const ast.Base) ErrorList!HIRType {
+        return self.type_system.convertTypeInfo((try self.storeTarget(node)).slot.*);
+    }
+
+    /// What the name a store through `node` writes reads at that store: the
+    /// narrowed member inside a view. A read-modify-write computes in it.
+    pub fn bindingReadTypeOf(self: *HIRGenerator, node: *const ast.Base) ErrorList!HIRType {
+        return self.type_system.convertTypeInfo((try self.storeTarget(node)).read.*);
+    }
+
+    /// The storage the name at `node` denotes: the binding beneath every view.
+    pub fn slotOf(self: *HIRGenerator, node: *const ast.Base) ErrorList!Slot {
+        return (try self.storeTarget(node)).storage;
+    }
+
+    /// Where a variable lives and what emitted code calls it.
+    pub const Place = struct {
+        slot: Slot,
+        scope_kind: ScopeKind,
+        var_name: []const u8,
+    };
+
+    /// The place of a binding with storage `slot`, spelled `name`; `global`
+    /// says it is module-level. A module global is named by its link name.
+    /// Top-level code lowers every other binding as a global too, so there its
+    /// spelling is qualified by its slot to keep bindings that share a name
+    /// apart; inside a function it is a local of the frame.
+    pub fn placeOf(self: *HIRGenerator, slot: Slot, name: []const u8, global: bool) !Place {
+        if (global) return .{ .slot = slot, .scope_kind = .GlobalLocal, .var_name = name };
+        if (self.current_function != null) return .{ .slot = slot, .scope_kind = .Local, .var_name = name };
+        return .{ .slot = slot, .scope_kind = .GlobalLocal, .var_name = try std.fmt.allocPrint(self.allocator, "{s}.{d}", .{ name, slot }) };
+    }
+
+    /// The place of the variable the name at `node` denotes.
+    pub fn placeOfName(self: *HIRGenerator, node: *const ast.Base, name: []const u8) !Place {
+        const target = try self.storeTarget(node);
+        return self.placeOf(target.storage, name, target.global);
+    }
+
+    /// Push the value of the variable the name at `node` denotes.
+    pub fn loadName(self: *HIRGenerator, node: *const ast.Base, name: []const u8) !void {
+        const place = try self.placeOfName(node, name);
+        if (self.alias_params.get(place.slot)) |alias_slot| {
+            try self.instructions.append(.{ .LoadAlias = .{ .slot = place.slot, .var_name = name, .slot_index = alias_slot } });
+            return;
+        }
+        try self.instructions.append(.{ .LoadVar = .{
+            .slot = place.slot,
+            .var_name = place.var_name,
+            .scope_kind = place.scope_kind,
+            .module_context = null,
+        } });
+    }
+
+    /// Store the top of the stack, already of `slot_type`, into the variable
+    /// the name at `node` denotes.
+    pub fn storeName(self: *HIRGenerator, node: *const ast.Base, name: []const u8, slot_type: HIRType, heap_copy: SoxaTypes.HeapCopyKind) !void {
+        const place = try self.placeOfName(node, name);
+        if (self.alias_params.get(place.slot)) |alias_slot| {
+            try self.instructions.append(.{ .StoreAlias = .{
+                .var_name = name,
+                .slot_index = alias_slot,
+                .expected_type = slot_type,
+                .heap_copy = heap_copy,
+            } });
+            return;
+        }
+        try self.storePlace(place, slot_type, heap_copy);
+    }
+
+    /// Push the address of the variable the name at `node` denotes. An alias
+    /// (`^`) parameter is not backed by a local slot: its storage pointer is
+    /// re-passed from its alias slot.
+    pub fn pushStorageOfName(self: *HIRGenerator, node: *const ast.Base, name: []const u8) !void {
+        const place = try self.placeOfName(node, name);
+        try self.instructions.append(.{ .PushStorageId = .{
+            .slot = place.slot,
+            .var_name = place.var_name,
+            .scope_kind = place.scope_kind,
+            .alias_slot = self.alias_params.get(place.slot),
+        } });
+    }
+
+    /// Store the top of the stack, already of `slot_type`, into `place`.
+    pub fn storePlace(self: *HIRGenerator, place: Place, slot_type: HIRType, heap_copy: SoxaTypes.HeapCopyKind) !void {
+        try self.instructions.append(.{ .StoreVar = .{
+            .slot = place.slot,
+            .var_name = place.var_name,
+            .scope_kind = place.scope_kind,
+            .module_context = null,
+            .expected_type = slot_type,
+            .heap_copy = heap_copy,
+        } });
+    }
+
+    /// Store the top of the stack, already of `slot_type`, back into the
+    /// variable, alias parameter or `this` that `target` names.
+    pub fn storeTo(self: *HIRGenerator, target: *ast.Expr, slot_type: HIRType, heap_copy: SoxaTypes.HeapCopyKind) !void {
+        switch (target.data) {
+            .Variable => |token| try self.storeName(&target.base, token.lexeme, slot_type, heap_copy),
+            .This => {
+                const this_slot = self.this_slot orelse return ErrorList.InvalidAliasArgument;
+                try self.instructions.append(.{ .StoreAlias = .{
+                    .var_name = "this",
+                    .slot_index = self.alias_params.get(this_slot).?,
+                    .expected_type = slot_type,
+                    .heap_copy = heap_copy,
+                } });
+            },
+            else => unreachable, // a store back targets a name or `this`
+        }
+    }
+
+    fn allocAliasSlot(self: *HIRGenerator) u32 {
+        defer self.next_alias_slot += 1;
+        return self.next_alias_slot;
+    }
+
+    /// A slot for a value only the generator introduces (a receiver or alias
+    /// box temporary, a method's `this`).
+    pub fn tempSlot(self: *HIRGenerator) Slot {
+        defer self.next_temp_slot += 1;
+        return self.next_temp_slot;
+    }
+
+    /// The storage of a parameter's binding, which analysis recorded on it.
+    pub fn paramSlot(self: *HIRGenerator, param: ast.FunctionParam) ErrorList!Slot {
+        if (param.storage) |storage| return storage;
+        self.reporter.reportInternal(
+            "no analyzed binding for parameter '{s}' at {s}:{d}:{d}. This is a compiler bug, not an error in the program",
+            .{ param.name.lexeme, param.name.file, param.name.line, param.name.column },
+            @src(),
+        );
+        return ErrorList.MissingBindingType;
+    }
+
+    fn storeTarget(self: *HIRGenerator, node: *const ast.Base) ErrorList!StoreTarget {
+        if (self.semantic.getStoreTarget(node.id)) |target| return target;
+        const location = node.location();
+        self.reporter.reportInternal(
+            "no analyzed binding for the store at {s}:{d}:{d}. This is a compiler bug, not an error in the program",
+            .{ location.file, location.range.start_line, location.range.start_col },
+            @src(),
+        );
+        return ErrorList.MissingBindingType;
+    }
+
+    /// Bring the value on top of the stack, of type `value_type`, to
+    /// `target_type`: the type of the storage it is stored into, or of the
+    /// expression whose value it becomes. A member becoming a union or group is
+    /// boxed as that type, a box of another type is re-packed, and a box whose
+    /// member a check has proved is read as that member. A number the analyzer
+    /// admitted into another numeric type (an `int` literal for a `byte` or a
+    /// `float`) is converted to it. Every store goes through here, so a store
+    /// always receives a value of its slot's type (`verifyStore` checks it).
+    pub fn convertValue(self: *HIRGenerator, value_type: HIRType, target_type: HIRType) !void {
+        if (value_type.eql(target_type)) return;
+        if (target_type.isBoxed()) {
+            try self.instructions.append(.{ .Box = .{ .boxed_type = target_type } });
+        } else if (value_type.isBoxed()) {
+            try self.instructions.append(.{ .Unbox = .{ .member_type = target_type } });
+        } else if (isNumber(value_type) and isNumber(target_type)) {
+            try self.instructions.append(.{ .Convert = .{ .from_type = value_type, .to_type = target_type } });
+        }
+    }
+
+    fn isNumber(t: HIRType) bool {
+        return t == .Int or t == .Byte or t == .Float;
+    }
+
+    /// Convert the value on top of the stack — `target` after an in-place
+    /// change — to the type of the storage `target` names, and return that
+    /// type: a name's slot beneath any narrowing, or `target`'s own type for
+    /// the receiver `this`.
+    pub fn convertForStoreBack(self: *HIRGenerator, target: *ast.Expr) !HIRType {
+        const read_type = try self.typeOf(target);
+        if (target.data != .Variable) return read_type;
+        const slot_type = try self.bindingTypeOf(&target.base);
+        try self.convertValue(read_type, slot_type);
+        return slot_type;
     }
 
     fn inferParameterType(self: *HIRGenerator, param_name: []const u8, function_body: []ast.Stmt, function_name: []const u8) !HIRType {

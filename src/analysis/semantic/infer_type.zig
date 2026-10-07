@@ -30,6 +30,23 @@ fn inferBuiltinSubjectType(self: *SemanticAnalyzer, subject: *ast.Expr) Semantic
     return subject_type;
 }
 
+/// The arguments of a built-in as one list: the receiver, when there is one,
+/// followed by the written arguments. Every call shape that reaches a `@` rule
+/// builds the list this way, so the list is not a per-branch concern.
+fn builtinArgs(
+    self: *SemanticAnalyzer,
+    receiver: ?*ast.Expr,
+    rest: []const *ast.Expr,
+) SemanticError![](*ast.Expr) {
+    const buffer = try self.allocator.alloc(*ast.Expr, rest.len + 1);
+    const prefix: usize = if (receiver) |r| blk: {
+        buffer[0] = r;
+        break :blk 1;
+    } else 0;
+    @memcpy(buffer[prefix .. prefix + rest.len], rest);
+    return buffer[0 .. prefix + rest.len];
+}
+
 /// Type rules for the built-in `@`-methods, reached by every call shape.
 /// `receiver` is absent only for `@std`, whose argument list is empty.
 ///
@@ -46,6 +63,24 @@ fn inferBuiltinCall(
 ) SemanticError!*ast.TypeInfo {
     const result = try inferBuiltinCallInner(self, expr, fname, receiver, rest);
     try self.type_cache.put(expr.base.id, result);
+
+    // Every argument of every builtin ends up with a type, whichever rule above
+    // happened to need. A rule is free to validate only its subject — `@find`
+    // reads `args[0]` and stops — but the generator asks for the type of an
+    // argument wherever one is written, so an argument no rule visited was a
+    // program the lowering rejected: `@find(text, @pack([0]))` never reached the
+    // inner `@pack`, and the array literal's node had no analyzed type.
+    //
+    // This is the walk being made total for builtins, and it belongs here rather
+    // than in each rule so that totality is a property of the dispatch instead
+    // of a thing every new `@` method has to remember. The rules keep their own
+    // checks; this only fills the cache, and it runs after them so a rule that
+    // reported an error does not report a second one underneath it.
+    if (self.fatal_error) return result;
+    const args = try builtinArgs(self, receiver, rest);
+    defer self.allocator.free(args);
+    for (args) |arg| _ = try inferTypeFromExpr(self, arg);
+
     return result;
 }
 
@@ -56,14 +91,8 @@ fn inferBuiltinCallInner(
     receiver: ?*ast.Expr,
     rest: []const *ast.Expr,
 ) SemanticError!*ast.TypeInfo {
-    const buffer = try self.allocator.alloc(*ast.Expr, rest.len + 1);
-    defer self.allocator.free(buffer);
-    const prefix: usize = if (receiver) |r| blk: {
-        buffer[0] = r;
-        break :blk 1;
-    } else 0;
-    @memcpy(buffer[prefix .. prefix + rest.len], rest);
-    const args: []const *ast.Expr = buffer[0 .. prefix + rest.len];
+    const args = try builtinArgs(self, receiver, rest);
+    defer self.allocator.free(args);
 
     const type_info = try ast.TypeInfo.createDefault(self.allocator);
     errdefer self.allocator.destroy(type_info);
@@ -481,11 +510,11 @@ fn inferTypeFromExprUncached(self: *SemanticAnalyzer, expr: *ast.Expr) SemanticE
         .Break => {
             type_info.base = .Nothing;
         },
-        .Increment => {
-            type_info.base = .Int;
-        },
-        .Decrement => {
-            type_info.base = .Int;
+        // `x++` and `x--` have their operand's type; a name as the operand is
+        // also stored to, which visiting it records.
+        .Increment, .Decrement => |operand| {
+            type_info.* = (try inferTypeFromExpr(self, operand)).*;
+            type_info.comptime_int = null;
         },
         .Binary => |bin| {
             const left_type = try inferTypeFromExpr(self, bin.left.?);
@@ -1101,13 +1130,24 @@ const op: []const u8 = switch (bin.operator.type) {
             if (elements.len == 0) {
                 type_info.* = .{ .base = .Array, .array_type = null };
             } else {
-                const first_type = try inferTypeFromExpr(self, elements[0]);
-                for (elements[1..]) |element| {
-                    const element_type = try inferTypeFromExpr(self, element);
-                    try helpers.unifyTypesExpr(self, first_type, element_type, element, .{ .location = getLocationFromBase(expr.base) });
+                // The element type is the elements' promoted type: a float
+                // among int or byte elements makes the array float[], wherever
+                // it sits (docs/math.md). Every element is then checked against
+                // that type, so a literal widens and a runtime value does not.
+                const element_types = try self.allocator.alloc(*ast.TypeInfo, elements.len);
+                defer self.allocator.free(element_types);
+                var joined = try inferTypeFromExpr(self, elements[0]);
+                element_types[0] = joined;
+                for (elements[1..], element_types[1..]) |element, *element_type| {
+                    element_type.* = try inferTypeFromExpr(self, element);
+                    if (element_type.*.base == .Float and (joined.base == .Int or joined.base == .Byte)) joined = element_type.*;
+                }
+                for (elements, element_types) |element, element_type| {
+                    if (element_type == joined) continue;
+                    try helpers.unifyTypesExpr(self, joined, element_type, element, .{ .location = getLocationFromBase(expr.base) });
                 }
                 const array_type = try ast.TypeInfo.createDefault(self.allocator);
-                array_type.* = first_type.*;
+                array_type.* = joined.*;
                 type_info.* = .{ .base = .Array, .array_type = array_type };
             }
         },
@@ -1187,7 +1227,7 @@ const op: []const u8 = switch (bin.operator.type) {
                         type_info.* = else_type.*;
                     } else if (else_type.base == .Nothing and then_type.base != .Nothing) {
                         type_info.* = then_type.*;
-                    } else if (then_type.base != else_type.base) {
+                    } else if (!helpers.typesEqual(self, then_type, else_type)) {
                         var members = [_]*ast.TypeInfo{ then_type, else_type };
                         const u = try helpers.createUnionType(self, members[0..]);
                         type_info.* = u.*;
@@ -1243,29 +1283,10 @@ const op: []const u8 = switch (bin.operator.type) {
                 }
 
                 if (union_types.items.len > 0) {
-                    var all_same_type = true;
-                    const first_type = union_types.items[0];
-
-                    for (union_types.items[1..]) |case_type| {
-                        if (case_type.base != first_type.base) {
-                            all_same_type = false;
-                            break;
-                        }
-                    }
-
-                    if (all_same_type) {
-                        type_info.* = first_type.*;
-                    } else {
-                        const union_type_array = try self.allocator.alloc(*ast.TypeInfo, union_types.items.len);
-                        for (union_types.items, union_type_array) |item, *dest| {
-                            dest.* = item;
-                        }
-
-                        const union_type = try self.allocator.create(ast.UnionType);
-                        union_type.* = .{ .types = union_type_array };
-
-                        type_info.* = .{ .base = .Union, .union_type = union_type };
-                    }
+                    // The match is one of its arms' values: their common type,
+                    // or the union of them. `Common.X` and `IO.Y` are two types,
+                    // though both are enums.
+                    type_info.* = (try helpers.createUnionType(self, union_types.items)).*;
                 } else {
                     type_info.* = .{ .base = .Nothing };
                 }
@@ -1286,7 +1307,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 self.block_value_expected = true;
                 defer self.block_value_expected = prev_bve;
                 const value_type = try inferTypeFromExpr(self, value);
-                if (try names.resolveAssignmentTarget(self, &assign.name)) |variable| {
+                if (try names.resolveAssignmentTarget(self, expr, &assign.name)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         if (storage.constant) {
                             self.reporter.reportCompileError(
@@ -1318,7 +1339,7 @@ const op: []const u8 = switch (bin.operator.type) {
         .CompoundAssign => |*compound_assign| {
             if (compound_assign.value) |value| {
                 const value_type = try inferTypeFromExpr(self, value);
-                if (try names.resolveAssignmentTarget(self, &compound_assign.name)) |variable| {
+                if (try names.resolveAssignmentTarget(self, expr, &compound_assign.name)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         if (storage.constant) {
                             self.reporter.reportCompileError(
@@ -1371,6 +1392,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 defer self.block_value_expected = prev_bve;
                 type_info.* = (try self.checkReturnValue(value, getLocationFromBase(expr.base))).*;
             } else {
+                self.checkBareReturn(getLocationFromBase(expr.base));
                 type_info.* = .{ .base = .Nothing };
             }
         },
@@ -1537,16 +1559,21 @@ const op: []const u8 = switch (bin.operator.type) {
 
             const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
-            var bound_var_type = if (array_type.array_type) |elem_type|
+            // The binding's type outlives this call: every read of the bound
+            // name records it as a store target, so it cannot live on this
+            // frame.
+            const bound_var_type = try ast.TypeInfo.createDefault(self.allocator);
+            bound_var_type.* = if (array_type.array_type) |elem_type|
                 elem_type.*
             else
                 ast.TypeInfo{ .base = .Int };
 
+            self.checkFreshName(quantifier_scope, exists.variable);
             _ = quantifier_scope.createValueBinding(
                 exists.variable.lexeme,
                 TokenLiteral{ .nothing = {} },
                 eval.convertTypeToTokenType(bound_var_type.base),
-                &bound_var_type,
+                bound_var_type,
                 true,
             ) catch |err| {
                 if (err == error.DuplicateVariableName) {
@@ -1606,16 +1633,21 @@ const op: []const u8 = switch (bin.operator.type) {
 
             const quantifier_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
-            var bound_var_type = if (array_type.array_type) |elem_type|
+            // The binding's type outlives this call: every read of the bound
+            // name records it as a store target, so it cannot live on this
+            // frame.
+            const bound_var_type = try ast.TypeInfo.createDefault(self.allocator);
+            bound_var_type.* = if (array_type.array_type) |elem_type|
                 elem_type.*
             else
                 ast.TypeInfo{ .base = .Int };
 
+            self.checkFreshName(quantifier_scope, for_all.variable);
             _ = quantifier_scope.createValueBinding(
                 for_all.variable.lexeme,
                 TokenLiteral{ .nothing = {} },
                 eval.convertTypeToTokenType(bound_var_type.base),
-                &bound_var_type,
+                bound_var_type,
                 true,
             ) catch |err| {
                 if (err == error.DuplicateVariableName) {
@@ -1854,7 +1886,7 @@ const op: []const u8 = switch (bin.operator.type) {
                 defer self.current_scope = prev_scope;
 
                 try bindNarrowedCastType(self, then_scope, cast.value, target_type_info);
-                if (cast_decl_name) |name| try bindNarrowedName(then_scope, name, target_type_info);
+                if (cast_decl_name) |name| expr.data.Cast.decl_then = try bindCastDeclName(then_scope, name, target_type_info);
 
                 if (then_expr.data == .Block and then_expr.data.Block.value != null) {
                     self.reporter.reportWarning(
@@ -1886,7 +1918,7 @@ const op: []const u8 = switch (bin.operator.type) {
 
                 const remainder_type = try helpers.subtractTypeFromUnion(self, value_type, target_type_info);
                 try bindNarrowedCastType(self, else_scope, cast.value, remainder_type);
-                if (cast_decl_name) |name| try bindNarrowedName(else_scope, name, remainder_type);
+                if (cast_decl_name) |name| expr.data.Cast.decl_else = try bindCastDeclName(else_scope, name, remainder_type);
 
                 else_type = try inferTypeFromExpr(self, else_expr);
                 if (expressionDiverges(else_expr)) {
@@ -2316,6 +2348,23 @@ fn bindNarrowedName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInf
     view.is_view = true;
 }
 
+/// Bind the name a cast declares inside one of its branches. The declaration
+/// has no value until the cast resolves, so inside a branch the name is its own
+/// binding, holding the subject narrowed to that branch's type.
+fn bindCastDeclName(scope: *Scope, name: []const u8, narrowed_type: *ast.TypeInfo) !?ast.CastBinding {
+    const binding = scope.createValueBinding(
+        name,
+        TokenLiteral{ .nothing = {} },
+        eval.convertTypeToTokenType(narrowed_type.base),
+        narrowed_type,
+        false,
+    ) catch |err| switch (err) {
+        error.DuplicateVariableName => return null,
+        else => |e| return e,
+    };
+    return .{ .storage = binding.storage_id, .type_info = narrowed_type };
+}
+
 fn bindNarrowedCastType(self: *SemanticAnalyzer, scope: *Scope, cast_value: *ast.Expr, narrowed_type: *ast.TypeInfo) !void {
     if (cast_value.data == .Variable) {
         try bindNarrowedName(scope, cast_value.data.Variable.lexeme, narrowed_type);
@@ -2428,6 +2477,9 @@ fn memberOfNamespace(self: *SemanticAnalyzer, expr: *ast.Expr, namespace: @impor
         return type_info;
     };
     const storage = self.memory.scope_manager.value_storage.get(variable.storage_id) orelse return error.StorageNotFound;
+    // A qualified global is rewritten in place into its link name, which
+    // codegen reads as any other name.
+    if (resolved == .global) try names.recordStoreTarget(self, expr.base.id, variable, variable, true);
     type_info.* = storage.type_info.*;
     return type_info;
 }

@@ -18,6 +18,7 @@ pub fn Methods(comptime Ctx: type) type {
     const HIRInstruction = Ctx.HIRInstruction;
     const StackType = Ctx.StackType;
     const StackVal = Ctx.StackVal;
+    const HIR = Ctx.HIR;
 
     return struct {
         pub const Error = error{MalformedHIR};
@@ -111,6 +112,41 @@ pub fn Methods(comptime Ctx: type) type {
         pub fn requireRepr(self: *IRPrinter, role: []const u8, val: StackVal, want: StackType) Error!void {
             if (val.ty == want) return;
             return self.hirFault("{s} operand is {s}, the instruction is lowered as {s}", .{ role, @tagName(val.ty), @tagName(want) });
+        }
+
+        /// A store writes `value` into storage of type `slot`. The generator
+        /// converts every stored value to its slot's type first
+        /// (`HIRGenerator.convertValue`), so the value already has a
+        /// representation of that type: a box of that union or group, or the
+        /// type's own scalar, pointer or string form.
+        pub fn verifyStore(self: *IRPrinter, value: StackVal, slot: HIR.HIRType) Error!void {
+            if (slot.isBoxed()) {
+                if (value.ty != .Value) {
+                    return self.hirFault("stores an unboxed {s} into a {s} slot", .{ @tagName(value.ty), @tagName(slot) });
+                }
+                // TODO(type-authority Phase C): a box whose type the stack
+                // simulation lost (`boxed_type == null`) is accepted unchecked.
+                if (value.boxed_type) |boxed| if (!boxed.eql(slot)) {
+                    return self.hirFault("stores a box of another {s} into a {s} slot without re-packing it", .{ @tagName(boxed), @tagName(slot) });
+                };
+                return;
+            }
+            const admitted: []const StackType = switch (slot) {
+                .Int, .Enum => &.{.I64},
+                .Byte => &.{.I8},
+                .Float => &.{.F64},
+                // A comparison yields `i1`; a tetra slot holds `i2`.
+                .Tetra => &.{ .I2, .I1 },
+                .String => &.{.STRING},
+                .Array, .Map, .Struct, .Function => &.{.PTR},
+                .Nothing => &.{.Nothing},
+                .Union, .Group => unreachable,
+                .Unknown, .Poison => return self.hirFault("the store's slot type is {s}", .{@tagName(slot)}),
+            };
+            for (admitted) |candidate| {
+                if (value.ty == candidate) return;
+            }
+            return self.hirFault("stores a {s} into a {s} slot", .{ @tagName(value.ty), @tagName(slot) });
         }
 
         /// `val` is one of the representations in `allowed`.

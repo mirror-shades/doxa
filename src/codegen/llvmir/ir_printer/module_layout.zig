@@ -161,7 +161,8 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 .MapSet => |m| self.markNestedStructs(needs, m.key_type),
                 .StructNew => |sn| for (sn.field_types) |ft| self.markNestedStructs(needs, ft),
-                .UnionConstruct => |u| self.markNestedStructs(needs, u.union_type),
+                .Box => |b| self.markNestedStructs(needs, b.boxed_type),
+                .Unbox => |u| self.markNestedStructs(needs, u.member_type),
                 .GetField => |g| {
                     self.markTypeNeeds(needs, g.container_type);
                     self.markNestedStructs(needs, g.field_type);
@@ -299,6 +300,11 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll("declare void @doxa_debug_peek(ptr)\ndeclare void @doxa_peek_string(ptr, i64)\ndeclare void @doxa_peek_end()\n");
             try w.writeAll("declare void @doxa_print_array_hdr(ptr)\n");
             try w.writeAll("declare i1 @doxa_str_eq(ptr, i64, ptr, i64)\n");
+            try w.writeAll("declare i32 @doxa_str_cmp(ptr, i64, ptr, i64)\n");
+            try w.writeAll("declare void @doxa_array_get_value(ptr, i64, ptr)\n");
+            try w.writeAll("declare void @doxa_array_set_value(ptr, i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_insert_value(ptr, i64, ptr)\n");
+            try w.writeAll("declare ptr @doxa_array_remove_value(ptr, i64, ptr)\n");
             try w.writeAll("declare ptr @doxa_array_new(i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_new_at(i64, i64, i64, i64)\n");
             try w.writeAll("declare ptr @doxa_array_new_nested(i64, i64, i64, ptr, i64, i64, i64)\n");
@@ -372,7 +378,15 @@ pub fn Methods(comptime Ctx: type) type {
             // The program's inline-Zig callees are external: declare each with
             // typed parameters for the correct ABI on every architecture.
             for (hir.zig_functions) |function| {
-                const ret_ty = if (function.return_type == .String) "void" else self.hirTypeToLLVMType(function.return_type, false);
+                const ret_ty = switch (function.return_type) {
+                    // A string return is written through two out-pointers.
+                    .String => "void",
+                    // A fallible return (`DoxaError_<path>!void`) crosses as an
+                    // i64: -1 for success, else the variant discriminant. The
+                    // call site boxes it into the union (`handleCall`).
+                    .Union => "i64",
+                    else => self.hirTypeToLLVMType(function.return_type, false),
+                };
 
                 var params_buf = std.array_list.Managed(u8).init(self.allocator);
                 defer params_buf.deinit();
@@ -738,11 +752,11 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .NarrowVar => |nv| {
-                        try self.narrowVariable(nv.var_name, nv.narrowed_type);
+                        try self.narrowVariable(nv.slot, nv.narrowed_type);
                         last_instruction_was_terminator = false;
                     },
                     .RestoreVar => |rv| {
-                        self.restoreVariable(rv.var_name);
+                        self.restoreVariable(rv.slot);
                         last_instruction_was_terminator = false;
                     },
                     .ArrayNew => |a| try self.emitArrayNew(w, &stack, &id, a),
@@ -890,7 +904,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .LoadVar => |lv| {
-                        try self.handleLoadVarGlobal(w, &stack, &id, lv.var_name);
+                        try self.handleLoadVarGlobal(w, &stack, &id, lv.slot, lv.var_name);
                         last_instruction_was_terminator = false;
                     },
                     .PushStorageId => |psid| {
@@ -972,8 +986,12 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.handleUnboxPayload(w, &stack, &id);
                         last_instruction_was_terminator = false;
                     },
-                    .UnionConstruct => |uc| {
-                        try self.handleUnionConstruct(w, &stack, &id, uc);
+                    .Box => |b| {
+                        try self.handleBox(w, &stack, &id, b);
+                        last_instruction_was_terminator = false;
+                    },
+                    .Unbox => |u| {
+                        try self.handleUnbox(w, &stack, &id, u);
                         last_instruction_was_terminator = false;
                     },
                     .AssertFail => |af| {

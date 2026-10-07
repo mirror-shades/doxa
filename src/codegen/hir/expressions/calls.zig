@@ -9,6 +9,7 @@ const HIRValue = @import("../soxa_values.zig").HIRValue;
 const HIRType = @import("../soxa_types.zig").HIRType;
 const HeapCopyKind = @import("../soxa_types.zig").HeapCopyKind;
 const ScopeKind = @import("../soxa_types.zig").ScopeKind;
+const Slot = @import("../soxa_types.zig").Slot;
 const HIRInstruction = @import("../soxa_instructions.zig").HIRInstruction;
 const ArithOp = @import("../soxa_instructions.zig").ArithOp;
 const CallKind = @import("../soxa_instructions.zig").CallKind;
@@ -25,34 +26,12 @@ pub const CallsHandler = struct {
         return .{ .generator = generator };
     }
 
-    fn storeVariableOrAlias(self: *CallsHandler, var_name: []const u8, expected_type: HIRType, heap_copy: HeapCopyKind) !void {
-        if (self.generator.symbol_table.isAliasParameter(var_name)) {
-            if (self.generator.slot_manager.getAliasSlot(var_name)) |alias_slot| {
-                try self.generator.instructions.append(.{
-                    .StoreAlias = .{
-                        .slot_index = alias_slot,
-                        .var_name = var_name,
-                        .expected_type = expected_type,
-                        .heap_copy = heap_copy,
-                    },
-                });
-                return;
-            }
-            return ErrorList.InvalidAliasArgument;
-        }
-
-        const var_idx = try self.generator.getOrCreateVariable(var_name);
-        const scope_kind = self.generator.symbol_table.determineVariableScope(var_name);
-        try self.generator.instructions.append(.{
-            .StoreVar = .{
-                .var_index = var_idx,
-                .var_name = var_name,
-                .scope_kind = scope_kind,
-                .module_context = null,
-                .expected_type = expected_type,
-                .heap_copy = heap_copy,
-            },
-        });
+    /// Store the value on top of the stack — `target` after an in-place
+    /// change — back into the variable, alias parameter or `this` it names,
+    /// converted to that storage's type.
+    fn storeBack(self: *CallsHandler, target: *ast.Expr, heap_copy: HeapCopyKind) !void {
+        const expected_type = try self.generator.convertForStoreBack(target);
+        try self.generator.storeTo(target, expected_type, heap_copy);
     }
 
     pub fn generateFunctionCall(self: *CallsHandler, function_call: ast.Expr.Data, preserve_result: bool, should_pop_after_use: bool) !void {
@@ -102,6 +81,15 @@ pub const CallsHandler = struct {
         }
     }
 
+    /// Convert the argument just pushed, of type `value_type`, to the type of
+    /// the parameter it binds, so an inlined body's parameter store and a
+    /// call's argument both receive a value of the parameter's type.
+    fn convertArgument(self: *CallsHandler, info: ?HIRGenerator.FunctionInfo, arg_index: usize, value_type: HIRType) !void {
+        const callee = info orelse return;
+        if (arg_index >= callee.param_types.len) return;
+        try self.generator.convertValue(value_type, callee.param_types[arg_index]);
+    }
+
     fn emitResolvedFunctionCall(
         self: *CallsHandler,
         callee: ModuleCall.Callee,
@@ -126,15 +114,14 @@ pub const CallsHandler = struct {
             .BuiltinFunction => null,
         };
         const AliasWriteback = struct {
+            /// The call-site temporary the member was boxed into.
+            box_slot: Slot,
             box_name: []const u8,
-            var_name: []const u8,
-            scope_kind: ScopeKind,
+            /// The aliased argument, a name, the member is written back to.
+            target: *ast.Expr,
             member_type: HIRType,
-            /// True when the aliased argument is itself a `^` parameter. The
-            /// member is then written back through the alias rather than into a
-            /// local slot.
-            is_alias: bool = false,
-            alias_slot: u32 = 0,
+            /// The parameter type the temporary is boxed as.
+            box_type: HIRType,
         };
         var alias_writebacks = std.array_list.Managed(AliasWriteback).init(self.generator.allocator);
         defer alias_writebacks.deinit();
@@ -143,6 +130,7 @@ pub const CallsHandler = struct {
             if (arg.expr.data == .DefaultArgPlaceholder) {
                 if (self.generator.resolveDefaultArgument(function_name, arg_index)) |default_expr| {
                     try self.generator.generateExpression(default_expr, true, false);
+                    try self.convertArgument(finfo_opt, arg_index, try self.generator.typeOf(default_expr));
                     arg_emitted_count += 1;
                 } else {
                     const location = if (call_data.callee.base.span) |span| span.location else Location{
@@ -156,86 +144,31 @@ pub const CallsHandler = struct {
                 if (arg.is_alias) {
                     if (arg.expr.data == .Variable) {
                         const var_token = arg.expr.data.Variable;
-                        if (!self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
-                            if (self.generator.symbol_table.getVariable(var_token.lexeme)) |var_idx| {
-                                if (finfo_opt) |info| {
-                                    if (arg_index < info.param_types.len) {
-                                        const param_type = info.param_types[arg_index];
-                                        if (isBoxedAliasType(param_type)) {
-                                            if (self.generator.getTrackedVariableType(var_token.lexeme)) |member_type| {
-                                                if (!sameBoxedAliasType(param_type, member_type)) {
-                                                    const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-                                                    const box_name = try std.fmt.allocPrint(self.generator.allocator, "__doxa_alias_box_{d}", .{self.generator.instructions.items.len});
-                                                    const box_idx = try self.generator.getOrCreateVariable(box_name);
-                                                    try self.generator.instructions.append(.{ .LoadVar = .{ .var_index = var_idx, .var_name = var_token.lexeme, .scope_kind = scope_kind, .module_context = null } });
-                                                    try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = box_idx, .var_name = box_name, .scope_kind = .Local, .module_context = null, .expected_type = param_type, .heap_copy = .keep } });
-                                                    try self.generator.instructions.append(.{ .PushStorageId = .{ .var_index = box_idx, .var_name = box_name, .scope_kind = .Local } });
-                                                    try alias_writebacks.append(.{ .box_name = box_name, .var_name = var_token.lexeme, .scope_kind = scope_kind, .member_type = member_type });
-                                                    arg_emitted_count += 1;
-                                                    continue;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-                                try self.generator.instructions.append(.{
-                                    .PushStorageId = .{
-                                        .var_index = var_idx,
-                                        .var_name = var_token.lexeme,
-                                        .scope_kind = scope_kind,
-                                    },
-                                });
-                                arg_emitted_count += 1;
-                            } else {
-                                self.generator.reporter.reportCompileError(
-                                    arg.expr.base.location(),
-                                    ErrorCode.UNDEFINED_VARIABLE,
-                                    "Undefined variable used as alias argument: {s}",
-                                    .{var_token.lexeme},
-                                );
-                                return ErrorList.UndefinedVariable;
-                            }
-                        } else if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
-                            // Re-passing an alias. When the callee's parameter is a
-                            // boxed (union/group) alias but the aliased storage is a
-                            // concrete member, forwarding the alias pointer would hand
-                            // the callee a raw concrete layout it reads as a
-                            // `%DoxaValue`. Box the member at the call site and write
-                            // it back through the alias after the call; a matching
-                            // boxed alias forwards directly.
-                            var boxed_repass = false;
-                            if (finfo_opt) |info| {
-                                if (arg_index < info.param_types.len) {
-                                    const param_type = info.param_types[arg_index];
-                                    if (isBoxedAliasType(param_type)) {
-                                        const member_type: HIRType = if (self.generator.slot_manager.getSlotInfo(alias_slot)) |si| si.hir_type else .Unknown;
-                                        if (!sameBoxedAliasType(param_type, member_type)) {
-                                            const box_name = try std.fmt.allocPrint(self.generator.allocator, "__doxa_alias_box_{d}", .{self.generator.instructions.items.len});
-                                            const box_idx = try self.generator.getOrCreateVariable(box_name);
-                                            try self.generator.instructions.append(.{ .LoadAlias = .{ .var_name = var_token.lexeme, .slot_index = alias_slot } });
-                                            try self.generator.instructions.append(.{ .StoreVar = .{ .var_index = box_idx, .var_name = box_name, .scope_kind = .Local, .module_context = null, .expected_type = param_type, .heap_copy = .keep } });
-                                            try self.generator.instructions.append(.{ .PushStorageId = .{ .var_index = box_idx, .var_name = box_name, .scope_kind = .Local } });
-                                            try alias_writebacks.append(.{ .box_name = box_name, .var_name = var_token.lexeme, .scope_kind = .Local, .member_type = member_type, .is_alias = true, .alias_slot = alias_slot });
-                                            arg_emitted_count += 1;
-                                            boxed_repass = true;
-                                        }
-                                    }
+                        // When the callee's parameter is a boxed (union/group)
+                        // alias but the aliased storage is a concrete member,
+                        // forwarding the storage would hand the callee a raw
+                        // concrete layout it reads as a `%DoxaValue`. Box the
+                        // member into a call-site temporary and write it back
+                        // after the call; matching storage is passed directly.
+                        if (finfo_opt) |info| {
+                            if (arg_index < info.param_types.len) {
+                                const param_type = info.param_types[arg_index];
+                                const member_type = try self.generator.bindingTypeOf(&arg.expr.base);
+                                if (param_type.isBoxed() and !member_type.eql(param_type)) {
+                                    const box_name = try std.fmt.allocPrint(self.generator.allocator, "__doxa_alias_box_{d}", .{self.generator.instructions.items.len});
+                                    const box_slot = self.generator.tempSlot();
+                                    try self.generator.loadName(&arg.expr.base, var_token.lexeme);
+                                    try self.generator.convertValue(try self.generator.typeOf(arg.expr), param_type);
+                                    try self.generator.instructions.append(.{ .StoreVar = .{ .slot = box_slot, .var_name = box_name, .scope_kind = .Local, .module_context = null, .expected_type = param_type, .heap_copy = .keep } });
+                                    try self.generator.instructions.append(.{ .PushStorageId = .{ .slot = box_slot, .var_name = box_name, .scope_kind = .Local } });
+                                    try alias_writebacks.append(.{ .box_slot = box_slot, .box_name = box_name, .target = arg.expr, .member_type = member_type, .box_type = param_type });
+                                    arg_emitted_count += 1;
+                                    continue;
                                 }
                             }
-                            if (!boxed_repass) {
-                                try self.generator.instructions.append(.{
-                                    .PushStorageId = .{
-                                        .var_index = alias_slot,
-                                        .var_name = var_token.lexeme,
-                                        .scope_kind = .Local,
-                                    },
-                                });
-                                arg_emitted_count += 1;
-                            }
-                        } else {
-                            return ErrorList.InvalidAliasArgument;
                         }
+                        try self.generator.pushStorageOfName(&arg.expr.base, var_token.lexeme);
+                        arg_emitted_count += 1;
                     } else {
                         self.generator.reporter.reportCompileError(
                             arg.expr.base.location(),
@@ -247,6 +180,7 @@ pub const CallsHandler = struct {
                     }
                 } else {
                     try self.generator.generateExpression(arg.expr, true, should_pop_after_use);
+                    try self.convertArgument(finfo_opt, arg_index, try self.generator.typeOf(arg.expr));
                     arg_emitted_count += 1;
                 }
             }
@@ -276,49 +210,19 @@ pub const CallsHandler = struct {
         // caller's plain variable. The call result (if any) stays on the stack
         // across these stores.
         for (alias_writebacks.items) |wb| {
-            const box_idx = try self.generator.getOrCreateVariable(wb.box_name);
-            try self.generator.instructions.append(.{ .LoadVar = .{ .var_index = box_idx, .var_name = wb.box_name, .scope_kind = .Local, .module_context = null } });
-            if (wb.is_alias) {
-                // Write the boxed member back through the caller's alias. The
-                // value is re-homed into the arena that owns the aliased
-                // variable; `.rehome` preserves array identity and clones a
-                // fresh string out of the transient box arena.
-                try self.generator.instructions.append(.{ .StoreAlias = .{
-                    .var_name = wb.var_name,
-                    .slot_index = wb.alias_slot,
-                    .expected_type = wb.member_type,
-                    .heap_copy = .rehome,
-                } });
-            } else {
-                const var_idx = try self.generator.getOrCreateVariable(wb.var_name);
-                try self.generator.instructions.append(.{ .StoreVar = .{
-                    .var_index = var_idx,
-                    .var_name = wb.var_name,
-                    .scope_kind = wb.scope_kind,
-                    .module_context = null,
-                    .expected_type = wb.member_type,
-                    .heap_copy = .keep,
-                } });
-            }
+            try self.generator.instructions.append(.{ .LoadVar = .{ .slot = wb.box_slot, .var_name = wb.box_name, .scope_kind = .Local, .module_context = null } });
+            try self.generator.convertValue(wb.box_type, wb.member_type);
+            // Written back through an alias, the member is re-homed into the
+            // arena that owns the aliased variable; `.rehome` preserves array
+            // identity and clones a fresh string out of the transient box
+            // arena. A local of this frame keeps it.
+            const slot = try self.generator.slotOf(&wb.target.base);
+            const heap_copy: HeapCopyKind = if (self.generator.alias_params.contains(slot)) .rehome else .keep;
+            try self.generator.storeName(&wb.target.base, wb.target.data.Variable.lexeme, wb.member_type, heap_copy);
         }
         if (!preserve_result) {
             try self.generator.instructions.append(.Pop);
         }
-    }
-
-    fn isBoxedAliasType(t: HIRType) bool {
-        return switch (t) {
-            .Union, .Group => true,
-            else => false,
-        };
-    }
-
-    fn sameBoxedAliasType(a: HIRType, b: HIRType) bool {
-        return switch (a) {
-            .Union => |u| b == .Union and b.Union.id == u.id,
-            .Group => |g| b == .Group and b.Group == g,
-            else => false,
-        };
     }
 
     /// Helper function to convert AST type to HIR type
@@ -492,10 +396,8 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.{ .ArrayPush = .{ .resize_behavior = .Double } });
             }
             if (args[0].data == .Variable) {
-                const var_name = args[0].data.Variable.lexeme;
-                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
                 const heap_copy: HeapCopyKind = if (target_type == .String) .rehome else .keep;
-                try self.storeVariableOrAlias(var_name, expected_type, heap_copy);
+                try self.storeBack(args[0], heap_copy);
             } else if (args[0].data == .FieldAccess) {
                 const fa = args[0].data.FieldAccess;
                 try self.generator.generateExpression(fa.object, true, false);
@@ -513,11 +415,8 @@ pub const CallsHandler = struct {
                         .nested_struct_id = null,
                     },
                 });
-                if (fa.object.data == .Variable) {
-                    const var_name = fa.object.data.Variable.lexeme;
-                    try self.storeVariableOrAlias(var_name, container_type, .keep);
-                } else if (fa.object.data == .This) {
-                    try self.storeVariableOrAlias("this", HIRType{ .Struct = 0 }, .keep);
+                if (fa.object.data == .Variable or fa.object.data == .This) {
+                    try self.storeBack(fa.object, .keep);
                 }
             }
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
@@ -536,15 +435,13 @@ pub const CallsHandler = struct {
                 try self.generator.instructions.append(.ArrayPop);
             }
             if (args[0].data == .Variable) {
-                const var_name = args[0].data.Variable.lexeme;
-                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
 
                 if (target_type == .String) {
                     try self.generator.instructions.append(.Swap);
-                    try self.storeVariableOrAlias(var_name, expected_type, .rehome);
+                    try self.storeBack(args[0], .rehome);
                 } else {
                     try self.generator.instructions.append(.Swap);
-                    try self.storeVariableOrAlias(var_name, expected_type, .keep);
+                    try self.storeBack(args[0], .keep);
                 }
             }
         } else if (std.mem.eql(u8, name, "insert")) {
@@ -555,13 +452,11 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(args[2], true, false);
             try self.generator.instructions.append(.ArrayInsert);
             if (args[0].data == .Variable) {
-                const var_name = args[0].data.Variable.lexeme;
-                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
                 // A string insert produces a fresh immutable buffer, so an alias
                 // store must re-home it into the caller's arena. An array insert
                 // mutates in place and must keep identity.
                 const heap_copy: HeapCopyKind = if (target_type == .String) .rehome else .keep;
-                try self.storeVariableOrAlias(var_name, expected_type, heap_copy);
+                try self.storeBack(args[0], heap_copy);
             } else {
                 try self.generator.instructions.append(.Pop);
             }
@@ -575,12 +470,10 @@ pub const CallsHandler = struct {
             try self.generator.generateExpression(args[1], true, false);
             try self.generator.instructions.append(.ArrayRemove);
             if (args[0].data == .Variable) {
-                const var_name = args[0].data.Variable.lexeme;
-                const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
 
                 const heap_copy: HeapCopyKind = if (target_type == .String) .rehome else .keep;
                 try self.generator.instructions.append(.Swap);
-                try self.storeVariableOrAlias(var_name, expected_type, heap_copy);
+                try self.storeBack(args[0], heap_copy);
             } else {
                 try self.generator.instructions.append(.Swap);
                 try self.generator.instructions.append(.Pop);
@@ -597,12 +490,10 @@ pub const CallsHandler = struct {
 
             if (target_type == .String) {
                 if (args[0].data == .Variable) {
-                    const var_name = args[0].data.Variable.lexeme;
-                    const expected_type = self.generator.getTrackedVariableType(var_name) orelse .String;
                     const empty_str_value = HIRValue{ .string = "" };
                     const empty_str_idx = try self.generator.addConstant(empty_str_value);
                     try self.generator.instructions.append(.{ .Const = .{ .value = empty_str_value, .constant_id = empty_str_idx } });
-                    try self.storeVariableOrAlias(var_name, expected_type, .rehome);
+                    try self.storeBack(args[0], .rehome);
                 }
             } else {
                 try self.generator.generateExpression(args[0], true, false);
@@ -615,13 +506,9 @@ pub const CallsHandler = struct {
                         .return_type = .Nothing,
                     },
                 });
-                if (args[0].data == .Variable) {
-                    const var_name = args[0].data.Variable.lexeme;
-                    const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
-                    try self.storeVariableOrAlias(var_name, expected_type, .keep);
-                } else {
-                    try self.generator.instructions.append(.Pop);
-                }
+                // `doxa_clear` empties the collection in place; its `nothing`
+                // result is not the collection, so nothing is stored back.
+                try self.generator.instructions.append(.Pop);
             }
             const nothing_const_idx = try self.generator.addConstant(HIRValue.nothing);
             try self.generator.instructions.append(.{ .Const = .{ .value = HIRValue.nothing, .constant_id = nothing_const_idx } });
@@ -698,30 +585,17 @@ pub const CallsHandler = struct {
         while (i > 0) {
             i -= 1;
             const param = func_body.function_params[i];
-            const alias_lookup = if (is_method) i + 1 else i;
-            const expected_t = func_body.function_info.param_types[alias_lookup];
-
-            if (func_body.function_info.param_is_alias[alias_lookup]) {
-                try self.generator.instructions.append(.{
-                    .BindAlias = .{
-                        .alias_name = param.name.lexeme,
-                        .target_variable_name = param.name.lexeme,
-                        .alias_slot = @intCast(i + 1),
-                        .target_type = expected_t,
-                    },
-                });
-            } else {
-                const var_idx = try self.generator.getOrCreateVariable(param.name.lexeme);
-                try self.generator.instructions.append(.{
-                    .StoreVar = .{
-                        .var_index = var_idx,
-                        .var_name = param.name.lexeme,
-                        .scope_kind = .Local,
-                        .module_context = null,
-                        .expected_type = expected_t,
-                    },
-                });
-            }
+            // `shouldInlineFunction` refuses a `^` parameter.
+            const expected_t = func_body.function_info.param_types[if (is_method) i + 1 else i];
+            try self.generator.instructions.append(.{
+                .StoreVar = .{
+                    .slot = try self.generator.paramSlot(param),
+                    .var_name = param.name.lexeme,
+                    .scope_kind = .Local,
+                    .module_context = null,
+                    .expected_type = expected_t,
+                },
+            });
         }
 
         try self.inlineBody(func_body);
@@ -793,16 +667,7 @@ pub const CallsHandler = struct {
 
     fn loadVarIfSimple(self: *CallsHandler, expr: *ast.Expr) !void {
         if (expr.data == .Variable) {
-            const v = expr.data.Variable;
-            const var_idx = try self.generator.getOrCreateVariable(v.lexeme);
-            try self.generator.instructions.append(.{
-                .LoadVar = .{
-                    .var_index = var_idx,
-                    .var_name = v.lexeme,
-                    .scope_kind = .Local,
-                    .module_context = null,
-                },
-            });
+            try self.generator.loadName(&expr.base, expr.data.Variable.lexeme);
         } else {
             try self.generator.generateExpression(expr, true, true);
         }
@@ -811,12 +676,9 @@ pub const CallsHandler = struct {
     fn shouldInlineFunction(self: *CallsHandler, func_body: *const HIRGenerator.FunctionBody) bool {
         if (func_body.statements.len > 3) return false; // Too complex
 
-        // A `^` parameter is bound by reference. The inliner re-generates the
-        // body from the AST at the call site, but the symbol table's alias
-        // tracking is flat, not scoped, so it cannot register the parameter as
-        // an alias for the inlined body without leaking into the enclosing
-        // function. Call functions that take one instead of inlining them.
-        // TODO: scope alias/type tracking so alias-parameter bodies can inline.
+        // A `^` parameter is bound by reference to the caller's storage, which
+        // the inliner does not bind. Call functions that take one instead.
+        // TODO: bind an inlined `^` parameter's slot to the argument's storage.
         for (func_body.function_info.param_is_alias) |is_alias| {
             if (is_alias) return false;
         }

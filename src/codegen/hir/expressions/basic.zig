@@ -79,77 +79,6 @@ pub const BasicExpressionHandler = struct {
         }
     }
 
-    /// Generate HIR for variable access
-    pub fn generateVariable(self: *BasicExpressionHandler, var_token: ast.Token) (std.mem.Allocator.Error || ErrorList)!void {
-        // Compile-time validation: Ensure variable has been declared
-        const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
-        if (maybe_idx) |existing_idx| {
-            const var_idx = existing_idx;
-
-            // Check if this is an alias parameter
-            if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
-                // For alias parameters, get the correct slot from the slot manager
-                if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
-                    try self.generator.instructions.append(.{
-                        .LoadAlias = .{
-                            .var_name = var_token.lexeme,
-                            .slot_index = alias_slot,
-                        },
-                    });
-                } else {
-                    return ErrorList.InvalidAliasArgument;
-                }
-            } else {
-                // Regular variable
-                // Determine scope based on where the variable was found
-                const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-
-                const load_var_inst = HIRInstruction{
-                    .LoadVar = .{
-                        .var_index = var_idx,
-                        .var_name = var_token.lexeme,
-                        .scope_kind = scope_kind,
-                        .module_context = null,
-                    },
-                };
-                try self.generator.instructions.append(load_var_inst);
-            }
-        } else {
-            // Check if this is an alias parameter that wasn't found in the symbol table
-            if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
-                // For alias parameters, get the correct slot from the slot manager
-                if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
-                    try self.generator.instructions.append(.{
-                        .LoadAlias = .{
-                            .var_name = var_token.lexeme,
-                            .slot_index = alias_slot,
-                        },
-                    });
-                } else {
-                    return ErrorList.InvalidAliasArgument;
-                }
-                return;
-            }
-
-            // Regular variable - ensure it exists in the current scope and load it at runtime
-            const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
-
-            // Determine scope based on where the variable was actually created
-            // This must happen AFTER getOrCreateVariable to ensure the variable is registered
-            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-
-            const load_var_inst2 = HIRInstruction{
-                .LoadVar = .{
-                    .var_index = var_idx2,
-                    .var_name = var_token.lexeme,
-                    .scope_kind = scope_kind,
-                    .module_context = null,
-                },
-            };
-            try self.generator.instructions.append(load_var_inst2);
-        }
-    }
-
     /// Generate HIR for grouping expressions (parentheses)
     pub fn generateGrouping(self: *BasicExpressionHandler, grouping: ?*ast.Expr, preserve_result: bool) (std.mem.Allocator.Error || ErrorList)!void {
         _ = preserve_result; // Unused parameter
@@ -163,31 +92,14 @@ pub const BasicExpressionHandler = struct {
         }
     }
 
-    /// Generate HIR for this keyword
+    /// Generate HIR for `this`: the receiver, an alias parameter of the method
+    /// being lowered.
     pub fn generateThis(self: *BasicExpressionHandler) (std.mem.Allocator.Error || ErrorList)!void {
-        // Check if 'this' is an alias parameter (which it should be in instance methods)
-        if (self.generator.symbol_table.isAliasParameter("this")) {
-            // For alias parameters, get the correct slot from the slot manager
-            if (self.generator.slot_manager.getAliasSlot("this")) |alias_slot| {
-                try self.generator.instructions.append(.{
-                    .LoadAlias = .{
-                        .var_name = "this",
-                        .slot_index = alias_slot,
-                    },
-                });
-                return;
-            } else {
-                return ErrorList.InvalidAliasArgument;
-            }
-        }
-
-        // Fallback: Load 'this' as a regular variable (shouldn't happen in instance methods)
-        const this_idx = try self.generator.getOrCreateVariable("this");
-        try self.generator.instructions.append(.{ .LoadVar = .{
-            .var_index = this_idx,
+        const this_slot = self.generator.this_slot orelse return ErrorList.InvalidAliasArgument;
+        try self.generator.instructions.append(.{ .LoadAlias = .{
+            .slot = this_slot,
             .var_name = "this",
-            .scope_kind = .Local,
-            .module_context = null,
+            .slot_index = self.generator.alias_params.get(this_slot).?,
         } });
     }
 

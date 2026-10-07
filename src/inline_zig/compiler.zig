@@ -123,6 +123,48 @@ fn nativeReturnType(t: ast.TypeInfo) ?[]const u8 {
     };
 }
 
+/// The enum a fallible return (`DoxaError_<path>!<payload>`) names, once analysis
+/// has resolved it. `null` for every other return type, including a plain union
+/// — an inline-Zig signature can only produce this one union shape.
+fn errorUnionRef(t: ast.TypeInfo) ?ast.TypeRef {
+    if (t.base != .Union) return null;
+    for (t.union_type.?.types) |member| {
+        if (member.base != .Enum) continue;
+        if (member.custom_type) |custom| switch (custom) {
+            .ref => |r| return r,
+            .written => {},
+        };
+    }
+    return null;
+}
+
+/// The success member of a fallible return. `!void` gives `nothing`, so the
+/// union is `nothing | <enum>` and the payload carries no bytes.
+fn errorUnionPayload(t: ast.TypeInfo) ?ast.TypeInfo {
+    if (t.base != .Union) return null;
+    for (t.union_type.?.types) |member| {
+        if (member.base != .Enum) return member.*;
+    }
+    return null;
+}
+
+/// The `DoxaError_` spelling whose set has this identity, so a signature's
+/// bridge names the same generated error set the source spelled.
+fn errorSetPathFor(error_sets: []const module_graph.ZigErrorSet, ref: ast.TypeRef) ?[]const u8 {
+    for (error_sets) |error_set| {
+        if (error_set.ref.eql(ref)) return error_set.path;
+    }
+    return null;
+}
+
+/// Append the identifier of the generated `name -> discriminant` switch for an
+/// error-set path: every character that cannot appear in an identifier becomes
+/// `_` (`error.IO` -> `__doxa_error_index_error_IO`).
+fn appendErrorIndexFn(buf: *std.array_list.Managed(u8), path: []const u8) !void {
+    try buf.appendSlice("__doxa_error_index_");
+    for (path) |c| try buf.append(if (std.ascii.isAlphanumeric(c)) c else '_');
+}
+
 /// Generic adapters, emitted once per wrapper. `__DoxaArrayType` names the Zig
 /// slice type for `depth` nested levels; `__doxa_view` materializes a borrowed
 /// view of an incoming `ArrayHeader` (aliasing scalar buffers, copying string
@@ -283,16 +325,53 @@ fn generateWrapperZigFile(
         }
     }
 
+    // A fallible return (`DoxaError_<path>!void`) crosses as an `i64`: -1 for
+    // success (Doxa `nothing`), else the variant discriminant. The shim body
+    // returns against a Zig error set the wrapper synthesizes here, named after
+    // the enum and carrying its variant names, and an index switch carries the
+    // caught error back across the ABI. Analysis resolved each set's variants
+    // and identity, so this is the only place the names are needed.
+    for (unit.error_sets) |error_set| {
+        try file_buf.appendSlice("const @\"DoxaError_");
+        try file_buf.appendSlice(error_set.path);
+        try file_buf.appendSlice("\" = error{");
+        for (error_set.variants, 0..) |variant, i| {
+            if (i > 0) try file_buf.appendSlice(",");
+            try file_buf.appendSlice(" ");
+            try file_buf.appendSlice(variant);
+        }
+        try file_buf.appendSlice(" };\n");
+
+        try file_buf.appendSlice("fn ");
+        try appendErrorIndexFn(&file_buf, error_set.path);
+        try file_buf.appendSlice("(e: @\"DoxaError_");
+        try file_buf.appendSlice(error_set.path);
+        try file_buf.appendSlice("\") i64 {\n    return switch (e) {\n");
+        for (error_set.variants, 0..) |variant, i| {
+            const arm = try std.fmt.allocPrint(allocator, "        error.{s} => {d},\n", .{ variant, i });
+            defer allocator.free(arm);
+            try file_buf.appendSlice(arm);
+        }
+        try file_buf.appendSlice("    };\n}\n");
+    }
+
     for (sigs) |sig| {
         const native_ident = try std.fmt.allocPrint(allocator, "__doxa_native__{s}", .{sig.name});
         defer allocator.free(native_ident);
         const native_sym = try graph.mangle(allocator, record.id, .function, &.{sig.name});
         defer allocator.free(native_sym);
 
-        const native_ret_zig = nativeReturnType(sig.return_type) orelse {
-            reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });
-            return error.NotImplemented;
-        };
+        const native_ret_zig = if (errorUnionRef(sig.return_type) != null)
+            "i64"
+        else
+            nativeReturnType(sig.return_type) orelse {
+                reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported return type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });
+                return error.NotImplemented;
+            };
+        const fallible_payload: ?ast.TypeInfo = if (errorUnionRef(sig.return_type) != null)
+            errorUnionPayload(sig.return_type)
+        else
+            null;
 
         var native_buf = std.array_list.Managed(u8).init(allocator);
         defer native_buf.deinit();
@@ -356,6 +435,26 @@ fn generateWrapperZigFile(
             if (sig.param_types.len > 0) try native_buf.appendSlice(", ");
             try native_buf.appendSlice("out_ptr: *?[*]u8, out_len: *u64");
         }
+        // A fallible payload crosses through trailing out-parameters, so the
+        // i64 return is free to carry the sentinel (-1 = success) or the error.
+        if (fallible_payload) |payload| {
+            const out_params: ?[]const u8 = switch (payload.base) {
+                .Nothing => null,
+                .String => "out_ptr: *?[*]u8, out_len: *u64",
+                .Array => "out_array: *?*__DoxaArrayHeader",
+                .Int => "out_value: *i64",
+                // TODO: a float/byte/tetra payload needs its own out-param type
+                // and a matching load in `emitFallibleZigCall`.
+                else => {
+                    reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported fallible payload type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });
+                    return error.NotImplemented;
+                },
+            };
+            if (out_params) |decl| {
+                if (sig.param_types.len > 0) try native_buf.appendSlice(", ");
+                try native_buf.appendSlice(decl);
+            }
+        }
         try native_buf.appendSlice(") callconv(.c) ");
         try native_buf.appendSlice(native_ret_zig);
         try native_buf.appendSlice(" {\n");
@@ -368,6 +467,41 @@ fn generateWrapperZigFile(
             try native_buf.appendSlice(";\n");
             try native_buf.appendSlice("    if (__doxa_out.len == 0) { out_ptr.* = null; out_len.* = 0; return; }\n");
             try native_buf.appendSlice("    doxa_str_clone_current(__doxa_out.ptr, __doxa_out.len, out_ptr, out_len);\n");
+        } else if (errorUnionRef(sig.return_type)) |ref| {
+            // Success crosses as -1 (`nothing`), a caught error as its variant
+            // discriminant; a payload, if any, is written to the out-params.
+            const path = errorSetPathFor(unit.error_sets, ref) orelse {
+                reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unresolved error set for '{s}.{s}'", .{ unit.name, sig.name });
+                return error.NotImplemented;
+            };
+            const payload = fallible_payload orelse ast.TypeInfo{ .base = .Nothing };
+            if (payload.base == .Nothing) {
+                try native_buf.appendSlice("    ");
+            } else {
+                try native_buf.appendSlice("    const __doxa_out = ");
+            }
+            try native_buf.appendSlice(native_call.items);
+            try native_buf.appendSlice(" catch |__doxa_e| return ");
+            try appendErrorIndexFn(&native_buf, path);
+            try native_buf.appendSlice("(__doxa_e);\n");
+
+            switch (payload.base) {
+                .Nothing => {},
+                .String => try native_buf.appendSlice("    if (__doxa_out.len == 0) { out_ptr.* = null; out_len.* = 0; return -1; }\n" ++
+                    "    doxa_str_clone_current(__doxa_out.ptr, __doxa_out.len, out_ptr, out_len);\n"),
+                .Array => {
+                    const elem = arrayInfoFor(payload) orelse {
+                        reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported fallible array payload for '{s}.{s}'", .{ unit.name, sig.name });
+                        return error.NotImplemented;
+                    };
+                    const postlude = try std.fmt.allocPrint(allocator, "    out_array.* = __doxa_build({s}, {d}, {d}, {d}, __doxa_out);\n", .{ elem.zig_type, elem.depth, elem.elem_tag, elem.elem_size });
+                    defer allocator.free(postlude);
+                    try native_buf.appendSlice(postlude);
+                },
+                .Int => try native_buf.appendSlice("    out_value.* = __doxa_out;\n"),
+                else => {},
+            }
+            try native_buf.appendSlice("    return -1;\n");
         } else if (sig.return_type.base == .Array) {
             const elem = arrayInfoFor(sig.return_type) orelse {
                 reporter.reportCompileError(location, ErrorCode.NOT_IMPLEMENTED, "inline zig: unsupported array element type in native bridge for '{s}.{s}'", .{ unit.name, sig.name });

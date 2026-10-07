@@ -16,6 +16,7 @@ const ErrorCode = Errors.ErrorCode;
 const Reporting = @import("../../utils/reporting.zig");
 const Location = Reporting.Location;
 const SemanticAnalyzer = @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer;
+const UnionTable = @import("../../common/union_table.zig").UnionTable;
 const TypeRef = ast.TypeRef;
 
 /// Codegen's view of the program's types. Named types are keyed by their
@@ -26,8 +27,9 @@ pub const TypeSystem = struct {
     allocator: std.mem.Allocator,
     reporter: *Reporting.Reporter,
     semantic: *const SemanticAnalyzer,
-    union_id_map: std.StringHashMap(u32),
-    next_union_id: u32,
+    /// The analyzer's union table: the one part of analysis codegen extends,
+    /// since lowering may name a union analysis never spelled.
+    unions: *UnionTable,
 
     pub const CustomTypeInfo = struct {
         name: []const u8,
@@ -109,122 +111,29 @@ pub const TypeSystem = struct {
         };
     }
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *Reporting.Reporter, semantic: *const SemanticAnalyzer) TypeSystem {
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporting.Reporter, semantic: *const SemanticAnalyzer, unions: *UnionTable) TypeSystem {
         return TypeSystem{
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
             .allocator = allocator,
             .reporter = reporter,
             .semantic = semantic,
-            .union_id_map = std.StringHashMap(u32).init(allocator),
-            .next_union_id = 1,
+            .unions = unions,
         };
     }
 
     pub fn deinit(self: *TypeSystem) void {
-        var it = self.union_id_map.iterator();
-        while (it.next()) |entry| {
-            self.allocator.free(entry.key_ptr.*);
-        }
-        self.union_id_map.deinit();
         self.custom_types.deinit();
     }
 
+    /// The names a peek lists for a group value: its flattened members, in
+    /// the order its box indexes them.
     pub fn getGroupMemberNames(self: *TypeSystem, group_key: []const u8) ![][]const u8 {
-        const ct = self.custom_types.get(group_key);
-        if (ct == null or ct.?.kind != .Group) return &[_][]const u8{};
-
-        if (ct.?.group_members) |members| {
-            var names = try self.allocator.alloc([]const u8, members.len + 1);
-            names[0] = "nothing";
-            for (members, 0..) |member, i| {
-                names[i + 1] = member.qualifier;
-            }
-            return names;
-        }
-
-        var names = try self.allocator.alloc([]const u8, 2);
-        names[0] = "nothing";
-        names[1] = group_key;
+        const groups = &self.semantic.group_table;
+        const id = groups.idByKey(group_key) orelse return &.{};
+        const members = groups.members(id) orelse return &.{};
+        const names = try self.allocator.alloc([]const u8, members.len);
+        for (members, names) |member, *name| name.* = member.qualifier;
         return names;
-    }
-
-    fn appendTypeLabel(self: *TypeSystem, buf: *std.ArrayListUnmanaged(u8), ti: *const ast.TypeInfo) !void {
-        switch (ti.base) {
-            .Array => {
-                if (ti.array_type) |elem| {
-                    try self.appendTypeLabel(buf, elem);
-                    try buf.appendSlice(self.allocator, "[]");
-                } else {
-                    try buf.appendSlice(self.allocator, "array");
-                }
-            },
-            .Map => {
-                try buf.appendSlice(self.allocator, "map<");
-                if (ti.map_key_type) |k| {
-                    try self.appendTypeLabel(buf, k);
-                } else {
-                    try buf.appendSlice(self.allocator, "unknown");
-                }
-                try buf.appendSlice(self.allocator, ":");
-                if (ti.map_value_type) |v| {
-                    try self.appendTypeLabel(buf, v);
-                } else {
-                    try buf.appendSlice(self.allocator, "unknown");
-                }
-                try buf.appendSlice(self.allocator, ">");
-            },
-            .Union => {
-                if (ti.union_type) |ut| {
-                    // Flatten nested unions into the buffer with '|' separators
-                    var first = true;
-                    for (ut.types) |member| {
-                        if (first) {
-                            first = false;
-                        } else {
-                            try buf.append(self.allocator, '|');
-                        }
-                        try self.appendTypeLabel(buf, member);
-                    }
-                } else {
-                    try buf.appendSlice(self.allocator, "union");
-                }
-            },
-            else => {
-                // A union's key is its members' identities: a named member is
-                // spelled by its canonical key, so two modules' `Node` never
-                // make the same union.
-                const label = if (ti.custom_type) |custom| self.refKey(custom.resolved()) orelse custom.displayName() else @tagName(ti.base);
-                try buf.appendSlice(self.allocator, label);
-            },
-        }
-    }
-
-    fn collectUnionMembers(self: *TypeSystem, list: *std.ArrayListUnmanaged(*const ast.TypeInfo), ut: *const ast.UnionType) !void {
-        for (ut.types) |member| {
-            if (member.base == .Union) {
-                if (member.union_type) |nested| {
-                    try self.collectUnionMembers(list, nested);
-                } else {
-                    try list.append(self.allocator, member);
-                }
-            } else {
-                try list.append(self.allocator, member);
-            }
-        }
-    }
-
-    fn buildUnionKey(self: *TypeSystem, ut: *ast.UnionType) ![]u8 {
-        var members: std.ArrayListUnmanaged(*const ast.TypeInfo) = .empty;
-        defer members.deinit(self.allocator);
-        try self.collectUnionMembers(&members, ut);
-
-        var buf: std.ArrayListUnmanaged(u8) = .empty;
-        defer buf.deinit(self.allocator);
-        for (members.items, 0..) |member, idx| {
-            if (idx > 0) try buf.append(self.allocator, '|');
-            try self.appendTypeLabel(&buf, member);
-        }
-        return buf.toOwnedSlice(self.allocator);
     }
 
     pub fn convertTypeInfo(self: *TypeSystem, type_info: ast.TypeInfo) HIRType {
@@ -264,34 +173,15 @@ pub const TypeSystem = struct {
                 return HIRType{ .Map = .{ .key = key_type, .value = value_type } };
             },
             .Union => blk: {
-                if (type_info.union_type) |ut| {
-                    const key = self.buildUnionKey(ut) catch return .Unknown;
-                    errdefer self.allocator.free(key);
-                    const entry = self.union_id_map.getOrPut(key) catch return .Unknown;
-                    if (!entry.found_existing) {
-                        entry.key_ptr.* = key;
-                        entry.value_ptr.* = self.next_union_id;
-                        self.next_union_id += 1;
-                    } else {
-                        self.allocator.free(key);
-                    }
-                    const union_id = entry.value_ptr.*;
-
-                    var lowered: std.ArrayListUnmanaged(*const HIRType) = .empty;
-                    defer lowered.deinit(self.allocator);
-                    var members: std.ArrayListUnmanaged(*const ast.TypeInfo) = .empty;
-                    defer members.deinit(self.allocator);
-                    self.collectUnionMembers(&members, ut) catch return .Unknown;
-                    for (members.items) |member| {
-                        const member_ptr = self.allocator.create(HIRType) catch return .Unknown;
-                        member_ptr.* = self.convertTypeInfo(member.*);
-                        lowered.append(self.allocator, member_ptr) catch return .Unknown;
-                    }
-
-                    const members_slice = lowered.toOwnedSlice(self.allocator) catch return .Unknown;
-                    break :blk HIRType{ .Union = .{ .id = union_id, .members = members_slice } };
+                const ut = type_info.union_type orelse break :blk .Unknown;
+                const lowered = self.allocator.alloc(*const HIRType, ut.types.len) catch break :blk .Unknown;
+                defer self.allocator.free(lowered);
+                for (ut.types, lowered) |member, *slot| {
+                    const member_ptr = self.allocator.create(HIRType) catch break :blk .Unknown;
+                    member_ptr.* = self.convertTypeInfo(member.*);
+                    slot.* = member_ptr;
                 }
-                break :blk .Unknown;
+                break :blk self.unions.intern(self.semantic.unionNames(), lowered) catch .Unknown;
             },
             .Struct => if (type_info.custom_type) |custom| self.typeForRef(custom.resolved()) else .Nothing,
             .Custom => if (type_info.custom_type) |custom| self.typeForRef(custom.resolved()) else .Unknown,
@@ -583,10 +473,8 @@ pub const TypeSystem = struct {
                         value_ptr.* = actual_value_ty;
                         const nothing_ptr = self.allocator.create(HIRType) catch break :blk .Unknown;
                         nothing_ptr.* = .Nothing;
-                        const members = self.allocator.alloc(*const HIRType, 2) catch break :blk .Unknown;
-                        members[0] = value_ptr;
-                        members[1] = nothing_ptr;
-                        break :blk HIRType{ .Union = .{ .id = 0, .members = members } };
+                        const members = [_]*const HIRType{ value_ptr, nothing_ptr };
+                        break :blk self.unions.intern(self.semantic.unionNames(), &members) catch .Unknown;
                     },
                     else => .String,
                 };
@@ -811,50 +699,6 @@ pub const TypeSystem = struct {
             .Map => "map",
             .Function => "function",
             .Custom => "custom",
-            .Union => "union",
-        };
-    }
-
-    pub fn collectUnionMemberNames(self: *TypeSystem, ut: *ast.UnionType) ![][]const u8 {
-        var list = std.array_list.Managed([]const u8).init(self.allocator);
-        defer if (false) list.deinit(); // transferred to caller
-
-        for (ut.types) |member| {
-            if (member.base == .Union) {
-                if (member.union_type) |nested| {
-                    const nested_list = try self.collectUnionMemberNames(nested);
-                    for (nested_list) |nm| {
-                        try list.append(nm);
-                    }
-                }
-            } else {
-                try list.append(try self.typeInfoDisplayName(member));
-            }
-        }
-
-        return try list.toOwnedSlice();
-    }
-
-    fn typeInfoDisplayName(self: *TypeSystem, info: *const ast.TypeInfo) ![]const u8 {
-        return switch (info.base) {
-            .Int => "int",
-            .Byte => "byte",
-            .Float => "float",
-            .String => "string",
-            .Tetra => "tetra",
-            .Nothing => "nothing",
-            .Array => blk: {
-                if (info.array_type) |elem| {
-                    const elem_name = try self.typeInfoDisplayName(elem);
-                    break :blk try std.fmt.allocPrint(self.allocator, "{s}[]", .{elem_name});
-                }
-                break :blk "array";
-            },
-            .Struct => if (info.custom_type) |custom| custom.displayName() else "struct",
-            .Enum => if (info.custom_type) |custom| custom.displayName() else "enum",
-            .Custom => if (info.custom_type) |custom| custom.displayName() else "custom",
-            .Map => "map",
-            .Function => "function",
             .Union => "union",
         };
     }

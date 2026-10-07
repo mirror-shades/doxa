@@ -116,6 +116,7 @@ pub const IRPrinter = struct {
     pub const requireStack = VerifyMethods.requireStack;
     pub const requireRepr = VerifyMethods.requireRepr;
     pub const requireReprIn = VerifyMethods.requireReprIn;
+    pub const verifyStore = VerifyMethods.verifyStore;
 
     const ValueHelperMethods = @import("./ir_printer/value_helpers.zig").Methods(Ctx);
     pub const createEnumTypeNameGlobal = ValueHelperMethods.createEnumTypeNameGlobal;
@@ -124,11 +125,13 @@ pub const IRPrinter = struct {
     pub const callReturningString = ValueHelperMethods.callReturningString;
     pub const pushStringResult = ValueHelperMethods.pushStringResult;
     pub const boxDoxaValue = ValueHelperMethods.boxDoxaValue;
+    pub const doxaValueSlot = ValueHelperMethods.doxaValueSlot;
     pub const enumTypeNameFor = ValueHelperMethods.enumTypeNameFor;
     pub const ensurePointer = ValueHelperMethods.ensurePointer;
     pub const ensureI64 = ValueHelperMethods.ensureI64;
     pub const unwrapDoxaValueToType = ValueHelperMethods.unwrapDoxaValueToType;
-    pub const findUnionMemberIndex = ValueHelperMethods.findUnionMemberIndex;
+    pub const boxMember = ValueHelperMethods.boxMember;
+    pub const boxMemberCount = ValueHelperMethods.boxMemberCount;
     pub const findMemberIndex = ValueHelperMethods.findMemberIndex;
     pub const isBoxedMemberType = ValueHelperMethods.isBoxedMemberType;
     pub const buildDoxaValue = ValueHelperMethods.buildDoxaValue;
@@ -181,9 +184,11 @@ pub const IRPrinter = struct {
     pub const handlePeekStruct = SharedHandlers.handlePeekStruct;
     pub const handleMemberCheck = SharedHandlers.handleMemberCheck;
     pub const handleUnboxPayload = SharedHandlers.handleUnboxPayload;
-    pub const handleUnionConstruct = SharedHandlers.handleUnionConstruct;
+    pub const handleBox = SharedHandlers.handleBox;
+    pub const handleUnbox = SharedHandlers.handleUnbox;
     pub const handleAssertFail = SharedHandlers.handleAssertFail;
     pub const handleCall = SharedHandlers.handleCall;
+pub const emitFallibleZigCall = SharedHandlers.emitFallibleZigCall;
     pub const handleStoreDeclGlobal = SharedHandlers.handleStoreDeclGlobal;
     pub const handleStoreVarGlobal = SharedHandlers.handleStoreVarGlobal;
     pub const handleLoadVarGlobal = SharedHandlers.handleLoadVarGlobal;
@@ -273,23 +278,23 @@ pub const IRPrinter = struct {
     /// Per-variable stack of `as`-cast narrowed member views. `NarrowVar` pushes
     /// a single-member union view; `RestoreVar` pops it. Loads of the variable
     /// unwrap the boxed `%DoxaValue` to the active member representation.
-    narrowed_vars: std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)),
+    narrowed_vars: std.AutoHashMap(HIR.Slot, std.ArrayListUnmanaged(HIR.HIRType)),
     /// Region class of each local variable's heap payload (A1). Populated while
     /// a function body is emitted so a `LoadVar` knows whether the object it
     /// loads provably outlives a later rehome store's destination. Global scope
     /// kinds never appear here; globals are always `Root`.
-    var_regions: std.StringHashMap(Region),
+    var_regions: std.AutoHashMap(HIR.Slot, Region),
     /// Phase D: value range of each local variable's integer payload. Same
     /// shape and lifetime as `var_regions` — a per-function map consulted by
     /// `LoadVar` so an arithmetic lowering can trust a bound across a variable
     /// reference. The recorded range is the hull of every store seen in the
     /// variable's own basic block; a store from any other block widens it to
     /// the whole of `i64` (see `recordVarRange`).
-    var_ranges: std.StringHashMap(IntRange),
+    var_ranges: std.AutoHashMap(HIR.Slot, IntRange),
     /// Phase D: the basic block each entry of `var_ranges` was recorded in, so
     /// a store from a different block can be recognised as one this linear walk
     /// cannot reason about.
-    var_range_blocks: std.StringHashMap([]const u8),
+    var_range_blocks: std.AutoHashMap(HIR.Slot, []const u8),
     /// Phase D: the basic block currently being emitted. Mirrors the
     /// `current_block` the emitter threads through its own helpers.
     current_block: []const u8 = "entry",
@@ -304,10 +309,10 @@ pub const IRPrinter = struct {
     range_ctx: ?@import("./ir_printer/range_flow.zig").Context = null,
     /// Phase D-1 follow-on: loop-head variable ranges, keyed by `loop_start_*`
     /// label. The emitter activates the entry matching the loop it is emitting.
-    loop_head_envs: std.StringHashMap(std.StringHashMap(IntRange)),
+    loop_head_envs: std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)),
     /// The loop-head range map currently in scope, or `null` outside a loop.
     /// Consulted by `varRange` before the block-local walk.
-    active_loop_range: ?*const std.StringHashMap(IntRange) = null,
+    active_loop_range: ?*const std.AutoHashMap(HIR.Slot, IntRange) = null,
     /// B2: struct type names that reach a reflection site anywhere in the program
     /// (borrowed from the generator). Such a type must keep its descriptor.
     reflected_structs: ?*const std.StringHashMap(void) = null,

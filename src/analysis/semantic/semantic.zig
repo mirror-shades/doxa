@@ -19,6 +19,7 @@ const ErrorCode = Errors.ErrorCode;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
 const EnumTable = @import("../../common/enum_table.zig").EnumTable;
 const GroupTable = @import("../../common/group_table.zig").GroupTable;
+const UnionTable = @import("../../common/union_table.zig").UnionTable;
 const StructId = @import("../../codegen/hir/soxa_types.zig").StructId;
 
 const Types = @import("../../types/types.zig");
@@ -95,6 +96,23 @@ fn isEmptyArrayLiteral(expr: *const ast.Expr) bool {
 ///
 /// `analyzeProgram` analyzes the entry record and then every record a
 /// reference materialized, until no new record joins the program.
+/// A store through a name. `type_cache` holds what an expression reads; a
+/// store also needs what it writes, which differs inside a narrowing view.
+pub const StoreTarget = struct {
+    /// The storage's type, beneath every narrowing view: what a store writes.
+    slot: *ast.TypeInfo,
+    /// What a read of the name sees at the store: the active view's type, or
+    /// the slot's.
+    read: *ast.TypeInfo,
+    /// The storage's identity: the storage id of the binding beneath every
+    /// view. Codegen keys a variable's slot by it, so two bindings that share
+    /// a name never share storage.
+    storage: u32,
+    /// The storage is module-level: a global, not a local of the enclosing
+    /// function.
+    global: bool,
+};
+
 pub const SemanticAnalyzer = struct {
     in_loop_scope: bool = false,
     allocator: std.mem.Allocator,
@@ -103,6 +121,9 @@ pub const SemanticAnalyzer = struct {
     fatal_error: bool,
     current_scope: ?*Scope,
     type_cache: std.AutoHashMap(NodeId, *ast.TypeInfo),
+    /// What a store through a name writes and what the name reads there, per
+    /// `Variable` expression, assignment and variable declaration.
+    store_targets: std.AutoHashMap(NodeId, StoreTarget),
     custom_types: graph_mod.TypeRefHashMap(CustomTypeInfo),
     struct_methods: graph_mod.TypeRefHashMap(std.StringHashMap(StructMethodInfo)),
 
@@ -144,9 +165,8 @@ pub const SemanticAnalyzer = struct {
     struct_table: StructTable,
     enum_table: EnumTable,
     group_table: GroupTable,
-    // Union type registry: assigns a stable id per canonical ast.UnionType
-    union_ids: std.AutoHashMap(*ast.UnionType, u32),
-    next_union_id: u32,
+    /// Every union type of the compilation; codegen extends it.
+    union_table: UnionTable,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -163,6 +183,7 @@ pub const SemanticAnalyzer = struct {
             .fatal_error = false,
             .current_scope = null,
             .type_cache = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
+            .store_targets = std.AutoHashMap(NodeId, StoreTarget).init(allocator),
             .custom_types = graph_mod.TypeRefHashMap(CustomTypeInfo).init(allocator),
             .struct_methods = graph_mod.TypeRefHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
             .loader = loader,
@@ -178,13 +199,13 @@ pub const SemanticAnalyzer = struct {
             .struct_table = StructTable.init(allocator),
             .enum_table = EnumTable.init(allocator),
             .group_table = GroupTable.init(allocator),
-            .union_ids = std.AutoHashMap(*ast.UnionType, u32).init(allocator),
-            .next_union_id = 1,
+            .union_table = UnionTable.init(allocator),
         };
     }
 
     pub fn deinit(self: *SemanticAnalyzer) void {
         self.type_cache.deinit();
+        self.store_targets.deinit();
         self.bare_variants.deinit(self.allocator);
         self.custom_types.deinit();
         var methods_it = self.struct_methods.valueIterator();
@@ -198,7 +219,7 @@ pub const SemanticAnalyzer = struct {
         self.struct_table.deinit();
         self.enum_table.deinit();
         self.group_table.deinit();
-        self.union_ids.deinit();
+        self.union_table.deinit();
     }
 
     pub fn getStructTable(self: *const SemanticAnalyzer) *const StructTable {
@@ -213,11 +234,22 @@ pub const SemanticAnalyzer = struct {
         return &self.group_table;
     }
 
+    /// The tables a union orders its named members by.
+    pub fn unionNames(self: *const SemanticAnalyzer) UnionTable.Names {
+        return .{ .structs = &self.struct_table, .enums = &self.enum_table, .groups = &self.group_table };
+    }
+
     /// The type the analyzer inferred for `expr`, if it has visited it.
     /// Codegen reads `@`-call types from here rather than re-deriving them, so
     /// `inferBuiltinCall` stays the single authority for builtin typing.
     pub fn getCachedExprType(self: *const SemanticAnalyzer, expr: *const ast.Expr) ?*ast.TypeInfo {
         return self.type_cache.get(expr.base.id);
+    }
+
+    /// The store target `node` names, if it is a name, an assignment or a
+    /// declaration the analyzer resolved.
+    pub fn getStoreTarget(self: *const SemanticAnalyzer, node: NodeId) ?StoreTarget {
+        return self.store_targets.get(node);
     }
 
     /// What `expr` was resolved to, if it names a module-level entity.
@@ -281,6 +313,7 @@ pub const SemanticAnalyzer = struct {
         try self.struct_table.assignKeys(self.graph);
         try self.enum_table.assignKeys(self.graph);
         try self.group_table.assignKeys(self.graph);
+        try helpers.lowerStructFieldTypes(self);
     }
 
     /// Register `id`'s declarations in its module scope (collecting its
@@ -438,11 +471,38 @@ pub const SemanticAnalyzer = struct {
     /// module function. A block resolves `DoxaEnum_X` through its owner's
     /// bindings; a `.zig` file has no Doxa bindings to resolve through.
     fn registerZigFunctions(self: *SemanticAnalyzer, record: *ModuleRecord) ErrorList!void {
-        const unit = record.zig.?;
+        const unit = &record.zig.?;
         const scope = self.moduleScope(record.id);
+        // Fallible returns resolve to `nothing | <enum>`; the wrapper needs the
+        // enum's variants to synthesize the Zig error set the body returns
+        // against. Their `path` spelling is captured before resolution replaces
+        // `custom_type.written` with the resolved ref.
+        var error_sets = std.array_list.Managed(graph_mod.ZigErrorSet).init(self.allocator);
+        defer error_sets.deinit();
         for (unit.sigs) |*sig| {
+            const error_path: ?[]const u8 = blk: {
+                if (sig.return_type.base != .Union) break :blk null;
+                for (sig.return_type.union_type.?.types) |member| {
+                    if (member.base != .Enum) continue;
+                    if (member.custom_type) |custom| switch (custom) {
+                        .written => |written| break :blk written,
+                        .ref => {},
+                    };
+                }
+                break :blk null;
+            };
+
             for (sig.param_types) |*param| try self.resolveZigType(record, param);
             try self.resolveZigType(record, &sig.return_type);
+
+            if (error_path) |path| {
+                const resolved = try self.zigErrorSetVariants(sig.return_type);
+                var already = false;
+                for (error_sets.items) |seen| {
+                    if (std.mem.eql(u8, seen.path, path)) already = true;
+                }
+                if (!already) try error_sets.append(.{ .path = path, .ref = resolved.ref, .variants = resolved.variants });
+            }
 
             const return_type = try ast.TypeInfo.createDefault(self.allocator);
             return_type.* = sig.return_type;
@@ -453,6 +513,31 @@ pub const SemanticAnalyzer = struct {
             const variable = try scope.createValueBinding(sig.name, TokenLiteral{ .nothing = {} }, .FUNCTION, type_info, true);
             variable.used = true;
         }
+        if (error_sets.items.len > 0) unit.error_sets = try error_sets.toOwnedSlice();
+    }
+
+    /// The resolved identity and variant names of the enum member of a fallible
+    /// return, in declaration order — the order a Zig error set's names must
+    /// follow for the generated `name -> discriminant` switch to agree with
+    /// Doxa.
+    fn zigErrorSetVariants(self: *SemanticAnalyzer, return_type: ast.TypeInfo) ErrorList!struct {
+        ref: ast.TypeRef,
+        variants: []const []const u8,
+    } {
+        const enum_member = for (return_type.union_type.?.types) |member| {
+            if (member.base == .Enum) break member;
+        } else return error.UndefinedType;
+
+        const ref = switch (enum_member.custom_type orelse return error.UndefinedType) {
+            .ref => |r| r,
+            .written => return error.UndefinedType,
+        };
+        const id = self.enum_table.idOf(ref) orelse return error.UndefinedType;
+        const variants = self.enum_table.variants(id) orelse return error.UndefinedType;
+
+        const variant_names = try self.allocator.alloc([]const u8, variants.len);
+        for (variants, 0..) |variant, i| variant_names[i] = variant.name;
+        return .{ .ref = ref, .variants = variant_names };
     }
 
     fn resolveZigType(self: *SemanticAnalyzer, record: *ModuleRecord, type_info: *ast.TypeInfo) ErrorList!void {
@@ -653,11 +738,9 @@ pub const SemanticAnalyzer = struct {
             func_type.return_type.* = func.return_type_info;
 
             // Local-only lookup: a binding of the same name in an ancestor
-            // scope is a different declaration that this one shadows, not a
-            // duplicate. The ancestor-walking lookup would let an enclosing
-            // scope suppress this registration, and the function's own body
-            // would then resolve the name to the outer binding instead.
+            // scope is a shadowing error, not this scope's duplicate.
             if (scope.lookupLocalVariable(func.name.lexeme) != null) continue;
+            self.checkFreshName(scope, func.name);
             const func_type_info = try ast.TypeInfo.createDefault(self.allocator);
             func_type_info.* = .{ .base = .Function, .function_type = func_type };
             // A function binding carries its type; its value is its
@@ -779,6 +862,7 @@ pub const SemanticAnalyzer = struct {
                         continue;
                     }
 
+                    self.checkFreshName(scope, decl.name);
                     const binding = if (decl.type_expr == null)
                         scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
                     else
@@ -909,7 +993,29 @@ pub const SemanticAnalyzer = struct {
         const type_info = try ast.TypeInfo.createDefault(self.allocator);
         type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref }, .struct_fields = fields, .is_mutable = false };
         try self.bindTypeName(scope, decl.name, .STRUCT, type_info, base);
+        try self.checkStructMemberNames(decl);
         try self.registerStructMethods(decl, ref);
+    }
+
+    /// A struct names each member once: no two fields, no two methods or
+    /// functions, and no method or function sharing a field's name.
+    fn checkStructMemberNames(self: *SemanticAnalyzer, decl: *ast.StructDecl) ErrorList!void {
+        var seen = std.StringHashMap(void).init(self.allocator);
+        defer seen.deinit();
+        for (decl.fields) |field| try self.claimStructMember(&seen, decl.name, field.name);
+        for (decl.methods) |method| try self.claimStructMember(&seen, decl.name, method.name);
+    }
+
+    fn claimStructMember(self: *SemanticAnalyzer, seen: *std.StringHashMap(void), struct_name: Token, member: Token) ErrorList!void {
+        if ((try seen.getOrPut(member.lexeme)).found_existing) {
+            self.reporter.reportCompileError(
+                ast.SourceSpan.fromToken(member).location,
+                ErrorCode.DUPLICATE_VARIABLE,
+                "struct '{s}' already has a member named '{s}'",
+                .{ struct_name.lexeme, member.lexeme },
+            );
+            self.fatal_error = true;
+        }
     }
 
     /// Register an enum declared at file scope and bind its name, so
@@ -1053,6 +1159,7 @@ pub const SemanticAnalyzer = struct {
                             else => return err,
                         };
 
+                        self.checkFreshName(scope, decl.name);
                         const binding = if (decl.type_expr == null)
                             scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
                         else
@@ -1066,6 +1173,10 @@ pub const SemanticAnalyzer = struct {
                             continue;
                         }
                     }
+                    // The declaration stores its binding's type, which an
+                    // incomplete array annotation completes from the initializer.
+                    const decl_binding = scope.lookupLocalVariable(decl.name.lexeme);
+                    try names.recordStoreTarget(self, stmt.base.id, decl_binding, decl_binding, scope == self.moduleScope(self.current_module));
 
                     // Type checking
                     if (decl.initializer) |init_expr| {
@@ -1115,6 +1226,8 @@ pub const SemanticAnalyzer = struct {
                 .Return => |return_stmt| {
                     if (return_stmt.value) |value| {
                         _ = try self.checkReturnValue(value, getLocationFromBase(stmt.base));
+                    } else {
+                        self.checkBareReturn(getLocationFromBase(stmt.base));
                     }
                     prev_was_terminator = true;
                 },
@@ -1333,13 +1446,17 @@ pub const SemanticAnalyzer = struct {
                     if (path.field_names.len > 0) {
                         if (member) |ref| if (self.struct_table.idOf(ref)) |sid| {
                             const fields = self.struct_table.fields(sid) orelse &.{};
-                            for (path.field_names) |field_token| {
-                                for (fields) |field| {
-                                    if (!std.mem.eql(u8, field.name, field_token.lexeme)) continue;
-                                    _ = try bindNarrowed(case_scope, field_token.lexeme, field.type_info.*, self.allocator);
-                                    break;
-                                }
+                            const storages = try self.allocator.alloc(u32, path.field_names.len);
+                            for (path.field_names, storages) |field_token, *storage| {
+                                // An undeclared field is `checkDestructure`'s
+                                // error, which stops the compile before codegen.
+                                const field = for (fields) |f| {
+                                    if (std.mem.eql(u8, f.name, field_token.lexeme)) break f;
+                                } else continue;
+                                self.checkFreshName(case_scope, field_token);
+                                storage.* = (try bindNarrowed(case_scope, field_token.lexeme, field.type_info.*, self.allocator)).storage_id;
                             }
+                            case.path_patterns[0].field_storages = storages;
                         };
                     }
                 }
@@ -1353,6 +1470,26 @@ pub const SemanticAnalyzer = struct {
         const case_body_type = try infer_type.inferTypeFromExpr(self, case.body);
         if (matched_var_name) |name| case_scope.propagateUsedToParent(name);
         return case_body_type;
+    }
+
+    /// One name, one meaning: a declaration inside a function, a block or a
+    /// pattern may not reuse a name already visible where it appears — an
+    /// enclosing local or parameter, or a top-level name of the file (its
+    /// declarations, imports and aliases). A sibling scope's binding is not
+    /// visible, so it does not conflict. A duplicate within one scope is
+    /// `DUPLICATE_VARIABLE`'s, and top-level names are checked against each
+    /// other by the loader. The declaration still binds, so its uses resolve.
+    pub fn checkFreshName(self: *SemanticAnalyzer, scope: *Scope, name: Token) void {
+        if (scope == self.moduleScope(self.current_module)) return;
+        const visible = if (scope.parent) |parent| parent.lookupVariable(name.lexeme) != null else false;
+        if (!visible and !self.graph.record(self.current_module).bindings.contains(name.lexeme)) return;
+        self.reporter.reportCompileError(
+            ast.SourceSpan.fromToken(name).location,
+            ErrorCode.SHADOWED_NAME,
+            "'{s}' is already declared where this declaration is visible; a name has one meaning wherever it can be seen",
+            .{name.lexeme},
+        );
+        self.fatal_error = true;
     }
 
     fn bindNarrowed(scope: *Scope, name: []const u8, narrowed: ast.TypeInfo, allocator: std.mem.Allocator) ErrorList!*Variable {
@@ -1832,12 +1969,20 @@ pub const SemanticAnalyzer = struct {
         const func_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
         // Add parameters to function scope
-        for (func.params) |param| {
+        for (func.params) |*param| {
             const param_type_info = if (param.type_expr) |type_expr|
                 try self.typeExprToTypeInfo(type_expr)
             else
                 try ast.TypeInfo.createDefault(self.allocator);
 
+            // A default stands in for an argument the caller left out, so it
+            // is typed against the parameter as an argument is.
+            if (param.default_value) |default_value| {
+                const default_type = try infer_type.inferTypeFromExpr(self, default_value);
+                try helpers.unifyTypesExpr(self, param_type_info, default_type, default_value, .{ .location = getLocationFromBase(default_value.base) });
+            }
+
+            self.checkFreshName(func_scope, param.name);
             const param_var = func_scope.createValueBinding(
                 param.name.lexeme,
                 TokenLiteral{ .nothing = {} }, // Parameters get their values at call time
@@ -1860,6 +2005,7 @@ pub const SemanticAnalyzer = struct {
             };
             param_var.is_param = true;
             param_var.recordDeclLocation(param.name);
+            param.storage = param_var.storage_id;
         }
 
         // Temporarily set current scope to function scope
@@ -1914,6 +2060,22 @@ pub const SemanticAnalyzer = struct {
         }
         try self.validateReturnTypeCompatibility(&returning.type, value_type, value, .{ .location = location });
         return value_type;
+    }
+
+    /// A bare `return` returns `nothing`, so the function has to declare a
+    /// return type that admits it: none at all, or a union with a `nothing`
+    /// member. A function returns what it declares; nothing widens it.
+    pub fn checkBareReturn(self: *SemanticAnalyzer, location: Location) void {
+        const returning = self.returning orelse return;
+        const declared = returning.type;
+        if (admitsNothing(&declared)) return;
+        self.reporter.reportCompileError(
+            location,
+            ErrorCode.TYPE_MISMATCH,
+            "'{s}' returns {s}, so a bare `return` has no value to give; declare `returns nothing | {s}` to return nothing",
+            .{ returning.function.lexeme, helpers.typeLabel(&declared), helpers.typeLabel(&declared) },
+        );
+        self.fatal_error = true;
     }
 
     fn checkStatementsHaveBreaks(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!bool {
@@ -2025,10 +2187,56 @@ fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList
         return false;
     }
 
+    /// Whether a value of `t` may be `nothing`: `nothing` itself, or a union
+    /// with a `nothing` member.
+    fn admitsNothing(t: *const ast.TypeInfo) bool {
+        return t.base == .Nothing or (t.base == .Union and unionHasNothing(t));
+    }
+
+    fn unionHasNothing(t: *const ast.TypeInfo) bool {
+        const union_type = t.union_type orelse return false;
+        for (union_type.types) |member| if (member.base == .Nothing) return true;
+        return false;
+    }
+
+    /// Whether `expected` accepts `actual` as the same named type: an enum
+    /// value matches a named enum, and either matches a group that contains it.
+    /// This is what widens `nothing | error.IO` (an inline-Zig fallible return)
+    /// into `nothing | error.StdError`, where the group's members are the enums.
+    fn namedMemberAccepts(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *const ast.TypeInfo) bool {
+        const expected_ref = switch (expected.custom_type orelse return false) {
+            .ref => |r| r,
+            .written => return false,
+        };
+        if (self.custom_types.get(expected_ref)) |custom| {
+            if (custom.kind == .Enum and actual.base == .Enum) return true;
+        }
+        const actual_ref = switch (actual.custom_type orelse return false) {
+            .ref => |r| r,
+            .written => return false,
+        };
+        const group_id = self.group_table.idOf(expected_ref) orelse return false;
+        const group_members = self.group_table.members(group_id) orelse return false;
+        for (group_members) |member| {
+            if (member.ref.eql(actual_ref)) return true;
+        }
+        return false;
+    }
+
     fn validateReturnTypeCompatibility(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, actual_expr: ?*ast.Expr, span: ast.SourceSpan) !void {
-        // Treat Nothing as a bottom type that is compatible with any expected return type
-        if (actual.base == .Nothing) {
-            return;
+        // `nothing` is returned only where the declared type admits it.
+        if (actual.base == .Nothing or (actual.base == .Union and unionHasNothing(actual))) {
+            if (!admitsNothing(expected)) {
+                self.reporter.reportCompileError(
+                    span.location,
+                    ErrorCode.TYPE_MISMATCH,
+                    "this return can be `nothing`, which {s} does not admit; declare `returns nothing | {s}`",
+                    .{ helpers.typeLabel(expected), helpers.typeLabel(expected) },
+                );
+                self.fatal_error = true;
+                return;
+            }
+            if (actual.base == .Nothing) return;
         }
         // Handle union types for return type checking
         if (expected.base == .Union) {
@@ -2039,7 +2247,7 @@ fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList
                     if (actual.union_type) |actual_union| {
                         // Check that every member of the actual union is compatible with the expected union
                         for (actual_union.types) |actual_member| {
-                            // Skip Nothing members; Nothing is compatible with any expected union
+                            // `nothing` was checked against the declared type above.
                             if (actual_member.base == .Nothing) continue;
                             var found_match = false;
                             for (union_type.types) |expected_member| {
@@ -2057,6 +2265,10 @@ fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList
                                             }
                                         }
                                     }
+                                }
+                                if (self.namedMemberAccepts(expected_member, actual_member)) {
+                                    found_match = true;
+                                    break;
                                 }
                             }
                             if (!found_match) {
@@ -2091,6 +2303,10 @@ fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList
                                     }
                                 }
                             }
+                        }
+                        if (self.namedMemberAccepts(member_type, actual)) {
+                            found_match = true;
+                            break;
                         }
                     }
 

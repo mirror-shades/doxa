@@ -598,22 +598,22 @@ public function execCapture(input :: string) returns string | error.StdError {
     return mapProcessError(err)
 }
 
-public function execCaptureEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
-    const output is Process.exec_capture_stdout_env(program, args, env_keys, env_values)
+public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
+    const output is Process.exec_capture_stdout_env(program, arguments, env_keys, env_values)
     const err is Process.takeLastErrorCode()
     if err == 0 then return output
     return mapProcessError(err)
 }
 
-public function execArgs(program :: string, args :: string[]) returns int | error.StdError {
-    const code is Process.exec_args(program, args)
+public function execArgs(program :: string, arguments :: string[]) returns int | error.StdError {
+    const code is Process.exec_args(program, arguments)
     const err is Process.takeLastErrorCode()
     if err == 0 then return code
     return mapProcessError(err)
 }
 
-public function execArgsEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
-    const code is Process.exec_args_env(program, args, env_keys, env_values)
+public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
+    const code is Process.exec_args_env(program, arguments, env_keys, env_values)
     const err is Process.takeLastErrorCode()
     if err == 0 then return code
     return mapProcessError(err)

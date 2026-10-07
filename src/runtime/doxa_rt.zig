@@ -212,6 +212,18 @@ pub export fn doxa_str_eq(a_ptr: ?[*]const u8, a_len: u64, b_ptr: ?[*]const u8, 
     return std.mem.eql(u8, a, b);
 }
 
+/// The order of two strings: -1, 0 or 1 as `a` sorts before, with or after
+/// `b`. Byte-wise lexicographic, which for UTF-8 is Unicode scalar order.
+pub export fn doxa_str_cmp(a_ptr: ?[*]const u8, a_len: u64, b_ptr: ?[*]const u8, b_len: u64) callconv(.c) i32 {
+    const a = sliceFromDoxaString(.{ .ptr = a_ptr, .len = a_len });
+    const b = sliceFromDoxaString(.{ .ptr = b_ptr, .len = b_len });
+    return switch (std.mem.order(u8, a, b)) {
+        .lt => -1,
+        .eq => 0,
+        .gt => 1,
+    };
+}
+
 /// Canonical string representation: pointer + byte length.
 ///
 /// This is the internal model for every layer (parser, HIR, LLVM IR).
@@ -336,22 +348,25 @@ pub export fn doxa_int_to_string(value: i64, out_ptr: *?[*]u8, out_len: *u64) ca
     out_len.* = ds.len;
 }
 
-pub export fn doxa_float_to_string(value: f64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
-    var buf: [64]u8 = undefined;
-    const rounded_down = std.math.floor(value);
-    const s = if (value - rounded_down == 0)
-        std.fmt.bufPrint(&buf, "{d}.0", .{value}) catch {
-            out_ptr.* = null;
-            out_len.* = 0;
-            return;
-        }
+/// The longest text `formatFloat` produces: a sign, "0.", the 323 zeros
+/// before the smallest subnormal's first digit, and 17 significant digits.
+/// The longest integral value (309 digits and ".0") fits well beneath it.
+const max_float_text_len = 1 + 2 + 323 + 17;
+
+/// A float's text: the shortest positional decimal that reads back as the same
+/// value, with ".0" on an integral one so a float never reads as an int.
+fn formatFloat(buf: *[max_float_text_len]u8, value: f64) []const u8 {
+    const integral = value - std.math.floor(value) == 0;
+    const rendered = if (integral)
+        std.fmt.bufPrint(buf, "{d}.0", .{value})
     else
-        std.fmt.bufPrint(&buf, "{d}", .{value}) catch {
-            out_ptr.* = null;
-            out_len.* = 0;
-            return;
-        };
-    const ds = allocDoxaString(s);
+        std.fmt.bufPrint(buf, "{d}", .{value});
+    return rendered catch unreachable;
+}
+
+pub export fn doxa_float_to_string(value: f64, out_ptr: *?[*]u8, out_len: *u64) callconv(.c) void {
+    var buf: [max_float_text_len]u8 = undefined;
+    const ds = allocDoxaString(formatFloat(&buf, value));
     out_ptr.* = @constCast(ds.ptr);
     out_len.* = ds.len;
 }
@@ -632,13 +647,8 @@ pub export fn doxa_print_u64(value: u64) callconv(.c) void {
 }
 
 pub export fn doxa_print_f64(value: f64) callconv(.c) void {
-    var buf: [64]u8 = undefined;
-    const rounded_down = std.math.floor(value);
-    const rendered = if (value - rounded_down == 0)
-        std.fmt.bufPrint(&buf, "{d}.0", .{value}) catch return
-    else
-        std.fmt.bufPrint(&buf, "{d}", .{value}) catch return;
-    doxaWrite(rendered);
+    var buf: [max_float_text_len]u8 = undefined;
+    doxaWrite(formatFloat(&buf, value));
 }
 
 pub export fn doxa_print_byte(value: i64) callconv(.c) void {
@@ -1434,7 +1444,8 @@ fn ensureArrayCapacity(hdr: *ArrayHeader, required_len: u64) bool {
 }
 
 /// 0=int(i64), 1=byte(u8), 2=float(f64), 3=string(i8*), 4=tetra(u8 lower 2 bits),
-/// 5=nothing, 6=array(*ArrayHeader), 7=struct(ptr), 8=enum(i64 variant index).
+/// 5=nothing, 6=array(*ArrayHeader), 7=struct(ptr), 8=enum(i64 variant index),
+/// 9=value(DoxaValue, a union or group element).
 fn arrayNewIn(scope: ?*scope_arena.Scope, elem_size: u64, elem_tag: u64, init_len: u64) *ArrayHeader {
     const cap = clampMin(init_len, ARRAY_MIN_CAPACITY);
     const hdr_ptr = scope_arena.createInScope(scope, ArrayHeader);
@@ -1494,6 +1505,10 @@ pub export fn doxa_array_range(start: i64, end: i64) callconv(.c) *ArrayHeader {
 }
 
 const ARRAY_TAG: u64 = 6;
+/// A union or group element: a `DoxaValue` stored inline, 24 bytes. The box
+/// keeps the member it holds, which a bare payload word would lose. Struct
+/// fields use the same tag for a union or group field.
+const VALUE_TAG: u64 = 9;
 
 pub export fn doxa_array_new_nested(
     elem_size: u64,
@@ -1620,24 +1635,30 @@ fn fixedArrayToNested(
     return outer;
 }
 
+/// Copy element `src_idx` of `src` to `dst_idx` of `dst`, whatever the
+/// element representation, re-homing a heap element into `dst`'s arena.
+fn copyElement(dst: *ArrayHeader, dst_idx: u64, src: *ArrayHeader, src_idx: u64) void {
+    switch (src.elem_tag) {
+        3 => {
+            var str_ptr: ?[*]u8 = undefined;
+            var str_len: u64 = undefined;
+            doxa_array_get_str(src, src_idx, &str_ptr, &str_len);
+            doxa_array_set_str(dst, dst_idx, str_ptr, str_len);
+        },
+        VALUE_TAG => {
+            var value: DoxaValue = undefined;
+            doxa_array_get_value(src, src_idx, &value);
+            doxa_array_set_value(dst, dst_idx, &value);
+        },
+        else => doxa_array_set_i64(dst, dst_idx, doxa_array_get_i64(src, src_idx)),
+    }
+}
+
 fn arrayCloneIn(scope: ?*scope_arena.Scope, hdr: ?*ArrayHeader) *ArrayHeader {
     const src = hdr orelse return arrayNewIn(scope, 8, 0, 0);
     const result = arrayNewIn(scope, src.elem_size, src.elem_tag, src.len);
-    if (src.elem_tag == 3) {
-        var idx: u64 = 0;
-        while (idx < src.len) : (idx += 1) {
-            var str_ptr: ?[*]u8 = undefined;
-            var str_len: u64 = undefined;
-            doxa_array_get_str(src, idx, &str_ptr, &str_len);
-            doxa_array_set_str(result, idx, str_ptr, str_len);
-        }
-    } else {
-        var idx: u64 = 0;
-        while (idx < src.len) : (idx += 1) {
-            const val = doxa_array_get_i64(src, idx);
-            doxa_array_set_i64(result, idx, val);
-        }
-    }
+    var idx: u64 = 0;
+    while (idx < src.len) : (idx += 1) copyElement(result, idx, src, idx);
     return result;
 }
 
@@ -1764,7 +1785,7 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
             const f: f64 = @bitCast(value);
             fp.* = f;
         },
-        3 => { // string: handled by doxa_array_set_str
+        3, VALUE_TAG => { // string and value: handled by their own setters
             return;
         },
         4 => { // tetra (2-bit stored in u8)
@@ -1863,74 +1884,73 @@ pub export fn doxa_array_set_str(hdr: *ArrayHeader, idx: u64, str_ptr: ?[*]const
     len_slot.* = @bitCast(@as(u64, cloned_len));
 }
 
+/// Read a union or group element (tag 9) into `out`. Out of range, or any
+/// other element kind, reads as a `nothing` box.
+pub export fn doxa_array_get_value(hdr: *ArrayHeader, idx: u64, out: *DoxaValue) callconv(.c) void {
+    if (hdr.data == null or idx >= hdr.len or hdr.elem_tag != VALUE_TAG) {
+        out.* = .{ .tag = @intFromEnum(DoxaTag.Nothing), .reserved = 0, .payload_bits = 0, .payload_len = 0 };
+        return;
+    }
+    const slots: [*]const DoxaValue = @ptrCast(@alignCast(hdr.data.?));
+    out.* = slots[@intCast(idx)];
+}
+
+/// Store a union or group element (tag 9), re-homing its heap payload into
+/// the array's own arena so it outlives the storing scope.
+pub export fn doxa_array_set_value(hdr: *ArrayHeader, idx: u64, value: *const DoxaValue) callconv(.c) void {
+    if (!ensureArrayCapacity(hdr, idx + 1)) return;
+    if (hdr.data == null or hdr.elem_tag != VALUE_TAG) return;
+    if (idx >= hdr.len) hdr.len = idx + 1;
+    var stored = value.*;
+    cloneDoxaValueInto(hdr.scope, &stored);
+    const slots: [*]DoxaValue = @ptrCast(@alignCast(hdr.data.?));
+    slots[@intCast(idx)] = stored;
+}
+
 pub export fn doxa_array_concat(a: ?*ArrayHeader, b: ?*ArrayHeader, elem_size: u64, elem_tag: u64) callconv(.c) *ArrayHeader {
     const len_a: u64 = if (a) |hdr| hdr.len else 0;
     const len_b: u64 = if (b) |hdr| hdr.len else 0;
     const result = doxa_array_new(elem_size, elem_tag, len_a + len_b);
-
-    if (elem_tag == 3) {
-        if (a) |hdr_a| {
-            var idx: u64 = 0;
-            while (idx < len_a) : (idx += 1) {
-                var str_ptr: ?[*]u8 = undefined;
-                var str_len: u64 = undefined;
-                doxa_array_get_str(hdr_a, idx, &str_ptr, &str_len);
-                doxa_array_set_str(result, idx, str_ptr, str_len);
-            }
-        }
-        if (b) |hdr_b| {
-            var idx: u64 = 0;
-            while (idx < len_b) : (idx += 1) {
-                var str_ptr: ?[*]u8 = undefined;
-                var str_len: u64 = undefined;
-                doxa_array_get_str(hdr_b, idx, &str_ptr, &str_len);
-                doxa_array_set_str(result, len_a + idx, str_ptr, str_len);
-            }
-        }
-    } else {
-        if (a) |hdr_a| {
-            var idx: u64 = 0;
-            while (idx < len_a) : (idx += 1) {
-                const val = doxa_array_get_i64(hdr_a, idx);
-                doxa_array_set_i64(result, idx, val);
-            }
-        }
-        if (b) |hdr_b| {
-            var idx: u64 = 0;
-            while (idx < len_b) : (idx += 1) {
-                const val = doxa_array_get_i64(hdr_b, idx);
-                doxa_array_set_i64(result, len_a + idx, val);
-            }
-        }
+    if (a) |hdr_a| {
+        var idx: u64 = 0;
+        while (idx < len_a) : (idx += 1) copyElement(result, idx, hdr_a, idx);
     }
-
+    if (b) |hdr_b| {
+        var idx: u64 = 0;
+        while (idx < len_b) : (idx += 1) copyElement(result, len_a + idx, hdr_b, idx);
+    }
     return result;
+}
+
+/// Open a gap at `pos` by moving every element from `pos` on one place up.
+/// The caller has already grown `h.len` by one.
+fn shiftUp(h: *ArrayHeader, pos: u64, old_len: u64) void {
+    var i: u64 = old_len;
+    while (i > pos) : (i -= 1) copyElement(h, i, h, i - 1);
+}
+
+/// Close the gap at `pos` by moving every later element one place down.
+fn shiftDown(h: *ArrayHeader, pos: u64) void {
+    var i: u64 = pos;
+    while (i + 1 < h.len) : (i += 1) copyElement(h, i, h, i + 1);
+}
+
+/// The insertion point for `idx` in `h`, with room for one more element, or
+/// null when `idx` is out of range or the array cannot grow.
+fn openInsert(h: *ArrayHeader, idx: i64) ?u64 {
+    if (idx < 0) return null;
+    const pos: u64 = @intCast(idx);
+    if (pos > h.len) return null;
+    const old_len = h.len;
+    if (!ensureArrayCapacity(h, old_len + 1)) return null;
+    h.len = old_len + 1;
+    shiftUp(h, pos, old_len);
+    return pos;
 }
 
 pub export fn doxa_array_insert(hdr: ?*ArrayHeader, idx: i64, value: i64) callconv(.c) *ArrayHeader {
     const h = hdr orelse return doxa_array_new(8, 0, 0);
-    if (idx < 0) return h;
-    const pos: u64 = @intCast(@as(u64, @intCast(idx)));
-    if (pos > h.len) return h;
-
-    const old_len = h.len;
-    if (!ensureArrayCapacity(h, old_len + 1)) return h;
-    h.len = old_len + 1;
-    if (h.elem_tag == 3) {
-        var i: u64 = old_len;
-        while (i > pos) : (i -= 1) {
-            var str_ptr: ?[*]u8 = undefined;
-            var str_len: u64 = undefined;
-            doxa_array_get_str(h, i - 1, &str_ptr, &str_len);
-            doxa_array_set_str(h, i, str_ptr, str_len);
-        }
-    } else {
-        var i: u64 = old_len;
-        while (i > pos) : (i -= 1) {
-            const prev = doxa_array_get_i64(h, i - 1);
-            doxa_array_set_i64(h, i, prev);
-        }
-    }
+    const pos = openInsert(h, idx) orelse return h;
     doxa_array_set_i64(h, pos, value);
     return h;
 }
@@ -1939,48 +1959,19 @@ pub export fn doxa_array_remove(hdr: ?*ArrayHeader, idx: i64, out_removed: *i64)
     const h = hdr orelse return doxa_array_new(8, 0, 0);
     out_removed.* = 0;
     if (idx < 0) return h;
-    const pos: u64 = @intCast(@as(u64, @intCast(idx)));
+    const pos: u64 = @intCast(idx);
     if (pos >= h.len) return h;
-
     out_removed.* = doxa_array_get_i64(h, pos);
-    if (h.elem_tag == 3) {
-        var i: u64 = pos;
-        while (i + 1 < h.len) : (i += 1) {
-            var str_ptr: ?[*]u8 = undefined;
-            var str_len: u64 = undefined;
-            doxa_array_get_str(h, i + 1, &str_ptr, &str_len);
-            doxa_array_set_str(h, i, str_ptr, str_len);
-        }
-    } else {
-        var i: u64 = pos;
-        while (i + 1 < h.len) : (i += 1) {
-            const next = doxa_array_get_i64(h, i + 1);
-            doxa_array_set_i64(h, i, next);
-        }
-    }
-    if (h.len > 0) h.len -= 1;
+    shiftDown(h, pos);
+    h.len -= 1;
     return h;
 }
 
 pub export fn doxa_array_insert_str(hdr: ?*ArrayHeader, idx: i64, str_ptr: ?[*]const u8, str_len: u64) callconv(.c) *ArrayHeader {
     const h = hdr orelse return doxa_array_new(16, 3, 0);
-    if (idx < 0) return h;
-    const pos: u64 = @intCast(@as(u64, @intCast(idx)));
-    if (pos > h.len) return h;
-
-    const old_len = h.len;
-    if (!ensureArrayCapacity(h, old_len + 1)) return h;
-    h.len = old_len + 1;
-    if (h.elem_tag == 3) {
-        var i: u64 = old_len;
-        while (i > pos) : (i -= 1) {
-            var prev_ptr: ?[*]u8 = undefined;
-            var prev_len: u64 = undefined;
-            doxa_array_get_str(h, i - 1, &prev_ptr, &prev_len);
-            doxa_array_set_str(h, i, prev_ptr, prev_len);
-        }
-        doxa_array_set_str(h, pos, str_ptr, str_len);
-    }
+    if (h.elem_tag != 3) return h;
+    const pos = openInsert(h, idx) orelse return h;
+    doxa_array_set_str(h, pos, str_ptr, str_len);
     return h;
 }
 
@@ -1989,47 +1980,46 @@ pub export fn doxa_array_remove_str(hdr: ?*ArrayHeader, idx: i64, out_ptr: *?[*]
     out_ptr.* = null;
     out_len.* = 0;
     if (idx < 0) return h;
-    const pos: u64 = @intCast(@as(u64, @intCast(idx)));
+    const pos: u64 = @intCast(idx);
     if (pos >= h.len) return h;
-
     doxa_array_get_str(h, pos, out_ptr, out_len);
-    if (h.elem_tag == 3) {
-        var i: u64 = pos;
-        while (i + 1 < h.len) : (i += 1) {
-            var next_ptr: ?[*]u8 = undefined;
-            var next_len: u64 = undefined;
-            doxa_array_get_str(h, i + 1, &next_ptr, &next_len);
-            doxa_array_set_str(h, i, next_ptr, next_len);
-        }
-    }
-    if (h.len > 0) h.len -= 1;
+    shiftDown(h, pos);
+    h.len -= 1;
+    return h;
+}
+
+/// Insert a union or group element (tag 9) at `idx`.
+pub export fn doxa_array_insert_value(hdr: ?*ArrayHeader, idx: i64, value: *const DoxaValue) callconv(.c) *ArrayHeader {
+    const h = hdr orelse return doxa_array_new(@sizeOf(DoxaValue), VALUE_TAG, 0);
+    if (h.elem_tag != VALUE_TAG) return h;
+    const pos = openInsert(h, idx) orelse return h;
+    doxa_array_set_value(h, pos, value);
+    return h;
+}
+
+/// Remove the union or group element (tag 9) at `idx` into `out_removed`.
+pub export fn doxa_array_remove_value(hdr: ?*ArrayHeader, idx: i64, out_removed: *DoxaValue) callconv(.c) *ArrayHeader {
+    const h = hdr orelse return doxa_array_new(@sizeOf(DoxaValue), VALUE_TAG, 0);
+    doxa_array_get_value(h, std.math.maxInt(u64), out_removed);
+    if (idx < 0) return h;
+    const pos: u64 = @intCast(idx);
+    if (pos >= h.len) return h;
+    doxa_array_get_value(h, pos, out_removed);
+    shiftDown(h, pos);
+    h.len -= 1;
     return h;
 }
 
 pub export fn doxa_array_slice(hdr: ?*ArrayHeader, start: i64, length: i64) callconv(.c) *ArrayHeader {
     const h = hdr orelse return doxa_array_new(8, 0, 0);
     if (start < 0 or length < 0) return doxa_array_new(h.elem_size, h.elem_tag, 0);
-    const s: u64 = @intCast(@as(u64, @intCast(start)));
-    const n: u64 = @intCast(@as(u64, @intCast(length)));
+    const s: u64 = @intCast(start);
+    const n: u64 = @intCast(length);
     if (s >= h.len or n == 0) return doxa_array_new(h.elem_size, h.elem_tag, 0);
-    const max_len = h.len - s;
-    const out_len: u64 = if (n > max_len) max_len else n;
+    const out_len: u64 = @min(n, h.len - s);
     const out = doxa_array_new(h.elem_size, h.elem_tag, out_len);
-    if (h.elem_tag == 3) {
-        var i: u64 = 0;
-        while (i < out_len) : (i += 1) {
-            var str_ptr: ?[*]u8 = undefined;
-            var str_len: u64 = undefined;
-            doxa_array_get_str(h, s + i, &str_ptr, &str_len);
-            doxa_array_set_str(out, i, str_ptr, str_len);
-        }
-    } else {
-        var i: u64 = 0;
-        while (i < out_len) : (i += 1) {
-            const v = doxa_array_get_i64(h, s + i);
-            doxa_array_set_i64(out, i, v);
-        }
-    }
+    var i: u64 = 0;
+    while (i < out_len) : (i += 1) copyElement(out, i, h, s + i);
     return out;
 }
 
@@ -2081,12 +2071,8 @@ fn printTaggedBitsImpl(out: *std.Io.Writer, tag: u64, bits: i64) anyerror!void {
             try out.print("{d}", .{b});
         },
         2 => { // float (f64)
-            const f: f64 = asFloat(bits);
-            const rounded_down = std.math.floor(f);
-            if (f - rounded_down == 0)
-                try out.print("{d}.0", .{f})
-            else
-                try out.print("{d}", .{f});
+            var buf: [max_float_text_len]u8 = undefined;
+            try out.writeAll(formatFloat(&buf, asFloat(bits)));
         },
         4 => { // tetra (2-bit stored in u8)
             const t: u2 = asTetra(bits);
@@ -2218,6 +2204,21 @@ fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
     try out.print(" }}", .{});
 }
 
+/// A union or group element of a printed array: a string quoted like a string
+/// element, anything else as the value prints.
+fn printValueElement(out: *std.Io.Writer, value: *const DoxaValue) anyerror!void {
+    if (value.tag == @intFromEnum(DoxaTag.String)) {
+        try out.writeAll("\"");
+        try writeEscaped(out, stringPayload(value));
+        try out.writeAll("\"");
+        return;
+    }
+    var text_ptr: ?[*]u8 = null;
+    var text_len: u64 = 0;
+    doxa_value_to_string(value, &text_ptr, &text_len);
+    if (text_ptr) |p| try out.writeAll(p[0..@intCast(text_len)]);
+}
+
 fn printArrayHdrImpl(out: *std.Io.Writer, hdr: *ArrayHeader) anyerror!void {
     try out.print("[", .{});
 
@@ -2237,6 +2238,10 @@ fn printArrayHdrImpl(out: *std.Io.Writer, hdr: *ArrayHeader) anyerror!void {
             try out.writeAll("\"");
             try writeEscaped(out, s);
             try out.writeAll("\"");
+        } else if (hdr.elem_tag == VALUE_TAG) {
+            var value: DoxaValue = undefined;
+            doxa_array_get_value(hdr, i, &value);
+            try printValueElement(out, &value);
         } else {
             const elem_bits = doxa_array_get_i64(hdr, i);
             try printTaggedBitsImpl(out, hdr.elem_tag, elem_bits);
@@ -2481,7 +2486,7 @@ pub export fn doxa_type_check(value: i64, value_type: i64, target_type: ?[*:0]co
         // raw stack pointer without materializing a dynamic header (its pushes
         // already no-op), which is what reaches here. Fix that conversion, then
         // this guard and the permissive fallback can go.
-        if (hdr.elem_tag > 8 or hdr.elem_size != elementSizeForTag(hdr.elem_tag)) return 1;
+        if (hdr.elem_tag > VALUE_TAG or hdr.elem_size != elementSizeForTag(hdr.elem_tag)) return 1;
         return if (hdr.elem_tag == expected) 1 else 0;
     }
 
@@ -2497,6 +2502,7 @@ fn elementSizeForTag(tag: u64) u64 {
         3 => 16, // string
         5 => 0, // nothing
         6, 7, 8 => 8, // nested array, struct, enum
+        VALUE_TAG => @sizeOf(DoxaValue), // union or group
         else => 0,
     };
 }

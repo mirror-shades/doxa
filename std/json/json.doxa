@@ -625,56 +625,56 @@ public struct Node {
     }
 }
 
-public function beginObject() returns error.StdError {
+public function beginObject() returns nothing | error.StdError {
     JSON.writerBeginObject()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
     return mapJSONError(code)
 }
 
-public function beginArray() returns error.StdError {
+public function beginArray() returns nothing | error.StdError {
     JSON.writerBeginArray()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
     return mapJSONError(code)
 }
 
-public function end() returns error.StdError {
+public function end() returns nothing | error.StdError {
     JSON.writerEnd()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
     return mapJSONError(code)
 }
 
-public function writeKey(name :: string) returns error.StdError {
+public function writeKey(name :: string) returns nothing | error.StdError {
     JSON.writerKey(name)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
     return mapJSONError(code)
 }
 
-public function writeText(text :: string) returns error.StdError {
+public function writeText(text :: string) returns nothing | error.StdError {
     JSON.writerText(text)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
     return mapJSONError(code)
 }
 
-public function writeInt(value :: int) returns error.StdError {
+public function writeInt(value :: int) returns nothing | error.StdError {
     JSON.writerInt(value)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
     return mapJSONError(code)
 }
 
-public function writeFloat(value :: float) returns error.StdError {
+public function writeFloat(value :: float) returns nothing | error.StdError {
     JSON.writerFloat(value)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
     return mapJSONError(code)
 }
 
-public function writeBoolean(value :: tetra) returns error.StdError {
+public function writeBoolean(value :: tetra) returns nothing | error.StdError {
     if value == both or value == neither then {
         JSON.writerReject(1)
         return error.Common.InvalidArgument
@@ -685,7 +685,7 @@ public function writeBoolean(value :: tetra) returns error.StdError {
     return mapJSONError(code)
 }
 
-public function writeNull() returns error.StdError {
+public function writeNull() returns nothing | error.StdError {
     JSON.writerNull()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return

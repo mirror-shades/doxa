@@ -65,24 +65,22 @@ pub const StructTable = struct {
     }
 
     /// Record the declared fields of `ref`. A struct registered again (its
-    /// field types resolved since) keeps its id and every HIR detail already
-    /// recorded against a field of the same name.
+    /// field types resolved since) keeps its id and the nested struct ids
+    /// already recorded against a field of the same name. Field HIR types are
+    /// set once analysis is complete (`lowerStructFieldTypes`).
     pub fn registerStruct(self: *StructTable, ref: TypeRef, field_inputs: []const FieldInput) !StructId {
         const id = try self.idFor(ref);
         const entry = self.getEntryById(id).?;
 
         const new_fields = try self.allocator.alloc(Field, field_inputs.len);
         for (field_inputs, 0..) |input, field_index| {
-            var hir_type: HIRType = .Unknown;
             var nested_struct_id: ?StructId = null;
             if (field_index < entry.fields.len and std.mem.eql(u8, entry.fields[field_index].name, input.name)) {
-                hir_type = entry.fields[field_index].hir_type;
                 nested_struct_id = entry.fields[field_index].nested_struct_id;
             }
             new_fields[field_index] = .{
                 .name = try self.allocator.dupe(u8, input.name),
                 .type_info = input.type_info,
-                .hir_type = hir_type,
                 .index = @intCast(field_index),
                 .nested_struct_id = nested_struct_id,
             };
@@ -137,12 +135,6 @@ pub const StructTable = struct {
     pub fn displayName(self: *const StructTable, id: StructId) ?[]const u8 {
         const ref = self.refOf(id) orelse return null;
         return ref.name;
-    }
-
-    pub fn setFieldHIRType(self: *StructTable, id: StructId, field_index: u32, ty: HIRType) void {
-        if (self.getEntryById(id)) |entry| {
-            if (field_index < entry.fields.len) entry.fields[field_index].hir_type = ty;
-        }
     }
 
     pub fn setNestedStructId(self: *StructTable, id: StructId, field_index: u32, nested_id: StructId) void {

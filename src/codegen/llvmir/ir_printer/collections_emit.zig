@@ -25,6 +25,7 @@ pub fn Methods(comptime Ctx: type) type {
                 // `byte` and `tetra` both occupy one byte; tetra keeps its value
                 // in the low two bits, which the caller narrows after loading.
                 .Byte, .Tetra => "i8",
+                .Union, .Group => "%DoxaValue",
                 else => null,
             };
         }
@@ -128,8 +129,25 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(trunc_line);
                     break :blk StackVal{ .name = narrowed, .ty = .I2 };
                 },
+                .Union, .Group => StackVal{ .name = loaded, .ty = .Value, .boxed_type = element_type },
                 else => unreachable,
             };
+        }
+
+        /// Store `value` as element `idx_name` of a union or group array: boxed
+        /// as the element type and passed by address. `doxa_array_set_value`
+        /// re-homes its payload into the array's arena.
+        fn emitBoxedElementStore(self: *IRPrinter, w: anytype, id: *usize, hdr_name: []const u8, idx_name: []const u8, value: StackVal, element_type: HIR.HIRType) !void {
+            const boxed = try self.buildDoxaValue(w, value, element_type, id);
+            const slot = try self.boxDoxaValue(w, boxed);
+            try w.print("  call void @doxa_array_set_value(ptr {s}, i64 {s}, ptr {s})\n", .{ hdr_name, idx_name, slot });
+        }
+
+        /// The box a runtime entry wrote to `slot` for a union or group array.
+        fn loadBoxedElement(self: *IRPrinter, w: anytype, id: *usize, slot: []const u8, element_type: HIR.HIRType) !StackVal {
+            const loaded = try self.nextTemp(id);
+            try w.print("  {s} = load %DoxaValue, ptr {s}\n", .{ loaded, slot });
+            return .{ .name = loaded, .ty = .Value, .boxed_type = element_type };
         }
 
         pub fn emitArrayNew(
@@ -159,7 +177,7 @@ pub fn Methods(comptime Ctx: type) type {
                 if (inst.element_type == .Array) {
                     if (inst.nested_depth > 0) {
                         const inner = inst.nested_element_type orelse break :blk false;
-                        break :blk inner != .String and inner != .Array and inner != .Map and inner != .Struct and inner != .Function and inner != .Union;
+                        break :blk inner != .String and inner != .Array and inner != .Map and inner != .Struct and inner != .Function and inner != .Union and inner != .Group;
                     }
                     break :blk false;
                 }
@@ -167,7 +185,8 @@ pub fn Methods(comptime Ctx: type) type {
                     inst.element_type != .Map and
                     inst.element_type != .Struct and
                     inst.element_type != .Function and
-                    inst.element_type != .Union;
+                    inst.element_type != .Union and
+                    inst.element_type != .Group;
             };
 
             if ((inst.storage_kind == .fixed or inst.storage_kind == .const_literal) and
@@ -868,7 +887,9 @@ pub fn Methods(comptime Ctx: type) type {
             const element_type = arr_ptr.array_type orelse HIR.HIRType{ .Int = {} };
             const idx_i64 = try self.ensureI64(w, idx_val, id);
 
-            if (element_type == .String) {
+            if (IRPrinter.isBoxedMemberType(element_type)) {
+                try emitBoxedElementStore(self, w, id, arr_ptr.name, idx_i64.name, value, element_type);
+            } else if (element_type == .String) {
                 const str_val = try self.ensureString(w, value, id);
                 const str_ptr_ext = try self.nextTemp(id);
                 const str_ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ str_ptr_ext, str_val.name });
@@ -1372,6 +1393,11 @@ pub fn Methods(comptime Ctx: type) type {
                     else => .Int,
                 };
             }
+            if (IRPrinter.isBoxedMemberType(element_type)) {
+                try emitBoxedElementStore(self, w, id, len_info.array.name, len_info.len_value.name, value, element_type);
+                try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = element_type, .region = array_region });
+                return;
+            }
             if (element_type == .String) {
                 // `doxa_array_set_str` clones the element into the array's own
                 // arena, so no pre-clone is needed here.
@@ -1450,7 +1476,11 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll(idx_line);
 
             var result_val: StackVal = undefined;
-            if (element_type == .String) {
+            if (IRPrinter.isBoxedMemberType(element_type)) {
+                const slot = try self.doxaValueSlot();
+                try w.print("  call void @doxa_array_get_value(ptr {s}, i64 {s}, ptr {s})\n", .{ len_info.array.name, idx, slot });
+                result_val = try loadBoxedElement(self, w, id, slot, element_type);
+            } else if (element_type == .String) {
                 const out_ptr_slot = try self.nextTemp(id);
                 const out_len_slot = try self.nextTemp(id);
                 const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
@@ -1539,6 +1569,14 @@ pub fn Methods(comptime Ctx: type) type {
                     };
                 }
                 const hdr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+                if (IRPrinter.isBoxedMemberType(elem_type)) {
+                    const boxed = try self.buildDoxaValue(w, value, elem_type, id);
+                    const slot = try self.boxDoxaValue(w, boxed);
+                    const out = try self.nextTemp(id);
+                    try w.print("  {s} = call ptr @doxa_array_insert_value(ptr {s}, i64 {s}, ptr {s})\n", .{ out, hdr.name, idx_i64.name, slot });
+                    try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = arr_region });
+                    return;
+                }
                 if (elem_type == .String) {
                     const str_val = try self.ensureString(w, value, id);
                     const str_ptr_ext = try self.nextTemp(id);
@@ -1604,6 +1642,16 @@ pub fn Methods(comptime Ctx: type) type {
             const idx_i64 = if (idx_val.ty == .I64) idx_val else try self.ensureI64(w, idx_val, id);
             if (target.array_type) |elem_type| {
                 const hdr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+                if (IRPrinter.isBoxedMemberType(elem_type)) {
+                    const slot = try self.doxaValueSlot();
+                    const out = try self.nextTemp(id);
+                    try w.print("  {s} = call ptr @doxa_array_remove_value(ptr {s}, i64 {s}, ptr {s})\n", .{ out, hdr.name, idx_i64.name, slot });
+                    const removed = try loadBoxedElement(self, w, id, slot, elem_type);
+                    // Contract: [updated, removed]
+                    try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = arr_region });
+                    try stack.append(removed);
+                    return;
+                }
                 if (elem_type == .String) {
                     const out_ptr_slot = try self.nextTemp(id);
                     const out_len_slot = try self.nextTemp(id);
@@ -1804,7 +1852,7 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 .F64 => {
                     const name = try self.nextTemp(id);
-                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fcmp one double {s}, 0.0\n", .{ name, value.name });
+                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fcmp une double {s}, 0.0\n", .{ name, value.name });
                     defer self.allocator.free(line);
                     try w.writeAll(line);
                     return .{ .name = name, .ty = .I1 };
@@ -1922,7 +1970,7 @@ pub fn Methods(comptime Ctx: type) type {
                     .Float => {
                         const pred = switch (cmp.op) {
                             .Eq => "oeq",
-                            .Ne => "one",
+                            .Ne => "une",
                             .Lt => "olt",
                             .Le => "ole",
                             .Gt => "ogt",
@@ -2015,11 +2063,22 @@ pub fn Methods(comptime Ctx: type) type {
                                 result_name = try self.nextTemp(id);
                                 break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 {s}, 0\n", .{ result_name, tmp_name });
                             },
-                            // Strings have no ordering in the language yet. The
-                            // analyzer accepts `<`/`<=`/`>`/`>=` on them, so the
-                            // instruction arrives here with nothing to lower to;
-                            // answering `false` would be a silent wrong result.
-                            else => return self.hirFault("ordered comparison ({s}) of strings has no lowering", .{@tagName(cmp.op)}),
+                            // Ordering is byte-wise lexicographic (`docs/strings.md`).
+                            .Lt, .Le, .Gt, .Ge => {
+                                const order_name = try self.nextTemp(id);
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call i32 @doxa_str_cmp(ptr {s}, i64 {s}, ptr {s}, i64 {s})\n", .{ order_name, lhs_ptr_ext, lhs_len_ext, rhs_ptr_ext, rhs_len_ext });
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                                const pred = switch (cmp.op) {
+                                    .Lt => "slt",
+                                    .Le => "sle",
+                                    .Gt => "sgt",
+                                    .Ge => "sge",
+                                    else => unreachable,
+                                };
+                                result_name = try self.nextTemp(id);
+                                break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i32 {s}, 0\n", .{ result_name, pred, order_name });
+                            },
                         }
                     },
                     else => {

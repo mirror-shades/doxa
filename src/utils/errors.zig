@@ -39,6 +39,7 @@ pub const ErrorList = error{
     ExpectedStructType,
     UnknownVariableType,
     MissingExpressionType,
+    MissingBindingType,
     UnknownCustomType,
     InvalidExpressionType,
     ImportMustHaveFrom,
@@ -365,6 +366,8 @@ pub const ErrorCode = struct {
     pub const BYTE_VALUE_OUT_OF_RANGE = "E1031";
     pub const INTEGER_VALUE_OUT_OF_RANGE = "E1032";
     pub const NON_EXHAUSTIVE_MATCH = "E1033";
+    pub const INEXACT_FLOAT_LITERAL = "E1034";
+    pub const SHADOWED_NAME = "E1035";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";

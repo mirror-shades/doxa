@@ -6,7 +6,6 @@ pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
     const HIR = Ctx.HIR;
     const PeekEmitState = Ctx.PeekEmitState;
-    const StackType = Ctx.StackType;
     const StackVal = Ctx.StackVal;
     const VariableInfo = Ctx.VariableInfo;
     const StackMergeState = Ctx.StackMergeState;
@@ -78,7 +77,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.scopes_elided = false;
 
             // First pass: Collect all variables that need allocation
-            var variables_to_allocate = std.StringHashMap(VariableInfo).init(self.allocator);
+            var variables_to_allocate = std.AutoHashMap(HIR.Slot, VariableInfo).init(self.allocator);
             defer {
                 var it = variables_to_allocate.iterator();
                 while (it.next()) |entry| {
@@ -114,14 +113,13 @@ pub fn Methods(comptime Ctx: type) type {
                             self.hirTypeToStackType(sv.expected_type)
                         else
                             .I64;
-                        // A store carries the type of the *value*, so only a value
-                        // that is itself a group or union says anything about the
-                        // slot. The declaration below is what a box is keyed on.
+                        // A store carries its slot's type, so a group or union one
+                        // names the box the slot holds, as a declaration does.
                         const boxed_declared_type: ?HIR.HIRType = if (IRPrinter.isBoxedMemberType(sv.expected_type))
                             sv.expected_type
                         else
                             null;
-                        if (variables_to_allocate.getPtr(sv.var_name)) |existing| {
+                        if (variables_to_allocate.getPtr(sv.slot)) |existing| {
                             // Upgrade a placeholder i64 slot to a concrete, possibly
                             // wider type (e.g. a string bound first as a raw value and
                             // then narrowed). The alloca must be sized for the widest
@@ -131,9 +129,9 @@ pub fn Methods(comptime Ctx: type) type {
                             }
                             if (existing.boxed_declared_type == null) existing.boxed_declared_type = boxed_declared_type;
                         } else {
-                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sv.var_name});
+                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}.{d}", .{ sv.var_name, sv.slot });
                             const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = declared_stack_type, .boxed_declared_type = boxed_declared_type, .array_type = null };
-                            try variables_to_allocate.put(sv.var_name, info);
+                            try variables_to_allocate.put(sv.slot, info);
                         }
                     },
                     .StoreDecl => |sd| {
@@ -160,7 +158,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 struct_field_names = self.struct_field_names_by_type.get(tn);
                             }
                         }
-                        if (variables_to_allocate.getPtr(sd.var_name)) |existing| {
+                        if (variables_to_allocate.getPtr(sd.slot)) |existing| {
                             // A declaration carries the authoritative type; upgrade a
                             // placeholder i64 slot so the alloca is sized for the real
                             // (possibly wider) value.
@@ -173,7 +171,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 if (existing.struct_type_name == null) existing.struct_type_name = struct_type_name;
                             }
                         } else {
-                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sd.var_name});
+                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}.{d}", .{ sd.var_name, sd.slot });
                             const info = VariableInfo{
                                 .ptr_name = ptr_name,
                                 .stack_type = declared_stack_type,
@@ -183,7 +181,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 .struct_field_names = struct_field_names,
                                 .struct_type_name = struct_type_name,
                             };
-                            try variables_to_allocate.put(sd.var_name, info);
+                            try variables_to_allocate.put(sd.slot, info);
                         }
                     },
                     else => {},
@@ -241,7 +239,7 @@ pub fn Methods(comptime Ctx: type) type {
             try outer_w.writeAll("entry:\n");
 
             // Initialize variables map
-            var variables = std.StringHashMap(VariableInfo).init(self.allocator);
+            var variables = std.AutoHashMap(HIR.Slot, VariableInfo).init(self.allocator);
             defer {
                 var it = variables.iterator();
                 while (it.next()) |entry| {
@@ -253,7 +251,7 @@ pub fn Methods(comptime Ctx: type) type {
             // Allocate all variables at function entry
             var it = variables_to_allocate.iterator();
             while (it.next()) |entry| {
-                const var_name = entry.key_ptr.*;
+                const slot = entry.key_ptr.*;
                 const var_info = entry.value_ptr.*;
                 const llvm_ty = self.stackTypeToLLVMType(var_info.stack_type);
                 const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ var_info.ptr_name, llvm_ty });
@@ -261,7 +259,7 @@ pub fn Methods(comptime Ctx: type) type {
                 try outer_w.writeAll(alloca_line);
 
                 // Add to variables map for later use
-                try variables.put(var_name, var_info);
+                try variables.put(slot, var_info);
             }
 
             // Reusable stack slots for string operations (avoid alloca-in-loop stack overflow)
@@ -492,8 +490,8 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .LoadVar => |lv| {
                         if (lv.scope_kind == .GlobalLocal or lv.scope_kind == .ModuleGlobal) {
-                            try self.handleLoadVarGlobal(w, &stack, &id, lv.var_name);
-                        } else if (variables.get(lv.var_name)) |entry| {
+                            try self.handleLoadVarGlobal(w, &stack, &id, lv.slot, lv.var_name);
+                        } else if (variables.get(lv.slot)) |entry| {
                             const result_name = try self.nextTemp(&id);
                             const ty_str = self.stackTypeToLLVMType(entry.stack_type);
                             const line = try std.fmt.allocPrint(
@@ -518,14 +516,14 @@ pub fn Methods(comptime Ctx: type) type {
                                 // rehome call (which reads the object's real
                                 // arena) instead of statically cloning an object
                                 // the runtime would keep.
-                                .region = switch (self.var_regions.get(lv.var_name) orelse .Unknown) {
+                                .region = switch (self.var_regions.get(lv.slot) orelse .Unknown) {
                                     .Deep => .Unknown,
                                     else => |r| r,
                                 },
                                 // Phase D: a variable's recorded range is a
                                 // must-join over its reaching stores, so a load
                                 // may present it as a fact.
-                                .int_range = self.varRange(lv.var_name),
+                                .int_range = self.varRange(lv.slot),
                                 .array_type = entry.array_type,
                                 .enum_type_name = entry.enum_type_name,
                                 .struct_field_types = entry.struct_field_types,
@@ -536,7 +534,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 .boxed_type = entry.boxed_declared_type,
                             };
                             if (entry.stack_type == .Value) {
-                                if (try self.loadNarrowedUnion(w, loaded, lv.var_name, &id)) |unwrapped| {
+                                if (try self.loadNarrowedUnion(w, loaded, lv.slot, &id)) |unwrapped| {
                                     try stack.append(unwrapped);
                                 } else {
                                     try stack.append(loaded);
@@ -559,9 +557,17 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .PushStorageId => |psid| {
-                        if (psid.scope_kind == .GlobalLocal or psid.scope_kind == .ModuleGlobal) {
+                        if (psid.alias_slot) |alias_slot| {
+                            const info = alias_slots.get(alias_slot).?;
+                            // Re-passing an existing alias: the storage owner is
+                            // one frame further up than it was for this alias.
+                            // Carry both the compile-time re-pass count and the
+                            // runtime owner depth so the callee can resolve the
+                            // true owner across the call boundary.
+                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .enum_type_name = info.enum_type_name, .struct_field_types = info.struct_field_types, .struct_field_names = info.struct_field_names, .struct_type_name = info.struct_type_name, .alias_extra = info.alias_extra + 1, .alias_owned = true, .alias_depth_value = info.depth_value });
+                        } else if (psid.scope_kind == .GlobalLocal or psid.scope_kind == .ModuleGlobal) {
                             try self.handlePushStorageIdGlobal(w, &stack, &id, psid.var_name);
-                        } else if (variables.get(psid.var_name)) |entry| {
+                        } else if (variables.get(psid.slot)) |entry| {
                             // A narrowed union variable's slot holds a boxed
                             // `%DoxaValue`, but the contract for a pushed storage
                             // id is the address of a slot holding the value a
@@ -569,7 +575,7 @@ pub fn Methods(comptime Ctx: type) type {
                             // The box's payload word is exactly that slot: pointing
                             // `this` at it unwraps the member for the call and
                             // writes any replaced receiver back into the box.
-                            if (self.narrowedMemberType(psid.var_name)) |member| {
+                            if (self.narrowedMemberType(psid.slot)) |member| {
                                 if (member == .Struct) {
                                     const payload_addr = try self.nextTemp(&id);
                                     const gep_line = try std.fmt.allocPrint(
@@ -625,13 +631,6 @@ pub fn Methods(comptime Ctx: type) type {
                             } else {
                                 try stack.append(.{ .name = entry.ptr_name, .ty = .PTR, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name, .struct_field_types = entry.struct_field_types, .struct_field_names = entry.struct_field_names, .struct_type_name = entry.struct_type_name });
                             }
-                        } else if (alias_slots.get(psid.var_index)) |info| {
-                            // Re-passing an existing alias: the storage owner is
-                            // one frame further up than it was for this alias.
-                            // Carry both the compile-time re-pass count and the
-                            // runtime owner depth so the callee can resolve the
-                            // true owner across the call boundary.
-                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .enum_type_name = info.enum_type_name, .struct_field_types = info.struct_field_types, .struct_field_names = info.struct_field_names, .struct_type_name = info.struct_type_name, .alias_extra = info.alias_extra + 1, .alias_owned = true, .alias_depth_value = info.depth_value });
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
@@ -691,7 +690,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 // as the active member, the same way `LoadVar`
                                 // does, or in-place intrinsics see the raw box.
                                 if (stack_ty == .Value) {
-                                    if (try self.loadNarrowedUnion(w, loaded, la.var_name, &id)) |unwrapped| {
+                                    if (try self.loadNarrowedUnion(w, loaded, la.slot, &id)) |unwrapped| {
                                         loaded = unwrapped;
                                     }
                                 }
@@ -853,52 +852,12 @@ pub fn Methods(comptime Ctx: type) type {
                         if (store_decl_is_global) {
                             try self.handleStoreDeclGlobal(w, &stack, &id, sd);
                         } else {
-                            if (stack.items.len < 1) {
-                                if (sd.declared_type == .Array or sd.declared_type == .Map) {
-                                    const info_ptr = variables.getPtr(sd.var_name) orelse continue;
-                                    switch (sd.declared_type) {
-                                        .Array => |inner| {
-                                            const elem_type = inner.*;
-                                            const elem_size = self.arrayElementSize(elem_type);
-                                            const elem_tag = self.arrayElementTag(elem_type);
-                                            const reg = try self.nextTemp(&id);
-                                            const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 0)\n", .{ reg, elem_size, elem_tag });
-                                            defer self.allocator.free(new_line);
-                                            try w.writeAll(new_line);
-                                            const store_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ reg, info_ptr.ptr_name });
-                                            defer self.allocator.free(store_line);
-                                            try w.writeAll(store_line);
-                                            info_ptr.stack_type = .PTR;
-                                            info_ptr.array_type = elem_type;
-                                        },
-                                        .Map => |kv| {
-                                            const key_tag = self.arrayElementTag(kv.key.*);
-                                            const val_tag = self.arrayElementTag(kv.value.*);
-                                            const reg = try self.nextTemp(&id);
-                                            const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_map_new(i64 0, i64 {d}, i64 {d})\n", .{ reg, key_tag, val_tag });
-                                            defer self.allocator.free(new_line);
-                                            try w.writeAll(new_line);
-                                            const store_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ reg, info_ptr.ptr_name });
-                                            defer self.allocator.free(store_line);
-                                            try w.writeAll(store_line);
-                                            info_ptr.stack_type = .PTR;
-                                            info_ptr.array_type = kv.value.*;
-                                        },
-                                        else => {},
-                                    }
-                                    // The empty default was materialised in the arena
-                                    // current at this declaration (A1 region analysis).
-                                    try self.recordVarRegion(sd.var_name, self.currentRegionTag());
-                                }
-                                continue;
-                            }
+                            try self.requireStack(&stack, 1);
                             var value = stack.items[stack.items.len - 1];
                             stack.items.len -= 1;
+                            try self.verifyStore(value, sd.declared_type);
                             if (sd.declared_type == .Array and value.array_type == null) {
                                 value.array_type = sd.declared_type.Array.*;
-                            }
-                            if (IRPrinter.isBoxedMemberType(sd.declared_type)) {
-                                value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
                             }
                             // A1: a mutable declaration re-homes (or plain-stores)
                             // into the function-body arena, so the payload outlives
@@ -914,9 +873,9 @@ pub fn Methods(comptime Ctx: type) type {
                                 // is single-assignment, so that region is a definite
                                 // fact, not a may-class — record it exactly so later
                                 // loads can be decided statically (A2).
-                                try self.var_regions.put(sd.var_name, value.region);
+                                try self.var_regions.put(sd.slot, value.region);
                             } else {
-                                try self.recordVarRegion(sd.var_name, .Func);
+                                try self.recordVarRegion(sd.slot, .Func);
                             }
                             // Phase D: a declaration is single-assignment, so
                             // its initializer's range is installed outright. A
@@ -924,7 +883,7 @@ pub fn Methods(comptime Ctx: type) type {
                             // too — there is no separate definition to merge
                             // with — and every later `StoreVar` hulls into it.
                             if (value.ty == .I64 or value.ty == .I8) {
-                                try self.recordVarRange(sd.var_name, value.int_range);
+                                try self.recordVarRange(sd.slot, value.int_range);
                             }
                             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
                                 value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
@@ -938,17 +897,13 @@ pub fn Methods(comptime Ctx: type) type {
                                 }
                             }
                             const declared_stack_type = self.hirTypeToStackType(sd.declared_type);
-                            const target_ty: StackType = if (sd.declared_type == .Unknown) value.ty else declared_stack_type;
-                            value = try self.coerceForStore(value, target_ty, &id, w);
-                            var info_ptr = variables.getPtr(sd.var_name);
+                            value = try self.coerceForStore(value, declared_stack_type, &id, w);
+                            var info_ptr = variables.getPtr(sd.slot);
                             if (info_ptr == null) {
                                 continue;
                             } else {
-                                if (sd.declared_type != .Unknown) {
-                                    const expected_stack_ty = self.hirTypeToStackType(sd.declared_type);
-                                    if (info_ptr.?.stack_type == .I64 and expected_stack_ty != .I64) {
-                                        info_ptr.?.stack_type = expected_stack_ty;
-                                    }
+                                if (info_ptr.?.stack_type == .I64 and declared_stack_type != .I64) {
+                                    info_ptr.?.stack_type = declared_stack_type;
                                 }
                                 if (info_ptr.?.array_type == null) info_ptr.?.array_type = value.array_type;
                                 if (info_ptr.?.enum_type_name == null) info_ptr.?.enum_type_name = value.enum_type_name;
@@ -981,16 +936,15 @@ pub fn Methods(comptime Ctx: type) type {
                             try self.requireStack(&stack, 1);
                             var value = stack.items[stack.items.len - 1];
                             stack.items.len -= 1;
-                            if (value.ty == .Nothing) continue;
+                            try self.verifyStore(value, sv.expected_type);
+                            // `nothing` is zero-sized: there is nothing to write.
+                            if (sv.expected_type == .Nothing) continue;
                             const expected_array_type: ?HIR.HIRType = switch (sv.expected_type) {
                                 .Array => |inner| inner.*,
                                 else => null,
                             };
                             if (value.array_type == null and expected_array_type != null) {
                                 value.array_type = expected_array_type.?;
-                            }
-                            if (IRPrinter.isBoxedMemberType(sv.expected_type)) {
-                                value = try self.buildDoxaValue(w, value, sv.expected_type, &id);
                             }
                             value = switch (sv.heap_copy) {
                                 .snapshot => try self.cloneHeapForSnapshot(w, &id, value, sv.expected_type),
@@ -1004,8 +958,8 @@ pub fn Methods(comptime Ctx: type) type {
                             // the same object the variable already holds; preserve a
                             // `Deep` classification (loop-arena payload) if one was
                             // recorded.
-                            if (sv.heap_copy != .keep or !self.var_regions.contains(sv.var_name)) {
-                                try self.recordVarRegion(sv.var_name, .Func);
+                            if (sv.heap_copy != .keep or !self.var_regions.contains(sv.slot)) {
+                                try self.recordVarRegion(sv.slot, .Func);
                             }
                             // Phase D: hull the stored value's range into the
                             // variable's, so the recorded fact covers every
@@ -1013,17 +967,15 @@ pub fn Methods(comptime Ctx: type) type {
                             // store-back carries the *post-mutation* value, so
                             // it widens the range just as a plain store does.
                             if (value.ty == .I64 or value.ty == .I8) {
-                                try self.recordVarRange(sv.var_name, value.int_range);
+                                try self.recordVarRange(sv.slot, value.int_range);
                             }
-                            var info_ptr = variables.getPtr(sv.var_name);
+                            var info_ptr = variables.getPtr(sv.slot);
                             if (info_ptr == null) {
                                 continue;
                             } else {
-                                if (sv.expected_type != .Unknown) {
-                                    const expected_stack_ty = self.hirTypeToStackType(sv.expected_type);
-                                    if (info_ptr.?.stack_type == .I64 and expected_stack_ty != .I64) {
-                                        info_ptr.?.stack_type = expected_stack_ty;
-                                    }
+                                const expected_stack_ty = self.hirTypeToStackType(sv.expected_type);
+                                if (info_ptr.?.stack_type == .I64 and expected_stack_ty != .I64) {
+                                    info_ptr.?.stack_type = expected_stack_ty;
                                 }
                                 if (info_ptr.?.array_type == null) info_ptr.?.array_type = value.array_type;
                                 if (info_ptr.?.array_type == null and expected_array_type != null) info_ptr.?.array_type = expected_array_type.?;
@@ -1039,17 +991,6 @@ pub fn Methods(comptime Ctx: type) type {
                             const target_ty = info_ptr.?.stack_type;
                             // `nothing` is zero-sized; skip the store (no data to write).
                             if (target_ty != .Nothing) {
-                                // A slot declared as a group or union always holds a
-                                // %DoxaValue, and only the declaration says which member
-                                // the value belongs to: the value carried here is the
-                                // member itself (a load inside a `NarrowVar` branch
-                                // unwraps the box), so a box keyed on its own type would
-                                // pack no index for the next `MemberCheck` to read.
-                                if (target_ty == .Value and value.ty != .Value) {
-                                    if (info_ptr.?.boxed_declared_type) |box_type| {
-                                        value = try self.buildDoxaValue(w, value, box_type, &id);
-                                    }
-                                }
                                 value = try self.coerceForStore(value, target_ty, &id, w);
                                 const target_llvm_ty = self.stackTypeToLLVMType(target_ty);
                                 const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ target_llvm_ty, value.name, info_ptr.?.ptr_name });
@@ -1112,16 +1053,20 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.handleUnboxPayload(w, &stack, &id);
                         last_instruction_was_terminator = false;
                     },
-                    .UnionConstruct => |uc| {
-                        try self.handleUnionConstruct(w, &stack, &id, uc);
+                    .Box => |b| {
+                        try self.handleBox(w, &stack, &id, b);
+                        last_instruction_was_terminator = false;
+                    },
+                    .Unbox => |u| {
+                        try self.handleUnbox(w, &stack, &id, u);
                         last_instruction_was_terminator = false;
                     },
                     .NarrowVar => |nv| {
-                        try self.narrowVariable(nv.var_name, nv.narrowed_type);
+                        try self.narrowVariable(nv.slot, nv.narrowed_type);
                         last_instruction_was_terminator = false;
                     },
                     .RestoreVar => |rv| {
-                        self.restoreVariable(rv.var_name);
+                        self.restoreVariable(rv.slot);
                         last_instruction_was_terminator = false;
                     },
                     .LogicalOp => |lop| {
@@ -1197,10 +1142,10 @@ pub fn Methods(comptime Ctx: type) type {
             return name;
         }
 
-        /// Push a narrowed member view for `var_name`. The narrowed type is a
+        /// Push a narrowed member view for `slot`. The narrowed type is a
         /// single-member union; loads of the variable unwrap to that member.
-        pub fn narrowVariable(self: *IRPrinter, var_name: []const u8, narrowed_type: HIR.HIRType) !void {
-            var entry = try self.narrowed_vars.getOrPut(var_name);
+        pub fn narrowVariable(self: *IRPrinter, slot: HIR.Slot, narrowed_type: HIR.HIRType) !void {
+            var entry = try self.narrowed_vars.getOrPut(slot);
             if (!entry.found_existing) {
                 entry.value_ptr.* = std.ArrayListUnmanaged(HIR.HIRType).empty;
             }
@@ -1217,20 +1162,20 @@ pub fn Methods(comptime Ctx: type) type {
             self.narrowed_vars.clearRetainingCapacity();
         }
 
-        /// Pop the narrowed member view for `var_name`, restoring any outer view.
-        pub fn restoreVariable(self: *IRPrinter, var_name: []const u8) void {
-            if (self.narrowed_vars.getPtr(var_name)) |stack| {
+        /// Pop the narrowed member view for `slot`, restoring any outer view.
+        pub fn restoreVariable(self: *IRPrinter, slot: HIR.Slot) void {
+            if (self.narrowed_vars.getPtr(slot)) |stack| {
                 if (stack.items.len > 0) {
                     stack.items.len -= 1;
-                    if (stack.items.len == 0) _ = self.narrowed_vars.remove(var_name);
+                    if (stack.items.len == 0) _ = self.narrowed_vars.remove(slot);
                 }
             }
         }
 
         /// The single member of the variable's active narrowed union view, or
         /// null when the variable is not narrowed to a single member.
-        pub fn narrowedMemberType(self: *IRPrinter, var_name: []const u8) ?HIR.HIRType {
-            const stack = self.narrowed_vars.get(var_name) orelse return null;
+        pub fn narrowedMemberType(self: *IRPrinter, slot: HIR.Slot) ?HIR.HIRType {
+            const stack = self.narrowed_vars.get(slot) orelse return null;
             if (stack.items.len == 0) return null;
             const view = stack.items[stack.items.len - 1];
             if (view != .Union) return null;
@@ -1246,10 +1191,10 @@ pub fn Methods(comptime Ctx: type) type {
             self: *IRPrinter,
             w: anytype,
             raw: StackVal,
-            var_name: []const u8,
+            slot: HIR.Slot,
             id: *usize,
         ) !?StackVal {
-            const member = self.narrowedMemberType(var_name) orelse return null;
+            const member = self.narrowedMemberType(slot) orelse return null;
             const unwrapped = try self.unwrapDoxaValueToType(w, raw, member, id);
             return unwrapped;
         }

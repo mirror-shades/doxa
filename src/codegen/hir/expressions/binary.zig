@@ -166,9 +166,12 @@ pub const BinaryExpressionHandler = struct {
             },
             .MINUS => {
                 const operand_type = try self.generator.typeOf(unary.right.?);
+                // Float negation subtracts from -0.0, not 0.0: IEEE 754 gives
+                // `0.0 - 0.0 = +0.0`, which would lose the sign of `-0.0`,
+                // while `-0.0 - x` is `-x` for every x but NaN.
                 const zero_value = switch (operand_type) {
                     .Int => HIRValue{ .int = 0 },
-                    .Float => HIRValue{ .float = 0.0 },
+                    .Float => HIRValue{ .float = -0.0 },
                     .Byte => HIRValue{ .byte = 0 },
                     else => HIRValue{ .int = 0 }, // fallback
                 };
@@ -329,6 +332,8 @@ pub const BinaryExpressionHandler = struct {
         /// value of one of its members.
         boxed_member: struct {
             boxed_on_left: bool,
+            /// Where the member sits among the members the box can hold.
+            member_index: u32,
             member_type: HIRType,
         },
     };
@@ -373,8 +378,8 @@ pub const BinaryExpressionHandler = struct {
         if (isBoxed(left) != isBoxed(right)) {
             const boxed = if (isBoxed(left)) left else right;
             const member = if (isBoxed(left)) right else left;
-            if (self.memberIndexIn(boxed, member) != null) {
-                return .{ .boxed_member = .{ .boxed_on_left = isBoxed(left), .member_type = member } };
+            if (self.memberIndexIn(boxed, member)) |member_index| {
+                return .{ .boxed_member = .{ .boxed_on_left = isBoxed(left), .member_index = member_index, .member_type = member } };
             }
             self.generator.reporter.reportCompileError(
                 bin.left.?.base.location(),
@@ -416,27 +421,21 @@ pub const BinaryExpressionHandler = struct {
                     );
                     return ErrorList.TypeMismatch;
                 }
-                try self.emitBoxedMemberEquality(bin, bm.boxed_on_left, bm.member_type, op);
+                try self.emitBoxedMemberEquality(bin, bm.boxed_on_left, bm.member_index, bm.member_type, op);
             },
         }
     }
 
-    /// `box == member_value` for a box whose member is an enum or an int: the
-    /// box is stripped to its payload word and the words are compared. The
-    /// operands are on the stack in source order.
-    ///
-    /// TODO(B015, plan/type-authority.md Phase C): this compares payloads
-    /// without first checking that the box holds `member_type`, so two enum
-    /// members of one group whose variants share an index compare equal. The
-    /// check cannot be emitted yet: a group value that has passed through a
-    /// union or an array has had its member index overwritten by the outer
-    /// box's (`retagBoxedValue`), so `MemberCheck` would reject the common
-    /// `result == std.error.IO.InvalidData` after narrowing. Restore the
-    /// member check here once a box keeps its group member index.
+    /// `box == member_value` for a box whose member is an enum or an int: equal
+    /// when the box holds `member_type` (at `member_index`) and its payload
+    /// word is the value's. A box holding another member is unequal whatever
+    /// its payload, so `IOError.Denied` never equals `ParseError.Eof` though
+    /// both are variant 1. The operands are on the stack in source order.
     fn emitBoxedMemberEquality(
         self: *BinaryExpressionHandler,
         bin: ast.Binary,
         boxed_on_left: bool,
+        member_index: u32,
         member_type: HIRType,
         op: CompareOp,
     ) ErrorList!void {
@@ -453,10 +452,31 @@ pub const BinaryExpressionHandler = struct {
                 return ErrorList.TypeMismatch;
             },
         }
-        // Bring the box to the top, strip it, and compare two plain words.
-        // Equality does not care which side each operand ended up on.
+        // Bring the box to the top. Equality does not care which side each
+        // operand ended up on.
         if (boxed_on_left) try g.instructions.append(.Swap);
+
+        const holds_label = try g.generateLabel("box_holds_member");
+        const other_label = try g.generateLabel("box_holds_other");
+        const end_label = try g.generateLabel("box_compare_end");
+        try g.instructions.append(.Dup);
+        try g.instructions.append(.{ .MemberCheck = .{ .members = try g.allocator.dupe(u32, &.{member_index}) } });
+        try g.instructions.append(.{ .JumpCond = .{ .label_true = holds_label, .label_false = other_label, .condition_type = .Tetra } });
+
+        // Another member: the answer is decided without the payload.
+        try g.instructions.append(.{ .Label = .{ .name = other_label } });
+        try g.instructions.append(.Pop);
+        try g.instructions.append(.Pop);
+        const decided: HIRValue = .{ .tetra = if (op == .Eq) TETRA_FALSE else TETRA_TRUE };
+        try g.instructions.append(.{ .Const = .{ .value = decided, .constant_id = try g.addConstant(decided) } });
+        try g.instructions.append(.{ .Jump = .{ .label = end_label } });
+
+        // The member: strip the box and compare two plain words.
+        try g.instructions.append(.{ .Label = .{ .name = holds_label } });
         try g.instructions.append(.{ .UnboxPayload = .{} });
         try g.instructions.append(.{ .Compare = .{ .op = op, .operand_type = member_type } });
+        try g.instructions.append(.{ .Jump = .{ .label = end_label } });
+
+        try g.instructions.append(.{ .Label = .{ .name = end_label } });
     }
 };

@@ -98,6 +98,12 @@ pub const GroupTable = struct {
         return self.index.getByKey(key);
     }
 
+    /// Whether `id`'s members are recorded: its declaration has been registered.
+    pub fn isDeclared(self: *const GroupTable, id: GroupId) bool {
+        if (id >= self.entries.items.len) return false;
+        return self.entries.items[id].declared;
+    }
+
     pub fn members(self: *const GroupTable, id: GroupId) ?[]const Member {
         if (id >= self.entries.items.len) return null;
         return self.entries.items[id].members;

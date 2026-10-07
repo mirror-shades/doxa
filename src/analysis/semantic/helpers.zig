@@ -12,7 +12,6 @@ const CustomTypeInfo = Types.CustomTypeInfo;
 const StructField = Types.StructField;
 const HIRTypeModule = @import("../../codegen/hir/soxa_types.zig");
 const HIRType = HIRTypeModule.HIRType;
-const UnionId = HIRTypeModule.UnionId;
 const StructId = HIRTypeModule.StructId;
 const names = @import("names.zig");
 const graph_mod = @import("../../module/graph.zig");
@@ -23,27 +22,31 @@ fn refOf(type_info: *const ast.TypeInfo) ?TypeRef {
     return custom.resolved();
 }
 
+/// Whether `base` spells a named type: an enum, a struct, or a group or type
+/// written by name.
+fn isNamedBase(base: ast.Type) bool {
+    return base == .Enum or base == .Struct or base == .Custom;
+}
+
 /// Structural equality for TypeInfo. Named types are equal exactly when they
-/// are the same declaration: two modules' `Node` are different types.
+/// are the same declaration: two modules' `Node` are different types. A
+/// resolved named type is the same type however it is spelled (`.Enum`,
+/// `.Struct` or `.Custom`).
 pub fn typesEqual(self: *const SemanticAnalyzer, a: *const ast.TypeInfo, b: *const ast.TypeInfo) bool {
+    if (isNamedBase(a.base) and isNamedBase(b.base)) {
+        // A `.Blue` shorthand its context has not typed yet carries no type of
+        // its own and is compatible with any named type; otherwise identities
+        // must agree.
+        const ra = refOf(a) orelse return isUntypedVariant(a) or a.base == .Custom;
+        const rb = refOf(b) orelse return isUntypedVariant(b) or b.base == .Custom;
+        return ra.eql(rb);
+    }
     if (a.base != b.base) return false;
 
     switch (a.base) {
         .Int, .Byte, .Float, .String, .Tetra, .Nothing => return true,
 
-        .Enum, .Struct => {
-            const ra = refOf(a) orelse return false;
-            const rb = refOf(b) orelse return false;
-            return ra.eql(rb);
-        },
-
-        .Custom => {
-            // A bare enum literal (`.Blue`) carries no type of its own and is
-            // compatible with any named type; otherwise names must agree.
-            const ra = refOf(a) orelse return true;
-            const rb = refOf(b) orelse return true;
-            return ra.eql(rb);
-        },
+        .Enum, .Struct, .Custom => unreachable,
 
         .Array => {
             // An array literal without element type info is compatible with any array.
@@ -452,18 +455,6 @@ fn canonicalizeUnion(
     return try list.toOwnedSlice(allocator);
 }
 
-/// Assign or look up a stable id for a canonical union type within this
-/// SemanticAnalyzer instance. The key is the canonical ast.UnionType pointer
-/// (after flattening/canonicalization), so structurally distinct unions get
-/// distinct ids.
-pub fn getOrAssignUnionId(self: *SemanticAnalyzer, ut: *ast.UnionType) !UnionId {
-    if (self.union_ids.get(ut)) |existing| return existing;
-    const id: UnionId = self.next_union_id;
-    self.next_union_id += 1;
-    try self.union_ids.put(ut, id);
-    return id;
-}
-
 /// The kind of declaration a named type is.
 fn declKind(self: *const SemanticAnalyzer, ref: TypeRef) ?Types.CustomTypeKind {
     const decl = self.graph.declOf(.{ .module = ref.module, .name = ref.name, .kind = .Type }) orelse return null;
@@ -539,16 +530,15 @@ pub fn lowerAstTypeToHIR(self: *SemanticAnalyzer, ti: *const ast.TypeInfo) !HIRT
         },
 
         .Union => blk: {
-            const flat = try flattenUnionType(self, ti.union_type.?);
-            var lowered: std.ArrayListUnmanaged(*const HIRType) = .empty;
-            defer lowered.deinit(self.allocator);
-            for (flat.types) |mt| {
-                const mptr = try self.allocator.create(HIRType);
-                mptr.* = try lowerAstTypeToHIR(self, mt);
-                try lowered.append(self.allocator, mptr);
+            const ut = ti.union_type orelse break :blk HIRType.Nothing;
+            const lowered = try self.allocator.alloc(*const HIRType, ut.types.len);
+            defer self.allocator.free(lowered);
+            for (ut.types, lowered) |member, *slot| {
+                const member_ptr = try self.allocator.create(HIRType);
+                member_ptr.* = try lowerAstTypeToHIR(self, member);
+                slot.* = member_ptr;
             }
-            const union_id = try getOrAssignUnionId(self, flat);
-            break :blk HIRType{ .Union = .{ .id = union_id, .members = try lowered.toOwnedSlice(self.allocator) } };
+            break :blk try self.union_table.intern(self.unionNames(), lowered);
         },
     };
 }
@@ -725,9 +715,23 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
         if (expected.base == .Float and (actual.base == .Int or actual.base == .Byte)) {
             if (actual_expr) |expr| {
                 if (actual.comptime_int) |lit_val| {
+                    // A literal widens only when the float holds it exactly:
+                    // past 2^53 an int rounds, and a literal that would
+                    // silently change value is an error, not a conversion.
+                    const widened: f64 = @floatFromInt(lit_val);
+                    if (@as(i128, @intFromFloat(widened)) != lit_val) {
+                        self.reporter.reportCompileError(
+                            span.location,
+                            ErrorCode.INEXACT_FLOAT_LITERAL,
+                            "int literal {d} has no exact float value (the nearest float is {d}.0); write it as a float literal or convert with @float()",
+                            .{ lit_val, widened },
+                        );
+                        self.fatal_error = true;
+                        return;
+                    }
                     switch (expr.data) {
                         .Literal => {
-                            expr.data.Literal = ast.TokenLiteral{ .float = @floatFromInt(lit_val) };
+                            expr.data.Literal = ast.TokenLiteral{ .float = widened };
                         },
                         .Unary => |unary| {
                             if (unary.operator.type == .MINUS) {
@@ -880,10 +884,18 @@ pub fn registerStructType(self: *SemanticAnalyzer, ref: TypeRef, fields: []const
     const struct_id = try self.struct_table.registerStruct(ref, table_inputs);
 
     for (fields, 0..) |field, i| {
-        self.struct_table.setFieldHIRType(struct_id, @intCast(i), try lowerAstTypeToHIR(self, field.type_info));
         if (try structIdFromTypeInfo(self, field.type_info)) |nested_struct_id| {
             self.struct_table.setNestedStructId(struct_id, @intCast(i), nested_struct_id);
         }
+    }
+}
+
+/// Lower every struct field's type for codegen. A field may name a type of a
+/// record whose types register after its struct's — a group, whose members a
+/// union field flattens — so this runs once every record is analyzed.
+pub fn lowerStructFieldTypes(self: *SemanticAnalyzer) !void {
+    for (self.struct_table.entries.items) |entry| {
+        for (entry.fields) |*field| field.hir_type = try lowerAstTypeToHIR(self, field.type_info);
     }
 }
 
