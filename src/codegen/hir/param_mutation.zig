@@ -300,11 +300,6 @@ fn stmtMutates(stmt: ast.Stmt, name: []const u8) bool {
                 if (exprMutates(init, name)) found = true;
             }
         },
-        .Block => |statements| {
-            for (statements) |s| {
-                if (stmtMutates(s, name)) found = true;
-            }
-        },
         .Return => |r| {
             if (r.value) |v| {
                 if (exprMutates(v, name)) found = true;
@@ -314,15 +309,6 @@ fn stmtMutates(stmt: ast.Stmt, name: []const u8) bool {
             if (exprMutates(a.condition, name)) found = true;
             if (a.message) |m| {
                 if (exprMutates(m, name)) found = true;
-            }
-        },
-        .Cast => |c| {
-            if (exprMutates(c.value, name)) found = true;
-            if (c.then_branch) |t| {
-                if (exprMutates(t, name)) found = true;
-            }
-            if (c.else_branch) |e| {
-                if (exprMutates(e, name)) found = true;
             }
         },
         .Defer => |d| {
@@ -350,9 +336,7 @@ fn stmtMutates(stmt: ast.Stmt, name: []const u8) bool {
         .ZigDecl,
         .EnumDecl,
         .GroupDecl,
-        .Module,
         .Import,
-        .Path,
         .Continue,
         .Break,
         => {},

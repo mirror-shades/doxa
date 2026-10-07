@@ -1,0 +1,20 @@
+module a from "./moddata/node_mod_a.doxa"
+module b from "./moddata/node_mod_b.doxa"
+module r from "./moddata/node_reexport.doxa"
+import Node from "./moddata/node_mod_a.doxa"
+
+# A type's identity is its defining module and name. `a.Node` and `b.Node` are
+# two types, each with its own fields and its own `describe`. An imported
+# `Node`, the qualified `a.Node`, and `r.Node` re-exported from another file
+# all name `a`'s one type, so a value of any spelling fits the others.
+function describeA(n :: a.Node) returns string {
+    return n.describe()
+}
+
+entry function main() {
+    const x is $a.Node { value is 1 }
+    const y is $b.Node { label is "two" }
+    const imported :: Node is x
+    const reexported :: r.Node is $Node { value is 3 }
+    @print("{x.describe()} {y.describe()} {describeA(imported)} {describeA(reexported)}\n")
+}

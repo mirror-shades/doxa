@@ -5,6 +5,50 @@ const Reporting = @import("../utils/reporting.zig");
 const Location = @import("../utils/reporting.zig").Location;
 const Reporter = @import("../utils/reporting.zig").Reporter;
 const HIRType = @import("../codegen/hir/soxa_types.zig").HIRType;
+const ids = @import("../module/ids.zig");
+
+pub const TypeRef = ids.TypeRef;
+
+/// The named type a `TypeInfo` refers to. A declaration or annotation carries
+/// the name as written (`Node`, `std.json.Node`) until semantic analysis
+/// resolves it against the declaring record's bindings; from then on it is the
+/// defining module's `TypeRef`. Identity is only ever the `ref`: a written name
+/// is a spelling, and codegen never sees one.
+pub const CustomType = union(enum) {
+    written: []const u8,
+    ref: TypeRef,
+
+    /// The name to show a user: the declared name of a resolved type, or the
+    /// spelling of an unresolved one.
+    pub fn displayName(self: CustomType) []const u8 {
+        return switch (self) {
+            .written => |name| name,
+            .ref => |ref| ref.name,
+        };
+    }
+
+    /// The resolved identity. Asking an unresolved name for its identity is a
+    /// compiler bug: every annotation is resolved before it is compared.
+    pub fn resolved(self: CustomType) TypeRef {
+        return switch (self) {
+            .ref => |ref| ref,
+            .written => unreachable,
+        };
+    }
+
+    pub fn eql(a: CustomType, b: CustomType) bool {
+        return switch (a) {
+            .ref => |ra| switch (b) {
+                .ref => |rb| ra.eql(rb),
+                .written => false,
+            },
+            .written => |wa| switch (b) {
+                .written => |wb| std.mem.eql(u8, wa, wb),
+                .ref => false,
+            },
+        };
+    }
+};
 
 var next_node_id: NodeId = 0;
 
@@ -130,11 +174,22 @@ pub const StructDecl = struct {
     }
 };
 
+/// A name an `as` cast declares inside one of its branches: its storage and
+/// the narrowed type it holds there.
+pub const CastBinding = struct {
+    storage: u32,
+    type_info: *TypeInfo,
+};
+
 pub const FunctionParam = struct {
     name: Token,
     type_expr: ?*TypeExpr,
     default_value: ?*Expr = null,
     is_alias: bool = false,
+    /// The storage id of the parameter's binding, filled in place by analysis
+    /// when the function body is checked. Codegen keys the parameter's slot by
+    /// it, as it keys every other variable by its `StoreTarget.storage`.
+    storage: ?u32 = null,
 
     pub fn deinit(self: *FunctionParam, allocator: std.mem.Allocator) void {
         if (self.type_expr) |te| {
@@ -235,7 +290,6 @@ pub const Stmt = struct {
             type_expr: ?*TypeExpr = null,
             is_public: bool = false,
         },
-        Block: []Stmt,
         FunctionDecl: struct {
             name: Token,
             params: []FunctionParam,
@@ -243,7 +297,6 @@ pub const Stmt = struct {
             body: []Stmt,
             is_entry: bool = false,
             is_public: bool = false,
-            defining_module: ?[]const u8 = null,
         },
         Return: struct {
             value: ?*Expr,
@@ -257,24 +310,13 @@ pub const Stmt = struct {
             value_type: ?TypeInfo = null,
             else_value: ?*Expr = null,
         },
-        Module: struct {
-            name: Token,
-            imports: []const ImportInfo,
-        },
         Import: ImportInfo,
-        Path: []const u8,
         Continue: void,
         Break: void,
         Assert: struct {
             condition: *Expr,
             location: Location,
             message: ?*Expr = null,
-        },
-        Cast: struct {
-            value: *Expr,
-            target_type: *TypeExpr,
-            then_branch: ?*Expr = null,
-            else_branch: ?*Expr,
         },
         Defer: *Expr,
         Lift: struct {
@@ -318,12 +360,6 @@ pub const Stmt = struct {
                     allocator.destroy(type_expr);
                 }
             },
-            .Block => |statements| {
-                for (statements) |*stmt| {
-                    stmt.deinit(allocator);
-                }
-                allocator.free(statements);
-            },
             .Return => |*r| {
                 if (r.value) |value| {
                     value.deinit(allocator);
@@ -366,25 +402,9 @@ pub const Stmt = struct {
                     allocator.destroy(msg);
                 }
             },
-            .Module => {},
             .Import => {},
-            .Path => {},
             .Continue => {},
             .Break => {},
-            .Cast => |*c| {
-                c.value.deinit(allocator);
-                allocator.destroy(c.value);
-                c.target_type.deinit(allocator);
-                allocator.destroy(c.target_type);
-                if (c.then_branch) |then_expr| {
-                    then_expr.deinit(allocator);
-                    allocator.destroy(then_expr);
-                }
-                if (c.else_branch) |else_expr| {
-                    else_expr.deinit(allocator);
-                    allocator.destroy(else_expr);
-                }
-            },
             .Defer => |expr| {
                 expr.deinit(allocator);
                 allocator.destroy(expr);
@@ -417,7 +437,6 @@ pub const If = struct {
 pub const Assignment = struct {
     name: Token,
     value: ?*Expr,
-    target_context: ?VariableRef = null,
 };
 
 pub const CallArgument = struct {
@@ -506,12 +525,30 @@ pub const MatchExpr = struct {
 pub const MatchCase = struct {
     patterns: []Token,
     path_patterns: []PathPattern = &[_]PathPattern{},
+    /// What each of `patterns` denotes, parallel to it, filled in place by
+    /// analysis so narrowing and lowering read one answer.
+    resolved: []const Resolved = &.{},
     body: *Expr,
+
+    pub const Resolved = union(enum) {
+        /// Read off the token itself: a literal, a builtin type, `else`.
+        token,
+        /// A named type — for a group subject, the group member it names.
+        type: TypeRef,
+        /// A variant of this enum.
+        variant: TypeRef,
+    };
 
     pub const PathPattern = struct {
         tokens: []const Token,
         is_wildcard: bool = false,
         field_names: []const Token = &[_]Token{},
+        /// The storage id of each destructured field's binding, parallel to
+        /// `field_names`, filled in place by analysis. Codegen stores each
+        /// field into its binding's slot.
+        field_storages: []u32 = &.{},
+        /// The index, in the arm's `patterns`, of the pattern this path spells.
+        pattern: u32,
 
         pub const Split = struct {
             member: Token,
@@ -579,7 +616,6 @@ pub const Expr = struct {
         FunctionCall: struct {
             callee: *Expr,
             arguments: []CallArgument,
-            call_context: ?FunctionCallRef = null,
         },
         Logical: Logical,
         FieldAccess: FieldAccess,
@@ -608,16 +644,8 @@ pub const Expr = struct {
             size: ?*Expr = null,
         },
         Match: MatchExpr,
-        EnumDecl: struct {
-            name: Token,
-            variants: []Token,
-            is_public: bool = false,
-        },
-        GroupDecl: struct {
-            name: Token,
-            members: []GroupMember,
-            is_public: bool = false,
-        },
+        EnumDecl: EnumDecl,
+        GroupDecl: GroupDecl,
         EnumMember: Token,
         DefaultArgPlaceholder: void,
 
@@ -657,6 +685,11 @@ pub const Expr = struct {
             // the declared name — so any analysis pass can narrow/expose that
             // binding inside the then/else branches.
             decl_name: ?[]const u8 = null,
+            /// The declared name's binding inside the then and the else
+            /// branch, filled in place by analysis. Codegen stores the
+            /// narrowed subject into it as the branch begins.
+            decl_then: ?CastBinding = null,
+            decl_else: ?CastBinding = null,
         },
         ReturnExpr: struct { value: ?*Expr },
         Unreachable: struct {
@@ -1019,7 +1052,7 @@ pub const ArrayStorageKind = enum {
 
 pub const TypeInfo = struct {
     base: Type,
-    custom_type: ?[]const u8 = null,
+    custom_type: ?CustomType = null,
     is_mutable: bool = true,
     array_type: ?*TypeInfo = null,
     struct_fields: ?[]StructFieldType = null,
@@ -1088,12 +1121,6 @@ pub const TypeInfo = struct {
             .tetra => .Tetra,
             .nothing => .Nothing,
             .array => .Array,
-            .struct_value => |sv| label: {
-                self.custom_type = sv.type_name;
-                break :label .Custom;
-            },
-            .function => .Function,
-            .enum_variant => .Enum,
             .map => .Map,
         };
     }
@@ -1148,13 +1175,23 @@ pub const ArrayType = struct {
     size: ?*Expr = null,
 };
 
+/// A named type in an annotation. `name` is the spelling as written (possibly
+/// module-qualified, `std.json.Node`); semantic analysis resolves it against
+/// the declaring record's bindings and records the identity in `ref`, so every
+/// later reader of the annotation sees the resolved type and never re-resolves
+/// a spelling.
+pub const CustomTypeExpr = struct {
+    name: Token,
+    ref: ?TypeRef = null,
+};
+
 pub const TypeExpr = struct {
     base: Base,
     data: Data,
 
     pub const Data = union(enum) {
         Basic: BasicType,
-        Custom: Token,
+        Custom: CustomTypeExpr,
         Array: ArrayType,
         Struct: []*StructField,
         Enum: []const []const u8,
@@ -1216,66 +1253,14 @@ pub const ImportType = enum {
     Specific,
 };
 
+/// `module X from S` (`import_type == .Module`, one name: the alias) or
+/// `import a, b from S` (`.Specific`, one name per imported entity). Each name
+/// is its token, so a duplicate binding can point at the site that wrote it.
 pub const ImportInfo = struct {
     import_type: ImportType,
     module_path: []const u8,
-    namespace_alias: ?[]const u8 = null,
-    specific_symbols: ?[][]const u8 = null,
-    specific_symbol: ?[]const u8 = null,
+    names: []const Token,
     is_public: bool = false,
-};
-
-pub const ModuleSymbol = struct {
-    name: []const u8,
-    kind: enum { Function, Variable, Struct, Enum, Group },
-    is_public: bool,
-    stmt_index: usize,
-};
-
-pub const ModuleInfo = struct {
-    name: []const u8,
-    imports: []const ImportInfo,
-    ast: ?*Expr = null,
-    file_path: []const u8,
-    importer_path: []const u8 = "",
-    symbols: ?std.StringHashMap(ModuleSymbol) = null,
-    is_inline_zig: bool = false,
-    /// MIGRATION (Phase 2 → removed once bindings live only on `ModuleRecord`):
-    /// the graph record this payload belongs to, so a resolution path that
-    /// returns a `ModuleInfo` can recover its record (for owner-scoped binding).
-    /// A `ModuleId` is a `u32`; keeping the raw integer avoids an import cycle
-    /// between the AST and the module graph.
-    record_id: ?u32 = null,
-
-    pub fn hasPublicSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {
-        if (self.symbols) |symbols| {
-            if (symbols.get(symbol_name)) |symbol| {
-                return symbol.is_public;
-            }
-        }
-        return false;
-    }
-
-    pub fn hasSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {
-        if (self.symbols) |symbols| {
-            return symbols.contains(symbol_name);
-        }
-        return false;
-    }
-
-    pub fn getSymbol(self: *const ModuleInfo, symbol_name: []const u8) ?ModuleSymbol {
-        if (self.symbols) |symbols| {
-            return symbols.get(symbol_name);
-        }
-        return null;
-    }
-
-    pub fn deinit(self: *ModuleInfo, allocator: std.mem.Allocator) void {
-        allocator.free(self.imports);
-        if (self.symbols) |*symbols| {
-            symbols.deinit();
-        }
-    }
 };
 
 fn dumpIndent(writer: *std.Io.Writer, depth: u32) std.Io.Writer.Error!void {
@@ -1306,10 +1291,6 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: *const Stmt, depth: u32) std.Io.Writer
             try writer.print("Stmt.VarDecl name={s}\n", .{v.name.lexeme});
             if (v.initializer) |init| try dumpExpr(writer, init, depth + 1);
         },
-        .Block => |block_stmts| {
-            try writer.print("Stmt.Block\n", .{});
-            for (block_stmts) |*s| try dumpStmt(writer, s, depth + 1);
-        },
         .FunctionDecl => |*f| {
             try writer.print("Stmt.FunctionDecl name={s}\n", .{f.name.lexeme});
             for (f.body) |*s| try dumpStmt(writer, s, depth + 1);
@@ -1329,20 +1310,13 @@ fn dumpStmt(writer: *std.Io.Writer, stmt: *const Stmt, depth: u32) std.Io.Writer
                 try dumpExpr(writer, entry.value, depth + 2);
             }
         },
-        .Module => |m| try writer.print("Stmt.Module name={s}\n", .{m.name.lexeme}),
         .Import => try writer.print("Stmt.Import\n", .{}),
-        .Path => |p| try writer.print("Stmt.Path {s}\n", .{p}),
         .Continue => try writer.print("Stmt.Continue\n", .{}),
         .Break => try writer.print("Stmt.Break\n", .{}),
         .Assert => |*a| {
             try writer.print("Stmt.Assert\n", .{});
             try dumpExpr(writer, a.condition, depth + 1);
             if (a.message) |msg| try dumpExpr(writer, msg, depth + 1);
-        },
-        .Cast => |*c| {
-            try writer.print("Stmt.Cast\n", .{});
-            try dumpExpr(writer, c.value, depth + 1);
-            try dumpTypeExpr(writer, c.target_type, depth + 1);
         },
         .Defer => |expr| {
             try writer.print("Stmt.Defer\n", .{});
@@ -1564,7 +1538,7 @@ fn dumpTypeExpr(writer: *std.Io.Writer, type_expr: *const TypeExpr, depth: u32) 
     try dumpIndent(writer, depth);
     switch (type_expr.data) {
         .Basic => |b| try writer.print("TypeExpr.Basic {s}\n", .{@tagName(b)}),
-        .Custom => |t| try writer.print("TypeExpr.Custom {s}\n", .{t.lexeme}),
+        .Custom => |custom| try writer.print("TypeExpr.Custom {s}\n", .{custom.name.lexeme}),
         .Array => |a| {
             try writer.print("TypeExpr.Array\n", .{});
             try dumpTypeExpr(writer, a.element_type, depth + 1);
@@ -1623,16 +1597,10 @@ pub fn createExpressionPart(expr: *Expr) FormatPart {
     return FormatPart{ .Expression = expr };
 }
 
-/// The identity of a named type is its bare declaration name, never a
-/// module-qualified spelling. Custom/struct/enum/group tables are keyed by the
-/// name a declaration writes, so `std.json.Node` and `Node` must produce the
-/// same `custom_type`. Callers that need the qualifier keep the original token;
-/// every lookup goes through canonical names.
-pub fn bareTypeName(name: []const u8) []const u8 {
-    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return name;
-    return name[dot + 1 ..];
-}
-
+/// The syntactic type an annotation writes. A named type keeps its full
+/// spelling — module qualifier included — because only semantic analysis,
+/// resolving against the declaring record's bindings, can say which type it
+/// names.
 pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*TypeInfo {
     const type_info = try allocator.create(TypeInfo);
     errdefer allocator.destroy(type_info);
@@ -1689,7 +1657,10 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
                 .struct_fields = struct_fields,
             };
         },
-        .Custom => |custom_token| TypeInfo{ .base = .Custom, .custom_type = bareTypeName(custom_token.lexeme) },
+        .Custom => |custom| TypeInfo{
+            .base = .Custom,
+            .custom_type = if (custom.ref) |ref| .{ .ref = ref } else .{ .written = custom.name.lexeme },
+        },
         .Map => |map| blk: {
             const key_type_info = if (map.key_type) |key_type|
                 try typeInfoFromExpr(allocator, key_type)
@@ -1730,110 +1701,3 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
     return type_info;
 }
 
-pub fn typeInfoFromHIRType(allocator: std.mem.Allocator, hir_type: HIRType) !*TypeInfo {
-    const type_info = try allocator.create(TypeInfo);
-    errdefer allocator.destroy(type_info);
-
-    switch (hir_type) {
-        .Int => type_info.* = .{ .base = .Int },
-        .Byte => type_info.* = .{ .base = .Byte },
-        .Float => type_info.* = .{ .base = .Float },
-        .String => type_info.* = .{ .base = .String },
-        .Tetra => type_info.* = .{ .base = .Tetra },
-        .Nothing => type_info.* = .{ .base = .Nothing },
-
-        .Array => |elem_ptr| {
-            const elem_ti = try typeInfoFromHIRType(allocator, elem_ptr.*);
-            type_info.* = .{ .base = .Array, .array_type = elem_ti };
-        },
-
-        .Map => {
-            type_info.* = .{ .base = .Map };
-        },
-
-        .Struct => type_info.* = .{ .base = .Struct },
-
-        .Enum => {
-            type_info.* = .{
-                .base = .Enum,
-                .custom_type = "ValueError",
-            };
-        },
-
-        .Function => {
-            type_info.* = .{ .base = .Function };
-        },
-
-        .Union => |union_info| {
-            const members = union_info.members;
-            var member_types = try allocator.alloc(*TypeInfo, members.len);
-            for (members, 0..) |member_ptr, i| {
-                member_types[i] = try typeInfoFromHIRType(allocator, member_ptr.*);
-            }
-
-            const ut = try allocator.create(UnionType);
-            ut.* = .{
-                .types = member_types,
-                .current_type_index = null,
-            };
-
-            type_info.* = .{ .base = .Union, .union_type = ut };
-        },
-
-        .Unknown => type_info.* = .{ .base = .Nothing },
-        .Poison => type_info.* = .{ .base = .Nothing },
-    }
-
-    return type_info;
-}
-
-pub const VariableRef = struct {
-    token: Token,
-    module_context: ?[]const u8 = null,
-    scope_depth: u32 = 0,
-    resolution_kind: ResolutionKind,
-
-    pub const ResolutionKind = enum {
-        Local,
-        ModuleGlobal,
-        ImportedModule,
-        ImportedSymbol,
-        Unresolved,
-    };
-};
-
-pub const FunctionCallRef = struct {
-    name: []const u8,
-    call_kind: CallKind,
-    target_module: ?[]const u8 = null,
-
-    pub const CallKind = enum {
-        LocalFunction,
-        ModuleFunction,
-        Unresolved,
-    };
-};
-
-pub fn createVariableRef(token: Token) VariableRef {
-    return VariableRef{
-        .token = token,
-        .resolution_kind = .Unresolved,
-    };
-}
-
-pub fn createResolvedVariableRef(token: Token, module_context: ?[]const u8, scope_depth: u32, kind: VariableRef.ResolutionKind) VariableRef {
-    return VariableRef{
-        .token = token,
-        .module_context = module_context,
-        .scope_depth = scope_depth,
-        .resolution_kind = kind,
-    };
-}
-
-pub fn createFunctionCallRef(name: []const u8, kind: FunctionCallRef.CallKind, target_module: ?[]const u8) FunctionCallRef {
-    return FunctionCallRef{
-        .name = name,
-        .call_kind = kind,
-        .target_module = target_module,
-    };
-}

@@ -2,35 +2,35 @@
 # other branch's code with it. Each function below pairs a diverging `then`
 # (or `else`) with a live opposite branch.
 
-function thenContinue(list :: string[]) returns int {
+function thenContinue(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        if list[i] == "" then { continue } else n += 1
+    for i while i < @length(items) do i += 1 {
+        if items[i] == "" then { continue } else n += 1
     }
     return n
 }
 
-function thenContinueBare(list :: string[]) returns int {
+function thenContinueBare(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        if list[i] == "" then continue else n += 1
+    for i while i < @length(items) do i += 1 {
+        if items[i] == "" then continue else n += 1
     }
     return n
 }
 
-function thenBreak(list :: string[]) returns int {
+function thenBreak(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        if list[i] == "" then { break } else n += 1
+    for i while i < @length(items) do i += 1 {
+        if items[i] == "" then { break } else n += 1
     }
     return n
 }
 
 # work before the divergence still runs
-function thenContinueAfterWork(list :: string[]) returns int {
+function thenContinueAfterWork(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        if list[i] == "" then {
+    for i while i < @length(items) do i += 1 {
+        if items[i] == "" then {
             n += 100
             continue
         } else n += 1
@@ -39,39 +39,39 @@ function thenContinueAfterWork(list :: string[]) returns int {
 }
 
 # no else branch: the shortcut is sound and must stay taken
-function thenContinueNoElse(list :: string[]) returns int {
+function thenContinueNoElse(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        if list[i] == "" then { continue }
+    for i while i < @length(items) do i += 1 {
+        if items[i] == "" then { continue }
         n += 1
     }
     return n
 }
 
-function elseContinue(list :: string[]) returns int {
+function elseContinue(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        if list[i] != "" then n += 1 else { continue }
+    for i while i < @length(items) do i += 1 {
+        if items[i] != "" then n += 1 else { continue }
     }
     return n
 }
 
 # both branches diverge to different labels
-function thenContinueElseBreak(list :: string[]) returns int {
+function thenContinueElseBreak(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        if list[i] == "" then { continue } else { break }
+    for i while i < @length(items) do i += 1 {
+        if items[i] == "" then { continue } else { break }
         n += 100
     }
     return n
 }
 
 # the jump must target the innermost enclosing loop
-function nestedInner(list :: string[]) returns int {
+function nestedInner(items :: string[]) returns int {
     var n is 0
     for i is 0 while i < 2 do i += 1 {
-        for j while j < @length(list) do j += 1 {
-            if list[j] == "" then { continue } else n += 1
+        for j while j < @length(items) do j += 1 {
+            if items[j] == "" then { continue } else n += 1
         }
         n += 10
     }
@@ -83,10 +83,10 @@ function maybeInt(s :: string) returns int | nothing {
     return 5
 }
 
-function asThenContinue(list :: string[]) returns int {
+function asThenContinue(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        maybeInt(list[i]) as int then { continue } else n += 1
+    for i while i < @length(items) do i += 1 {
+        maybeInt(items[i]) as int then { continue } else n += 1
     }
     return n
 }

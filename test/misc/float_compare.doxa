@@ -1,0 +1,76 @@
+# Float comparisons follow IEEE 754. Mixed int/byte/float operands compare
+# after promotion to float; the signed zeros are equal; the infinities bound
+# every finite value; and NaN is unordered — every ordered comparison with it
+# is false, `==` is false, and `!=` is the exact negation of `==`, so NaN is
+# unequal to everything, itself included. Each NaN check runs on a value the
+# backend cannot fold (a parameter) and on one it can (a literal quotient), so
+# a wrong predicate cannot hide behind either path.
+
+function div(a :: float, b :: float) returns float {
+    return a / b
+}
+
+function selfUnequal(x :: float) returns tetra {
+    return x != x
+}
+
+function show(label :: string, value :: tetra) {
+    @print("{label}={value}\n")
+}
+
+public entry function main() {
+    # Mixed operands promote to float before comparing.
+    var i is 2
+    var b :: byte is 0x02
+    show("int_eq_float", 1 == 1.0)
+    show("float_eq_int", 3.0 == 3)
+    show("int_lt_float", i < 2.5)
+    show("float_gt_int", 2.5 > i)
+    show("int_ne_float", i != 2.0)
+    show("byte_lt_float", b < 2.5)
+    show("byte_eq_float", b == 2.0)
+    show("le_equal", 2.5 <= 2.5)
+    show("ge_equal", 2.5 >= 2.5)
+    show("lt_one_ulp", 1.0 < 1.0000000000000002)
+
+    # Binary rounding is visible to `==`.
+    show("rounding_eq", 0.1 + 0.2 == 0.3)
+    show("rounding_ne", 0.1 + 0.2 != 0.3)
+
+    # Signed zeros are equal and neither is below the other.
+    const neg_zero is div(-0.0, 1.0)
+    show("zeros_eq", neg_zero == 0.0)
+    show("zeros_ne", neg_zero != 0.0)
+    show("zeros_lt", neg_zero < 0.0)
+
+    # The infinities bound every finite value and equal themselves.
+    const inf is div(1.0, 0.0)
+    const ninf is div(-1.0, 0.0)
+    show("inf_gt_max", inf > 1.7976931348623157e308)
+    show("ninf_lt_min", ninf < -1.7976931348623157e308)
+    show("inf_eq_inf", inf == inf)
+    show("inf_ne_ninf", inf != ninf)
+    show("inf_ge_inf", inf >= inf)
+
+    # NaN from a runtime quotient.
+    const nan is div(0.0, 0.0)
+    show("nan_eq_nan", nan == nan)
+    show("nan_ne_nan", nan != nan)
+    show("nan_ne_num", nan != 1.0)
+    show("num_ne_nan", 1.0 != nan)
+    show("nan_ne_inf", nan != inf)
+    show("nan_lt", nan < 1.0)
+    show("nan_gt", nan > 1.0)
+    show("nan_le", nan <= nan)
+    show("nan_ge", nan >= nan)
+    show("nan_self_unequal", selfUnequal(nan))
+    show("num_self_unequal", selfUnequal(1.0))
+    var x is nan
+    if x != x then show("nan_branch_ne", true) else show("nan_branch_ne", false)
+    if x == x then show("nan_branch_eq", true) else show("nan_branch_eq", false)
+
+    # NaN from a literal quotient the compiler may fold.
+    const folded is 0.0 / 0.0
+    show("folded_eq", folded == folded)
+    show("folded_ne", folded != folded)
+}

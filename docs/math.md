@@ -51,7 +51,7 @@ Doxa promotes numeric **operands** to a common type before evaluation. This appl
 | Position | Rule |
 |---|---|
 | **Operator** (e.g. `1 + 2.5`) | Int or byte operands promote to float automatically |
-| **Array initializer** (e.g. `float[] is [1, 2, 3]`) | Elements promote to the array's element type |
+| **Array initializer** (e.g. `float[] is [1, 2.5, 3]`) | A float element makes the array `float[]` wherever it sits; each element is then a value position, so int literals widen and runtime ints need `@float()` |
 | **Value position** (assignment, call arg, return) | Only comptime literals are implicit; runtime values require `@float()` |
 
 ### Operator promotion
@@ -84,8 +84,20 @@ takesFloat(i)                # error — runtime value, use @float(i)
 var f :: float is i          # error — runtime value, use @float(i)
 ```
 
+A literal widens only when the float holds it exactly. Above 2^53 not every int has a float, so `var x :: float is 9007199254740993` is an error (`E1034`) rather than a silent rounding to `9007199254740992.0`; write the float literal you mean instead. A runtime value has no such check, which is why it needs `@float()`.
+
 This rule mirrors how `int` → `byte` already works (comptime literals are allowed; runtime values require `@byte()`). The `@float()` intrinsic converts int, byte, or string values to float.
 
 ## Division by zero
 
-Division or modulo by zero in any context (float, int, byte) produces a runtime error.
+Integer division and modulo by zero (`//`, `%`, on `int` or `byte`) are a runtime trap. Float division follows IEEE 754 instead: `1 / 0` is `inf`, `-1 / 0` is `-inf`, and `0 / 0` is NaN.
+
+## Floating point
+
+`float` is an IEEE 754 double, and its special values behave as the standard says:
+
+- **NaN** comes only from an operation with no defined answer: `0.0 / 0.0`, `inf - inf`, `inf * 0`, `inf / inf`, or `@float("nan")`. It is unordered: `<`, `<=`, `>`, `>=`, and `==` against NaN are all `false`, and `!=` is `true` — NaN is unequal even to itself, so `x != x` holds exactly when `x` is NaN.
+- **Negative zero** is a distinct value that compares equal to `0.0`. Negation keeps its sign (`-0.0` prints `-0.0`), and the sign shows through division: `1 / -0.0` is `-inf`.
+- **Overflow** rounds to `inf` or `-inf`; **underflow** rounds to `0.0`.
+
+A float prints as the shortest positional decimal that reads back as the same value, with `.0` on an integral one so it never reads as an `int`: `0.1 + 0.2` prints `0.30000000000000004`, `1.0e10` prints `10000000000.0`.

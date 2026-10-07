@@ -1,0 +1,11 @@
+# A bare `return` returns `nothing`, which the declared return type must admit.
+
+enum Kind { Bad }
+group Err { Kind }
+
+function fallible(fail :: tetra) returns Err {
+    if fail then return Kind.Bad
+    return
+}
+
+fallible(true)

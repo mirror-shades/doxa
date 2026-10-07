@@ -25,6 +25,7 @@ pub fn Methods(comptime Ctx: type) type {
                 // `byte` and `tetra` both occupy one byte; tetra keeps its value
                 // in the low two bits, which the caller narrows after loading.
                 .Byte, .Tetra => "i8",
+                .Union, .Group => "%DoxaValue",
                 else => null,
             };
         }
@@ -128,8 +129,25 @@ pub fn Methods(comptime Ctx: type) type {
                     try w.writeAll(trunc_line);
                     break :blk StackVal{ .name = narrowed, .ty = .I2 };
                 },
+                .Union, .Group => StackVal{ .name = loaded, .ty = .Value, .boxed_type = element_type },
                 else => unreachable,
             };
+        }
+
+        /// Store `value` as element `idx_name` of a union or group array: boxed
+        /// as the element type and passed by address. `doxa_array_set_value`
+        /// re-homes its payload into the array's arena.
+        fn emitBoxedElementStore(self: *IRPrinter, w: anytype, id: *usize, hdr_name: []const u8, idx_name: []const u8, value: StackVal, element_type: HIR.HIRType) !void {
+            const boxed = try self.buildDoxaValue(w, value, element_type, id);
+            const slot = try self.boxDoxaValue(w, boxed);
+            try w.print("  call void @doxa_array_set_value(ptr {s}, i64 {s}, ptr {s})\n", .{ hdr_name, idx_name, slot });
+        }
+
+        /// The box a runtime entry wrote to `slot` for a union or group array.
+        fn loadBoxedElement(self: *IRPrinter, w: anytype, id: *usize, slot: []const u8, element_type: HIR.HIRType) !StackVal {
+            const loaded = try self.nextTemp(id);
+            try w.print("  {s} = load %DoxaValue, ptr {s}\n", .{ loaded, slot });
+            return .{ .name = loaded, .ty = .Value, .boxed_type = element_type };
         }
 
         pub fn emitArrayNew(
@@ -159,7 +177,7 @@ pub fn Methods(comptime Ctx: type) type {
                 if (inst.element_type == .Array) {
                     if (inst.nested_depth > 0) {
                         const inner = inst.nested_element_type orelse break :blk false;
-                        break :blk inner != .String and inner != .Array and inner != .Map and inner != .Struct and inner != .Function and inner != .Union;
+                        break :blk inner != .String and inner != .Array and inner != .Map and inner != .Struct and inner != .Function and inner != .Union and inner != .Group;
                     }
                     break :blk false;
                 }
@@ -167,7 +185,8 @@ pub fn Methods(comptime Ctx: type) type {
                     inst.element_type != .Map and
                     inst.element_type != .Struct and
                     inst.element_type != .Function and
-                    inst.element_type != .Union;
+                    inst.element_type != .Union and
+                    inst.element_type != .Group;
             };
 
             if ((inst.storage_kind == .fixed or inst.storage_kind == .const_literal) and
@@ -493,7 +512,7 @@ pub fn Methods(comptime Ctx: type) type {
             id: *usize,
             inst: std.meta.fieldInfo(HIRInstruction, .MapGet).type,
         ) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const key_val = stack.items[stack.items.len - 1];
             var map_val = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -709,7 +728,7 @@ pub fn Methods(comptime Ctx: type) type {
             id: *usize,
             inst: std.meta.fieldInfo(HIRInstruction, .MapSet).type,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const value = stack.items[stack.items.len - 1];
             const key_val = stack.items[stack.items.len - 2];
             var map_val = stack.items[stack.items.len - 3];
@@ -746,7 +765,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const value = stack.items[stack.items.len - 1];
             const idx_val = stack.items[stack.items.len - 2];
             const hdr_val = stack.items[stack.items.len - 3];
@@ -868,7 +887,9 @@ pub fn Methods(comptime Ctx: type) type {
             const element_type = arr_ptr.array_type orelse HIR.HIRType{ .Int = {} };
             const idx_i64 = try self.ensureI64(w, idx_val, id);
 
-            if (element_type == .String) {
+            if (IRPrinter.isBoxedMemberType(element_type)) {
+                try emitBoxedElementStore(self, w, id, arr_ptr.name, idx_i64.name, value, element_type);
+            } else if (element_type == .String) {
                 const str_val = try self.ensureString(w, value, id);
                 const str_ptr_ext = try self.nextTemp(id);
                 const str_ext0 = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ str_ptr_ext, str_val.name });
@@ -903,7 +924,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const idx_val = stack.items[stack.items.len - 1];
             const hdr_val = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -1071,7 +1092,7 @@ pub fn Methods(comptime Ctx: type) type {
             op: ArithOp,
             current_block: *[]const u8,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const value = stack.items[stack.items.len - 1];
             const idx_val = stack.items[stack.items.len - 2];
             const hdr_val = stack.items[stack.items.len - 3];
@@ -1346,7 +1367,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const value = stack.items[stack.items.len - 1];
             const hdr_val = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -1371,6 +1392,11 @@ pub fn Methods(comptime Ctx: type) type {
                     .PTR => value.array_type orelse .String,
                     else => .Int,
                 };
+            }
+            if (IRPrinter.isBoxedMemberType(element_type)) {
+                try emitBoxedElementStore(self, w, id, len_info.array.name, len_info.len_value.name, value, element_type);
+                try stack.append(.{ .name = len_info.array.name, .ty = .PTR, .array_type = element_type, .region = array_region });
+                return;
             }
             if (element_type == .String) {
                 // `doxa_array_set_str` clones the element into the array's own
@@ -1415,7 +1441,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const hdr_val = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
 
@@ -1438,7 +1464,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 1) return;
+            try self.requireStack(stack, 1);
             const hdr_val = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
             const len_info = try self.loadArrayLength(w, hdr_val, id);
@@ -1450,7 +1476,11 @@ pub fn Methods(comptime Ctx: type) type {
             try w.writeAll(idx_line);
 
             var result_val: StackVal = undefined;
-            if (element_type == .String) {
+            if (IRPrinter.isBoxedMemberType(element_type)) {
+                const slot = try self.doxaValueSlot();
+                try w.print("  call void @doxa_array_get_value(ptr {s}, i64 {s}, ptr {s})\n", .{ len_info.array.name, idx, slot });
+                result_val = try loadBoxedElement(self, w, id, slot, element_type);
+            } else if (element_type == .String) {
                 const out_ptr_slot = try self.nextTemp(id);
                 const out_len_slot = try self.nextTemp(id);
                 const alloca_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
@@ -1518,7 +1548,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const value = stack.items[stack.items.len - 1];
             const idx_val = stack.items[stack.items.len - 2];
             const target = stack.items[stack.items.len - 3];
@@ -1539,6 +1569,14 @@ pub fn Methods(comptime Ctx: type) type {
                     };
                 }
                 const hdr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+                if (IRPrinter.isBoxedMemberType(elem_type)) {
+                    const boxed = try self.buildDoxaValue(w, value, elem_type, id);
+                    const slot = try self.boxDoxaValue(w, boxed);
+                    const out = try self.nextTemp(id);
+                    try w.print("  {s} = call ptr @doxa_array_insert_value(ptr {s}, i64 {s}, ptr {s})\n", .{ out, hdr.name, idx_i64.name, slot });
+                    try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = arr_region });
+                    return;
+                }
                 if (elem_type == .String) {
                     const str_val = try self.ensureString(w, value, id);
                     const str_ptr_ext = try self.nextTemp(id);
@@ -1594,7 +1632,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 2) return;
+            try self.requireStack(stack, 2);
             const idx_val = stack.items[stack.items.len - 1];
             const target = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -1604,6 +1642,16 @@ pub fn Methods(comptime Ctx: type) type {
             const idx_i64 = if (idx_val.ty == .I64) idx_val else try self.ensureI64(w, idx_val, id);
             if (target.array_type) |elem_type| {
                 const hdr = if (target.ty == .PTR) target else try self.ensurePointer(w, target, id);
+                if (IRPrinter.isBoxedMemberType(elem_type)) {
+                    const slot = try self.doxaValueSlot();
+                    const out = try self.nextTemp(id);
+                    try w.print("  {s} = call ptr @doxa_array_remove_value(ptr {s}, i64 {s}, ptr {s})\n", .{ out, hdr.name, idx_i64.name, slot });
+                    const removed = try loadBoxedElement(self, w, id, slot, elem_type);
+                    // Contract: [updated, removed]
+                    try stack.append(.{ .name = out, .ty = .PTR, .array_type = elem_type, .region = arr_region });
+                    try stack.append(removed);
+                    return;
+                }
                 if (elem_type == .String) {
                     const out_ptr_slot = try self.nextTemp(id);
                     const out_len_slot = try self.nextTemp(id);
@@ -1713,7 +1761,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            if (stack.items.len < 3) return;
+            try self.requireStack(stack, 3);
             const len_val = stack.items[stack.items.len - 1];
             const start_val = stack.items[stack.items.len - 2];
             const target = stack.items[stack.items.len - 3];
@@ -1752,25 +1800,7 @@ pub fn Methods(comptime Ctx: type) type {
             stack: *std.array_list.Managed(StackVal),
             id: *usize,
         ) !void {
-            // Debug: emit comment showing stack state
-            const debug_line = try std.fmt.allocPrint(self.allocator, "  ; ArrayConcat called with {d} items on stack\n", .{stack.items.len});
-            defer self.allocator.free(debug_line);
-            try w.writeAll(debug_line);
-
-            if (stack.items.len < 2) {
-                // If we don't have 2 items, try to generate a call anyway with dummy values
-                // This shouldn't happen in correct code, but let's be robust
-                const dummy_reg = try self.nextTemp(id);
-                const call_line = try std.fmt.allocPrint(
-                    self.allocator,
-                    "  {s} = call ptr @doxa_array_concat(ptr null, ptr null, i64 8, i64 0)\n",
-                    .{dummy_reg},
-                );
-                defer self.allocator.free(call_line);
-                try w.writeAll(call_line);
-                try stack.append(.{ .name = dummy_reg, .ty = .PTR, .region = self.currentRegionTag() });
-                return;
-            }
+            try self.requireStack(stack, 2);
             var rhs = stack.items[stack.items.len - 1];
             var lhs = stack.items[stack.items.len - 2];
             stack.items.len -= 2;
@@ -1798,145 +1828,6 @@ pub fn Methods(comptime Ctx: type) type {
             try stack.append(.{ .name = concat_reg, .ty = .PTR, .array_type = elem_type, .region = self.currentRegionTag() });
         }
 
-        pub fn emitRange(
-            self: *IRPrinter,
-            w: anytype,
-            stack: *std.array_list.Managed(StackVal),
-            id: *usize,
-            inst: std.meta.fieldInfo(HIRInstruction, .Range).type,
-        ) !void {
-            _ = inst;
-
-            if (stack.items.len < 2) return;
-            const end_val = stack.items[stack.items.len - 1];
-            const start_val = stack.items[stack.items.len - 2];
-            stack.items.len -= 2;
-
-            const start_i64 = try self.ensureI64(w, start_val, id);
-            const end_i64 = try self.ensureI64(w, end_val, id);
-
-            const one = try self.nextTemp(id);
-            const one_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 1\n", .{one});
-            defer self.allocator.free(one_line);
-            try w.writeAll(one_line);
-
-            const diff = try self.nextTemp(id);
-            const diff_line = try std.fmt.allocPrint(self.allocator, "  {s} = sub i64 {s}, {s}\n", .{ diff, end_i64.name, start_i64.name });
-            defer self.allocator.free(diff_line);
-            try w.writeAll(diff_line);
-
-            const len_raw = try self.nextTemp(id);
-            const len_raw_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ len_raw, diff, one });
-            defer self.allocator.free(len_raw_line);
-            try w.writeAll(len_raw_line);
-
-            const cmp = try self.nextTemp(id);
-            const cmp_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp sge i64 {s}, {s}\n", .{ cmp, end_i64.name, start_i64.name });
-            defer self.allocator.free(cmp_line);
-            try w.writeAll(cmp_line);
-
-            const zero = try self.nextTemp(id);
-            const zero_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, 0\n", .{zero});
-            defer self.allocator.free(zero_line);
-            try w.writeAll(zero_line);
-
-            const size = try self.nextTemp(id);
-            const sel_line = try std.fmt.allocPrint(self.allocator, "  {s} = select i1 {s}, i64 {s}, i64 {s}\n", .{ size, cmp, len_raw, zero });
-            defer self.allocator.free(sel_line);
-            try w.writeAll(sel_line);
-
-            const ah = try self.nextTemp(id);
-            const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_new(i64 8, i64 0, i64 {s})\n", .{ ah, size });
-            defer self.allocator.free(new_line);
-            try w.writeAll(new_line);
-
-            // Allocate the loop index before the loop (must be in a dominating block)
-            const i_ptr = try self.nextTemp(id);
-            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{i_ptr});
-            defer self.allocator.free(alloca_line);
-            try w.writeAll(alloca_line);
-            const st0 = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{i_ptr});
-            defer self.allocator.free(st0);
-            try w.writeAll(st0);
-
-            const is_empty = try self.nextTemp(id);
-            const empty_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i64 {s}, 0\n", .{ is_empty, size });
-            defer self.allocator.free(empty_line);
-            try w.writeAll(empty_line);
-
-            const lbl_after = try std.fmt.allocPrint(self.allocator, "range.after.{d}", .{id.*});
-            defer self.allocator.free(lbl_after);
-            const lbl_cond = try std.fmt.allocPrint(self.allocator, "range.cond.{d}", .{id.*});
-            defer self.allocator.free(lbl_cond);
-            const lbl_body = try std.fmt.allocPrint(self.allocator, "range.body.{d}", .{id.*});
-            defer self.allocator.free(lbl_body);
-            const lbl_step = try std.fmt.allocPrint(self.allocator, "range.step.{d}", .{id.*});
-            defer self.allocator.free(lbl_step);
-
-            const br0 = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ is_empty, lbl_after, lbl_cond });
-            defer self.allocator.free(br0);
-            try w.writeAll(br0);
-
-            // Start of the range condition block
-            const cond_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl_cond});
-            defer self.allocator.free(cond_label_line);
-            try w.writeAll(cond_label_line);
-
-            const i_cur = try self.nextTemp(id);
-            const ld_i = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ i_cur, i_ptr });
-            defer self.allocator.free(ld_i);
-            try w.writeAll(ld_i);
-
-            const cmp2 = try self.nextTemp(id);
-            const cmp2_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp slt i64 {s}, {s}\n", .{ cmp2, i_cur, size });
-            defer self.allocator.free(cmp2_line);
-            try w.writeAll(cmp2_line);
-
-            const br1 = try std.fmt.allocPrint(self.allocator, "  br i1 {s}, label %{s}, label %{s}\n", .{ cmp2, lbl_body, lbl_after });
-            defer self.allocator.free(br1);
-            try w.writeAll(br1);
-
-            const body_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl_body});
-            defer self.allocator.free(body_label_line);
-            try w.writeAll(body_label_line);
-
-            const val = try self.nextTemp(id);
-            const val_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, {s}\n", .{ val, start_i64.name, i_cur });
-            defer self.allocator.free(val_line);
-            try w.writeAll(val_line);
-
-            const set_line = try std.fmt.allocPrint(self.allocator, "  call void @doxa_array_set_i64(ptr {s}, i64 {s}, i64 {s})\n", .{ ah, i_cur, val });
-            defer self.allocator.free(set_line);
-            try w.writeAll(set_line);
-
-            const br2 = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{lbl_step});
-            defer self.allocator.free(br2);
-            try w.writeAll(br2);
-
-            const step_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl_step});
-            defer self.allocator.free(step_label_line);
-            try w.writeAll(step_label_line);
-
-            const next_i = try self.nextTemp(id);
-            const add1 = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {s}, 1\n", .{ next_i, i_cur });
-            defer self.allocator.free(add1);
-            try w.writeAll(add1);
-
-            const st_next = try std.fmt.allocPrint(self.allocator, "  store i64 {s}, ptr {s}\n", .{ next_i, i_ptr });
-            defer self.allocator.free(st_next);
-            try w.writeAll(st_next);
-
-            const br3 = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{lbl_cond});
-            defer self.allocator.free(br3);
-            try w.writeAll(br3);
-
-            const after_label_line = try std.fmt.allocPrint(self.allocator, "{s}:\n", .{lbl_after});
-            defer self.allocator.free(after_label_line);
-            try w.writeAll(after_label_line);
-
-            try stack.append(.{ .name = ah, .ty = .PTR, .array_type = .Int, .region = self.currentRegionTag() });
-        }
-
         pub fn ensureBool(
             self: *IRPrinter,
             w: anytype,
@@ -1961,7 +1852,7 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 .F64 => {
                     const name = try self.nextTemp(id);
-                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fcmp one double {s}, 0.0\n", .{ name, value.name });
+                    const line = try std.fmt.allocPrint(self.allocator, "  {s} = fcmp une double {s}, 0.0\n", .{ name, value.name });
                     defer self.allocator.free(line);
                     try w.writeAll(line);
                     return .{ .name = name, .ty = .I1 };
@@ -2029,13 +1920,8 @@ pub fn Methods(comptime Ctx: type) type {
             rhs: StackVal,
             id: *usize,
         ) !StackVal {
-            // Guard against corrupted operand names causing huge allocations
             if (lhs.name.len > IRPrinter.MAX_SANE_NAME_LEN or rhs.name.len > IRPrinter.MAX_SANE_NAME_LEN) {
-                const result_name = try self.nextTemp(id);
-                const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
-                defer self.allocator.free(false_line);
-                try w.writeAll(false_line);
-                return .{ .name = result_name, .ty = .I1 };
+                return self.hirFault("comparison operand name is {d} bytes long; the value stack is corrupted", .{@max(lhs.name.len, rhs.name.len)});
             }
             var result_name: []const u8 = undefined;
             var operand_type = cmp.operand_type;
@@ -2057,12 +1943,19 @@ pub fn Methods(comptime Ctx: type) type {
                             .Gt => "sgt",
                             .Ge => "sge",
                         };
+                        // Integer comparison widens a byte or a tetra flag;
+                        // it does not reinterpret a float, a pointer, a string
+                        // or a boxed value as an integer.
+                        try self.requireReprIn("left", lhs, &.{ .I64, .I8, .I1, .I2 });
+                        try self.requireReprIn("right", rhs, &.{ .I64, .I8, .I1, .I2 });
                         const lhs_i64 = if (lhs.ty != .I64) try self.ensureI64(w, lhs, id) else lhs;
                         const rhs_i64 = if (rhs.ty != .I64) try self.ensureI64(w, rhs, id) else rhs;
                         result_name = try self.nextTemp(id);
                         break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i64 {s}, {s}\n", .{ result_name, pred, lhs_i64.name, rhs_i64.name });
                     },
                     .Byte => {
+                        try self.requireRepr("left", lhs, .I8);
+                        try self.requireRepr("right", rhs, .I8);
                         result_name = try self.nextTemp(id);
                         const pred = switch (cmp.op) {
                             .Eq => "eq",
@@ -2077,12 +1970,14 @@ pub fn Methods(comptime Ctx: type) type {
                     .Float => {
                         const pred = switch (cmp.op) {
                             .Eq => "oeq",
-                            .Ne => "one",
+                            .Ne => "une",
                             .Lt => "olt",
                             .Le => "ole",
                             .Gt => "ogt",
                             .Ge => "oge",
                         };
+                        try self.requireReprIn("left", lhs, &.{ .F64, .I64, .I8 });
+                        try self.requireReprIn("right", rhs, &.{ .F64, .I64, .I8 });
                         const lhs_f64 = if (lhs.ty == .Value) lhs_blk: {
                             const payload = try self.ensureI64(w, lhs, id);
                             const tmp = try self.nextTemp(id);
@@ -2117,6 +2012,8 @@ pub fn Methods(comptime Ctx: type) type {
                         break :blk try std.fmt.allocPrint(self.allocator, "  {s} = fcmp {s} double {s}, {s}\n", .{ result_name, pred, lhs_f64.name, rhs_f64.name });
                     },
                     .Tetra => {
+                        try self.requireRepr("left", lhs, .I2);
+                        try self.requireRepr("right", rhs, .I2);
                         result_name = try self.nextTemp(id);
                         const pred = switch (cmp.op) {
                             .Eq => "eq",
@@ -2129,8 +2026,14 @@ pub fn Methods(comptime Ctx: type) type {
                         break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i2 {s}, {s}\n", .{ result_name, pred, lhs.name, rhs.name });
                     },
                     .String => {
-                        const lhs_str = try self.ensureString(w, lhs, id);
-                        const rhs_str = try self.ensureString(w, rhs, id);
+                        // A string comparison compares strings. `ensureString`
+                        // would render any other operand as text and compare
+                        // that, which is how an enum subject matched against
+                        // a variant name came to compare "2" with "C".
+                        try self.requireRepr("left", lhs, .STRING);
+                        try self.requireRepr("right", rhs, .STRING);
+                        const lhs_str = lhs;
+                        const rhs_str = rhs;
                         const lhs_ptr_ext = try self.nextTemp(id);
                         const lhs_ptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaString {s}, 0\n", .{ lhs_ptr_ext, lhs_str.name });
                         defer self.allocator.free(lhs_ptr_line);
@@ -2160,14 +2063,31 @@ pub fn Methods(comptime Ctx: type) type {
                                 result_name = try self.nextTemp(id);
                                 break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 {s}, 0\n", .{ result_name, tmp_name });
                             },
-                            else => {
+                            // Ordering is byte-wise lexicographic (`docs/strings.md`).
+                            .Lt, .Le, .Gt, .Ge => {
+                                const order_name = try self.nextTemp(id);
+                                const call_line = try std.fmt.allocPrint(self.allocator, "  {s} = call i32 @doxa_str_cmp(ptr {s}, i64 {s}, ptr {s}, i64 {s})\n", .{ order_name, lhs_ptr_ext, lhs_len_ext, rhs_ptr_ext, rhs_len_ext });
+                                defer self.allocator.free(call_line);
+                                try w.writeAll(call_line);
+                                const pred = switch (cmp.op) {
+                                    .Lt => "slt",
+                                    .Le => "sle",
+                                    .Gt => "sgt",
+                                    .Ge => "sge",
+                                    else => unreachable,
+                                };
                                 result_name = try self.nextTemp(id);
-                                const false_line = try std.fmt.allocPrint(self.allocator, "  {s} = icmp eq i1 0, 1\n", .{result_name});
-                                break :blk false_line;
+                                break :blk try std.fmt.allocPrint(self.allocator, "  {s} = icmp {s} i32 {s}, 0\n", .{ result_name, pred, order_name });
                             },
                         }
                     },
                     else => {
+                        // Enum, Nothing and the remaining types compare as raw
+                        // `i64` words: a boxed, pointer or string operand here
+                        // means the generator annotated the comparison with a
+                        // type its operands do not have.
+                        try self.requireRepr("left", lhs, .I64);
+                        try self.requireRepr("right", rhs, .I64);
                         result_name = try self.nextTemp(id);
                         const pred = switch (cmp.op) {
                             .Eq => "eq",

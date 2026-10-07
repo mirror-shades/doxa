@@ -1,0 +1,48 @@
+module std from @std()
+import error from @std()
+
+# A fallible inline-Zig return, `DoxaError_<enum>!<payload>`, lowers to
+# `<payload> | <enum>`: the shim body returns against a Zig error set the wrapper
+# synthesizes from the enum's variants, success crosses as the payload, and a
+# caught error crosses as its variant — so a call site narrows exactly as it
+# would for a Doxa function declared `returns nothing | error.IO`.
+zig Fs {
+    pub fn mightFail(n: i64) @"DoxaError_error.IO"!void {
+        if (n == 0) return;
+        if (n == 1) return error.NotFound;
+        return error.IsDirectory;
+    }
+
+    pub fn maybeRead(n: i64) @"DoxaError_error.IO"![]const u8 {
+        if (n == 0) return error.NotFound;
+        return "payload";
+    }
+
+    pub fn maybeCount(n: i64) @"DoxaError_error.IO"!i64 {
+        if (n == 0) return error.IsDirectory;
+        return 7;
+    }
+}
+
+entry function main() {
+    const a is Fs.mightFail(0)
+    a as error.IO then @print("a: {a}\n") else @print("a: ok\n")
+
+    const b is Fs.mightFail(1)
+    b as error.IO then @print("b: {b}\n") else @print("b: ok\n")
+
+    const c is Fs.mightFail(2)
+    c as error.IO then @print("c: {c}\n") else @print("c: ok\n")
+
+    const d is Fs.maybeRead(0)
+    d as error.IO then @print("d: {d}\n") else @print("d: [{d}]\n")
+
+    const e is Fs.maybeRead(1)
+    e as error.IO then @print("e: {e}\n") else @print("e: [{e}]\n")
+
+    const f is Fs.maybeCount(0)
+    f as error.IO then @print("f: {f}\n") else @print("f: {f}\n")
+
+    const g is Fs.maybeCount(1)
+    g as error.IO then @print("g: {g}\n") else @print("g: {g}\n")
+}

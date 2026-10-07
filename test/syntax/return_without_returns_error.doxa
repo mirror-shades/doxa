@@ -1,0 +1,6 @@
+# A function without `returns` returns nothing; returning a value is an error.
+function half(n :: int) {
+    return n // 2
+}
+
+half(4)

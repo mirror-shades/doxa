@@ -153,6 +153,8 @@ function read() -> string | Error
 
 A function declared `returns string | Error` accepts `string`, any `Error` value, or any value of a member type (widened to `Error`).
 
+A union holds a group's members, not the group: `string | Error` is the same type as `string | IOError | CommonError | CompilerError`. A value keeps the member it is through the union and back — narrowing to `Error` with `as` or `match` gives the same `Error` value that went in, and `Error then` is a test that the union holds any of `Error`'s members. Diagnostics and `?` still name the group as written (`string | >Error`).
+
 ---
 
 ## 4. Pattern matching
@@ -235,7 +237,7 @@ A group value has a hidden tag to identify which member it belongs to, followed 
 Group value = [member_index: u32] [payload: union { enum_variant, struct_instance }]
 ```
 
-This is identical in shape to how tagged unions already work. The difference is that group members are named and traceable, whereas union arms are anonymous.
+This is identical in shape to how tagged unions already work. The difference is that group members are named and traceable, whereas union arms are anonymous. A group value stored in a union is re-indexed to the union's position for the same member, and back when it is narrowed to the group, so the index always names a concrete member type.
 
 The member index is stable for the lifetime of the group declaration. Reordering members changes the index and is an ABI break.
 

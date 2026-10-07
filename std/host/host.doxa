@@ -50,28 +50,28 @@ public function isMac() returns tetra {
     return Host.isMac();
 }
 
-# True when `ch` is a path separator for `os`: `/` everywhere, and `\` on
+# True when `ch` is a path separator for `platform`: `/` everywhere, and `\` on
 # Windows.
-function isSep(ch :: string, os :: string) returns tetra {
+function isSep(ch :: string, platform :: string) returns tetra {
     if ch == "/" then return true
-    if os == "windows" {
+    if platform == "windows" {
         if ch == "\\" then return true
     }
     return false
 }
 
-# The separator joined between segments for `os`.
-function sepFor(os :: string) returns string {
-    if os == "windows" then return "\\"
+# The separator joined between segments for `platform`.
+function sepFor(platform :: string) returns string {
+    if platform == "windows" then return "\\"
     return "/"
 }
 
-# True when `part` is an absolute path for `os`: a leading separator, or a
+# True when `part` is an absolute path for `platform`: a leading separator, or a
 # Windows drive root such as `C:\` or `C:/`.
-function isAbsolute(part :: string, os :: string) returns tetra {
+function isAbsolute(part :: string, platform :: string) returns tetra {
     if @length(part) == 0 then return false
-    if isSep(part[0], os) then return true
-    if os == "windows" {
+    if isSep(part[0], platform) then return true
+    if platform == "windows" {
         if @length(part) >= 2 {
             if part[1] == ":" then return true
         }
@@ -79,12 +79,12 @@ function isAbsolute(part :: string, os :: string) returns tetra {
     return false
 }
 
-# Joins `parts` with the separator for `os` (one of the names returned by
+# Joins `parts` with the separator for `platform` (one of the names returned by
 # `os()`, e.g. `"windows"`, `"linux"`, `"macos"`). Empty segments are skipped,
 # an absolute segment resets the result, and a separator already at the join
 # point is not doubled.
-public function pathFor(os :: string, parts :: string[]) returns string {
-    const sep is sepFor(os)
+public function pathFor(platform :: string, parts :: string[]) returns string {
+    const sep is sepFor(platform)
     var result is ""
     var i is 0
     while i < @length(parts) {
@@ -94,11 +94,11 @@ public function pathFor(os :: string, parts :: string[]) returns string {
             continue
         }
 
-        if isAbsolute(part, os) then {
+        if isAbsolute(part, platform) then {
             result is part
         } else if @length(result) == 0 then {
             result is part
-        } else if isSep(result[@length(result) - 1], os) then {
+        } else if isSep(result[@length(result) - 1], platform) then {
             result is result + part
         } else {
             result is result + sep + part

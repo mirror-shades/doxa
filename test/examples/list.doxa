@@ -1,6 +1,6 @@
 struct Node {
-    value :: int
-    next  :: int
+    public value :: int
+    public next  :: int
 }
 
 public struct LinkedList {

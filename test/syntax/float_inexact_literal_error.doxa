@@ -1,0 +1,6 @@
+# Past 2^53 not every int has a float: 2^53 + 1 would silently become 2^53, so
+# widening it is an error rather than a rounding.
+public entry function main() {
+    var f :: float is 9007199254740993
+    @print("{f}\n")
+}

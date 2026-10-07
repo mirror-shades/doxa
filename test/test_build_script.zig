@@ -1,175 +1,130 @@
 const std = @import("std");
-const platform = @import("platform");
+const testing = std.testing;
 
 const harness = @import("harness.zig");
+const process = @import("process.zig");
 
-const test_results = harness.Counts;
+// Regression cover for the std build layer reporting success while skipping the
+// compile. `artifactIsUpToDate` used to compare the output's mtime against the
+// entry source alone, so editing an imported module left the output looking
+// newer than the entry, the build was skipped, and `execute` printed
+// "build exit code: 0" and exited 0, with a stale binary in place and not even a
+// compile attempt to fail. The skip is gone; the driver decides. This pins the
+// observable consequence: a build whose *imported module* no longer compiles
+// must exit non-zero and surface the compiler's diagnostic, and restoring the
+// module must build again.
 
-/// Regression cover for the std build layer reporting success while skipping the
-/// compile. `artifactIsUpToDate` used to compare the output's mtime against the
-/// entry source alone, so editing an imported module left the output looking
-/// newer than the entry, the build was skipped, and `execute` printed
-/// "build exit code: 0" and exited 0 — with a stale binary in place and not even
-/// a compile attempt to fail. The skip is gone; the driver decides. These cases
-/// pin the observable consequence: a build whose artifact no longer compiles
-/// must exit non-zero and surface the compiler's diagnostic, and a build whose
-/// *imported module* no longer compiles must do the same.
-const ScriptCase = struct {
-    name: []const u8,
-    /// Run from the fixture project directory.
-    cwd: []const u8,
-    /// Source file mutated in place before the second build.
-    module_to_break: ?[]const u8,
-    expect_second_exit_nonzero: bool,
-    expect_diagnostic: ?[]const u8,
-};
+/// The fixture project. A run copies it into a `build-script` `harness.Slot`,
+/// so it never edits the checkout and concurrent runs never share a tree,
+/// while the caches the builds leave there stay warm for the next run.
+const fixture = "test/build_script";
+const fixture_files = [_][]const u8{ "build.doxa", "src/app.doxa", "src/lib.doxa" };
 
-/// Run the fixture's build script. Each invocation gets its own cache
-/// directory: `doxa run` links the build script itself into `<cache>/build.exe`,
-/// and relinking a binary a previous run just executed intermittently fails on
-/// Windows with "Permission denied" while the old image is still mapped. Giving
-/// each run its own cache keeps every link writing a path nothing else holds.
-/// The artifact under test, `bin/app`, is shared on purpose — that is the file
-/// whose staleness the case is about.
-fn runBuildScript(
-    allocator: std.mem.Allocator,
-    exe_path: []const u8,
-    cwd: []const u8,
-    run_index: usize,
-) !harness.CommandResult {
-    const cache_dir = try std.fmt.allocPrint(allocator, "{s}/.doxa-cache-run{d}", .{ cwd, run_index });
-    const cache_flag = try std.fmt.allocPrint(allocator, "--cache-dir={s}", .{cache_dir});
-    var argv = [_][]const u8{ exe_path, "run", "build.doxa", cache_flag };
-    return harness.runCommandCapture(allocator, &argv, cwd, null);
-}
+const broken_lib =
+    \\public function greet(who :: string) returns string {
+    \\    return who.this_field_does_not_exist
+    \\}
+    \\
+;
 
-fn runCase(allocator: std.mem.Allocator, exe_path: []const u8, tc: ScriptCase) !test_results {
-    var passed: usize = 0;
-    var failed: usize = 0;
+test "build script: an imported module change is not silently skipped" {
+    const gpa = testing.allocator;
+    const io = testing.io;
 
-    const first = try runBuildScript(allocator, exe_path, tc.cwd, 1);
-    defer allocator.free(first.stdout);
-    defer allocator.free(first.stderr);
+    const doxa: harness.Doxa = try .init(gpa, io);
+    defer doxa.deinit(gpa);
 
-    if (first.exit_code == 0) {
-        passed += 1;
-    } else {
-        std.debug.print("Build script test failed ({s}): clean build exited {d}\n", .{ tc.name, first.exit_code });
-        std.debug.print("stderr: {s}\n", .{first.stderr});
-        failed += 1;
-        return .{ .passed = passed, .failed = failed, .untested = 0 };
-    }
-
-    const break_module = tc.module_to_break orelse {
-        return .{ .passed = passed, .failed = failed, .untested = 0 };
-    };
-
-    // Back-date the entry point so that any up-to-date check keyed on it alone
-    // considers the output current, then break the imported module. A check that
-    // only looks at the entry source will skip this build and report success.
-    // After the clean build the output is newer than `src/app.doxa`, which is
-    // exactly the state an entry-point-only mtime check treats as current. So
-    // breaking `lib.doxa` here reproduces the silent skip without needing to
-    // manipulate timestamps.
-    const broken_source = "public function greet(who :: string) returns string {\n    return who.this_field_does_not_exist\n}\n";
-
-    const module_path = try std.fs.path.join(allocator, &.{ tc.cwd, "src", break_module });
-    defer allocator.free(module_path);
-
-    const original = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, module_path, allocator, .unlimited);
-    defer allocator.free(original);
-
-    try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = module_path, .data = broken_source });
-
-    const second = try runBuildScript(allocator, exe_path, tc.cwd, 2);
-    defer allocator.free(second.stdout);
-    defer allocator.free(second.stderr);
-
-    // Restore before asserting so a failure cannot leave the tree broken.
-    try std.Io.Dir.cwd().writeFile(std.testing.io, .{ .sub_path = module_path, .data = original });
-
-    if (tc.expect_second_exit_nonzero) {
-        if (second.exit_code != 0) {
-            passed += 1;
-        } else {
-            std.debug.print("Build script test failed ({s}): build with a broken {s} exited 0\n", .{ tc.name, break_module });
-            std.debug.print("stderr: {s}\n", .{second.stderr});
-            failed += 1;
-        }
-    } else if (second.exit_code == 0) {
-        passed += 1;
-    } else {
-        std.debug.print("Build script test failed ({s}): rebuild exited {d}\n", .{ tc.name, second.exit_code });
-        std.debug.print("stderr: {s}\n", .{second.stderr});
-        failed += 1;
-    }
-
-    if (tc.expect_diagnostic) |needle| {
-        if (std.mem.indexOf(u8, second.stderr, needle) != null) {
-            passed += 1;
-        } else {
-            std.debug.print("Build script test failed ({s}): expected \"{s}\" in stderr\n", .{ tc.name, needle });
-            std.debug.print("stderr: {s}\n", .{second.stderr});
-            failed += 1;
-        }
-    } else {
-        passed += 1;
-    }
-
-    // A rebuild must converge: restoring the module and building again has to
-    // succeed, which also proves the fixture is left reusable.
-    const third = try runBuildScript(allocator, exe_path, tc.cwd, 3);
-    defer allocator.free(third.stdout);
-    defer allocator.free(third.stderr);
-    if (third.exit_code == 0) {
-        passed += 1;
-    } else {
-        std.debug.print("Build script test failed ({s}): rebuild after restore exited {d}\n", .{ tc.name, third.exit_code });
-        std.debug.print("stderr: {s}\n", .{third.stderr});
-        failed += 1;
-    }
-
-    return .{ .passed = passed, .failed = failed, .untested = 0 };
-}
-
-pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
-    var arena = std.heap.ArenaAllocator.init(parent_allocator);
+    const slot: harness.Slot = try .claim(gpa, io, "build-script");
+    defer slot.release(gpa, io);
+    var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
-    const allocator = arena.allocator();
+    const project_path = try std.fs.path.join(arena.allocator(), &.{ slot.path, "project" });
 
-    platform.enableUtf8Console();
-    platform.sealStdHandles();
+    // A fresh copy of the sources and no output: the first build is clean.
+    var project = try std.Io.Dir.cwd().createDirPathOpen(io, project_path, .{});
+    defer project.close(io);
+    try project.deleteTree(io, "bin");
+    try project.createDirPath(io, "src");
+    var source = try std.Io.Dir.cwd().openDir(io, fixture, .{});
+    defer source.close(io);
+    for (fixture_files) |file| try source.copyFile(file, project, file, io, .{});
 
-    const verbose = harness.verboseFromEnv(allocator);
-    const repo_root = try harness.repoRootFromEnv(allocator);
-    defer if (repo_root) |rr| allocator.free(rr);
-
-    const exe_path = try harness.doxaExePath(allocator);
-    defer allocator.free(exe_path);
-
-    const fixture = if (repo_root) |rr|
-        try std.fs.path.join(allocator, &.{ rr, "test", "build_script" })
-    else
-        try allocator.dupe(u8, "test/build_script");
-    defer allocator.free(fixture);
-
-    const cases = [_]ScriptCase{
-        .{
-            .name = "imported module change is not silently skipped",
-            .cwd = fixture,
-            .module_to_break = "lib.doxa",
-            .expect_second_exit_nonzero = true,
-            .expect_diagnostic = "Cannot access field on non-struct type String",
-        },
+    var script: Script = .{
+        .gpa = gpa,
+        .io = io,
+        .doxa = &doxa,
+        .slot = slot.path,
+        .dir = project,
+        .path = project_path,
+        .failure = .init(arena.allocator()),
     };
 
-    var total: harness.Counts = .{ .passed = 0, .failed = 0, .untested = 0 };
-    for (cases) |tc| {
-        const result = try runCase(allocator, exe_path, tc);
-        total.passed += result.passed;
-        total.failed += result.failed;
-        total.untested += result.untested;
-        harness.printCase(tc.name, result, verbose);
-    }
-    return total;
+    try harness.report(gpa, "build script", &.{.{
+        .name = "an imported module change is not silently skipped",
+        .subject = fixture,
+        .outcome = try script.run(),
+    }});
 }
+
+/// The fixture's three builds: clean, with `src/lib.doxa` broken, and with it
+/// restored. Stops at the first build that misbehaves, whose capture explains
+/// the failure.
+const Script = struct {
+    gpa: std.mem.Allocator,
+    io: std.Io,
+    doxa: *const harness.Doxa,
+    /// Holds the project and one cache per build.
+    slot: []const u8,
+    dir: std.Io.Dir,
+    path: []const u8,
+    failure: harness.Failure,
+    builds: usize = 0,
+
+    fn run(script: *Script) !harness.Outcome {
+        // After a clean build the output is newer than `src/app.doxa`, exactly
+        // the state an entry-point-only freshness check treats as current, so
+        // breaking `lib.doxa` next reproduces the silent skip.
+        {
+            const clean = try script.build();
+            defer clean.deinit(script.gpa);
+            if (!clean.succeeded()) {
+                try script.failure.note("the clean build failed", .{});
+                return script.failure.outcome(clean);
+            }
+        }
+
+        const original = try script.dir.readFileAlloc(script.io, "src/lib.doxa", script.gpa, .unlimited);
+        defer script.gpa.free(original);
+        try script.dir.writeFile(script.io, .{ .sub_path = "src/lib.doxa", .data = broken_lib });
+        {
+            const broken = try script.build();
+            defer broken.deinit(script.gpa);
+            if (broken.succeeded()) try script.failure.note("the build with a broken src/lib.doxa succeeded", .{});
+            const diagnostic = "Cannot access field on non-struct type String";
+            if (std.mem.indexOf(u8, broken.stderr, diagnostic) == null) {
+                try script.failure.note("its stderr lacks `{s}`", .{diagnostic});
+            }
+            const outcome = try script.failure.outcome(broken);
+            if (outcome == .fail) return outcome;
+        }
+
+        try script.dir.writeFile(script.io, .{ .sub_path = "src/lib.doxa", .data = original });
+        const restored = try script.build();
+        defer restored.deinit(script.gpa);
+        if (!restored.succeeded()) try script.failure.note("the rebuild after restoring src/lib.doxa failed", .{});
+        return script.failure.outcome(restored);
+    }
+
+    /// Runs the fixture's build script. Each build gets its own cache directory:
+    /// `doxa run` links the script itself into `<cache>/build.exe`, and
+    /// relinking a binary a previous run just executed intermittently fails on
+    /// Windows with "Permission denied" while the old image is still mapped.
+    /// The artifact under test, `bin/app`, is shared on purpose: it is the file
+    /// whose staleness the case is about.
+    fn build(script: *Script) !process.Capture {
+        script.builds += 1;
+        var flag_buffer: [std.fs.max_path_bytes + 32]u8 = undefined;
+        const cache_flag = try std.fmt.bufPrint(&flag_buffer, "--cache-dir={s}{c}cache-{d}", .{ script.slot, std.fs.path.sep, script.builds });
+        return script.doxa.run(script.gpa, script.io, .{ .args = &.{ "run", "build.doxa", cache_flag }, .cwd = script.path });
+    }
+};

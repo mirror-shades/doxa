@@ -8,14 +8,14 @@ const Errors = @import("../../utils/errors.zig");
 const ErrorCode = Errors.ErrorCode;
 
 /// Whether `candidate` is already represented in a flattened union list.
-/// Two `.Custom` arms must compare `custom_type` (e.g. `error.IO` vs `error.Common`), not only `base`.
+/// Two `.Custom` arms compare by identity (e.g. `error.IO` vs `error.Common`), not only `base`.
 fn unionArmDuplicate(existing: *const TypeInfo, candidate: *const TypeInfo) bool {
     if (existing.base != candidate.base) return false;
     return switch (candidate.base) {
         .Custom => {
             if (existing.custom_type == null or candidate.custom_type == null)
                 return existing == candidate;
-            return std.mem.eql(u8, existing.custom_type.?, candidate.custom_type.?);
+            return existing.custom_type.?.eql(candidate.custom_type.?);
         },
         else => existing == candidate,
     };
@@ -157,53 +157,4 @@ pub fn getUnionDefaultValue(union_type: *ast.UnionType) TokenLiteral {
         .Nothing => TokenLiteral{ .nothing = {} },
         else => TokenLiteral{ .nothing = {} },
     };
-}
-
-/// Check if a type is compatible with a union type
-pub fn isTypeCompatibleWithUnion(
-    actual: *ast.TypeInfo,
-    expected_union: *ast.UnionType,
-    allocator: std.mem.Allocator,
-    reporter: *Reporter,
-    span: ast.SourceSpan,
-) !bool {
-    if (actual.base == .Union) {
-        // Union-to-union compatibility: every member of actual must be allowed by expected
-        if (actual.union_type) |act_union| {
-            for (act_union.types) |act_member| {
-                var member_allowed = false;
-                for (expected_union.types) |exp_member| {
-                    if (exp_member.base == act_member.base) {
-                        member_allowed = true;
-                        break;
-                    }
-                }
-                if (!member_allowed) {
-                    // Build expected list for error message
-                    var type_list = std.array_list.Managed(u8).init(allocator);
-                    defer type_list.deinit();
-                    for (expected_union.types, 0..) |m, i| {
-                        if (i > 0) try type_list.appendSlice(" | ");
-                        try type_list.appendSlice(@tagName(m.base));
-                    }
-                    reporter.reportCompileError(
-                        span.location,
-                        ErrorCode.TYPE_MISMATCH,
-                        "Type mismatch: expected union ({s}), got {s}",
-                        .{ type_list.items, @tagName(act_member.base) },
-                    );
-                    return false;
-                }
-            }
-            return true;
-        }
-    } else {
-        // Single type - check if it's a member of the expected union
-        for (expected_union.types) |member_type| {
-            if (member_type.base == actual.base) {
-                return true;
-            }
-        }
-    }
-    return false;
 }

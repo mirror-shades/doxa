@@ -8,15 +8,15 @@
 struct Counter {
     value :: int,
 
-    function new(start :: int) returns Counter {
+    public function new(start :: int) returns Counter {
         return $Counter { value is start }
     }
 
-    method get() returns int {
+    public method get() returns int {
         return this.value
     }
 
-    method bump(by :: int) {
+    public method bump(by :: int) {
         this.value += by
     }
 }
@@ -41,5 +41,5 @@ entry function main() {
 }
 
 struct Holder {
-    inner :: Counter,
+    public inner :: Counter,
 }

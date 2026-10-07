@@ -7,6 +7,9 @@ pub const IRPrinter = struct {
     pub const HIRInstruction = @import("../hir/soxa_instructions.zig").HIRInstruction;
     pub const CompareInstruction = std.meta.fieldInfo(@import("../hir/soxa_instructions.zig").HIRInstruction, .Compare).type;
     const Self = @This();
+    pub const GroupTable = @import("../../common/group_table.zig").GroupTable;
+    pub const EnumTable = @import("../../common/enum_table.zig").EnumTable;
+    pub const StructTable = @import("../../common/struct_table.zig").StructTable;
 
     const Ctx = struct {
         pub const IRPrinter = Self;
@@ -29,6 +32,9 @@ pub const IRPrinter = struct {
         pub const escapeLLVMString = Self.escapeLLVMString;
         pub const internPeekString = Self.internPeekString;
         pub const OverflowBehavior = Self.OverflowBehavior;
+        pub const GroupTable = Self.GroupTable;
+        pub const EnumTable = Self.EnumTable;
+        pub const StructTable = Self.StructTable;
 
         /// Function attributes every emitted `define` references. Clang's C
         /// frontend emits `"tune-cpu"="generic"` when only the CPU model is
@@ -51,6 +57,7 @@ pub const IRPrinter = struct {
     pub const recordStackForLabel = CoreMethods.recordStackForLabel;
     pub const restoreStackForLabel = CoreMethods.restoreStackForLabel;
     pub const mapBuiltinToRuntime = CoreMethods.mapBuiltinToRuntime;
+    pub const callDiverges = CoreMethods.callDiverges;
     pub const functionSymbol = CoreMethods.functionSymbol;
     pub const mangleGlobalName = CoreMethods.mangleGlobalName;
     pub const cloneHeapForStore = CoreMethods.cloneHeapForStore;
@@ -102,6 +109,15 @@ pub const IRPrinter = struct {
     pub const emitEnumPrint = FunctionEmitMethods.emitEnumPrint;
     pub const emitQuantifierWrappers = FunctionEmitMethods.emitQuantifierWrappers;
 
+    const VerifyMethods = @import("./ir_printer/verify.zig").Methods(Ctx);
+    pub const verifyEnter = VerifyMethods.verifyEnter;
+    pub const hirFault = VerifyMethods.hirFault;
+    pub const collectLiveJumpTargets = VerifyMethods.collectLiveJumpTargets;
+    pub const requireStack = VerifyMethods.requireStack;
+    pub const requireRepr = VerifyMethods.requireRepr;
+    pub const requireReprIn = VerifyMethods.requireReprIn;
+    pub const verifyStore = VerifyMethods.verifyStore;
+
     const ValueHelperMethods = @import("./ir_printer/value_helpers.zig").Methods(Ctx);
     pub const createEnumTypeNameGlobal = ValueHelperMethods.createEnumTypeNameGlobal;
     pub const emitRTCallReturningString = ValueHelperMethods.emitRTCallReturningString;
@@ -109,11 +125,13 @@ pub const IRPrinter = struct {
     pub const callReturningString = ValueHelperMethods.callReturningString;
     pub const pushStringResult = ValueHelperMethods.pushStringResult;
     pub const boxDoxaValue = ValueHelperMethods.boxDoxaValue;
+    pub const doxaValueSlot = ValueHelperMethods.doxaValueSlot;
     pub const enumTypeNameFor = ValueHelperMethods.enumTypeNameFor;
     pub const ensurePointer = ValueHelperMethods.ensurePointer;
     pub const ensureI64 = ValueHelperMethods.ensureI64;
     pub const unwrapDoxaValueToType = ValueHelperMethods.unwrapDoxaValueToType;
-    pub const findUnionMemberIndex = ValueHelperMethods.findUnionMemberIndex;
+    pub const boxMember = ValueHelperMethods.boxMember;
+    pub const boxMemberCount = ValueHelperMethods.boxMemberCount;
     pub const findMemberIndex = ValueHelperMethods.findMemberIndex;
     pub const isBoxedMemberType = ValueHelperMethods.isBoxedMemberType;
     pub const buildDoxaValue = ValueHelperMethods.buildDoxaValue;
@@ -137,6 +155,7 @@ pub const IRPrinter = struct {
     pub const emitArrayInsert = CollectionsEmitMethods.emitArrayInsert;
     pub const emitArrayRemove = CollectionsEmitMethods.emitArrayRemove;
     pub const emitArraySlice = CollectionsEmitMethods.emitArraySlice;
+    pub const emitArrayConcat = CollectionsEmitMethods.emitArrayConcat;
     pub const emitArrayLen = CollectionsEmitMethods.emitArrayLen;
     pub const emitFlatArrayPeek = CollectionsEmitMethods.emitFlatArrayPeek;
     pub const emitSyntheticArrayHeader = CollectionsEmitMethods.emitSyntheticArrayHeader;
@@ -165,10 +184,11 @@ pub const IRPrinter = struct {
     pub const handlePeekStruct = SharedHandlers.handlePeekStruct;
     pub const handleMemberCheck = SharedHandlers.handleMemberCheck;
     pub const handleUnboxPayload = SharedHandlers.handleUnboxPayload;
-    pub const handleUnionConstruct = SharedHandlers.handleUnionConstruct;
+    pub const handleBox = SharedHandlers.handleBox;
+    pub const handleUnbox = SharedHandlers.handleUnbox;
     pub const handleAssertFail = SharedHandlers.handleAssertFail;
-    pub const handleArrayConcat = SharedHandlers.handleArrayConcat;
     pub const handleCall = SharedHandlers.handleCall;
+pub const emitFallibleZigCall = SharedHandlers.emitFallibleZigCall;
     pub const handleStoreDeclGlobal = SharedHandlers.handleStoreDeclGlobal;
     pub const handleStoreVarGlobal = SharedHandlers.handleStoreVarGlobal;
     pub const handleLoadVarGlobal = SharedHandlers.handleLoadVarGlobal;
@@ -206,7 +226,8 @@ pub const IRPrinter = struct {
 
     allocator: std.mem.Allocator,
     io: std.Io,
-    zig_fn_param_types: std.StringHashMap([]HIR.HIRType),
+    /// Each inline-Zig callee's wrapper parameter types, from the program.
+    zig_fn_param_types: std.StringHashMap([]const HIR.HIRType),
     peek_string_counter: usize,
     string_pool_len: usize = 0,
 
@@ -233,9 +254,10 @@ pub const IRPrinter = struct {
     enum_desc_globals_by_type: std.StringHashMap([]const u8),
     last_emitted_enum_value: ?u64 = null,
     enum_print_map: std.StringHashMap(std.ArrayListUnmanaged(EnumVariantMeta)),
-    group_table: ?*anyopaque = null,
-    enum_table: ?*anyopaque = null,
-    struct_table: ?*anyopaque = null,
+    /// The analyzer's type tables: canonical keys, layouts, and members.
+    group_table: *const GroupTable,
+    enum_table: *const EnumTable,
+    struct_table: *const StructTable,
     entry_str_out_ptr: ?[]const u8 = null,
     entry_str_out_len: ?[]const u8 = null,
     /// Alloca lines discovered while emitting the current function/program body
@@ -256,23 +278,23 @@ pub const IRPrinter = struct {
     /// Per-variable stack of `as`-cast narrowed member views. `NarrowVar` pushes
     /// a single-member union view; `RestoreVar` pops it. Loads of the variable
     /// unwrap the boxed `%DoxaValue` to the active member representation.
-    narrowed_vars: std.StringHashMap(std.ArrayListUnmanaged(HIR.HIRType)),
+    narrowed_vars: std.AutoHashMap(HIR.Slot, std.ArrayListUnmanaged(HIR.HIRType)),
     /// Region class of each local variable's heap payload (A1). Populated while
     /// a function body is emitted so a `LoadVar` knows whether the object it
     /// loads provably outlives a later rehome store's destination. Global scope
     /// kinds never appear here; globals are always `Root`.
-    var_regions: std.StringHashMap(Region),
+    var_regions: std.AutoHashMap(HIR.Slot, Region),
     /// Phase D: value range of each local variable's integer payload. Same
     /// shape and lifetime as `var_regions` — a per-function map consulted by
     /// `LoadVar` so an arithmetic lowering can trust a bound across a variable
     /// reference. The recorded range is the hull of every store seen in the
     /// variable's own basic block; a store from any other block widens it to
     /// the whole of `i64` (see `recordVarRange`).
-    var_ranges: std.StringHashMap(IntRange),
+    var_ranges: std.AutoHashMap(HIR.Slot, IntRange),
     /// Phase D: the basic block each entry of `var_ranges` was recorded in, so
     /// a store from a different block can be recognised as one this linear walk
     /// cannot reason about.
-    var_range_blocks: std.StringHashMap([]const u8),
+    var_range_blocks: std.AutoHashMap(HIR.Slot, []const u8),
     /// Phase D: the basic block currently being emitted. Mirrors the
     /// `current_block` the emitter threads through its own helpers.
     current_block: []const u8 = "entry",
@@ -287,10 +309,10 @@ pub const IRPrinter = struct {
     range_ctx: ?@import("./ir_printer/range_flow.zig").Context = null,
     /// Phase D-1 follow-on: loop-head variable ranges, keyed by `loop_start_*`
     /// label. The emitter activates the entry matching the loop it is emitting.
-    loop_head_envs: std.StringHashMap(std.StringHashMap(IntRange)),
+    loop_head_envs: std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)),
     /// The loop-head range map currently in scope, or `null` outside a loop.
     /// Consulted by `varRange` before the block-local walk.
-    active_loop_range: ?*const std.StringHashMap(IntRange) = null,
+    active_loop_range: ?*const std.AutoHashMap(HIR.Slot, IntRange) = null,
     /// B2: struct type names that reach a reflection site anywhere in the program
     /// (borrowed from the generator). Such a type must keep its descriptor.
     reflected_structs: ?*const std.StringHashMap(void) = null,
@@ -307,6 +329,14 @@ pub const IRPrinter = struct {
     /// carries no `PeekEmitState` parameter, so the pass installs its state
     /// here and restores the previous value on exit.
     active_peek_state: ?*PeekEmitState = null,
+
+    /// Where an internal-error diagnostic is sent. Set by the driver; null in
+    /// isolated emitter tests, which fall back to stderr.
+    reporter: ?*@import("../../utils/reporting.zig").Reporter = null,
+    /// The instruction being emitted, for `hirFault` (Phase A verifier).
+    verify_function: []const u8 = "<top level>",
+    verify_index: usize = 0,
+    verify_tag: []const u8 = "",
 
     pub const EnumVariantMeta = struct {
         index: u32,

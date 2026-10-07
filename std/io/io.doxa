@@ -230,29 +230,29 @@ function mapIOError(code :: int) returns error.StdError {
     }
 }
 
-public function print(input :: string) returns error.StdError {
-    IO.print(input);
+public function print(text :: string) returns nothing | error.StdError {
+    IO.print(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function println(input :: string) returns error.StdError {
-    IO.printlnStdout(input);
+public function println(text :: string) returns nothing | error.StdError {
+    IO.printlnStdout(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function eprint(input :: string) returns error.StdError {
-    IO.eprint(input);
+public function eprint(text :: string) returns nothing | error.StdError {
+    IO.eprint(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function eprintln(input :: string) returns error.StdError {
-    IO.eprintlnStderr(input);
+public function eprintln(text :: string) returns nothing | error.StdError {
+    IO.eprintlnStderr(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)

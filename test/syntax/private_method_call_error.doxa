@@ -1,0 +1,15 @@
+# A private method is callable only from inside its struct.
+struct Counter {
+    count :: int,
+
+    public function start() returns Counter {
+        return $Counter { count is 0 }
+    }
+
+    method reset() {
+        this.count is 0
+    }
+}
+
+const counter is Counter.start()
+counter.reset()

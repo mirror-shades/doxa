@@ -6,8 +6,11 @@ const ast = @import("../src/ast/ast.zig");
 const LexicalAnalyzer = @import("../src/analysis/lexical.zig").LexicalAnalyzer;
 const Parser = @import("../src/parser/parser_types.zig").Parser;
 const Reporting = @import("../src/utils/reporting.zig");
+const MemoryManager = @import("../src/utils/memory.zig").MemoryManager;
+const SemanticAnalyzer = @import("../src/analysis/semantic/semantic.zig").SemanticAnalyzer;
 const inline_zig_compiler = @import("../src/inline_zig/compiler.zig");
 const module_graph = @import("../src/module/graph.zig");
+const ModuleLoader = @import("../src/module/loader.zig").ModuleLoader;
 
 test "inline zig: accepts import consts and function bodies" {
     const src =
@@ -181,16 +184,16 @@ test "inline zig: parses enum mirror signatures" {
 
     // Scalar enum: `.Enum` carries the name; it lowers to the enum id.
     try testing.expectEqual(ast.Type.Enum, sigs[0].param_types[0].base);
-    try testing.expectEqualStrings("Species", sigs[0].param_types[0].custom_type.?);
+    try testing.expectEqualStrings("Species", sigs[0].param_types[0].custom_type.?.written);
     try testing.expectEqual(ast.Type.Int, sigs[0].return_type.base);
 
     // enum[] param and enum return.
     const param = sigs[1].param_types[0];
     try testing.expectEqual(ast.Type.Array, param.base);
     try testing.expectEqual(ast.Type.Enum, param.array_type.?.base);
-    try testing.expectEqualStrings("Species", param.array_type.?.custom_type.?);
+    try testing.expectEqualStrings("Species", param.array_type.?.custom_type.?.written);
     try testing.expectEqual(ast.Type.Enum, sigs[1].return_type.base);
-    try testing.expectEqualStrings("Species", sigs[1].return_type.custom_type.?);
+    try testing.expectEqualStrings("Species", sigs[1].return_type.custom_type.?.written);
 }
 
 test "inline zig: lenient mode tolerates arbitrary top-level and extracts only Doxa-compatible pub fns" {
@@ -248,7 +251,16 @@ test "inline zig: lenient mode tolerates arbitrary top-level and extracts only D
     try testing.expectEqual(ast.Type.Tetra, sigs[1].return_type.base);
 }
 
-test "inline zig: collectInlineZigDecls only sees reachable modules" {
+/// A unit is compiled iff analysis reached it, so the set is read off the
+/// program's analyzed records.
+fn unitOwnedBy(units: []const *module_graph.ModuleRecord, owner_suffix: []const u8) bool {
+    for (units) |unit| {
+        if (std.mem.endsWith(u8, unit.stable_module_key, owner_suffix)) return true;
+    }
+    return false;
+}
+
+test "inline zig: only the zig units a program reaches are compiled" {
     var arena = std.heap.ArenaAllocator.init(testing.allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -256,66 +268,39 @@ test "inline zig: collectInlineZigDecls only sees reachable modules" {
     var reporter = Reporting.Reporter.init(testing.io, allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
 
-    var lexer = try LexicalAnalyzer.init(testing.io, allocator, "module std from \"std/std.doxa\"\n", "test/inline_zig_collect.doxa", &reporter);
-    defer lexer.deinit();
+    // The entry's identity is an existing fixture no std file imports; its
+    // contents are this source.
+    const path = "test/misc/lazy/direct.doxa";
+    const source = "module std from \"pkg//std/std.doxa\"\nconst count is std.process.argc()\n";
+    var lexer = try LexicalAnalyzer.init(testing.io, allocator, source, path, &reporter);
     try lexer.initKeywords();
     const tokens = try lexer.lexTokens();
-    defer tokens.deinit();
+    const uri = try reporter.ensureFileUri(testing.io, path);
+    var parser = Parser.init(testing.io, allocator, tokens.items, path, uri, &reporter);
+    const statements = try parser.execute();
 
-    const uri = try reporter.ensureFileUri(testing.io, "test/inline_zig_collect.doxa");
     var graph_store = try module_graph.ModuleGraph.init(testing.io, allocator, &.{
         .{ .tag = "pkg", .path = "." },
     });
-    defer graph_store.deinit();
-    var parser = Parser.init(testing.io, allocator, tokens.items, "test/inline_zig_collect.doxa", uri, &reporter, &graph_store);
-    defer parser.deinit();
-    _ = try parser.execute();
+    var loader = ModuleLoader.init(testing.io, allocator, &reporter, &graph_store);
+    const entry = try loader.registerEntry(path, source, statements);
 
-    _ = try parser.ensureModuleNamespace("std");
+    var memory = try MemoryManager.init(allocator);
+    defer memory.deinit();
+    var semantic = SemanticAnalyzer.init(allocator, &reporter, &memory, &loader, entry.id, null);
+    defer semantic.deinit();
+    try semantic.analyzeProgram();
 
-    // Only load std.process, not std.http
-    _ = try parser.ensureNestedModuleNamespace("std", "process");
-    try testing.expect(parser.graph.findStable("pkg//std/process/process.doxa") != null);
-    try testing.expect(parser.graph.findStable("pkg//std/http/http.doxa") == null);
+    // `std.process` was used, so its `zig Process` block is compiled; `std.http`
+    // was not, so neither its file nor its `http.zig` engine was even read.
+    const units = try inline_zig_compiler.programZigUnits(allocator, &graph_store);
+    try testing.expect(unitOwnedBy(units, "std/process/process.doxa//zig/Process"));
+    try testing.expect(!unitOwnedBy(units, "std/http/http.zig"));
+    const http = graph_store.findStable("pkg//std/http/http.doxa").?;
+    try testing.expect(!http.status.atLeast(.Parsed));
+    try testing.expect(graph_store.findStable("pkg//std/http/http.zig") == null);
 
-    // collectInlineZigDecls iterates module_namespaces — should only see Process's zig block
-    const parsed_at_root: [0]ast.Stmt = .{};
-    const zig_decls = try inline_zig_compiler.collectInlineZigDecls(
-        allocator,
-        &parsed_at_root,
-        &parser,
-    );
-    defer allocator.free(zig_decls);
-
-    // Should contain exactly 1 decl: "Process"
-    try testing.expect(zig_decls.len >= 1);
-
-    var found_process = false;
-    var found_http = false;
-    for (zig_decls) |decl| {
-        if (std.mem.eql(u8, decl.module_name, "Process")) found_process = true;
-        if (std.mem.eql(u8, decl.module_name, "HTTP")) found_http = true;
-    }
-    try testing.expect(found_process);
-    try testing.expect(!found_http);
-
-    // Now load std.http and verify it shows up
-    _ = try parser.ensureNestedModuleNamespace("std", "http");
-    try testing.expect(parser.graph.findStable("pkg//std/http/http.doxa") != null);
-
-    const zig_decls2 = try inline_zig_compiler.collectInlineZigDecls(
-        allocator,
-        &parsed_at_root,
-        &parser,
-    );
-    defer allocator.free(zig_decls2);
-
-    found_process = false;
-    found_http = false;
-    for (zig_decls2) |decl| {
-        if (std.mem.eql(u8, decl.module_name, "Process")) found_process = true;
-        if (std.mem.eql(u8, decl.module_name, "HTTP")) found_http = true;
-    }
-    try testing.expect(found_process);
-    try testing.expect(found_http);
+    // Reaching into `std.http` loads it, which interns the engine it imports.
+    _ = try loader.ensureDeclarations(http);
+    try testing.expect(graph_store.findStable("pkg//std/http/http.zig") != null);
 }

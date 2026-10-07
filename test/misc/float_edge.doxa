@@ -1,0 +1,65 @@
+# Float edge cases at the boundaries of f64: the largest finite value, the
+# smallest normal and subnormal values, overflow to infinity, underflow to
+# zero, and negative zero. Each value is printed through every formatting
+# path — direct interpolation, `@string`, and an element of a printed array —
+# and is produced both at runtime and from literals the compiler folds, so a
+# constant that cannot be spelled in the emitted IR, or a formatter that
+# cannot hold a long rendering, fails here.
+
+function mul(a :: float, b :: float) returns float {
+    return a * b
+}
+
+function div(a :: float, b :: float) returns float {
+    return a / b
+}
+
+function negate(x :: float) returns float {
+    return -x
+}
+
+public entry function main() {
+    # Ordinary renderings.
+    @print("plain={1.0} {0.5} {-2.25} {123456789.125}\n")
+    @print("exponents={1.0e10} {1.5e-7}\n")
+    @print("rounding={0.1 + 0.2}\n")
+
+    # The largest finite value.
+    const max is 1.7976931348623157e308
+    @print("max={max}\n")
+    @print("max_string={@string(max)}\n")
+    @print("max_array={[max]}\n")
+    @print("neg_max={-max}\n")
+
+    # The smallest normal and subnormal values.
+    @print("min_normal={2.2250738585072014e-308}\n")
+    @print("min_subnormal={5e-324}\n")
+    @print("min_subnormal_string={@string(5e-324)}\n")
+
+    # Overflow to infinity, at runtime and folded.
+    @print("runtime_overflow={mul(max, 10.0)}\n")
+    @print("runtime_neg_overflow={mul(max, -10.0)}\n")
+    @print("folded_overflow={1.0e308 * 10.0}\n")
+    @print("folded_neg_overflow={-1.0e308 * 10.0}\n")
+    @print("runtime_inf={div(1.0, 0.0)} {div(-1.0, 0.0)}\n")
+    @print("folded_inf={1.0 / 0.0} {-1.0 / 0.0}\n")
+    @print("inf_string={@string(div(1.0, 0.0))}\n")
+    @print("inf_array={[div(1.0, 0.0), div(-1.0, 0.0)]}\n")
+    @print("inf_arith={div(1.0, 0.0) + 1.0} {div(1.0, 0.0) * -2.0}\n")
+
+    # Underflow to zero.
+    @print("runtime_underflow={div(5e-324, 2.0)}\n")
+    @print("folded_underflow={5e-324 / 2.0}\n")
+
+    # Negative zero survives negation, literals, and arithmetic, and its sign
+    # is observable through division.
+    var zero is 0.0
+    @print("neg_zero_literal={-0.0}\n")
+    @print("neg_zero_runtime={-zero}\n")
+    @print("neg_zero_call={negate(0.0)}\n")
+    @print("neg_zero_product={mul(-1.0, 0.0)}\n")
+    @print("neg_zero_string={@string(-zero)}\n")
+    @print("neg_zero_array={[-zero, zero]}\n")
+    @print("pos_zero_again={-(-zero)}\n")
+    @print("neg_zero_sign={div(1.0, -zero)} {div(1.0, negate(0.0))} {1.0 / -0.0}\n")
+}

@@ -1,0 +1,6 @@
+# A runtime int does not widen to float in a value position; only a literal does.
+public entry function main() {
+    var i is 60
+    var f :: float is i
+    @print("{f}\n")
+}

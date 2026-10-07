@@ -1,0 +1,9 @@
+module a from "./moddata/zig_io_a.doxa"
+module b from "./moddata/zig_io_b.doxa"
+
+# Two files each declare `zig IO { fn x }`. Each block is its own record with
+# its own link names, so both compile into one program and link, and each
+# file's `IO.x` calls its own.
+entry function main() {
+    @print("{a.read()} {b.read()}\n")
+}

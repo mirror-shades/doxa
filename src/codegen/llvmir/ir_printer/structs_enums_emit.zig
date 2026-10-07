@@ -1,6 +1,6 @@
 const std = @import("std");
+const module_graph = @import("../../../module/graph.zig");
 const DoxaUnionMeta = @import("../../../runtime/doxa_rt.zig").DoxaUnionMeta;
-const GroupTable = @import("../../../common/group_table.zig").GroupTable;
 
 fn resolveStructFieldIndex(field_name: []const u8, field_names: ?[]const []const u8, hir_index: u32) u32 {
     if (field_names) |names| {
@@ -64,7 +64,8 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .Union => {
                         if (pk.union_members) |members| {
-                            const idx = self.findUnionMemberIndex(pk.value_type, value);
+                            const member_idx = self.findMemberIndex(pk.value_type, value);
+                            const idx = if (pk.member_slots) |slots| (if (member_idx < slots.len) slots[member_idx] else member_idx) else member_idx;
                             if (idx < members.len) {
                                 break :blk_type members[idx];
                             }
@@ -117,13 +118,14 @@ pub fn Methods(comptime Ctx: type) type {
                     .Value => "value",
                 };
             };
+            // Named types travel by canonical key; a peek shows the declared name.
             const type_info = try internPeekString(
                 self.allocator,
                 &state.string_map,
                 &state.strings,
                 state.next_id_ptr,
                 &state.globals,
-                type_slice,
+                module_graph.displayName(type_slice),
             );
 
             var name_info: ?PeekStringInfo = null;
@@ -348,8 +350,27 @@ pub fn Methods(comptime Ctx: type) type {
                 }
 
                 if (active_index_var == null and pk.value_type == .Union) {
-                    const idx = self.findUnionMemberIndex(pk.value_type, value);
+                    const idx = self.findMemberIndex(pk.value_type, value);
                     active_index = @intCast(idx);
+                }
+
+                // The box names a member; the list may show several members as
+                // one written group, so the marker goes on that entry.
+                if (pk.member_slots) |slots| {
+                    if (active_index_var) |member_index| {
+                        var slot = try self.nextTemp(id);
+                        try w.print("  {s} = add i32 0, -1\n", .{slot});
+                        for (slots, 0..) |member_slot, member| {
+                            const is_member = try self.nextTemp(id);
+                            try w.print("  {s} = icmp eq i32 {s}, {d}\n", .{ is_member, member_index, member });
+                            const next = try self.nextTemp(id);
+                            try w.print("  {s} = select i1 {s}, i32 {d}, i32 {s}\n", .{ next, is_member, member_slot, slot });
+                            slot = next;
+                        }
+                        active_index_var = slot;
+                    } else if (active_index >= 0 and active_index < slots.len) {
+                        active_index = @intCast(slots[@intCast(active_index)]);
+                    }
                 }
 
                 // Create array of pointers to union member strings
@@ -638,12 +659,12 @@ pub fn Methods(comptime Ctx: type) type {
             var idx_usize: usize = 0;
             while (idx_usize < @as(usize, @intCast(sn.field_count))) : (idx_usize += 1) {
                 // Pop field name
-                if (stack.items.len < 1) return error.StackUnderflow;
+                try self.requireStack(stack, 1);
                 const field_name_val = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
 
                 // Pop field value
-                if (stack.items.len < 1) return error.StackUnderflow;
+                try self.requireStack(stack, 1);
                 const field_val = stack.items[stack.items.len - 1];
                 stack.items.len -= 1;
 
@@ -794,7 +815,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn emitGetField(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, gf: std.meta.fieldInfo(HIRInstruction, .GetField).type) !void {
-            if (stack.items.len < 1) return error.StackUnderflow;
+            try self.requireStack(stack, 1);
             var struct_val = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
             if (struct_val.ty != .PTR) {
@@ -922,7 +943,7 @@ pub fn Methods(comptime Ctx: type) type {
         }
 
         pub fn emitSetField(self: *IRPrinter, w: anytype, stack: *std.array_list.Managed(StackVal), id: *usize, sf: std.meta.fieldInfo(HIRInstruction, .SetField).type) !void {
-            if (stack.items.len < 2) return error.StackUnderflow;
+            try self.requireStack(stack, 2);
             const value = stack.items[stack.items.len - 1];
             stack.items.len -= 1;
             var struct_val = stack.items[stack.items.len - 1];
@@ -1539,7 +1560,7 @@ pub fn Methods(comptime Ctx: type) type {
                 &peek_state.strings,
                 peek_state.next_id_ptr,
                 &peek_state.globals,
-                type_name,
+                module_graph.displayName(type_name),
             );
 
             const type_gep_expr = try std.fmt.allocPrint(
@@ -1724,6 +1745,9 @@ pub fn Methods(comptime Ctx: type) type {
             return self.getOrCreateStructDescGlobal(peek_state, type_name, field_names, field_types, enum_type_names);
         }
 
+        /// The runtime finds an enum descriptor by its type name, so the name it
+        /// carries is the canonical key: two modules may declare the same enum
+        /// name. (A struct descriptor is found by instance and shows its name.)
         pub fn getOrCreateEnumDescGlobal(
             self: *IRPrinter,
             peek_state: *PeekEmitState,
@@ -1872,8 +1896,8 @@ pub fn Methods(comptime Ctx: type) type {
                 },
                 .Map => try allocator.dupe(u8, "map"),
                 .Struct => |sid| {
-                    if (self.struct_type_names_by_id.get(sid)) |tn| {
-                        return try allocator.dupe(u8, tn);
+                    if (self.struct_type_names_by_id.get(sid)) |key| {
+                        return try allocator.dupe(u8, module_graph.displayName(key));
                     }
                     return try allocator.dupe(u8, "struct");
                 },
@@ -1881,10 +1905,7 @@ pub fn Methods(comptime Ctx: type) type {
                 .Function => try allocator.dupe(u8, "function"),
                 .Union => try allocator.dupe(u8, "union"),
                 .Group => |gid| try allocator.dupe(u8, blk: {
-                    if (self.group_table) |gt_opaque| {
-                        const gt: *GroupTable = @constCast(@ptrCast(@alignCast(gt_opaque)));
-                        if (gt.getName(gid)) |gname| break :blk gname;
-                    }
+                    if (self.group_table.displayName(gid)) |gname| break :blk gname;
                     break :blk "group";
                 }),
                 .Nothing => try allocator.dupe(u8, "nothing"),

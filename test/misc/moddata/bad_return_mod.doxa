@@ -1,0 +1,3 @@
+public function count() returns int {
+    return "text"
+}

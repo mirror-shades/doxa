@@ -109,7 +109,7 @@ public function popStringArray(^collection :: string[]) returns string | error.M
     return @pop(collection)
 }
 
-public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns error.Method {
+public function insert(^collection :: string | int[] | float[] | byte[] | tetra[] | string[], index :: int, value :: string | int | float | byte | tetra) returns nothing | error.Method {
     match collection {
         string then {
             if index < 0 then return error.Method.OutOfBounds

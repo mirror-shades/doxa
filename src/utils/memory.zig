@@ -8,7 +8,6 @@ const Token = TokenImport.Token;
 const TokenType = TokenImport.TokenType;
 const TypesImport = @import("../types/types.zig");
 const TokenLiteral = TypesImport.TokenLiteral;
-const CustomTypeInfo = TypesImport.CustomTypeInfo;
 
 pub const ValueStorage = struct {
     value: TokenLiteral,
@@ -24,6 +23,10 @@ pub const Variable = struct {
     id: u32,
     is_alias: bool,
     is_param: bool = false,
+    /// A narrowing view (`x as T then …`, a match arm): the same variable as
+    /// the binding it shadows, seen at a narrower type. Its identity is that
+    /// binding's.
+    is_view: bool = false,
     used: bool = false,
     /// 1-based source position of the declaring name, recorded only for
     /// inferred variable declarations. Lets tooling (the language server's
@@ -386,7 +389,6 @@ pub const MemoryManager = struct {
     execution_arena: std.heap.ArenaAllocator,
     scope_manager: *ScopeManager,
     scope_pool: std.ArrayList(*Scope),
-    type_registry: std.StringHashMap(CustomTypeInfo),
 
     pub fn init(allocator: std.mem.Allocator) !MemoryManager {
         return .{
@@ -395,7 +397,6 @@ pub const MemoryManager = struct {
             .execution_arena = std.heap.ArenaAllocator.init(allocator),
             .scope_manager = try ScopeManager.init(allocator),
             .scope_pool = .empty,
-            .type_registry = std.StringHashMap(CustomTypeInfo).init(allocator),
         };
     }
 
@@ -412,7 +413,6 @@ pub const MemoryManager = struct {
         self.scope_pool.deinit(self.allocator);
 
         self.scope_manager.deinit();
-        self.type_registry.deinit();
         self.analysis_arena.deinit();
         self.execution_arena.deinit();
     }
@@ -437,14 +437,6 @@ pub const MemoryManager = struct {
             try p.children.append(p.allocator, scope);
         }
         return scope;
-    }
-
-    pub fn registerCustomType(self: *MemoryManager, type_info: CustomTypeInfo) !void {
-        try self.type_registry.put(type_info.name, type_info);
-    }
-
-    pub fn getCustomType(self: *MemoryManager, type_name: []const u8) ?CustomTypeInfo {
-        return self.type_registry.get(type_name);
     }
 
     pub fn dumpState(self: *MemoryManager, reporter: anytype) void {

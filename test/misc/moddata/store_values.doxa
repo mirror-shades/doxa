@@ -1,0 +1,6 @@
+public const LIMIT is 7
+public const NAME is "values"
+
+public function seven() returns int {
+    return 7
+}

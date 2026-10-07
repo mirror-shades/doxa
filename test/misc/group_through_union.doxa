@@ -1,0 +1,82 @@
+# A group member keeps its identity through a union: the union holds the
+# group's members, and narrowing back to the group re-packs the box.
+
+enum IOError { NotFound, Denied }
+enum ParseError { BadToken, Eof }
+struct FileError { public path :: string, public code :: int }
+group Error { IOError, ParseError, FileError }
+
+function describe(e :: Error) returns string {
+    return match e {
+        IOError then "io",
+        ParseError then "parse",
+        FileError then "file",
+    }
+}
+
+function fail(which :: int) returns string | Error {
+    if which == 1 then return IOError.Denied
+    if which == 2 then return ParseError.Eof
+    if which == 3 then return $FileError { path is "/", code is 13 }
+    return "ok"
+}
+
+# B015: through a union and back, by `as` and by `match`.
+var out is ""
+var kind is 0
+while kind < 4 do kind += 1 {
+    const r is fail(kind)
+    r as string then { out is out + "str " } else { out is out + describe(r) + " " }
+}
+@print("{out}\n")
+out is ""
+kind is 0
+while kind < 4 do kind += 1 {
+    const r is fail(kind)
+    match r {
+        string then { out is out + "str " },
+        Error then { out is out + describe(r) + " " },
+    }
+}
+@print("{out}\n")
+
+# B023: equality after narrowing to the group, in every form.
+function viaAsThen(r :: string | Error) returns tetra {
+    r as Error then { return r == ParseError.Eof } else { return false }
+    return false
+}
+function viaAsElse(r :: string | Error) returns tetra {
+    const e is r as Error else { return false }
+    return e == ParseError.Eof
+}
+function viaMatch(r :: string | Error) returns tetra {
+    match r {
+        Error then { return r == ParseError.Eof },
+        else { return false },
+    }
+    return false
+}
+const eof is fail(2)
+const denied is fail(1)
+@print("{viaAsThen(eof)} {viaAsElse(eof)} {viaMatch(eof)} {viaAsThen(denied)} {viaAsElse(denied)} {viaMatch(denied)}\n")
+
+# A global narrowed to the group, and one declared from `as`.
+eof as Error then { @print("{eof == ParseError.Eof} {eof != IOError.Denied}\n") } else {}
+const g is eof as Error else { @exit(2) }
+@print("{g == ParseError.Eof} {g == IOError.Denied}\n")
+
+# Two members whose variants share an index are still two members.
+const held :: Error is IOError.Denied
+@print("{held == ParseError.Eof} {held == IOError.Denied} {ParseError.Eof != held}\n")
+
+# A match or an if whose arms are different members is the union of them.
+function byMatch(k :: int) returns Error {
+    return match k {
+        0 then IOError.Denied,
+        else ParseError.Eof,
+    }
+}
+function byIf(k :: int) returns Error {
+    return if k == 0 then IOError.Denied else ParseError.Eof
+}
+@print("{describe(byMatch(0))} {describe(byMatch(1))} {describe(byIf(0))} {describe(byIf(1))}\n")

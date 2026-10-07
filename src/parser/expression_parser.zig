@@ -195,6 +195,7 @@ const body = try matchArmBody(self);
                 .tokens = path_tokens,
                 .is_wildcard = self.current_path_pattern_is_wildcard,
                 .field_names = self.current_path_pattern_field_names orelse &[_]token.Token{},
+                .pattern = 0,
             });
             self.current_path_pattern_tokens = null;
             self.current_path_pattern_is_wildcard = false;
@@ -211,6 +212,7 @@ const body = try matchArmBody(self);
                     .tokens = path_tokens,
                     .is_wildcard = self.current_path_pattern_is_wildcard,
                     .field_names = self.current_path_pattern_field_names orelse &[_]token.Token{},
+                    .pattern = @intCast(patterns.items.len - 1),
                 });
                 self.current_path_pattern_tokens = null;
                 self.current_path_pattern_is_wildcard = false;
@@ -760,7 +762,7 @@ pub fn parseTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                 .span = ast.SourceSpan.fromToken(type_token),
             },
             .data = .{
-                .Custom = custom_type_token,
+                .Custom = .{ .name = custom_type_token },
             },
         };
     } else {
@@ -1348,7 +1350,7 @@ fn parseNonUnionTypeExpr(self: *Parser) ErrorList!?*ast.TypeExpr {
                     .span = ast.SourceSpan.fromToken(type_token),
                 },
                 .data = .{
-                    .Custom = custom_type_token,
+                    .Custom = .{ .name = custom_type_token },
                 },
             };
             base_type_expr = type_expr;
@@ -1470,15 +1472,12 @@ pub fn inferType(expr: *ast.Expr) !ast.TypeInfo {
                 .nothing => return .{ .base = .Nothing, .is_mutable = false },
                 .array => return .{ .base = .Array, .is_mutable = false },
                 .map => return .{ .base = .Map, .is_mutable = false },
-                .enum_variant => return .{ .base = .Enum, .is_mutable = false },
-                .struct_value => |sv| return .{ .base = .Custom, .custom_type = sv.type_name, .is_mutable = false },
-                .function => return .{ .base = .Function, .is_mutable = false },
             }
         },
         .Array => return .{ .base = .Array, .is_mutable = false },
         .StructLiteral => |struct_lit| return .{
             .base = .Custom,
-            .custom_type = struct_lit.name.lexeme,
+            .custom_type = .{ .written = struct_lit.name.lexeme },
             .is_mutable = false,
         },
         .Cast => return .{ .base = .Nothing, .is_mutable = false },
