@@ -1240,6 +1240,12 @@ pub const ModuleInfo = struct {
     importer_path: []const u8 = "",
     symbols: ?std.StringHashMap(ModuleSymbol) = null,
     is_inline_zig: bool = false,
+    /// MIGRATION (Phase 2 → removed once bindings live only on `ModuleRecord`):
+    /// the graph record this payload belongs to, so a resolution path that
+    /// returns a `ModuleInfo` can recover its record (for owner-scoped binding).
+    /// A `ModuleId` is a `u32`; keeping the raw integer avoids an import cycle
+    /// between the AST and the module graph.
+    record_id: ?u32 = null,
 
     pub fn hasPublicSymbol(self: *const ModuleInfo, symbol_name: []const u8) bool {
         if (self.symbols) |symbols| {
@@ -1617,6 +1623,16 @@ pub fn createExpressionPart(expr: *Expr) FormatPart {
     return FormatPart{ .Expression = expr };
 }
 
+/// The identity of a named type is its bare declaration name, never a
+/// module-qualified spelling. Custom/struct/enum/group tables are keyed by the
+/// name a declaration writes, so `std.json.Node` and `Node` must produce the
+/// same `custom_type`. Callers that need the qualifier keep the original token;
+/// every lookup goes through canonical names.
+pub fn bareTypeName(name: []const u8) []const u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, name, '.') orelse return name;
+    return name[dot + 1 ..];
+}
+
 pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*TypeInfo {
     const type_info = try allocator.create(TypeInfo);
     errdefer allocator.destroy(type_info);
@@ -1673,7 +1689,7 @@ pub fn typeInfoFromExpr(allocator: std.mem.Allocator, type_expr: ?*TypeExpr) !*T
                 .struct_fields = struct_fields,
             };
         },
-        .Custom => |custom_token| TypeInfo{ .base = .Custom, .custom_type = custom_token.lexeme },
+        .Custom => |custom_token| TypeInfo{ .base = .Custom, .custom_type = bareTypeName(custom_token.lexeme) },
         .Map => |map| blk: {
             const key_type_info = if (map.key_type) |key_type|
                 try typeInfoFromExpr(allocator, key_type)

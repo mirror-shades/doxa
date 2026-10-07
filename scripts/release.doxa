@@ -1,0 +1,69 @@
+module std from @std()
+
+const release_dir is "doxa"
+
+const directories is [
+    "macos-x64",
+    "macos-arm64",
+    "linux-x64",
+    "linux-arm64",
+    "windows-x64",
+]
+
+function run_command(cmd :: string, description :: string is "") returns tetra {
+    
+    if @length(description) < 1 then {
+        std.io.println("{description}...")
+    }
+    std.io.println("Running: {cmd}")
+    const res is std.process.exec(cmd) as int else {
+        std.io.println("Error: {res}")
+        return false
+    }
+    if res == 0 then return true 
+    std.io.println("Exit code: {res}")
+    return false
+}
+
+# def archive_release(directory):
+#     source = os.path.join(RELEASE_DIR, directory)
+#     if not os.path.isdir(source):
+#         print(f"Skipping {directory}: {source} does not exist")
+#         return
+
+#     label = f"doxa-{directory}"
+#     root = f"{label}/doxa"
+
+#     if directory.startswith("windows"):
+#         archive = os.path.join(RELEASE_DIR, f"{label}.zip")
+#         print(f"Zipping {directory} release -> {archive}")
+#         with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as zf:
+#             for dirpath, _, files in os.walk(source):
+#                 for name in files:
+#                     path = os.path.join(dirpath, name)
+#                     rel = os.path.relpath(path, source).replace(os.sep, "/")
+#                     zf.write(path, f"{root}/{rel}")
+#     else:
+#         archive = os.path.join(RELEASE_DIR, f"{label}.tar.gz")
+#         print(f"Tarballing {directory} release -> {archive}")
+#         with tarfile.open(archive, "w:gz") as tf:
+#             tf.add(source, arcname=root)
+
+def archive_releases(directories :: string[]) {
+    each directory in directories {
+        archive_release(directory)
+    }
+}
+
+function main() returns int {
+    if not run_command("zig build release", "Building release binaries for all platforms") then {
+        std.io.println("Release build failed")
+        return 1
+    }
+    print("Release build completed successfully")
+    archive_releases(DIRECTORIES)
+    return 0
+}
+
+if __name__ == "__main__":
+    sys.exit(main())

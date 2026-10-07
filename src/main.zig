@@ -31,6 +31,7 @@ const StructMethodInfo = @import("./analysis/semantic/semantic.zig").StructMetho
 const LspServer = @import("./lsp/server.zig");
 const Resolver = @import("./resolver/resolver.zig").Resolver;
 const platform = @import("./utils/platform.zig");
+const module_graph = @import("./module/graph.zig");
 
 const constants = @import("common/constants.zig");
 const MAX_FILE_SIZE = constants.MAX_SOURCE_FILE_BYTES;
@@ -245,75 +246,6 @@ fn nativeOutputPath(allocator: std.mem.Allocator, cli: *const CLI, script_path: 
     return withExeSuffix(allocator, raw, is_windows);
 }
 
-fn registerMissingTypesFromModuleCache(parser: *Parser, semantic_analyzer: *SemanticAnalyzer) !void {
-    const Registration = struct {
-        fn enumDecl(parser_inner: *Parser, analyzer: *SemanticAnalyzer, ed: anytype) !void {
-            const helpers = @import("./analysis/semantic/helpers.zig");
-            const variants = try parser_inner.allocator.alloc([]const u8, ed.variants.len);
-            for (ed.variants, variants) |v, *name| name.* = v.lexeme;
-            try helpers.registerEnumType(analyzer, ed.name.lexeme, variants);
-        }
-        fn groupDecl(analyzer: *SemanticAnalyzer, gd: anytype) !void {
-            const helpers = @import("./analysis/semantic/helpers.zig");
-            try helpers.registerGroupType(analyzer, gd.name.lexeme, gd.members);
-        }
-        fn structDecl(analyzer: *SemanticAnalyzer, sd: anytype) !void {
-            const ast = @import("./ast/ast.zig");
-            const helpers = @import("./analysis/semantic/helpers.zig");
-            const field_types = try analyzer.allocator.alloc(ast.StructFieldType, sd.fields.len);
-            for (sd.fields, 0..) |field, i| {
-                field_types[i] = ast.StructFieldType{
-                    .name = field.name.lexeme,
-                    .type_info = try analyzer.typeExprToTypeInfo(field.type_expr),
-                    .is_public = field.is_public,
-                };
-            }
-            try helpers.registerStructType(analyzer, sd.name.lexeme, field_types);
-        }
-    };
-
-    // Ensure all lazy module namespaces are loaded so their enum/group/struct
-    // declarations are available in the module cache. (Reachability loading is
-    // done by the resolver; this is the safety net for any namespace registered
-    // after it, e.g. while lowering.)
-    var ns_it = parser.module_namespaces.iterator();
-    while (ns_it.next()) |entry| {
-        if (entry.value_ptr.ast == null) {
-            _ = parser.ensureModuleNamespace(entry.key_ptr.*) catch continue;
-        }
-    }
-
-    var cache_it = parser.module_cache.iterator();
-    while (cache_it.next()) |entry| {
-        const module_info = entry.value_ptr.*;
-        const module_ast = module_info.ast orelse continue;
-        if (module_ast.data != .Block) continue;
-        for (module_ast.data.Block.statements) |stmt| {
-            switch (stmt.data) {
-                .EnumDecl => |ed| try Registration.enumDecl(parser, semantic_analyzer, ed),
-                .GroupDecl => |gd| try Registration.groupDecl(semantic_analyzer, gd),
-                .Expression => |maybe_expr| {
-                    if (maybe_expr) |expr| {
-                        if (expr.data == .EnumDecl) {
-                            try Registration.enumDecl(parser, semantic_analyzer, expr.data.EnumDecl);
-                        } else if (expr.data == .GroupDecl) {
-                            try Registration.groupDecl(semantic_analyzer, expr.data.GroupDecl);
-                        } else if (expr.data == .StructDecl) {
-                            try Registration.structDecl(semantic_analyzer, expr.data.StructDecl);
-                            // Register the struct's methods too. Semantic inference
-                            // does this on first use, but a struct referenced only
-                            // from an imported module body never goes through it, so
-                            // its method calls would silently degrade to no-ops.
-                            try semantic_analyzer.ensureImportedStructRegistered(expr.data.StructDecl.name.lexeme);
-                        }
-                    }
-                },
-                else => {},
-            }
-        }
-    }
-}
-
 fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []AST.Stmt, module_namespaces: std.StringHashMap(AST.ModuleInfo), parser: *Parser, semantic_analyzer: *SemanticAnalyzer, reporter: *Reporter, profiler: *Profiler) !HIRProgram {
     const root_scope = semantic_analyzer.memory.scope_manager.root_scope orelse return error.MissingRootScope;
     var constant_folder = ConstantFolder.init(memoryManager.getAnalysisAllocator(), root_scope);
@@ -331,10 +263,10 @@ fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []A
     profiler.begin("register-types");
     // Enums, groups, and structs declared in dependency modules may not appear
     // on the root parser's `imported_symbols` map (private structs are never
-    // direct imports, yet public structs reference them in fields). Register them
-    // from the module cache so HIR lowering resolves types like `error.IO` in
-    // return unions and `Node[]` in `LinkedList.nodes`.
-    try registerMissingTypesFromModuleCache(parser, semantic_analyzer);
+    // direct imports, yet public structs reference them in fields). Register
+    // them from every parsed module record so HIR lowering resolves types like
+    // `error.IO` in return unions and `Node[]` in `LinkedList.nodes`.
+    try semantic_analyzer.registerMissingTypesFromImportedModules();
 
     // Recompute struct field HIR types now that enums/groups/structs from every
     // module are registered. The eager lowering in registerStructType ran before
@@ -344,10 +276,12 @@ fn generateHIRProgram(io: std.Io, memoryManager: *MemoryManager, statements: []A
 
     profiler.begin("hir-lower");
     defer profiler.end();
-    var hir_generator = HIRGenerator.init(io, memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer);
+    var hir_generator = HIRGenerator.init(io, memoryManager.getAnalysisAllocator(), reporter, module_namespaces, parser.imported_symbols, semantic_analyzer.getFunctionReturnTypes(), semantic_analyzer, parser.graph, if (parser.owner_record) |record| record.id else 0);
     defer hir_generator.deinit();
 
     hir_generator.type_system.function_signatures = &hir_generator.function_signatures;
+    hir_generator.type_system.call_return_resolver = HIRGenerator.resolveCallReturnTypeThunk;
+    hir_generator.type_system.call_return_ctx = &hir_generator;
 
     const custom_types = semantic_analyzer.getCustomTypes();
     var custom_types_iter = custom_types.iterator();
@@ -1406,7 +1340,7 @@ const SCAFFOLD_BUILD =
     \\
     \\c.addArtifact(exe)
     \\
-    \\build.execute(c, false)
+    \\build.execute(c)
     \\
 ;
 
@@ -1505,97 +1439,6 @@ fn exitIfCompileErrors(reporter: *Reporter) void {
     if (reporter.hasCompileErrors()) {
         std.process.exit(EXIT_CODE_USAGE);
     }
-}
-
-fn parserErrorHint(err: anyerror) []const u8 {
-    return switch (err) {
-        error.ExpectedComma => "expected a ',' between arguments or list elements",
-        error.ExpectedCommaOrBrace => "expected ',' or '}'",
-        error.ExpectedCommaOrParen => "expected ',' or ')'",
-        error.ExpectedCommaOrBracket => "expected ',' or ']'",
-        error.ExpectedCommaOrClosingBracket => "expected ',' or a closing bracket",
-        error.ExpectedCommaOrClosingParenthesis => "expected ',' or a closing parenthesis",
-        error.ExpectedRightParen, error.ExpectedClosingParen, error.ExpectedClosingParenthesis => "expected a closing parenthesis ')'",
-        error.ExpectedLeftParen => "expected an opening parenthesis '('",
-        error.ExpectedRightBrace => "expected a closing brace '}'",
-        error.ExpectedLeftBrace => "expected an opening brace '{'",
-        error.ExpectedRightBracket => "expected a closing bracket ']'",
-        error.ExpectedLeftBracket => "expected an opening bracket '['",
-        error.ExpectedExpression => "expected an expression",
-        error.ExpectedIdentifier => "expected an identifier",
-        error.ExpectedType => "expected a type",
-        error.ExpectedThen => "expected 'then' after the condition",
-        error.ExpectedElse => "expected 'else'",
-        error.ExpectedColon => "expected ':'",
-        error.ExpectedAssignmentOperator => "expected an assignment operator",
-        error.ExpectedReturnsKeyword => "expected 'returns'",
-        error.ExpectedLeftBraceOrReturnsKeyword => "expected '{' or 'returns'",
-        error.ExpectedFunctionName => "expected a function name",
-        error.ExpectedFunctionParams => "expected function parameters",
-        error.ExpectedFunctionBody => "expected a function body",
-        error.ExpectedFunctionReturnType => "expected a function return type",
-        error.ExpectedString, error.ExpectedStringLiteral => "expected a string literal",
-        error.ExpectedMapKey => "expected a map key",
-        error.ExpectedInKeyword => "expected 'in'",
-        error.ExpectedWhereKeyword => "expected 'where'",
-        error.ExpectedMapKeyword => "expected 'map'",
-        error.ExpectedPattern => "expected a pattern",
-        error.ExpectedEnumVariant => "expected an enum variant",
-        error.ExpectedModuleName => "expected a module name",
-        error.ExpectedImportName => "expected an import name",
-        error.UnexpectedToken => "unexpected token",
-        error.ParserDidNotAdvance => "parser could not make progress",
-        error.InternalParserError => "internal parser error",
-        else => "",
-    };
-}
-
-fn reportParserError(parser: *Parser, reporter: *Reporter, err: anyerror) void {
-    const tok = parser.peek();
-
-    const file = if (tok.file.len > 0) tok.file else parser.current_file;
-    const file_uri = if (tok.file_uri.len > 0) tok.file_uri else parser.current_file_uri;
-
-    const loc = Location{
-        .file = file,
-        .file_uri = file_uri,
-        .range = .{
-            .start_line = tok.line,
-            .start_col = tok.column,
-            .end_line = tok.line,
-            .end_col = tok.column + tok.lexeme.len,
-        },
-    };
-
-    var lexeme_buf: [64]u8 = undefined;
-    var token_desc: []const u8 = @tagName(tok.type);
-    if (tok.lexeme.len > 0 and tok.lexeme.len <= lexeme_buf.len and isPrintableAscii(tok.lexeme)) {
-        token_desc = std.fmt.bufPrint(&lexeme_buf, "{s} '{s}'", .{ @tagName(tok.type), tok.lexeme }) catch @tagName(tok.type);
-    }
-
-    const hint = parserErrorHint(err);
-    if (hint.len > 0) {
-        reporter.reportCompileError(
-            loc,
-            ErrorCode.SYNTAX_ERROR,
-            "{s}: {s}; found {s}",
-            .{ @errorName(err), hint, token_desc },
-        );
-    } else {
-        reporter.reportCompileError(
-            loc,
-            ErrorCode.SYNTAX_ERROR,
-            "parse error: {s}; found {s}",
-            .{ @errorName(err), token_desc },
-        );
-    }
-}
-
-fn isPrintableAscii(text: []const u8) bool {
-    for (text) |byte| {
-        if (byte < 0x20 or byte > 0x7e) return false;
-    }
-    return true;
 }
 
 /// Fallback for a compilation phase that returned an error without emitting a
@@ -1760,6 +1603,32 @@ pub fn main(init: std.process.Init) !void {
     };
 }
 
+/// The compilation's declared roots, in priority order: the entry file's
+/// directory (`pkg`), the installed standard library (`std`), then each
+/// `--include=` directory (`inc0`, `inc1`, …). A file outside every root is a
+/// hard error at registration; there is no path- or content-derived fallback.
+fn buildModuleGraph(io: std.Io, allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8) !module_graph.ModuleGraph {
+    var roots = std.array_list.Managed(module_graph.Root).init(allocator);
+    defer roots.deinit();
+
+    const entry_dir = std.fs.path.dirname(script_path) orelse ".";
+    try roots.append(.{ .tag = "pkg", .path = entry_dir });
+
+    const exe_dir = try std.process.executableDirPathAlloc(io, allocator);
+    defer allocator.free(exe_dir);
+    const std_root = try std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "std" });
+    defer allocator.free(std_root);
+    try roots.append(.{ .tag = "std", .path = std_root });
+
+    for (cli_options.include_dirs.items, 0..) |dir, i| {
+        const tag = try std.fmt.allocPrint(allocator, "inc{d}", .{i});
+        defer allocator.free(tag);
+        try roots.append(.{ .tag = tag, .path = dir });
+    }
+
+    return module_graph.ModuleGraph.init(io, allocator, roots.items);
+}
+
 fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: std.mem.Allocator, cli_options: CLI, script_path: []const u8, memoryManager: *MemoryManager, reporter: *Reporter, profiler: *Profiler, source: []const u8) !void {
     profiler.begin("compile");
 
@@ -1780,11 +1649,62 @@ fn pipeline(io: std.Io, environ_map: *const std.process.Environ.Map, allocator: 
     profiler.end();
 
     profiler.begin("parse");
-    var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter);
+    var graph_store = buildModuleGraph(io, allocator, cli_options, script_path) catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "resolve", err);
+        }
+        exitIfCompileErrors(reporter);
+        return err;
+    };
+    defer graph_store.deinit();
+
+    // The entry file is record 0: register it before any import resolves, so
+    // root-file declarations have an owning record and no synthetic key is
+    // derived outside the graph. The root parse is driven below and completes
+    // the record.
+    const entry_physical = module_graph.physicalPath(io, allocator, script_path) catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "resolve", err);
+        }
+        exitIfCompileErrors(reporter);
+        return err;
+    };
+    defer allocator.free(entry_physical);
+    const entry_record = graph_store.ensureRecord(entry_physical) catch |err| {
+        switch (err) {
+            error.ModuleRootUnknown => reporter.reportCompileError(
+                null,
+                ErrorCode.MODULE_ROOT_UNKNOWN,
+                "Entry file '{s}' is outside every declared root",
+                .{script_path},
+            ),
+            error.DuplicateStableKey => reporter.reportCompileError(
+                null,
+                ErrorCode.DUPLICATE_STABLE_KEY,
+                "Two distinct modules claim the entry file's stable key for '{s}'",
+                .{script_path},
+            ),
+            error.OutOfMemory => {},
+        }
+        exitIfCompileErrors(reporter);
+        return err;
+    };
+
+    var parser = Parser.init(io, memoryManager.getAnalysisAllocator(), lexedTokens.items, script_path, try reporter.ensureFileUri(io, script_path), reporter, &graph_store);
     defer parser.deinit();
+    // The entry record owns any inline `zig` synthetic records this parse
+    // generates, so no owner key is derived outside the graph.
+    parser.owner_record = entry_record;
     const parsedStatements = parser.execute() catch |err| {
         if (!reporter.hasCompileErrors()) {
-            reportParserError(&parser, reporter, err);
+            parser.reportParseError(err);
+        }
+        exitIfCompileErrors(reporter);
+        return err;
+    };
+    parser.completeEntryRecord(entry_record, source, parsedStatements) catch |err| {
+        if (!reporter.hasCompileErrors()) {
+            reportPhaseFailure(reporter, "parse", err);
         }
         exitIfCompileErrors(reporter);
         return err;

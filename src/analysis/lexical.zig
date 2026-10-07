@@ -213,7 +213,11 @@ pub const LexicalAnalyzer = struct {
                     self.advance();
                     self.advance();
                 } else if (self.match('/')) {
-                    try self.addMinimalToken(.DOUBLE_SLASH);
+                    if (self.match('=')) {
+                        try self.addMinimalToken(.DOUBLE_SLASH_EQUAL);
+                    } else {
+                        try self.addMinimalToken(.DOUBLE_SLASH);
+                    }
                 } else if (self.match('=')) {
                     try self.addMinimalToken(.SLASH_EQUAL);
                 } else {
@@ -271,7 +275,13 @@ pub const LexicalAnalyzer = struct {
                 try self.addMinimalToken(.SEMICOLON);
                 try self.tokens.append(Token.initWithFile(.NEWLINE, "", .nothing, self.line, 1, self.file_path, self.file_uri));
             },
-            '%' => try self.addMinimalToken(.MODULO),
+            '%' => {
+                if (self.match('=')) {
+                    try self.addMinimalToken(.MODULO_EQUAL);
+                } else {
+                    try self.addMinimalToken(.MODULO);
+                }
+            },
             '#' => {
                 if (!self.isAtEnd()) {
                     while (!self.isAtEnd() and self.peekAt(0) != '\n') {

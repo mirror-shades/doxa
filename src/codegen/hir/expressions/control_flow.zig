@@ -14,6 +14,7 @@ const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const TETRA_TRUE = @import("../soxa_generator.zig").TETRA_TRUE;
 const generateStatement = @import("../soxa_statements.zig").generateStatement;
 const StructsHandler = @import("structs.zig").StructsHandler;
+const DoxaTag = @import("../../../runtime/doxa_rt.zig").DoxaTag;
 
 /// Handle control flow expressions: if, match, loops, blocks
 pub const ControlFlowHandler = struct {
@@ -313,29 +314,31 @@ pub const ControlFlowHandler = struct {
             }
         };
 
+        // Folding a branch down to a direct jump to the loop label emits *only*
+        // that jump — every other branch is dropped on the floor. It is
+        // therefore sound only when the `if` has no else branch to lose. With
+        // an else branch present the condition's false edge leads somewhere
+        // real, and that code has to be emitted.
         if (lc_opt) |lc| {
-            const then_is_continue = isControlOnlyBlock.run(self.generator, if_expr.then_branch.?, false, true);
-            const then_is_break = isControlOnlyBlock.run(self.generator, if_expr.then_branch.?, true, false);
-            const else_is_continue = if (if_expr.else_branch) |eb| isControlOnlyBlock.run(self.generator, eb, false, true) else false;
-            const else_is_break = if (if_expr.else_branch) |eb| isControlOnlyBlock.run(self.generator, eb, true, false) else false;
+            if (if_expr.else_branch == null) {
+                const then_is_continue = isControlOnlyBlock.run(self.generator, if_expr.then_branch.?, false, true);
+                const then_is_break = isControlOnlyBlock.run(self.generator, if_expr.then_branch.?, true, false);
 
-            if (then_is_continue and !else_is_break and !else_is_continue and !then_is_break) {
-                // If TRUE -> continue label, else fall-through
-                try self.generator.generateExpression(if_expr.condition.?, true, should_pop_after_use);
-                const end_if = try self.generator.generateLabel("end_if");
-                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = lc.continue_label, .label_false = end_if, .condition_type = .Tetra } });
-                try self.generator.instructions.append(.{ .Label = .{ .name = end_if } });
-                handled_as_loop_control = true;
-            } else if (then_is_break and !else_is_break and !else_is_continue and !then_is_continue) {
-                // If TRUE -> break label, else fall-through
-                try self.generator.generateExpression(if_expr.condition.?, true, should_pop_after_use);
-                const end_if = try self.generator.generateLabel("end_if");
-                try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = lc.break_label, .label_false = end_if, .condition_type = .Tetra } });
-                try self.generator.instructions.append(.{ .Label = .{ .name = end_if } });
-                handled_as_loop_control = true;
-            } else if (!then_is_break and !then_is_continue and (else_is_break or else_is_continue)) {
-                // DISABLED: This optimization can skip important semantics like debugging output
-                // or proper execution flow. It's safer to use the standard if-then-else codegen.
+                if (then_is_continue and !then_is_break) {
+                    // If TRUE -> continue label, else fall-through
+                    try self.generator.generateExpression(if_expr.condition.?, true, should_pop_after_use);
+                    const end_if = try self.generator.generateLabel("end_if");
+                    try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = lc.continue_label, .label_false = end_if, .condition_type = .Tetra } });
+                    try self.generator.instructions.append(.{ .Label = .{ .name = end_if } });
+                    handled_as_loop_control = true;
+                } else if (then_is_break and !then_is_continue) {
+                    // If TRUE -> break label, else fall-through
+                    try self.generator.generateExpression(if_expr.condition.?, true, should_pop_after_use);
+                    const end_if = try self.generator.generateLabel("end_if");
+                    try self.generator.instructions.append(.{ .JumpCond = .{ .label_true = lc.break_label, .label_false = end_if, .condition_type = .Tetra } });
+                    try self.generator.instructions.append(.{ .Label = .{ .name = end_if } });
+                    handled_as_loop_control = true;
+                }
             }
         }
 
@@ -476,6 +479,10 @@ pub const ControlFlowHandler = struct {
             index: u32,
             /// The struct a destructuring pattern binds its fields from.
             struct_id: ?StructId,
+            /// Runtime tag the boxed member must carry, when it is unambiguous
+            /// (struct vs enum). Null for a group member, whose boxed tag is its
+            /// underlying member's.
+            tag: ?u32 = null,
         },
         /// The union never boxes this type, so the arm can never run.
         never,
@@ -506,11 +513,11 @@ pub const ControlFlowHandler = struct {
             switch (member_ptr.*) {
                 .Struct => |sid| {
                     if (struct_id != null and sid == struct_id.?)
-                        return .{ .member = .{ .index = @intCast(idx), .struct_id = sid } };
+                        return .{ .member = .{ .index = @intCast(idx), .struct_id = sid, .tag = @intFromEnum(DoxaTag.Struct) } };
                 },
                 .Enum => |eid| {
                     if (enum_id != null and eid == enum_id.?)
-                        return .{ .member = .{ .index = @intCast(idx), .struct_id = null } };
+                        return .{ .member = .{ .index = @intCast(idx), .struct_id = null, .tag = @intFromEnum(DoxaTag.Enum) } };
                 },
                 .Group => |gid| {
                     if (group_id != null and gid == group_id.?)
@@ -788,7 +795,7 @@ pub const ControlFlowHandler = struct {
                     switch (union_pattern) {
                         .member => |m| {
                             try self.generator.instructions.append(.Dup);
-                            try self.generator.instructions.append(.{ .MemberCheck = .{ .member_index = m.index } });
+                            try self.generator.instructions.append(.{ .MemberCheck = .{ .member_index = m.index, .expected_tag = m.tag } });
                             try self.generator.instructions.append(.{ .JumpCond = .{
                                 .label_true = case_labels.items[i],
                                 .label_false = false_label,
@@ -894,7 +901,7 @@ pub const ControlFlowHandler = struct {
                         // A union subject is discriminated by the member index
                         // it boxed, never by an enum variant or a literal.
                         switch (union_pattern) {
-                            .member => |m| try self.generator.instructions.append(.{ .MemberCheck = .{ .member_index = m.index } }),
+                            .member => |m| try self.generator.instructions.append(.{ .MemberCheck = .{ .member_index = m.index, .expected_tag = m.tag } }),
                             .never => {
                                 // This type is not in the union, so the arm is
                                 // unreachable: drop the copy under test and

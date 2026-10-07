@@ -1,0 +1,35 @@
+# Pins the same-scope struct assignment semantics the compiler actually
+# implements, which no test covered: a struct-typed local initialised from
+# another struct expression in the same scope keeps *identity*, not a copy, so
+# a write through one name is visible through the other. docs/struct.md calls
+# this "same-scope move semantics — no deep copy occurs when the source and
+# destination share an arena", and docs/memory.md repeats it; the implementation
+# is the `is_const` guard on the local store plus a plain store for a value
+# already in the function-body arena. Every struct-to-struct local in the corpus
+# so far only *read* through the alias, which cannot tell aliasing from copying.
+struct Cell {
+    value :: int,
+
+    function new(start :: int) returns Cell {
+        return $Cell { value is start }
+    }
+
+    method get() returns int {
+        return this.value
+    }
+
+    method set(v :: int) {
+        this.value is v
+    }
+}
+
+entry function main() {
+    const original is Cell.new(1)
+    const alias is original
+
+    @print("before {original.get()} {alias.get()}\n")
+
+    alias.set(42)
+
+    @print("after {original.get()} {alias.get()}\n")
+}

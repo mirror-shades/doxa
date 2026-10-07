@@ -28,6 +28,25 @@ struct - no classes, no inheretance, only composition
 group -  can be used as an umbrella type for enums and structs
 union - can be handled with switch statements and type narrowing, see page on unions for more info
 
+### Line Continuation
+
+A newline ends a statement. To continue one expression across lines, begin the
+next line with `...`, which joins it to the line above:
+
+```doxa
+function inRange(v :: int) returns tetra {
+    return v >= 0
+        ...and v <= 7
+}
+```
+
+`...` must be the first thing on its line. Placed anywhere else it is an error:
+
+```
+return @length("ab") == 2 ...and true
+                          ^^^ EllipsisWithoutNewline: '...' continuation must follow a completed line
+```
+
 ### Arithmetic Operators
 
 Arithmetic follows Python-like semantics. See the [Arithmetic](math.md) page for full details on type promotion, division, and modulo.
@@ -42,7 +61,22 @@ Arithmetic follows Python-like semantics. See the [Arithmetic](math.md) page for
 | `//` | Integer division (floored) | `-7 // 2` → `-4` |
 | `%` | Modulo (floored) | `-7 % 2` → `1` |
 
-Compound assignment (`+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `**=`) is supported for all arithmetic operators.
+Compound assignment is supported for all arithmetic operators: `+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `**=`.
+
+`//=` and `%=` are integer-only, matching their binary forms: both operands must be `int` or `byte`.
+
+`/=` is the exception that looks like the others but is not. Doxa's `/` is *float* division, so `/=` computes a `float` whatever the operands are — assigning that back into an `int` is a narrowing, which Doxa rejects everywhere else. Use `//=` for integer division:
+
+```doxa
+var n is 10
+n /= 3      # Error: Float is not assignable to type Int
+n //= 3     # n is now 3
+
+var f is 10.0
+f /= 4      # f is now 2.5
+```
+
+Dividing or taking a remainder by zero is a runtime trap (`Division by zero`, exit 1) rather than undefined behaviour. Float division is unaffected and follows IEEE 754, so `5 / 0` is `inf`.
 
 ### Strings
 

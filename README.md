@@ -63,9 +63,12 @@ doxa run build.doxa
 ```
 
 The script declares artifacts against a `build.Context`, then terminates with
-`build.execute(c, false)`, which compiles every artifact and propagates the
-result through the process exit code. Artifacts whose output is newer than
-their entry source are skipped unless forced (`build.execute(c, true)`).
+`build.execute(c)`, which compiles every artifact and propagates the result
+through the process exit code. There is no up-to-date skip here: the build layer
+does not attempt to decide whether anything changed, because a check it cannot
+make soundly is worse than none — it reports a stale binary as a successful
+build. Deciding what is worth recompiling is the compiler's job, and the
+artifact cache already skips the unchanged backend steps.
 
 Cross-compiling names the output for the target OS, not the host: `--os=windows`
 appends `.exe`, `--os=linux` does not. A cross target must name both its

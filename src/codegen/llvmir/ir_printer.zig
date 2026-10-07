@@ -140,6 +140,7 @@ pub const IRPrinter = struct {
     pub const emitArrayLen = CollectionsEmitMethods.emitArrayLen;
     pub const emitFlatArrayPeek = CollectionsEmitMethods.emitFlatArrayPeek;
     pub const emitSyntheticArrayHeader = CollectionsEmitMethods.emitSyntheticArrayHeader;
+    pub const isFlatStructArray = CollectionsEmitMethods.isFlatStructArray;
     pub const emitMap = CollectionsEmitMethods.emitMap;
     pub const emitMapGet = CollectionsEmitMethods.emitMapGet;
     pub const emitMapSet = CollectionsEmitMethods.emitMapSet;
@@ -178,6 +179,15 @@ pub const IRPrinter = struct {
     pub const emitStructNew = StructsEnumsEmitMethods.emitStructNew;
     pub const emitGetField = StructsEnumsEmitMethods.emitGetField;
     pub const emitSetField = StructsEnumsEmitMethods.emitSetField;
+    pub const canBoxFixedArrayField = StructsEnumsEmitMethods.canBoxFixedArrayField;
+    pub const boxFixedArrayField = StructsEnumsEmitMethods.boxFixedArrayField;
+    pub const boxBoxedMemberField = StructsEnumsEmitMethods.boxBoxedMemberField;
+    pub const structFieldDescTag = StructsEnumsEmitMethods.structFieldDescTag;
+    pub const boxFixedStructArrayField = StructsEnumsEmitMethods.boxFixedStructArrayField;
+    pub const fixedStructElementInfo = StructsEnumsEmitMethods.fixedStructElementInfo;
+    pub const emitFixedStructArrayHeader = StructsEnumsEmitMethods.emitFixedStructArrayHeader;
+    pub const buildNonOwningHeader = StructsEnumsEmitMethods.buildNonOwningHeader;
+    pub const wrapFixedStructArrayHeader = StructsEnumsEmitMethods.wrapFixedStructArrayHeader;
     pub const emitPeekInstruction = StructsEnumsEmitMethods.emitPeekInstruction;
     pub const hydrateStructMetadata = StructsEnumsEmitMethods.hydrateStructMetadata;
     pub const resolveStructFieldNames = StructsEnumsEmitMethods.resolveStructFieldNames;
@@ -186,6 +196,7 @@ pub const IRPrinter = struct {
     pub const storeStructStringField = StructsEnumsEmitMethods.storeStructStringField;
     pub const loadStructStringField = StructsEnumsEmitMethods.loadStructStringField;
     pub const getOrCreateStructDescGlobal = StructsEnumsEmitMethods.getOrCreateStructDescGlobal;
+    pub const getOrCreateStructDescGlobalByName = StructsEnumsEmitMethods.getOrCreateStructDescGlobalByName;
     pub const getOrCreateEnumDescGlobal = StructsEnumsEmitMethods.getOrCreateEnumDescGlobal;
     pub const emitEnumInitCalls = StructsEnumsEmitMethods.emitEnumInitCalls;
     pub const hirTypeToStackType = StructsEnumsEmitMethods.hirTypeToStackType;
@@ -291,6 +302,11 @@ pub const IRPrinter = struct {
     /// Computed once before emission; `emitStructNew` skips the registry write
     /// for these and clones use the typed scalar path.
     skip_descriptor_structs: std.StringHashMap(void),
+    /// The peek accumulator active for the current emit pass. A container
+    /// element descriptor has to be materialized from `emitSetField`, which
+    /// carries no `PeekEmitState` parameter, so the pass installs its state
+    /// here and restores the previous value on exit.
+    active_peek_state: ?*PeekEmitState = null,
 
     pub const EnumVariantMeta = struct {
         index: u32,

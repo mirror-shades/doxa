@@ -80,7 +80,8 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
         self.reporter.reportCompileError(location, ErrorCode.EXPECTED_MODULE_NAME, "expected module name after 'module' keyword", .{});
         return error.ExpectedModuleName;
     }
-    const namespace = self.peek().lexeme;
+    const namespace_token = self.peek();
+    const namespace = namespace_token.lexeme;
     self.advance();
 
     if (self.peek().type != .FROM) {
@@ -112,7 +113,7 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
         self.advance();
     }
 
-    try self.registerModuleAlias(self.current_file, namespace, module_path, is_public);
+    try self.registerModuleAlias(self.current_file, namespace, module_path, is_public, ast.SourceSpan.fromToken(namespace_token));
 
     return ast.Stmt{
         .base = .{
@@ -137,6 +138,8 @@ pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
 
     var symbols = std.array_list.Managed([]const u8).init(self.allocator);
     defer symbols.deinit();
+    var symbol_spans = std.array_list.Managed(ast.SourceSpan).init(self.allocator);
+    defer symbol_spans.deinit();
 
     if (self.peek().type != .IDENTIFIER) {
         const current_token = self.peek();
@@ -154,6 +157,7 @@ pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
         return error.ExpectedImportSymbol;
     }
     try symbols.append(self.peek().lexeme);
+    try symbol_spans.append(ast.SourceSpan.fromToken(self.peek()));
     self.advance();
 
     while (self.peek().type == .COMMA) {
@@ -175,6 +179,7 @@ pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
             return error.ExpectedImportSymbol;
         }
         try symbols.append(self.peek().lexeme);
+        try symbol_spans.append(ast.SourceSpan.fromToken(self.peek()));
         self.advance();
     }
 
@@ -209,8 +214,8 @@ pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
 
     const owned_symbols = try self.allocator.dupe([]const u8, symbols.items);
 
-    for (owned_symbols) |symbol| {
-        try self.recordSpecificImport(self.current_file, module_path, symbol, is_public);
+    for (owned_symbols, 0..) |symbol, i| {
+        try self.recordSpecificImport(self.current_file, module_path, symbol, is_public, symbol_spans.items[i]);
     }
 
     return ast.Stmt{

@@ -8,6 +8,9 @@ const precedence = @import("./precedence.zig");
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const import_parser = @import("import_parser.zig");
 const module_resolver = @import("module_resolver.zig");
+const module_graph = @import("../module/graph.zig");
+const ModuleGraph = module_graph.ModuleGraph;
+const ModuleRecord = module_graph.ModuleRecord;
 
 const ast = @import("../ast/ast.zig");
 const ModuleInfo = ast.ModuleInfo;
@@ -26,12 +29,6 @@ const TokenStyle = enum {
     Undefined,
 };
 
-pub const ModuleResolutionStatus = enum {
-    NOT_STARTED,
-    IN_PROGRESS,
-    COMPLETED,
-};
-
 pub const ImportStackEntry = struct {
     module_path: []const u8,
     imported_from: ?[]const u8,
@@ -48,6 +45,8 @@ pub const ImportStackEntry = struct {
 pub const ModuleImportEntry = struct {
     imported_path: []const u8,
     is_public: bool,
+    /// Source span of the alias token, for duplicate-binding diagnostics.
+    span: ?ast.SourceSpan = null,
 };
 
 pub const SpecificImportEntry = struct {
@@ -55,6 +54,8 @@ pub const SpecificImportEntry = struct {
     module_path: []const u8,
     symbol_name: []const u8,
     is_public: bool,
+    /// Source span of the imported name token, for duplicate-binding diagnostics.
+    span: ?ast.SourceSpan = null,
 };
 
 const PendingModuleDependency = struct {
@@ -62,6 +63,56 @@ const PendingModuleDependency = struct {
     alias: []const u8,
     parent_file: []const u8,
 };
+
+fn parserErrorHint(err: anyerror) []const u8 {
+    return switch (err) {
+        error.ExpectedComma => "expected a ',' between arguments or list elements",
+        error.ExpectedCommaOrBrace => "expected ',' or '}'",
+        error.ExpectedCommaOrParen => "expected ',' or ')'",
+        error.ExpectedCommaOrBracket => "expected ',' or ']'",
+        error.ExpectedCommaOrClosingBracket => "expected ',' or a closing bracket",
+        error.ExpectedCommaOrClosingParenthesis => "expected ',' or a closing parenthesis",
+        error.ExpectedRightParen, error.ExpectedClosingParen, error.ExpectedClosingParenthesis => "expected a closing parenthesis ')'",
+        error.ExpectedLeftParen => "expected an opening parenthesis '('",
+        error.ExpectedRightBrace => "expected a closing brace '}'",
+        error.ExpectedLeftBrace => "expected an opening brace '{'",
+        error.ExpectedRightBracket => "expected a closing bracket ']'",
+        error.ExpectedLeftBracket => "expected an opening bracket '['",
+        error.ExpectedExpression => "expected an expression",
+        error.ExpectedIdentifier => "expected an identifier",
+        error.ExpectedType => "expected a type",
+        error.ExpectedThen => "expected 'then' after the condition",
+        error.ExpectedElse => "expected 'else'",
+        error.ExpectedColon => "expected ':'",
+        error.ExpectedAssignmentOperator => "expected an assignment operator",
+        error.ExpectedReturnsKeyword => "expected 'returns'",
+        error.ExpectedLeftBraceOrReturnsKeyword => "expected '{' or 'returns'",
+        error.ExpectedFunctionName => "expected a function name",
+        error.ExpectedFunctionParams => "expected function parameters",
+        error.ExpectedFunctionBody => "expected a function body",
+        error.ExpectedFunctionReturnType => "expected a function return type",
+        error.ExpectedString, error.ExpectedStringLiteral => "expected a string literal",
+        error.ExpectedMapKey => "expected a map key",
+        error.ExpectedInKeyword => "expected 'in'",
+        error.ExpectedWhereKeyword => "expected 'where'",
+        error.ExpectedMapKeyword => "expected 'map'",
+        error.ExpectedPattern => "expected a pattern",
+        error.ExpectedEnumVariant => "expected an enum variant",
+        error.ExpectedModuleName => "expected a module name",
+        error.ExpectedImportName => "expected an import name",
+        error.UnexpectedToken => "unexpected token",
+        error.ParserDidNotAdvance => "parser could not make progress",
+        error.InternalParserError => "internal parser error",
+        else => "",
+    };
+}
+
+fn isPrintableAscii(text: []const u8) bool {
+    for (text) |byte| {
+        if (byte < 0x20 or byte > 0x7e) return false;
+    }
+    return true;
+}
 
 pub const Parser = struct {
     tokens: []const token.Token,
@@ -76,8 +127,15 @@ pub const Parser = struct {
 
     current_file: []const u8,
     current_file_uri: []const u8,
+    /// The one authoritative module store, shared by every parser in a
+    /// compilation.
+    graph: *ModuleGraph,
+    /// The graph record for the file this parser is parsing. It owns the
+    /// synthetic records generated for inline `zig Name { … }` blocks, whose
+    /// stable keys derive from it. Null only for a parser that is not parsing a
+    /// file (a temporary expression parser).
+    owner_record: ?*ModuleRecord = null,
     current_module: ?ModuleInfo = null,
-    module_cache: std.StringHashMap(ModuleInfo),
     module_namespaces: std.StringHashMap(ModuleInfo),
 
     module_imports: std.StringHashMap(std.StringHashMap(ModuleImportEntry)),
@@ -85,7 +143,6 @@ pub const Parser = struct {
 
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
 
-    module_resolution_status: std.StringHashMap(ModuleResolutionStatus),
     import_stack: std.array_list.Managed(ImportStackEntry),
 
     // Match path pattern tracking
@@ -93,7 +150,7 @@ pub const Parser = struct {
     current_path_pattern_is_wildcard: bool = false,
     current_path_pattern_field_names: ?[]const token.Token = null,
 
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter) Parser {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter, graph_store: *ModuleGraph) Parser {
         const parser = Parser{
             .io = io,
             .allocator = allocator,
@@ -102,12 +159,11 @@ pub const Parser = struct {
             .reporter = reporter,
             .current_file = current_file,
             .current_file_uri = current_file_uri,
-            .module_cache = std.StringHashMap(ModuleInfo).init(allocator),
+            .graph = graph_store,
             .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
             .module_imports = std.StringHashMap(std.StringHashMap(ModuleImportEntry)).init(allocator),
             .specific_imports = std.array_list.Managed(SpecificImportEntry).init(allocator),
             .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
-            .module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(allocator),
             .import_stack = std.array_list.Managed(ImportStackEntry).init(allocator),
         };
 
@@ -115,14 +171,12 @@ pub const Parser = struct {
     }
 
     pub fn deinit(self: *Parser) void {
-        self.module_cache.deinit();
         self.module_namespaces.deinit();
         self.module_imports.deinit();
         self.specific_imports.deinit();
         if (self.imported_symbols) |*imported_symbols| {
             imported_symbols.deinit();
         }
-        self.module_resolution_status.deinit();
         self.import_stack.deinit();
     }
 
@@ -131,6 +185,74 @@ pub const Parser = struct {
             self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
         }
         return &self.imported_symbols.?;
+    }
+
+    /// Record a top-level declaration in this file's own namespace. The entry
+    /// file and every imported module has an owner record; a temporary
+    /// expression parser does not, and this is a no-op for it.
+    fn bindLocalDeclaration(self: *Parser, name: token.Token, kind: module_graph.SymbolKind, is_public: bool) ErrorList!void {
+        const record = self.owner_record orelse return;
+        try self.checkTopLevelNameAvailable(name.lexeme, ast.SourceSpan.fromToken(name));
+        try self.graph.bindSymbol(
+            record,
+            name.lexeme,
+            kind,
+            if (is_public) .Public else .Private,
+            ast.SourceSpan.fromToken(name),
+        );
+    }
+
+    /// A name already bound in this file's namespace by a declaration, a
+    /// `module` alias, or an `import`. `span` is the winning declaration's span
+    /// when known (an inline `zig` block binds without one).
+    const BindingConflict = struct { span: ?ast.SourceSpan };
+
+    fn findTopLevelConflict(self: *Parser, name: []const u8) ?BindingConflict {
+        if (self.owner_record) |record| {
+            if (record.bindings.get(name)) |bound| return .{ .span = bound.span };
+        }
+        if (self.module_imports.get(self.current_file)) |aliases| {
+            if (aliases.get(name)) |entry| return .{ .span = entry.span };
+        }
+        for (self.specific_imports.items) |entry| {
+            if (std.mem.eql(u8, entry.importer_path, self.current_file) and
+                std.mem.eql(u8, entry.symbol_name, name))
+            {
+                return .{ .span = entry.span };
+            }
+        }
+        return null;
+    }
+
+    /// Reject a declaration or import whose name is already bound in this file.
+    /// Bindings are owner-scoped, so the check is per file: two files may each
+    /// bind the same name to different targets. Reports the previous site as
+    /// related information so the diagnostic points at both declarations.
+    fn checkTopLevelNameAvailable(self: *Parser, name: []const u8, span: ast.SourceSpan) ErrorList!void {
+        const conflict = self.findTopLevelConflict(name) orelse return;
+        if (conflict.span) |previous_span| {
+            const related = [_]Reporting.RelatedInformation{.{
+                .message = "previous declaration here",
+                .location = previous_span.location,
+            }};
+            self.reporter.reportWithRelated(
+                .CompileTime,
+                .Error,
+                span.location,
+                ErrorCode.DUPLICATE_VARIABLE,
+                &related,
+                "Duplicate binding name '{s}'",
+                .{name},
+            );
+        } else {
+            self.reporter.reportCompileError(
+                span.location,
+                ErrorCode.DUPLICATE_VARIABLE,
+                "Duplicate binding name '{s}'",
+                .{name},
+            );
+        }
+        return error.DuplicateVariableName;
     }
 
     pub fn peek(self: *Parser) token.Token {
@@ -183,6 +305,70 @@ pub const Parser = struct {
 
     pub fn liftBlock(self: *Parser) ErrorList!?*ast.Expr {
         return self.parseBlockBody(false);
+    }
+
+    /// The three forms a branch body may take, reported so a caller can apply
+    /// its own terminator rules to the ones that need them.
+    pub const BranchForm = enum {
+        /// A bare `return`/`break`/`continue`.
+        diverging,
+        /// A braced `{ ... }` body.
+        block,
+        /// A trailing expression.
+        expression,
+    };
+
+    pub const BranchBody = struct {
+        /// `match` arms keep a block's implicit last-expression return; `if`
+        /// and `as` branches require an explicit `lift`.
+        allow_implicit_value: bool,
+        /// The `else` of an `if` reads its expression at the lowest precedence
+        /// level; every other slot reads a full expression.
+        lowest_precedence: bool,
+    };
+
+    /// Parses the body of a `then`/`else` branch or a `match` arm.
+    ///
+    /// A bare `return`/`break`/`continue` is wrapped into the single-statement
+    /// block it abbreviates, so the rest of the compiler only ever sees one
+    /// shape and divergence analysis is unchanged by the surface syntax.
+    pub fn branchBody(self: *Parser, opts: BranchBody, form: *BranchForm) ErrorList!?*ast.Expr {
+        switch (self.peek().type) {
+            .CONTINUE, .BREAK, .RETURN => {
+                const stmt: ast.Stmt = switch (self.peek().type) {
+                    .CONTINUE => try statement_parser.parseContinueStmt(self),
+                    .BREAK => try statement_parser.parseBreakStmt(self),
+                    .RETURN => try statement_parser.parseReturnStmt(self),
+                    else => unreachable,
+                };
+
+                const statements = try self.allocator.alloc(ast.Stmt, 1);
+                statements[0] = stmt;
+
+                const block_expr = try self.allocator.create(ast.Expr);
+                block_expr.* = .{
+                    .base = .{
+                        .id = ast.generateNodeId(),
+                        .span = ast.SourceSpan.fromToken(self.previous()),
+                    },
+                    .data = .{ .Block = .{ .statements = statements, .value = null } },
+                };
+
+                form.* = .diverging;
+                return block_expr;
+            },
+            .LEFT_BRACE => {
+                form.* = .block;
+                return self.parseBlockBody(opts.allow_implicit_value);
+            },
+            else => {
+                form.* = .expression;
+                if (opts.lowest_precedence) {
+                    return precedence.parsePrecedence(self, .NONE);
+                }
+                return expression_parser.parseExpression(self);
+            },
+        }
     }
 
     fn parseBlockBody(self: *Parser, allow_implicit_value: bool) ErrorList!?*ast.Expr {
@@ -254,6 +440,53 @@ pub const Parser = struct {
         return block_expr;
     }
 
+    /// Report a parser-phase failure at the token the parser stopped on.
+    /// `execute` returns errors without emitting a diagnostic — the caller owns
+    /// presentation — so every caller must route through here: the root file in
+    /// `main.zig` and each lazily parsed imported module in `module_resolver.zig`.
+    /// Otherwise a parse failure in an imported module surfaces as an unlocated
+    /// internal compiler error instead of a syntax error at the offending line.
+    pub fn reportParseError(self: *Parser, err: anyerror) void {
+        const tok = self.peek();
+
+        const file = if (tok.file.len > 0) tok.file else self.current_file;
+        const file_uri = if (tok.file_uri.len > 0) tok.file_uri else self.current_file_uri;
+
+        const loc = Location{
+            .file = file,
+            .file_uri = file_uri,
+            .range = .{
+                .start_line = tok.line,
+                .start_col = tok.column,
+                .end_line = tok.line,
+                .end_col = tok.column + tok.lexeme.len,
+            },
+        };
+
+        var lexeme_buf: [64]u8 = undefined;
+        var token_desc: []const u8 = @tagName(tok.type);
+        if (tok.lexeme.len > 0 and tok.lexeme.len <= lexeme_buf.len and isPrintableAscii(tok.lexeme)) {
+            token_desc = std.fmt.bufPrint(&lexeme_buf, "{s} '{s}'", .{ @tagName(tok.type), tok.lexeme }) catch @tagName(tok.type);
+        }
+
+        const hint = parserErrorHint(err);
+        if (hint.len > 0) {
+            self.reporter.reportCompileError(
+                loc,
+                ErrorCode.SYNTAX_ERROR,
+                "{s}: {s}; found {s}",
+                .{ @errorName(err), hint, token_desc },
+            );
+        } else {
+            self.reporter.reportCompileError(
+                loc,
+                ErrorCode.SYNTAX_ERROR,
+                "parse error: {s}; found {s}",
+                .{ @errorName(err), token_desc },
+            );
+        }
+    }
+
     pub fn execute(self: *Parser) ErrorList![]ast.Stmt {
         var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
         errdefer {
@@ -323,6 +556,20 @@ pub const Parser = struct {
                         });
                     }
 
+                    // An inline `zig` block is a namespace, and every namespace
+                    // is a synthetic module record owned by the file that
+                    // declares it. Its stable key derives from the owner, so two
+                    // files may each declare `zig Name` without collision. The
+                    // owner binds the block name; the block's own namespace is
+                    // its function surface.
+                    if (self.owner_record) |owner| {
+                        const generated = try self.graph.addGeneratedRecord(self.allocator, owner, module_name);
+                        try self.graph.bindNamespace(owner, module_name, generated.id, .Private, null);
+                        for (sigs) |sig| {
+                            try self.graph.bindSymbol(generated, sig.name, .Function, .Private, null);
+                        }
+                    }
+
                     const imported_symbols = self.getImportedSymbols();
                     for (sigs) |sig| {
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, sig.name });
@@ -345,6 +592,11 @@ pub const Parser = struct {
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
+                    try self.bindLocalDeclaration(
+                        decl.data.VarDecl.name,
+                        if (stmt_token_type == .CONST) .Constant else .Variable,
+                        is_public,
+                    );
                     try statements.append(decl);
                 },
                 .MAP_KEYWORD => {
@@ -352,6 +604,7 @@ pub const Parser = struct {
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
+                    try self.bindLocalDeclaration(map_stmt.data.VarDecl.name, .Variable, is_public);
                     try statements.append(map_stmt);
                 },
                 .FUNCTION => {
@@ -367,6 +620,7 @@ pub const Parser = struct {
                             }
                         }
                     }
+                    try self.bindLocalDeclaration(func.data.FunctionDecl.name, .Function, is_public);
                     try statements.append(func);
                 },
                 .IMPORT => {
@@ -387,6 +641,7 @@ pub const Parser = struct {
                         switch (non_null_expr.data) {
                             .StructDecl => |*struct_decl| {
                                 struct_decl.is_public = is_public;
+                                try self.bindLocalDeclaration(struct_decl.name, .Type, is_public);
                             },
                             else => {},
                         }
@@ -410,6 +665,7 @@ pub const Parser = struct {
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
+                    try self.bindLocalDeclaration(enum_decl.data.EnumDecl.name, .Type, is_public);
                     try statements.append(enum_decl);
                 },
                 .GROUP_KEYWORD => {
@@ -418,6 +674,7 @@ pub const Parser = struct {
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
+                    try self.bindLocalDeclaration(group_decl.data.GroupDecl.name, .Type, is_public);
                     try statements.append(group_decl);
                 },
                 .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH, .DEFER => {
@@ -489,6 +746,23 @@ pub const Parser = struct {
         }
 
         return statements.toOwnedSlice();
+    }
+
+    /// Complete the entry file's record from the externally-driven root parse.
+    /// The entry file is record 0 in the module graph; like any module it owns
+    /// its source and body, so `Parsed` never means `ast == null`. `record` is
+    /// the graph record for `self.current_file`, registered before imports
+    /// resolved. The body is wrapped in a block so the record carries the same
+    /// shape an imported module's record does.
+    pub fn completeEntryRecord(self: *Parser, record: *ModuleRecord, source: []const u8, statements: []ast.Stmt) ErrorList!void {
+        const module_block = try self.allocator.create(ast.Expr);
+        module_block.* = .{
+            .base = .{ .id = ast.generateNodeId(), .span = null },
+            .data = .{ .Block = .{ .statements = statements, .value = null } },
+        };
+
+        const info = try module_resolver.extractModuleInfoWithParser(self, module_block, self.current_file, null, self);
+        self.graph.completeExternalParse(record, source, module_block, info);
     }
 
     pub fn hasReturnWithValue(self: *Parser) !bool {
@@ -1194,8 +1468,9 @@ pub const Parser = struct {
         return length_expr;
     }
 
-    pub fn registerModuleAlias(self: *Parser, importer_path: []const u8, namespace: []const u8, module_path: []const u8, is_public: bool) ErrorList!void {
-        try module_resolver.recordModuleImport(self, importer_path, namespace, module_path, is_public);
+    pub fn registerModuleAlias(self: *Parser, importer_path: []const u8, namespace: []const u8, module_path: []const u8, is_public: bool, span: ast.SourceSpan) ErrorList!void {
+        try self.checkTopLevelNameAvailable(namespace, span);
+        try module_resolver.recordModuleImport(self, importer_path, namespace, module_path, is_public, span);
         if (!self.module_namespaces.contains(namespace)) {
             try self.module_namespaces.put(namespace, .{
                 .name = namespace,
@@ -1208,7 +1483,10 @@ pub const Parser = struct {
         }
     }
 
-    pub fn recordSpecificImport(self: *Parser, importer_path: []const u8, module_path: []const u8, symbol_name: []const u8, is_public: bool) ErrorList!void {
+    pub fn recordSpecificImport(self: *Parser, importer_path: []const u8, module_path: []const u8, symbol_name: []const u8, is_public: bool, span: ?ast.SourceSpan) ErrorList!void {
+        if (span) |decl_span| {
+            try self.checkTopLevelNameAvailable(symbol_name, decl_span);
+        }
         for (self.specific_imports.items) |entry| {
             if (std.mem.eql(u8, entry.importer_path, importer_path) and
                 std.mem.eql(u8, entry.module_path, module_path) and
@@ -1223,7 +1501,65 @@ pub const Parser = struct {
             .module_path = module_path,
             .symbol_name = symbol_name,
             .is_public = is_public,
+            .span = span,
         });
+    }
+
+    /// The record that owns `namespace`'s binding: the record of the file that
+    /// declared the alias, recovered from the namespace entry's importer path.
+    /// A path that is not on disk (a synthetic test file) falls back to this
+    /// parser's own record.
+    fn ownerRecordForModuleFile(self: *Parser, importer_path: []const u8) ?*ModuleRecord {
+        if (importer_path.len == 0) return self.owner_record;
+        const physical = module_graph.physicalPath(self.io, self.allocator, importer_path) catch return self.owner_record;
+        defer self.allocator.free(physical);
+        return self.graph.findPhysical(physical) orelse self.owner_record;
+    }
+
+    /// Visibility of an alias as declared in `importer_path`'s `module`/`import`
+    /// statements. Defaults to private when the declaration is not found.
+    fn aliasVisibility(self: *Parser, importer_path: []const u8, alias: []const u8) module_graph.Visibility {
+        if (self.module_imports.get(importer_path)) |aliases| {
+            if (aliases.get(alias)) |entry| {
+                return if (entry.is_public) .Public else .Private;
+            }
+        }
+        return .Private;
+    }
+
+    /// Record a resolved namespace alias in its owning file's binding map. This
+    /// is the owner-scoped replacement for the flat `module_namespaces` key: the
+    /// alias belongs to the record of the file that declared it, so two files
+    /// may bind the same alias to different targets. `importer_path` must be
+    /// captured before resolution, because `loadAndRegisterModule` replaces the
+    /// namespace entry with the parsed payload (which does not carry it).
+    pub fn bindResolvedNamespace(self: *Parser, namespace: []const u8, info: ast.ModuleInfo, importer_path: []const u8) ErrorList!void {
+        const target_id = info.record_id orelse return;
+        const owner = self.ownerRecordForModuleFile(importer_path) orelse return;
+        try self.graph.bindNamespace(owner, namespace, target_id, self.aliasVisibility(importer_path, namespace), null);
+    }
+
+    /// Record a nested namespace alias (`bundle.a`) in the parent module's own
+    /// namespace under its local alias (`a`), not the qualified key.
+    fn bindNestedNamespace(self: *Parser, parent_info: ast.ModuleInfo, field_name: []const u8, child_info: ast.ModuleInfo) ErrorList!void {
+        const parent_id = parent_info.record_id orelse return;
+        const child_id = child_info.record_id orelse return;
+        const owner = self.graph.record(parent_id);
+        try self.graph.bindNamespace(owner, field_name, child_id, self.aliasVisibility(parent_info.file_path, field_name), null);
+    }
+
+    /// The parsed payload of the module an imported symbol came from, recovered
+    /// from the graph rather than the deleted spelling-keyed `module_cache`. A
+    /// symbol's `original_module` is a module's resolved path (as recorded in
+    /// `ModuleInfo.file_path`); the match is exact, so identity comes from a
+    /// record and never from a key spelling. A symbol registered under a raw
+    /// specifier is covered by the `module_namespaces` scan, not this lookup.
+    pub fn lookupModuleInfo(self: *const Parser, original_module: []const u8) ?ast.ModuleInfo {
+        for (self.graph.records.items) |record| {
+            const info = record.module_info orelse continue;
+            if (std.mem.eql(u8, info.file_path, original_module)) return info;
+        }
+        return null;
     }
 
     pub fn ensureModuleNamespace(self: *Parser, namespace: []const u8) ErrorList!?ast.ModuleInfo {
@@ -1234,15 +1570,17 @@ pub const Parser = struct {
             // importer's path so that relative module_paths resolve correctly.
             const prev_file = self.current_file;
             const prev_uri = self.current_file_uri;
-            if (existing.importer_path.len > 0) {
-                self.current_file = existing.importer_path;
-                self.current_file_uri = try self.reporter.ensureFileUri(self.io,existing.importer_path);
+            const importer_path = existing.importer_path;
+            if (importer_path.len > 0) {
+                self.current_file = importer_path;
+                self.current_file_uri = try self.reporter.ensureFileUri(self.io,importer_path);
             }
             defer {
                 self.current_file = prev_file;
                 self.current_file_uri = prev_uri;
             }
             const module_info = try self.loadAndRegisterModule(existing.file_path, namespace, null);
+            try self.bindResolvedNamespace(namespace, module_info, importer_path);
             return module_info;
         }
         return null;
@@ -1261,7 +1599,10 @@ pub const Parser = struct {
                 return error.CircularImport;
             }
             if (self.module_namespaces.get(qualified_alias)) |existing| {
-                if (existing.ast != null) return existing;
+                if (existing.ast != null) {
+                    try self.bindNestedNamespace(parent_info, field_name, existing);
+                    return existing;
+                }
             }
 
             const previous_current_file = self.current_file;
@@ -1274,6 +1615,7 @@ pub const Parser = struct {
             }
 
             const child_info = try self.loadAndRegisterModule(import.module_path, qualified_alias, import.specific_symbol);
+            try self.bindNestedNamespace(parent_info, field_name, child_info);
             return child_info;
         }
         return null;
@@ -1305,10 +1647,19 @@ pub const Parser = struct {
         switch (stmt.data) {
             .Expression => |maybe_expr| {
                 if (maybe_expr) |expr| {
-                    // A struct declaration carries method bodies, which are
-                    // lowered as functions but are not statements of the block.
+                    // A struct declaration carries field types and method
+                    // bodies, which are not statements of the block but do
+                    // reference imported names.
                     if (expr.data == .StructDecl) {
+                        for (expr.data.StructDecl.fields) |field| {
+                            if (walkTypeExpr(ctx, field.type_expr)) return true;
+                        }
                         for (expr.data.StructDecl.methods) |method| {
+                            for (method.params) |param| {
+                                if (param.type_expr) |te| {
+                                    if (walkTypeExpr(ctx, te)) return true;
+                                }
+                            }
                             if (walkStatements(ctx, method.body)) return true;
                         }
                         return false;
@@ -1318,7 +1669,14 @@ pub const Parser = struct {
             },
             .VarDecl => |decl| if (decl.initializer) |initializer| return walkExpr(ctx, initializer),
             .Block => |inner| return walkStatements(ctx, inner),
-            .FunctionDecl => |func| return walkStatements(ctx, func.body),
+            .FunctionDecl => |func| {
+                for (func.params) |param| {
+                    if (param.type_expr) |te| {
+                        if (walkTypeExpr(ctx, te)) return true;
+                    }
+                }
+                return walkStatements(ctx, func.body);
+            },
             .Return => |ret| if (ret.value) |value| return walkExpr(ctx, value),
             .MapLiteral => |lit| {
                 if (walkMapEntries(ctx, lit.entries)) return true;
@@ -1346,6 +1704,31 @@ pub const Parser = struct {
         for (entries) |entry| {
             if (walkExpr(ctx, entry.key)) return true;
             if (walkExpr(ctx, entry.value)) return true;
+        }
+        return false;
+    }
+
+    /// Type-position counterpart of `walkExpr`: a name can be referenced from a
+    /// field, parameter, or return type (`board :: Board`), which the expression
+    /// walk alone never reaches. `ctx.visitType` is the type-position hook.
+    fn walkTypeExpr(ctx: anytype, type_expr: *ast.TypeExpr) bool {
+        if (ctx.visitType(type_expr)) return true;
+        switch (type_expr.data) {
+            .Array => |array| {
+                if (walkTypeExpr(ctx, array.element_type)) return true;
+                if (array.size) |size| if (walkExpr(ctx, size)) return true;
+            },
+            .Struct => |fields| for (fields) |field| {
+                if (walkTypeExpr(ctx, field.type_expr)) return true;
+            },
+            .Union => |types| for (types) |type_expr_item| {
+                if (walkTypeExpr(ctx, type_expr_item)) return true;
+            },
+            .Map => |map| {
+                if (map.key_type) |key_type| if (walkTypeExpr(ctx, key_type)) return true;
+                if (walkTypeExpr(ctx, map.value_type)) return true;
+            },
+            .Basic, .Custom, .Enum => {},
         }
         return false;
     }
@@ -1467,6 +1850,13 @@ pub const Parser = struct {
                 else => false,
             };
         }
+
+        fn visitType(self: ReferenceContext, type_expr: *ast.TypeExpr) bool {
+            return switch (type_expr.data) {
+                .Custom => |tok| std.mem.eql(u8, tok.lexeme, self.name),
+                else => false,
+            };
+        }
     };
 
     /// Nested-namespace visitor: resolve each field-access chain rooted at a
@@ -1476,6 +1866,10 @@ pub const Parser = struct {
 
         fn visit(self: NamespaceContext, expr: *ast.Expr) bool {
             if (expr.data == .FieldAccess) self.parser.materializeNamespacePath(expr);
+            return false;
+        }
+
+        fn visitType(_: NamespaceContext, _: *ast.TypeExpr) bool {
             return false;
         }
     };
@@ -1576,7 +1970,12 @@ pub const Parser = struct {
                     self.current_file = previous_current_file;
                     self.current_file_uri = previous_current_file_uri;
                 }
-                try self.loadAndRegisterSpecificSymbol(import_entry.module_path, import_entry.symbol_name);
+                try self.loadAndRegisterSpecificSymbol(
+                    import_entry.importer_path,
+                    import_entry.module_path,
+                    import_entry.symbol_name,
+                    import_entry.is_public,
+                );
             }
 
             if (self.imported_symbols) |symbols| {
@@ -1636,8 +2035,13 @@ pub const Parser = struct {
                         .Module => {
                             if (!moduleReferencesImport(module_info, import)) continue;
                             const alias = import.namespace_alias orelse continue;
-                            if (self.module_namespaces.get(alias)) |existing| {
-                                if (existing.ast != null) continue;
+                            // Owner-scoped: the declaring file's own record is
+                            // authoritative for whether its alias is resolved.
+                            // The flat `module_namespaces` entry cannot decide,
+                            // because two files may bind the same alias to
+                            // different targets (Phase 2c).
+                            if (self.ownerRecordForModuleFile(module_info.file_path)) |owner| {
+                                if (owner.bindings.contains(alias)) continue;
                             }
                             try pending.append(.{
                                 .module_path = import.module_path,
@@ -1649,11 +2053,11 @@ pub const Parser = struct {
                             if (import.specific_symbols) |symbols| {
                                 for (symbols) |symbol_name| {
                                     if (!moduleReferencesName(module_info, symbol_name)) continue;
-                                    try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public);
+                                    try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public, null);
                                 }
                             } else if (import.specific_symbol) |symbol_name| {
                                 if (!moduleReferencesName(module_info, symbol_name)) continue;
-                                try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public);
+                                try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public, null);
                             }
                         },
                     }
@@ -1663,8 +2067,8 @@ pub const Parser = struct {
             try self.ensureSpecificImports();
 
             for (pending.items) |dep| {
-                if (self.module_namespaces.get(dep.alias)) |existing| {
-                    if (existing.ast != null) continue;
+                if (self.ownerRecordForModuleFile(dep.parent_file)) |owner| {
+                    if (owner.bindings.contains(dep.alias)) continue;
                 }
 
                 {
@@ -1677,7 +2081,11 @@ pub const Parser = struct {
                         self.current_file_uri = previous_current_file_uri;
                     }
 
-                    _ = try self.loadAndRegisterModule(dep.module_path, dep.alias, null);
+                    const loaded = try self.loadAndRegisterModule(dep.module_path, dep.alias, null);
+                    // Bind the target returned for *this* dependency, not the
+                    // flat map's `dep.alias` entry, which a sibling file with the
+                    // same alias may have overwritten.
+                    try self.bindResolvedNamespace(dep.alias, loaded, dep.parent_file);
                 }
                 made_progress = true;
             }
@@ -1724,7 +2132,18 @@ pub const Parser = struct {
         if (module_ast.data != .Block) return false;
         for (module_ast.data.Block.statements) |stmt| {
             switch (stmt.data) {
-                .FunctionDecl, .VarDecl, .ZigDecl => return true,
+                .FunctionDecl, .VarDecl, .ZigDecl, .EnumDecl, .GroupDecl => return true,
+                .Expression => |maybe_expr| {
+                    const expr = maybe_expr orelse continue;
+                    // A struct's fields and method bodies, and a group's
+                    // members, can name an import even when the module has no
+                    // top-level function or variable. A struct-only module must
+                    // therefore have its imports scanned too.
+                    switch (expr.data) {
+                        .StructDecl, .EnumDecl, .GroupDecl => return true,
+                        else => {},
+                    }
+                },
                 else => {},
             }
         }
@@ -1753,7 +2172,7 @@ pub const Parser = struct {
         const module_info = try module_resolver.resolveModule(self, module_path);
 
         try self.module_namespaces.put(namespace, module_info);
-        try self.registerPublicSymbols(module_info, module_path, namespace, specific_symbol);
+        try self.registerPublicSymbols(module_info, namespace, specific_symbol);
 
         return module_info;
     }
@@ -1783,7 +2202,7 @@ pub const Parser = struct {
         }
     }
 
-    fn registerPublicSymbols(self: *Parser, module_info: ast.ModuleInfo, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
+    fn registerPublicSymbols(self: *Parser, module_info: ast.ModuleInfo, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
         if (self.imported_symbols == null) {
             self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
         }
@@ -1808,18 +2227,29 @@ pub const Parser = struct {
                     .Group => .Group,
                 },
                 .name = symbol_name,
-                .original_module = module_path,
+                // The defining module's resolved path, never the raw import
+                // specifier: `lookupModuleInfo` matches this against
+                // `ModuleInfo.file_path`.
+                .original_module = module_info.file_path,
                 .enum_role = if (symbol.kind == .Enum or symbol.kind == .Group) .Type else null,
                 .enum_type_name = if (symbol.kind == .Enum or symbol.kind == .Group) symbol_name else null,
             });
         }
     }
 
-    pub fn loadAndRegisterSpecificSymbol(self: *Parser, module_path: []const u8, symbol_name: []const u8) ErrorList!void {
-        const module_info = if (self.module_cache.get(module_path)) |cached|
-            cached
-        else
-            try module_resolver.resolveModule(self, module_path);
+    /// Resolve one name named by `import n from S` and bind it, owner-scoped, on
+    /// the file that declared the import. `n` is classified against `S`'s public
+    /// surface: a public submodule re-export binds a namespace, any other public
+    /// declaration binds the defining symbol (kind preserved). The
+    /// `imported_symbols`/`module_namespaces` compatibility views are still
+    /// populated for codegen until they are deleted.
+    pub fn loadAndRegisterSpecificSymbol(self: *Parser, importer_path: []const u8, module_path: []const u8, symbol_name: []const u8, is_public: bool) ErrorList!void {
+        // Resolution dedups on the graph and returns the already-parsed payload
+        // for a known physical identity, so no separate cache lookup is needed.
+        const module_info = try module_resolver.resolveModule(self, module_path);
+
+        const owner = self.ownerRecordForModuleFile(importer_path) orelse self.owner_record;
+        const visibility: module_graph.Visibility = if (is_public) .Public else .Private;
 
         // If the requested symbol is a public module re-exported by this module
         // (`public module io from ...`), bind it directly as a namespace so
@@ -1828,8 +2258,26 @@ pub const Parser = struct {
             if (import_info.import_type != .Module or !import_info.is_public) continue;
             const reexport_alias = import_info.namespace_alias orelse continue;
             if (!std.mem.eql(u8, reexport_alias, symbol_name)) continue;
-            try self.registerReexportedSubmodule(module_info.file_path, import_info.module_path, symbol_name);
+            const child_id = try self.registerReexportedSubmodule(module_info.file_path, import_info.module_path, symbol_name);
+            if (child_id) |target_id| {
+                if (owner) |record| {
+                    try self.graph.bindNamespace(record, symbol_name, target_id, visibility, null);
+                }
+            }
             return;
+        }
+
+        // A public declaration of the target is the entity `n` names. The target
+        // record owns its public surface (populated when its declarations were
+        // collected at parse), so classification reads `public_bindings`, not
+        // the flat alias map.
+        if (module_info.record_id) |target_id| {
+            if (owner) |record| {
+                const target = self.graph.record(target_id);
+                if (target.public_bindings.get(symbol_name)) |bound| {
+                    try self.graph.bindName(record, symbol_name, bound.binding, visibility, null);
+                }
+            }
         }
 
         // A specific import binds only the named symbols; it must not lay claim
@@ -1850,7 +2298,10 @@ pub const Parser = struct {
         }
 
         if (module_info.ast) |module_ast| {
-            try self.registerSpecificSymbol(module_ast, module_path, symbol_name);
+            // Pass the defining module's resolved path, not the raw specifier:
+            // `original_module` must match `ModuleInfo.file_path` so
+            // `lookupModuleInfo` can recover the declaring module.
+            try self.registerSpecificSymbol(module_ast, module_info.file_path, symbol_name);
         }
     }
 
@@ -2002,9 +2453,20 @@ pub const Parser = struct {
 
     /// Load a submodule re-exported by `parent_path` (via `public module <name> from
     /// child_rel_path`) and register it directly under `bind_name` as a namespace.
-    fn registerReexportedSubmodule(self: *Parser, parent_path: []const u8, child_rel_path: []const u8, bind_name: []const u8) ErrorList!void {
+    /// Returns the re-exported submodule's record id so the caller can also bind
+    /// the name on the importing file's own record.
+    fn registerReexportedSubmodule(self: *Parser, parent_path: []const u8, child_rel_path: []const u8, bind_name: []const u8) ErrorList!?module_graph.ModuleId {
         if (self.module_namespaces.get(bind_name)) |existing| {
-            if (existing.ast != null) return;
+            if (existing.ast != null) {
+                // The re-export belongs to the parent file that declared it.
+                if (existing.record_id) |target_id| {
+                    if (self.ownerRecordForModuleFile(parent_path)) |owner| {
+                        try self.graph.bindNamespace(owner, bind_name, target_id, self.aliasVisibility(parent_path, bind_name), null);
+                    }
+                    return target_id;
+                }
+                return null;
+            }
         }
 
         const previous_current_file = self.current_file;
@@ -2016,6 +2478,13 @@ pub const Parser = struct {
             self.current_file_uri = previous_current_file_uri;
         }
 
-        _ = try self.loadAndRegisterModule(child_rel_path, bind_name, null);
+        const child_info = try self.loadAndRegisterModule(child_rel_path, bind_name, null);
+        if (child_info.record_id) |target_id| {
+            if (self.ownerRecordForModuleFile(parent_path)) |owner| {
+                try self.graph.bindNamespace(owner, bind_name, target_id, self.aliasVisibility(parent_path, bind_name), null);
+            }
+            return target_id;
+        }
+        return null;
     }
 };

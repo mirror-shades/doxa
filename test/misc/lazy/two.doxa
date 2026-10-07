@@ -1,0 +1,7 @@
+public function alpha() returns int {
+    return 1
+}
+
+public function beta() returns int {
+    return 2
+}

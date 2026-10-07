@@ -7,6 +7,7 @@ const LexicalAnalyzer = @import("../src/analysis/lexical.zig").LexicalAnalyzer;
 const Parser = @import("../src/parser/parser_types.zig").Parser;
 const Reporting = @import("../src/utils/reporting.zig");
 const inline_zig_compiler = @import("../src/inline_zig/compiler.zig");
+const module_graph = @import("../src/module/graph.zig");
 
 test "inline zig: accepts import consts and function bodies" {
     const src =
@@ -262,7 +263,11 @@ test "inline zig: collectInlineZigDecls only sees reachable modules" {
     defer tokens.deinit();
 
     const uri = try reporter.ensureFileUri(testing.io, "test/inline_zig_collect.doxa");
-    var parser = Parser.init(testing.io, allocator, tokens.items, "test/inline_zig_collect.doxa", uri, &reporter);
+    var graph_store = try module_graph.ModuleGraph.init(testing.io, allocator, &.{
+        .{ .tag = "pkg", .path = "." },
+    });
+    defer graph_store.deinit();
+    var parser = Parser.init(testing.io, allocator, tokens.items, "test/inline_zig_collect.doxa", uri, &reporter, &graph_store);
     defer parser.deinit();
     _ = try parser.execute();
 
@@ -270,8 +275,8 @@ test "inline zig: collectInlineZigDecls only sees reachable modules" {
 
     // Only load std.process, not std.http
     _ = try parser.ensureNestedModuleNamespace("std", "process");
-    try testing.expect(parser.module_cache.contains("process/process.doxa"));
-    try testing.expect(!parser.module_cache.contains("http/http.doxa"));
+    try testing.expect(parser.graph.findStable("pkg//std/process/process.doxa") != null);
+    try testing.expect(parser.graph.findStable("pkg//std/http/http.doxa") == null);
 
     // collectInlineZigDecls iterates module_namespaces — should only see Process's zig block
     const parsed_at_root: [0]ast.Stmt = .{};
@@ -296,7 +301,7 @@ test "inline zig: collectInlineZigDecls only sees reachable modules" {
 
     // Now load std.http and verify it shows up
     _ = try parser.ensureNestedModuleNamespace("std", "http");
-    try testing.expect(parser.module_cache.contains("http/http.doxa"));
+    try testing.expect(parser.graph.findStable("pkg//std/http/http.doxa") != null);
 
     const zig_decls2 = try inline_zig_compiler.collectInlineZigDecls(
         allocator,

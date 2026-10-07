@@ -1,0 +1,7 @@
+public struct Req {
+    public verb :: string,
+
+    public method body() returns string {
+        return this.verb
+    }
+}

@@ -24,6 +24,11 @@ pub const expected_array_storage_results = [_]print_result{
     .{ .value = "3 3" },
 };
 
+pub const expected_fixed_field_array_results = [_]print_result{
+    .{ .value = "8 8 false both" },
+    .{ .value = "3 0 9 0" },
+};
+
 pub const expected_alias_arrays_results = [_]print_result{
     .{ .value = "1 3 5 7" },
     .{ .value = "20.0" },
@@ -189,6 +194,34 @@ pub const expected_fixed_struct_array_results = [_]print_result{
     .{ .value = "7.25 1.5 2.5" },
 };
 
+pub const expected_fixed_struct_field_array_results = [_]print_result{
+    .{ .value = "1 2 3 6" },
+    .{ .value = "30" },
+    .{ .value = "102 104 106" },
+    .{ .value = "[{ y: 102, x: 1 }, { y: 104, x: 30 }, { y: 106, x: 5 }]" },
+    .{ .value = "0 0" },
+};
+
+pub const expected_union_nothing_match_results = [_]print_result{
+    .{ .value = "empty" },
+    .{ .value = "piece 7" },
+    .{ .value = "direct empty" },
+    .{ .value = "direct piece" },
+};
+
+pub const expected_union_struct_field_results = [_]print_result{
+    .{ .value = "1 1" },
+    .{ .value = "7 7" },
+    .{ .value = "5 7" },
+    .{ .value = "[{ y: 2, x: 1 }, { y: 0, x: 0 }]" },
+};
+
+pub const expected_fixed_struct_array_params_results = [_]print_result{
+    .{ .value = "5" },
+    .{ .value = "1 4" },
+    .{ .value = "222 333 111" },
+};
+
 pub const expected_floored_arith_results = [_]print_result{
     .{ .value = "c_pow2_mod=1" },
     .{ .value = "c_pow2_idiv=1543" },
@@ -234,6 +267,22 @@ pub const expected_module_string_interp_results = [_]print_result{
 
 pub const expected_module_method_calls_results = [_]print_result{
     .{ .value = "42 42 7" },
+};
+
+pub const expected_module_qualified_collision_results = [_]print_result{
+    .{ .value = "105 211" },
+};
+
+pub const expected_module_alias_owner_results = [_]print_result{
+    .{ .value = "1 2" },
+};
+
+pub const expected_module_qualified_group_results = [_]print_result{
+    .{ .value = "group ok" },
+};
+
+pub const expected_module_imported_struct_members_results = [_]print_result{
+    .{ .value = "GET GET GET" },
 };
 
 pub const expected_inline_zig_test_results = [_]print_result{
@@ -784,6 +833,12 @@ pub const expected_alias_test_results = [_]print_result{
     .{ .value = "circle: 20" },
     .{ .value = "shift: 30" },
     .{ .value = "result: nothing" },
+};
+
+pub const expected_var_from_const_ref_results = [_]print_result{
+    .{ .value = "5 world 9" },
+    .{ .value = "10 7 goodbye 3" },
+    .{ .value = "42" },
 };
 
 pub const expected_bigfile_results = [_]peek_result{

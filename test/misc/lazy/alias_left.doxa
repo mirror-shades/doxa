@@ -1,0 +1,5 @@
+module dep from "./a.doxa"
+
+public function get() returns int {
+    return dep.value()
+}

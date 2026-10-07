@@ -1,0 +1,13 @@
+module pal from "./moddata/group_mod.doxa"
+
+# Regression: a group reached through a module qualifier (`pal.Palette`) must
+# resolve to its bare declaration name and accept its member enums. The tables
+# are keyed by bare name, so the qualified spelling previously reported
+# "no type 'pal.Palette'".
+function red() returns pal.Palette {
+    return pal.Color.Red
+}
+
+entry function main() {
+    @print("group ok\n")
+}

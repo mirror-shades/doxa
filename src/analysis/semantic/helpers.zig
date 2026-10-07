@@ -126,7 +126,7 @@ fn typeMatchesUnionMember(self: *const SemanticAnalyzer, exp_member: *const ast.
     if (exp_member.base == .Custom and exp_member.custom_type != null) {
         if (self.custom_types.get(exp_member.custom_type.?)) |ct| {
             if (ct.kind == .Group) {
-                return typeIsGroupMember(self, exp_member.custom_type.?, actual_member);
+                return typeWidensToGroup(self, exp_member.custom_type.?, actual_member);
             }
         }
     }
@@ -152,6 +152,27 @@ fn typeIsGroupMember(self: *const SemanticAnalyzer, group_name: []const u8, actu
         if (std.mem.eql(u8, member.qualifier, actual_name)) return true;
     }
     return false;
+}
+
+/// True when `actual` is assignable to the group `group_name` on its own: it is
+/// one of the group's members, it is the group itself, or it is `Nothing`.
+///
+/// The last two cases are why this exists separately from `typeIsGroupMember`.
+/// A function declared `returns SomeGroup` commonly has one path returning a
+/// member and another falling off the end with a bare `return` (typed
+/// `Nothing`), and a wrapper returns the group unchanged. Both are legitimate,
+/// and both appear as *members* when such a body's inferred return type is a
+/// union — so a union is assignable to the group exactly when each of its
+/// members is, and asking only "is this member one of the group's members?"
+/// rejects the group itself and `Nothing`.
+fn typeWidensToGroup(self: *const SemanticAnalyzer, group_name: []const u8, actual: *const ast.TypeInfo) bool {
+    if (actual.base == .Nothing) return true;
+    if (actual.base == .Custom) {
+        if (actual.custom_type) |n| {
+            if (std.mem.eql(u8, self.resolveTypeAlias(n), group_name)) return true;
+        }
+    }
+    return typeIsGroupMember(self, group_name, actual);
 }
 
 /// §4.1: a `match` on a group must cover every flattened member. An arm covers
@@ -594,12 +615,12 @@ pub fn unifyTypesExpr(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, ac
     if (expected.base == .Custom and expected.custom_type != null) {
         if (self.custom_types.get(expected.custom_type.?)) |ct| {
             if (ct.kind == .Group) {
-                if (typeIsGroupMember(self, expected.custom_type.?, actual)) return;
+                if (typeWidensToGroup(self, expected.custom_type.?, actual)) return;
                 if (actual.base == .Union) {
                     if (actual.union_type) |act_u| {
                         var all_allowed = true;
                         for (act_u.types) |act_m| {
-                            if (!typeIsGroupMember(self, expected.custom_type.?, act_m)) {
+                            if (!typeWidensToGroup(self, expected.custom_type.?, act_m)) {
                                 all_allowed = false;
                                 break;
                             }
@@ -928,6 +949,23 @@ pub fn isModuleNamespace(self: *SemanticAnalyzer, name: []const u8) bool {
     return false;
 }
 
+/// The module a qualified access (`mod.field`) names. Imported symbols are
+/// keyed by the qualifier written at the use site, so the namespace map must be
+/// probed with exactly that qualifier. Falling back to the declared module name
+/// or file path keeps a re-exported alias resolvable when the qualifier differs
+/// from the key it was registered under.
+fn findModuleByQualifier(parser: *@import("../../parser/parser_types.zig").Parser, qualifier: []const u8) ?ast.ModuleInfo {
+    if (parser.module_namespaces.get(qualifier)) |module_info| return module_info;
+
+    var it = parser.module_namespaces.iterator();
+    while (it.next()) |entry| {
+        const module_info = entry.value_ptr.*;
+        if (std.mem.eql(u8, module_info.name, qualifier)) return module_info;
+        if (std.mem.eql(u8, module_info.file_path, qualifier)) return module_info;
+    }
+    return null;
+}
+
 /// unchanged domain logic (minor nits left as-is)
 pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8, field_name: []const u8, span: ast.SourceSpan) !*ast.TypeInfo {
     var type_info = try ast.TypeInfo.createDefault(self.allocator);
@@ -1021,10 +1059,11 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                         // Try to find the actual function definition to get its return type
                         var found_func_type: ?*ast.FunctionType = null;
 
-                        // Look through module namespaces to find the actual function
-                        var it = parser.module_namespaces.iterator();
-                        while (it.next()) |entry| {
-                            const module_info = entry.value_ptr.*;
+                        // Search only the named module's AST. Matching by bare
+                        // field name across every loaded module silently binds
+                        // a qualified call (`a.fn`) to a same-named function in
+                        // an unrelated module.
+                        if (findModuleByQualifier(parser_mut, module_name)) |module_info| {
                             if (module_info.ast) |module_ast| {
                                 if (module_ast.data == .Block) {
                                     const stmts = module_ast.data.Block.statements;
@@ -1063,10 +1102,10 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                                             },
                                             else => {},
                                         }
+                                        if (found_func_type != null) break;
                                     }
                                 }
                             }
-                            if (found_func_type != null) break;
                         }
 
                         // Fallback if not found: zero params and nothing return (safer than Int)
@@ -1088,10 +1127,10 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                         // Look up the actual variable type from the module's AST
                         var found_var_type: ?ast.TypeInfo = null;
 
-                        // Look through module namespaces to find the actual variable
-                        var it = parser.module_namespaces.iterator();
-                        while (it.next()) |entry| {
-                            const module_info = entry.value_ptr.*;
+                        // Search only the named module's AST (see the function
+                        // case above): a bare-name match across every loaded
+                        // module can bind `a.thing` to another module's value.
+                        if (findModuleByQualifier(parser_mut, module_name)) |module_info| {
                             if (module_info.ast) |module_ast| {
                                 if (module_ast.data == .Block) {
                                     const stmts = module_ast.data.Block.statements;
@@ -1107,10 +1146,10 @@ pub fn handleModuleFieldAccess(self: *SemanticAnalyzer, module_name: []const u8,
                                             },
                                             else => {},
                                         }
+                                        if (found_var_type != null) break;
                                     }
                                 }
                             }
-                            if (found_var_type != null) break;
                         }
 
                         if (found_var_type) |var_type| {

@@ -1,0 +1,21 @@
+module std from @std()
+
+const linux_skip is std.host.pathFor("linux", ["a", "", "b"])
+const windows_skip is std.host.pathFor("windows", ["a", "", "b"])
+const linux_absolute is std.host.pathFor("linux", ["a", "/b", "c"])
+const linux_root is std.host.pathFor("linux", ["/", "etc", "hosts"])
+const windows_drive is std.host.pathFor("windows", ["C:\\", "Users", "x"])
+const linux_trailing is std.host.pathFor("linux", ["a/", "b/", "c"])
+const macos_slash is std.host.pathFor("macos", ["a", "b"])
+
+@print("{linux_skip}\n")
+@print("{windows_skip}\n")
+@print("{linux_absolute}\n")
+@print("{linux_root}\n")
+@print("{windows_drive}\n")
+@print("{linux_trailing}\n")
+@print("{macos_slash}\n")
+
+if std.host.path(["a", "b"]) == std.host.pathFor(std.host.os(), ["a", "b"]) then {
+    @print("host ok\n")
+}

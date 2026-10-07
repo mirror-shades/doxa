@@ -483,7 +483,31 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             const left_type = try inferTypeFromExpr(self, bin.left.?);
             const right_type = try inferTypeFromExpr(self, bin.right.?);
 
-            const op = bin.operator.lexeme;
+            // The parser rewrites a compound assignment on an index or field target into
+// an `IndexAssign`/`FieldAssignment` whose value is a `Binary` holding the
+// *compound* lexeme (`"/="`) beside the base operator's token type (`SLASH`) —
+// `precedence.zig` rewrites `.type` but copies `.lexeme` from the compound
+// token. Dispatching on the raw lexeme therefore matched none of the branches
+// below and fell through to the catch-all at the end of this switch, which
+// reports the left operand's type. So `a[i] /= 3` inferred as `Int`, and
+// storing a `float` into an `int[]` element slipped past the narrowing check
+// and truncated silently. Key off the token type, which is authoritative.
+const op: []const u8 = switch (bin.operator.type) {
+    .PLUS => "+",
+    .MINUS => "-",
+    .ASTERISK => "*",
+    .SLASH => "/",
+    .DOUBLE_SLASH => "//",
+    .MODULO => "%",
+    .POWER => "**",
+    .LESS => "<",
+    .GREATER => ">",
+    .LESS_EQUAL => "<=",
+    .GREATER_EQUAL => ">=",
+    .EQUALITY => "==",
+    .BANG_EQUAL => "!=",
+    else => bin.operator.lexeme,
+};
 
             // Arithmetic on a union is never well typed: the operand has to be
             // narrowed first. Checked ahead of the per-operator rules, which would
@@ -741,8 +765,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (self.struct_methods.get(method_struct_name)) |method_table| {
                                 if (method_table.get(method_name)) |method_info| {
                                     if (!method_info.is_static) {
-                                        try inferArgs(self, function_call.arguments);
-                                        type_info.* = method_info.return_type.*;
+                                        if (!try validateFunctionCallArguments(self, expr, function_call.arguments, method_info.signature)) {
+                                            type_info.base = .Nothing;
+                                            return type_info;
+                                        }
+                                        type_info.* = method_info.signature.return_type.*;
                                         return type_info;
                                     }
                                 }
@@ -780,8 +807,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             if (self.struct_methods.get(object_name)) |method_table| {
                                 if (method_table.get(method_name)) |method_info| {
                                     if (method_info.is_static) {
-                                        try inferArgs(self, function_call.arguments);
-                                        type_info.* = method_info.return_type.*;
+                                        if (!try validateFunctionCallArguments(self, expr, function_call.arguments, method_info.signature)) {
+                                            type_info.base = .Nothing;
+                                            return type_info;
+                                        }
+                                        type_info.* = method_info.signature.return_type.*;
                                         return type_info;
                                     }
                                 }
@@ -874,8 +904,11 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             try self.ensureImportedStructRegistered(method_struct_name);
                             if (self.struct_methods.get(method_struct_name)) |tbl| {
                                 if (tbl.get(method_name)) |mi| {
-                                    try inferArgs(self, function_call.arguments);
-                                    type_info.* = mi.return_type.*;
+                                    if (!try validateFunctionCallArguments(self, expr, function_call.arguments, mi.signature)) {
+                                        type_info.base = .Nothing;
+                                        return type_info;
+                                    }
+                                    type_info.* = mi.signature.return_type.*;
                                     return type_info;
                                 }
                             }
@@ -885,6 +918,10 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                         if (object_type.struct_fields) |fields| {
                             for (fields) |field| {
                                 if (std.mem.eql(u8, field.name, method_name) and field.type_info.base == .Function) {
+                                    if (!try validateFunctionCallArguments(self, expr, function_call.arguments, field.type_info.function_type.?)) {
+                                        type_info.base = .Nothing;
+                                        return type_info;
+                                    }
                                     type_info.* = field.type_info.*;
                                     return type_info;
                                 }
@@ -1332,7 +1369,12 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                                         }
                                         if (!is_public_field) {
                                             const accessed_via_this = (field.object.data == .This);
-                                            if (!accessed_via_this) {
+                                            // `private` is module-private, so the
+                                            // declaring module's own functions may
+                                            // read the field directly; only code
+                                            // outside it needs `this` or a method.
+                                            const same_module = self.canAccessPrivateField(owner_name);
+                                            if (!accessed_via_this and !same_module) {
                                                 self.reporter.reportCompileError(
                                                     getLocationFromBase(expr.base),
                                                     ErrorCode.PRIVATE_FIELD_ACCESS,
@@ -1614,7 +1656,24 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             type_info.base = .Nothing;
                             return type_info;
                         }
-                        try helpers.unifyTypesExpr(self, storage.type_info, value_type, value, .{ .location = getLocationFromBase(expr.base) });
+                        // `/` is Doxa's *float* division, so `/=` produces a
+                        // `float` whatever the operands are. Unifying the
+                        // operand's type misses that: `n /= 2` on an `int`
+                        // compared `Int` against `Int` and passed, while the
+                        // lowering emitted an `fdiv` and stored a `double` into
+                        // an `i64` slot — invalid IR that reached clang
+                        // uncaught. Check the operation's result type instead,
+                        // so `n /= 2` reports the narrowing and `n //= 2` is
+                        // the integer form.
+                        if (compound_assign.operator.type == .SLASH_EQUAL) {
+                            const division_result = try ast.TypeInfo.createDefault(self.allocator);
+                            errdefer self.allocator.destroy(division_result);
+                            division_result.* = .{ .base = .Float };
+                            try helpers.unifyTypesExpr(self, storage.type_info, division_result, value, .{ .location = getLocationFromBase(expr.base) });
+                            self.allocator.destroy(division_result);
+                        } else {
+                            try helpers.unifyTypesExpr(self, storage.type_info, value_type, value, .{ .location = getLocationFromBase(expr.base) });
+                        }
                     }
                 } else {
                     self.reporter.reportCompileError(
@@ -1987,7 +2046,8 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
             type_info.* = .{ .base = .Struct };
         },
         .StructLiteral => |struct_lit| {
-            if (lookupVariable(self, struct_lit.name.lexeme)) |variable| {
+            const bare_name = self.materializeQualifiedTypeName(struct_lit.name.lexeme);
+            if (lookupVariable(self, bare_name)) |variable| {
                 if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                     if (storage.type_info.base == .Custom) {
                         type_info.* = storage.type_info.*;
@@ -2038,13 +2098,13 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
                             }
                         }
                     } else {
-                        type_info.* = .{ .base = .Custom, .custom_type = struct_lit.name.lexeme };
+                        type_info.* = .{ .base = .Custom, .custom_type = bare_name };
                     }
                 } else {
-                    type_info.* = .{ .base = .Custom, .custom_type = struct_lit.name.lexeme };
+                    type_info.* = .{ .base = .Custom, .custom_type = bare_name };
                 }
             } else {
-                type_info.* = .{ .base = .Custom, .custom_type = struct_lit.name.lexeme };
+                type_info.* = .{ .base = .Custom, .custom_type = bare_name };
             }
         },
         .EnumDecl => {
@@ -2342,16 +2402,6 @@ pub fn inferTypeFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr) !*ast.TypeInf
 
     try self.type_cache.put(expr.base.id, type_info);
     return type_info;
-}
-
-/// Resolve each call argument's type. The side effect that matters here is
-/// marking referenced variables as used: struct method calls previously skipped
-/// argument inference, so their arguments were reported as unused.
-fn inferArgs(self: *SemanticAnalyzer, arguments: []const ast.CallArgument) SemanticError!void {
-    for (arguments) |arg_expr_it| {
-        if (arg_expr_it.expr.data == .DefaultArgPlaceholder) continue;
-        _ = try inferTypeFromExpr(self, arg_expr_it.expr);
-    }
 }
 
 fn validateFunctionCallArguments(self: *SemanticAnalyzer, expr: *ast.Expr, arguments: []const ast.CallArgument, func_type: *const ast.FunctionType) SemanticError!bool {

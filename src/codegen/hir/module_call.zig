@@ -29,28 +29,15 @@ pub const CallTarget = union(enum) {
     internal_method: ast.FieldAccess,
 };
 
-/// Walk `std` → `std.process` for nested module namespaces.
-pub fn moduleNamespaceFromExpr(generator: *HIRGenerator, expr: *ast.Expr) !?[]const u8 {
-    return switch (expr.data) {
-        .Variable => |var_tok| blk: {
-            if (generator.isModuleNamespace(var_tok.lexeme)) {
-                break :blk try generator.allocator.dupe(u8, var_tok.lexeme);
-            }
-            break :blk null;
-        },
-        .FieldAccess => |fa| blk: {
-            const parent = try moduleNamespaceFromExpr(generator, fa.object) orelse break :blk null;
-            defer generator.allocator.free(parent);
-            break :blk try std.fmt.allocPrint(generator.allocator, "{s}.{s}", .{ parent, fa.field.lexeme });
-        },
-        else => null,
-    };
+/// Walk `std` → `std.process` for nested module namespaces through the current
+/// record's owner-scoped bindings.
+pub fn moduleNamespaceFromExpr(generator: *HIRGenerator, expr: *ast.Expr) ?HIRGenerator.NamespaceRef {
+    return generator.namespaceRefForExpr(expr);
 }
 
 fn resolveModuleFieldCall(generator: *HIRGenerator, field_access: ast.FieldAccess) !?ResolvedCall {
-    if (try moduleNamespaceFromExpr(generator, field_access.object)) |ns| {
-        defer generator.allocator.free(ns);
-        const qualified = try std.fmt.allocPrint(generator.allocator, "{s}.{s}", .{ ns, field_access.field.lexeme });
+    if (moduleNamespaceFromExpr(generator, field_access.object)) |ns| {
+        const qualified = try std.fmt.allocPrint(generator.allocator, "{s}.{s}", .{ ns.prefix, field_access.field.lexeme });
         return .{
             .qualified_name = qualified,
             .call_kind = .ModuleFunction,
@@ -78,6 +65,34 @@ pub fn resolveBareCallee(generator: *HIRGenerator, bare_name: []const u8) Resolv
             .function_index = generator.getFunctionIndex(qualified_name),
             .name_allocated = false,
         };
+    }
+
+    // A symbol imported by name (`import alpha from S`): the owner-scoped
+    // binding names the *defining* module, so the callee is that module's
+    // prefixed function (never a bare alias-qualified name).
+    {
+        const current = generator.graph.record(generator.current_module);
+        if (current.bindings.get(bare_name)) |bound| {
+            switch (bound.binding) {
+                .symbol => |sym| if (sym.kind == .Function) {
+                    const prefix = generator.linkPrefixForRecord(sym.module, bare_name);
+                    const qualified = std.fmt.allocPrint(generator.allocator, "{s}.{s}", .{ prefix, bare_name }) catch
+                        return .{
+                            .qualified_name = bare_name,
+                            .call_kind = .ModuleFunction,
+                            .function_index = null,
+                            .name_allocated = false,
+                        };
+                    return .{
+                        .qualified_name = qualified,
+                        .call_kind = .ModuleFunction,
+                        .function_index = generator.getFunctionIndex(qualified),
+                        .name_allocated = true,
+                    };
+                },
+                .namespace => {},
+            }
+        }
     }
 
     if (bare_name.len > 0 and bare_name[0] == '@') {
@@ -198,8 +213,7 @@ fn classifyFieldAccessCall(generator: *HIRGenerator, field_access: ast.FieldAcce
     // the call as a plain module function (`ns.Struct.method`, which does not exist).
     if (field_access.object.data == .FieldAccess) {
         const inner = field_access.object.data.FieldAccess;
-        if (try moduleNamespaceFromExpr(generator, inner.object)) |ns| {
-            defer generator.allocator.free(ns);
+        if (moduleNamespaceFromExpr(generator, inner.object) != null) {
             const type_name = inner.field.lexeme;
             const method_name = field_access.field.lexeme;
 
@@ -292,6 +306,12 @@ fn classifyFieldAccessCall(generator: *HIRGenerator, field_access: ast.FieldAcce
         }
     }
 
+    // Falling through to `.internal_method` is the *normal* path for a method call
+    // on a local variable, not a failure: `generateInternalMethodCall` resolves
+    // the receiver's struct name from the tracked custom type and emits the call.
+    // A name it cannot resolve used to end in a silent no-op; that is now an E1012
+    // at its `!is_known_builtin` return. See
+    // plan/struct-and-array-representation.md, Finding 1.
     return .{ .internal_method = field_access };
 }
 
@@ -322,7 +342,7 @@ pub fn inferFunctionCallReturnType(generator: *HIRGenerator, expr: *ast.Expr) HI
 
             if (generator.struct_methods.get(sm.struct_name)) |method_table| {
                 if (method_table.get(sm.field_access.field.lexeme)) |mi| {
-                    return generator.convertTypeInfo(mi.return_type.*);
+                    return generator.convertTypeInfo(mi.signature.return_type.*);
                 }
             }
             return .Unknown;

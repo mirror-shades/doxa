@@ -234,11 +234,32 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                         const resolved = resolveArrayElementInfo(self, decl.type_info.array_type);
                         if (resolved.element_type != .Unknown and resolved.element_type != .Nothing) {
                             try self.instructions.append(.Pop);
+                            // A fixed-size array has an immutable length, so `is []`
+                            // zero-fills the declared dimensions rather than producing
+                            // a zero-length array (which downstream indexing would then
+                            // read out of bounds of).
+                            const storage_kind = self.storageKindFromTypeInfo(decl.type_info);
+                            const is_fixed = storage_kind == .fixed or storage_kind == .const_literal;
+                            const size: u32 = if (is_fixed)
+                                (if (decl.type_info.array_size) |s| @intCast(s) else 0)
+                            else
+                                0;
+                            const nested = if (is_fixed) collectNestedSizes(decl.type_info.array_type) else NestedSizes{};
+                            if (nested.truncated) {
+                                self.reporter.reportCompileError(
+                                    stmt.base.location(),
+                                    ErrorCode.INVALID_ARRAY_TYPE,
+                                    "nested arrays are limited to 4 levels",
+                                    .{},
+                                );
+                            }
                             try self.instructions.append(.{ .ArrayNew = .{
                                 .element_type = resolved.element_type,
-                                .size = 0,
+                                .size = size,
                                 .nested_element_type = resolved.nested_element_type,
-                                .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
+                                .storage_kind = storage_kind,
+                                .nested_sizes = nested.sizes,
+                                .nested_depth = nested.depth,
                                 .element_struct_field_types = self.elementStructFieldTypes(resolved.element_type),
                                 .element_struct_type_name = self.elementStructTypeName(resolved.element_type),
                             } });
@@ -377,7 +398,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                                         var tracked: ?[]const u8 = null;
                                         if (self.struct_methods.get(type_name)) |method_table| {
                                             if (method_table.get(callee_field.field.lexeme)) |mi| {
-                                                if (mi.return_type.custom_type) |rt_name| {
+                                                if (mi.signature.return_type.custom_type) |rt_name| {
                                                     if (self.isCustomType(rt_name)) |rct| {
                                                         if (rct.kind == .Struct) tracked = rt_name;
                                                     }
@@ -500,6 +521,19 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                             try self.trackArrayElementType(decl.name.lexeme, element_type);
                         },
                         else => {
+                            // TODO(struct default): this arm absorbs every type
+                            // with no materialized default — `.Struct` included —
+                            // and pushes `nothing`. For a struct that value is
+                            // then stored as a struct reference and renders as
+                            // `zext {} 0 to i64`, which `zig cc` rejects, so
+                            // `var p :: Point` fails to compile with a clang
+                            // error instead of a Doxa diagnostic. What a struct
+                            // local should hold (null, a synthesized default, or
+                            // a rejection) is undecided: see
+                            // plan/uninitialized-declarations.md. Whatever it
+                            // becomes, this switch should be exhaustive so the
+                            // next type without a default fails to compile
+                            // rather than emit invalid IR.
                             const default_value = HIRValue.nothing;
                             const const_idx = try self.addConstant(default_value);
                             try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
@@ -522,13 +556,32 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
             if (custom_type_name) |custom_type| {
                 try self.trackVariableCustomType(decl.name.lexeme, custom_type);
+            } else if (decl.initializer) |init_expr| {
+                // An unannotated declaration whose initialiser already has a
+                // concrete custom type (`const copy is original`, `const p is
+                // registry.first()`) has no annotation to name the type from.
+                // Method resolution reads the *name*, so the variable looked
+                // nameless and a call on it evaluated its receiver and dropped
+                // the call with no diagnostic (the `is_known_builtin` early
+                // return in `generateInternalMethodCall`). Recovering it from the
+                // HIR type is not enough either: the constructor path records a
+                // placeholder `HIRType{ .Struct = 0 }` that no table lookup
+                // resolves. Ask the same resolver call sites use, so a
+                // declaration and a call on it always agree.
+                if (self.type_system.resolveFieldAccessType(init_expr, &self.symbol_table)) |res| {
+                    if (res.custom_type_name) |name| {
+                        if (self.isCustomType(name) != null) {
+                            try self.trackVariableCustomType(decl.name.lexeme, name);
+                        }
+                    }
+                }
             }
 
             const var_idx = precreated_cast_idx orelse try self.symbol_table.createVariable(decl.name.lexeme);
             const is_module_ctx = self.current_function == null and self.isModuleContext();
             if (is_module_ctx and self.current_module_context != null) {
-                const module_name = self.current_module_context.?;
-                try self.trackModuleFieldSlot(module_name, decl.name.lexeme, var_idx);
+                const module_id = self.current_module_context.?;
+                try self.trackModuleFieldSlot(module_id, decl.name.lexeme, var_idx);
             }
 
             if (decl.type_info.base == .Union) {

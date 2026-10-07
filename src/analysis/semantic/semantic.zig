@@ -42,6 +42,8 @@ const getLocationFromBase = helpers.getLocationFromBase;
 const eval = @import("eval_utils.zig");
 const union_handling = @import("union_handling.zig");
 const infer_type = @import("./infer_type.zig");
+const ModuleGraph = @import("../../module/graph.zig").ModuleGraph;
+const ModuleRecord = @import("../../module/graph.zig").ModuleRecord;
 
 pub const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
 
@@ -70,6 +72,23 @@ pub const SemanticAnalyzer = struct {
     custom_types: std.StringHashMap(CustomTypeInfo),
     type_aliases: std.StringHashMap([]const u8),
     struct_methods: std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)),
+    /// Scopes created to validate imported modules. They hang off the root scope
+    /// so a module body can still resolve analyzer-level state, which means
+    /// `reportUnused`'s recursion would otherwise reach them and warn about every
+    /// private helper a library legitimately keeps. Unused reporting is a
+    /// statement about the unit being compiled, so these subtrees are skipped.
+    module_scopes: std.AutoHashMap(*Scope, void),
+    /// The graph record whose bodies are currently being analyzed. Field
+    /// visibility is module-scoped: a private field is reachable from `this`,
+    /// from any method of the owning struct, and from any code in the module
+    /// that declares it — and from nowhere else. Resolving that needs to know
+    /// both which module is being checked and which module declares the struct,
+    /// neither of which the old `this`-only test could see.
+    current_module: ?*ModuleRecord = null,
+    /// Declaring module for each registered struct, keyed by struct name. A
+    /// missing entry means the owner is unknown, which is never treated as
+    /// proof of cross-module access — see `canAccessPrivateField`.
+    struct_owner_module: std.StringHashMap(*ModuleRecord),
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
     current_function_returns: std.array_list.Managed(*ast.TypeInfo),
     current_initializing_var: ?[]const u8 = null,
@@ -94,6 +113,8 @@ pub const SemanticAnalyzer = struct {
             .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
             .type_aliases = std.StringHashMap([]const u8).init(allocator),
             .struct_methods = std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)).init(allocator),
+            .module_scopes = std.AutoHashMap(*Scope, void).init(allocator),
+            .struct_owner_module = std.StringHashMap(*ModuleRecord).init(allocator),
             .function_return_types = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
             .current_function_returns = std.array_list.Managed(*ast.TypeInfo).init(allocator),
             .current_struct_type = null,
@@ -120,6 +141,8 @@ pub const SemanticAnalyzer = struct {
         var methods_it = self.struct_methods.valueIterator();
         while (methods_it.next()) |tbl| tbl.*.deinit();
         self.struct_methods.deinit();
+        self.module_scopes.deinit();
+        self.struct_owner_module.deinit();
         self.function_return_types.deinit();
         self.current_function_returns.deinit();
         self.struct_table.deinit();
@@ -128,11 +151,22 @@ pub const SemanticAnalyzer = struct {
         self.union_ids.deinit();
     }
 
+    /// Which of a struct's methods reach the analyzer-level method table. An
+    /// imported struct exposes only its public methods; a struct declared in the
+    /// unit being compiled keeps its private ones too, because scope visibility
+    /// already governs who may call them.
+    pub const MethodVisibility = enum { public_only, all };
+
     pub const StructMethodInfo = struct {
         name: []const u8,
         is_public: bool,
         is_static: bool,
-        return_type: *ast.TypeInfo,
+        /// The method's full signature. Carrying the parameter list (not just the
+        /// return type) is what lets a method call run the same argument
+        /// validation a plain function call gets; without it a wrong arity or a
+        /// wrong argument type on `x.method(...)` reaches codegen unchecked and
+        /// mis-compiles instead of being diagnosed.
+        signature: *ast.FunctionType,
     };
 
     pub fn getCustomTypes(self: *const SemanticAnalyzer) *const std.StringHashMap(CustomTypeInfo) {
@@ -340,6 +374,86 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
+        /// Register every enum, group, and struct declared in any parsed module, plus
+    /// each public struct's methods.
+    ///
+    /// This has to happen before *any* body is validated, not just before HIR
+    /// lowering. A module body that returns an error group (`io.println` returning
+    /// `error.StdError`) is only checkable once `error.doxa`'s `StdError` group is
+    /// in the group table; validating bodies first makes the group unrecognised and
+    /// the check rejects a perfectly legal signature.
+    pub fn registerMissingTypesFromImportedModules(self: *SemanticAnalyzer) ErrorList!void {
+        const parser_const = self.parser orelse return;
+        const parser: *Parser = @constCast(parser_const);
+        const Registration = struct {
+            fn enumDecl(analyzer: *SemanticAnalyzer, parser_inner: *Parser, ed: anytype) !void {
+                const variants = try parser_inner.allocator.alloc([]const u8, ed.variants.len);
+                for (ed.variants, variants) |v, *name| name.* = v.lexeme;
+                try helpers.registerEnumType(analyzer, ed.name.lexeme, variants);
+            }
+            fn groupDecl(analyzer: *SemanticAnalyzer, gd: anytype) !void {
+                try helpers.registerGroupType(analyzer, gd.name.lexeme, gd.members);
+            }
+            fn structDecl(analyzer: *SemanticAnalyzer, sd: anytype) !void {
+                const field_types = try analyzer.allocator.alloc(ast.StructFieldType, sd.fields.len);
+                for (sd.fields, 0..) |field, i| {
+                    field_types[i] = ast.StructFieldType{
+                        .name = field.name.lexeme,
+                        .type_info = try analyzer.typeExprToTypeInfo(field.type_expr),
+                        .is_public = field.is_public,
+                    };
+                }
+                try helpers.registerStructType(analyzer, sd.name.lexeme, field_types);
+            }
+        };
+
+        // Ensure all lazy module namespaces are loaded so their enum/group/struct
+        // declarations are available as parsed records. (Reachability loading is
+        // done by the resolver; this is the safety net for any namespace registered
+        // after it, e.g. while lowering.)
+        var ns_it = parser.module_namespaces.iterator();
+        while (ns_it.next()) |entry| {
+            if (entry.value_ptr.ast == null) {
+                _ = parser.ensureModuleNamespace(entry.key_ptr.*) catch continue;
+            }
+        }
+
+        // Walk every parsed record. The graph is authoritative; there is no
+        // path-keyed cache, so nothing can be missed by a key mismatch.
+        for (parser.graph.records.items) |record| {
+            const module_info = record.module_info orelse continue;
+            const module_ast = module_info.ast orelse continue;
+            if (module_ast.data != .Block) continue;
+            for (module_ast.data.Block.statements) |stmt| {
+                switch (stmt.data) {
+                    .EnumDecl => |ed| try Registration.enumDecl(self, parser, ed),
+                    .GroupDecl => |gd| try Registration.groupDecl(self, gd),
+                    .Expression => |maybe_expr| {
+                        if (maybe_expr) |expr| {
+                            if (expr.data == .EnumDecl) {
+                                try Registration.enumDecl(self, parser, expr.data.EnumDecl);
+                            } else if (expr.data == .GroupDecl) {
+                                try Registration.groupDecl(self, expr.data.GroupDecl);
+} else if (expr.data == .StructDecl) {
+                            try Registration.structDecl(self, expr.data.StructDecl);
+                            // Remember which module declares it, so a private
+                            // field of this struct stays reachable from the
+                            // module's own functions.
+                            try self.struct_owner_module.put(self.allocator.dupe(u8, expr.data.StructDecl.name.lexeme) catch return error.OutOfMemory, record);
+                                // Register the struct's methods too. Semantic inference
+                                // does this on first use, but a struct referenced only
+                                // from an imported module body never goes through it, so
+                                // its method calls would silently degrade to no-ops.
+                                try self.ensureImportedStructRegistered(expr.data.StructDecl.name.lexeme);
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
     pub fn analyze(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {
         const root_scope = try self.memory.scope_manager.createScope(null, self.memory);
         self.memory.scope_manager.root_scope = root_scope;
@@ -358,12 +472,91 @@ pub const SemanticAnalyzer = struct {
 
         try self.validateStatements(statements);
 
+        try self.validateImportedModuleBodies(statements);
+
         try self.reportUnused(root_scope);
         try self.reportUnusedImports();
     }
 
+    /// Walk every imported module's top-level statements through declaration
+    /// collection and body validation.
+    ///
+    /// Without this a module's function and method bodies are never checked at
+    /// all: `analyze` sees only the entry unit's statements, and the imported
+    /// passes (`processImportedSymbols`, `registerImportedStruct`, ...) read
+    /// module ASTs purely to register declarations. A type error inside an
+    /// imported function therefore reached codegen unchecked, which is how a
+    /// wrong-arity method call or a bad field reference could compile clean and
+    /// then fault at runtime.
+    ///
+    /// Each module is validated in its own scope parented to the root, so a
+    /// module body resolves the module's own declarations plus everything the
+    /// analyzer's tables know, and never the entry unit's locals. Unused-value
+    /// reporting deliberately stays root-only: a library's private helpers are
+    /// not the importing program's business.
+    fn validateImportedModuleBodies(self: *SemanticAnalyzer, entry_statements: []ast.Stmt) ErrorList!void {
+        const parser = self.parser orelse return;
+        const graph: *const ModuleGraph = parser.graph;
+        const entry_record = parser.owner_record;
+
+        // Every module's enums, groups, and structs must be in the analyzer's
+        // tables before any body is checked: a signature that returns an error
+        // group is only recognizable once the declaring module's group exists.
+        try self.registerMissingTypesFromImportedModules();
+
+        for (graph.records.items) |record| {
+            if (entry_record) |owner| {
+                if (record.id == owner.id) continue;
+            }
+            // Inline-Zig records carry no Doxa body to check.
+            if (record.module_info) |mi| {
+                if (mi.is_inline_zig) continue;
+            }
+            const module_expr = record.ast orelse continue;
+            if (module_expr.data != .Block) continue;
+
+            const module_statements = module_expr.data.Block.statements;
+
+            // A module whose body is literally the entry unit's statement list is
+            // the same code path; validating it twice would double every
+            // diagnostic.
+            if (module_statements.ptr == entry_statements.ptr) continue;
+
+            const module_scope = try self.memory.scope_manager.createScope(self.memory.scope_manager.root_scope, self.memory);
+            try self.module_scopes.put(module_scope, {});
+            self.current_scope = module_scope;
+            self.current_module = record;
+
+            try self.collectDeclarations(module_statements, module_scope);
+            if (self.fatal_error) return error.SemanticError;
+
+            try self.validateStatements(module_statements);
+            if (self.fatal_error) return error.SemanticError;
+
+            self.current_scope = self.memory.scope_manager.root_scope;
+            self.current_module = entry_record;
+        }
+    }
+
+    /// True when code in `self.current_module` may read a private field of the
+    /// struct named `owner_name`.
+    ///
+    /// Private means module-private, so access is legal from the declaring
+    /// module and illegal from any other. A struct whose declaring module was
+    /// never recorded is treated as accessible: the check only fires on positive
+    /// evidence of a cross-module access, so a missing owner can never
+    /// manufacture a false rejection.
+    pub fn canAccessPrivateField(self: *const SemanticAnalyzer, owner_name: []const u8) bool {
+        const owner = self.struct_owner_module.get(owner_name) orelse return true;
+        const current = self.current_module orelse return true;
+        return owner.id == current.id;
+    }
+
     fn reportUnused(self: *SemanticAnalyzer, scope: *Scope) ErrorList!void {
         if (scope.is_deinited) return;
+        // Imported-module subtrees are validated but not reported on: an unused
+        // private helper in a library is not the importing program's business.
+        if (self.module_scopes.contains(scope)) return;
 
         var it = scope.variables.valueIterator();
         while (it.next()) |variable_ptr| {
@@ -409,60 +602,38 @@ pub const SemanticAnalyzer = struct {
     }
 
     fn processImportedSymbols(self: *SemanticAnalyzer) ErrorList!void {
-        // Create an isolated scope for imported modules to prevent variable name conflicts
-        const import_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
-        defer import_scope.deinit();
-
-        // Temporarily set current scope to import scope
-        const prev_scope = self.current_scope;
-        self.current_scope = import_scope;
-
+        // Imported names resolve through the owning record's `bindings` /
+        // `public_bindings`, not the compilation scope tree. This pass only
+        // registers the analyzer-level type and method tables an imported type
+        // needs; it creates no scope bindings, so there is no isolated import
+        // scope to contain them.
         // Register types and methods from parser-imported symbols so cross-module dot-methods work
         if (self.parser) |p| {
             // Safely access parser's imported symbols map
             if (p.imported_symbols) |symbols| {
+                // Pass 1 registers functions, structs, and enums — every type a
+                // group can name as a member. `registerGroupType` resolves its
+                // members eagerly, but `imported_symbols` is a hash map with
+                // unspecified iteration order, so flattening a group in this
+                // same pass can race its member enums/structs and emit a
+                // spurious "Group member ... is not a declared type" whose
+                // presence depends on how many modules happened to be loaded.
+                // Groups are flattened in pass 2 instead.
                 var it = symbols.iterator();
                 while (it.next()) |entry| {
                     const sym = entry.value_ptr.*;
-                    // Process all imported symbols, including functions
+                    if (sym.kind == .Group) continue;
                     switch (sym.kind) {
-                        .Function => {
-                            const func_type = try self.allocator.create(ast.FunctionType);
-                            const return_type = try ast.TypeInfo.createDefault(self.allocator);
-                            return_type.* = if (sym.return_type_info) |rti| rti else ast.TypeInfo{ .base = .Nothing };
-
-                            // Use stored parameter types if available, otherwise create empty ones
-                            var params: []ast.TypeInfo = undefined;
-                            if (sym.param_types) |param_types| {
-                                params = try self.allocator.alloc(ast.TypeInfo, param_types.len);
-                                for (param_types, 0..) |param_type, i| {
-                                    params[i] = param_type;
-                                }
-                            } else {
-                                params = try self.allocator.alloc(ast.TypeInfo, sym.param_count orelse 0);
-                                for (params) |*param| {
-                                    param.* = .{ .base = .Nothing };
-                                }
-                            }
-
-                            func_type.* = .{
-                                .params = params,
-                                .return_type = return_type,
-                            };
-
-                            const type_info = try ast.TypeInfo.createDefault(self.allocator);
-                            type_info.* = .{ .base = .Function, .function_type = func_type, .is_mutable = false };
-
-                            const placeholder = @import("../../types/types.zig").TokenLiteral{ .nothing = {} };
-                            _ = self.current_scope.?.createValueBinding(sym.name, placeholder, .FUNCTION, type_info, true) catch {}; // duplicate is benign on circular/repeat import
-                        },
+                        // Imported functions carry no analyzer-level table entry;
+                        // their signature is resolved on demand from the defining
+                        // record by `lookupVariable`/`handleModuleFieldAccess`.
+                        .Function => {},
                         .Struct => {
-                            // Fetch module info to locate the struct declaration
+                            // Locate the declaring module through the graph.
                             var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
-                            if (p.module_cache.get(sym.original_module)) |mi| {
+                            if (p.lookupModuleInfo(sym.original_module)) |mi| {
                                 mod_info = mi;
                             } else {
-                                // TODO: handle uncached module lookup
                                 continue;
                             }
                             if (mod_info) |mi| {
@@ -487,43 +658,7 @@ pub const SemanticAnalyzer = struct {
                                                                     };
                                                                 }
                                                                 try helpers.registerStructType(self, sd.name.lexeme, field_types);
-
-                                                                // Create scope binding so static calls like Type.method work
-                                                                const struct_type_info = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
-                                                                struct_type_info.* = .{ .base = .Custom, .custom_type = sd.name.lexeme, .struct_fields = field_types, .is_mutable = false };
-                                                                const placeholder = @import("../../types/types.zig").TokenLiteral{ .string = sd.name.lexeme };
-                                                                _ = self.current_scope.?.createValueBinding(sd.name.lexeme, placeholder, .STRUCT, struct_type_info, true) catch {}; // duplicate is benign on circular/repeat import
-
-                                                                // Register public methods
-                                                                var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
-                                                                for (sd.methods) |m| {
-                                                                    if (!m.is_public) continue;
-                                                                    var ret_type_ptr: *@import("../../ast/ast.zig").TypeInfo = undefined;
-                                                                    if (m.return_type_info.base != .Nothing) {
-                                                                        const rtp = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
-                                                                        rtp.* = try self.resolveTypeInfo(m.return_type_info);
-                                                                        ret_type_ptr = rtp;
-                                                                    } else {
-                                                                        const rtp = try self.allocator.create(@import("../../ast/ast.zig").TypeInfo);
-                                                                        rtp.* = .{ .base = .Nothing, .is_mutable = false };
-                                                                        ret_type_ptr = rtp;
-                                                                    }
-                                                                    const mi2 = @This().StructMethodInfo{
-                                                                        .name = m.name.lexeme,
-                                                                        .is_public = m.is_public,
-                                                                        .is_static = m.is_static,
-                                                                        .return_type = ret_type_ptr,
-                                                                    };
-                                                                    _ = try method_table.put(m.name.lexeme, mi2);
-                                                                }
-                                                                if (self.struct_methods.getPtr(sd.name.lexeme)) |existing| {
-                                                                    var mit2 = method_table.iterator();
-                                                                    while (mit2.next()) |e| {
-                                                                        _ = try existing.put(e.key_ptr.*, e.value_ptr.*);
-                                                                    }
-                                                                } else {
-                                                                    try self.struct_methods.put(sd.name.lexeme, method_table);
-                                                                }
+                                                                try self.registerStructMethods(sd, .public_only);
                                                             }
                                                         }
                                                     }
@@ -545,10 +680,9 @@ pub const SemanticAnalyzer = struct {
                         .Enum => {
                             // Handle enum imports - need to find the enum declaration and register it
                             var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
-                            if (p.module_cache.get(sym.original_module)) |mi| {
+                            if (p.lookupModuleInfo(sym.original_module)) |mi| {
                                 mod_info = mi;
                             } else {
-                                // TODO: handle uncached module lookup
                                 continue;
                             }
                             if (mod_info) |mi| {
@@ -584,31 +718,38 @@ pub const SemanticAnalyzer = struct {
                                 }
                             }
                         },
-                        .Group => {
-                            var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
-                            if (p.module_cache.get(sym.original_module)) |mi| {
-                                mod_info = mi;
-                            } else {
-                                continue;
-                            }
-                            if (mod_info) |mi| {
-                                if (mi.ast) |module_ast| {
-                                    if (module_ast.data == .Block) {
-                                        for (module_ast.data.Block.statements) |stmt| {
-                                            switch (stmt.data) {
-                                                .GroupDecl => |gd| {
-                                                    if (std.mem.eql(u8, gd.name.lexeme, sym.name)) {
-                                                        try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
-                                                    }
-                                                },
-                                                else => {},
+                        else => {},
+                    }
+                }
+
+                // Pass 2: flatten groups now that every member type in pass 1
+                // has been registered.
+                var group_it = symbols.iterator();
+                while (group_it.next()) |entry| {
+                    const sym = entry.value_ptr.*;
+                    if (sym.kind != .Group) continue;
+
+                    var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
+                    if (p.lookupModuleInfo(sym.original_module)) |mi| {
+                        mod_info = mi;
+                    } else {
+                        continue;
+                    }
+                    if (mod_info) |mi| {
+                        if (mi.ast) |module_ast| {
+                            if (module_ast.data == .Block) {
+                                for (module_ast.data.Block.statements) |stmt| {
+                                    switch (stmt.data) {
+                                        .GroupDecl => |gd| {
+                                            if (std.mem.eql(u8, gd.name.lexeme, sym.name)) {
+                                                try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
                                             }
-                                        }
+                                        },
+                                        else => {},
                                     }
                                 }
                             }
-                        },
-                        else => {},
+                        }
                     }
                 }
             }
@@ -633,10 +774,55 @@ pub const SemanticAnalyzer = struct {
                     try self.registerImportedStruct(sd);
                 }
             }
-        }
 
-        // Restore previous scope
-        self.current_scope = prev_scope;
+            // Enums and groups have no equivalent of the struct pass's fallback.
+            // Scan `module_namespaces`, the authoritative propagated map, so
+            // every imported module's public enums register. Enums are
+            // registered before groups so every group member exists when the
+            // group is flattened.
+            var enum_ns_it = p.module_namespaces.iterator();
+            while (enum_ns_it.next()) |entry| {
+                const module_info = entry.value_ptr.*;
+                const module_ast = module_info.ast orelse continue;
+                if (module_ast.data != .Block) continue;
+                for (module_ast.data.Block.statements) |mod_stmt| {
+                    switch (mod_stmt.data) {
+                        .EnumDecl => |ed| {
+                            if (ed.is_public) _ = try self.ensureEnumRegistered(ed);
+                        },
+                        .Expression => |maybe_expr| {
+                            const mod_expr = maybe_expr orelse continue;
+                            if (mod_expr.data == .EnumDecl) {
+                                const ed = mod_expr.data.EnumDecl;
+                                if (ed.is_public) _ = try self.ensureEnumRegistered(ed);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+            var group_ns_it = p.module_namespaces.iterator();
+            while (group_ns_it.next()) |entry| {
+                const module_info = entry.value_ptr.*;
+                const module_ast = module_info.ast orelse continue;
+                if (module_ast.data != .Block) continue;
+                for (module_ast.data.Block.statements) |mod_stmt| {
+                    switch (mod_stmt.data) {
+                        .GroupDecl => |gd| {
+                            if (gd.is_public) try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
+                        },
+                        .Expression => |maybe_expr| {
+                            const mod_expr = maybe_expr orelse continue;
+                            if (mod_expr.data == .GroupDecl) {
+                                const gd = mod_expr.data.GroupDecl;
+                                if (gd.is_public) try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
+                            }
+                        },
+                        else => {},
+                    }
+                }
+            }
+        }
     }
 
     /// Register an imported public struct's type and public methods (static and
@@ -652,36 +838,59 @@ pub const SemanticAnalyzer = struct {
             };
         }
         try helpers.registerStructType(self, sd.name.lexeme, field_types);
+        try self.registerStructMethods(sd, .public_only);
+    }
 
+    /// Build the analyzer-level method table for `sd` and merge it into
+    /// `struct_methods`, replacing any entry of the same name. Every registration
+    /// site funnels through here so a method's recorded signature cannot drift
+    /// between the passes that discover it.
+    fn registerStructMethods(self: *SemanticAnalyzer, sd: ast.StructDecl, mode: MethodVisibility) ErrorList!void {
         var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
         for (sd.methods) |m| {
-            if (!m.is_public) continue;
-            var ret_type_ptr: *ast.TypeInfo = undefined;
-            if (m.return_type_info.base != .Nothing) {
-                const rtp = try ast.TypeInfo.createDefault(self.allocator);
-                rtp.* = try self.resolveTypeInfo(m.return_type_info);
-                ret_type_ptr = rtp;
-            } else {
-                const rtp = try ast.TypeInfo.createDefault(self.allocator);
-                rtp.* = .{ .base = .Nothing, .is_mutable = false };
-                ret_type_ptr = rtp;
-            }
-            const mi = @This().StructMethodInfo{
+            if (mode == .public_only and !m.is_public) continue;
+            const return_type = try ast.TypeInfo.createDefault(self.allocator);
+            return_type.* = if (m.return_type_info.base != .Nothing)
+                try self.resolveTypeInfo(m.return_type_info)
+            else
+                .{ .base = .Nothing, .is_mutable = false };
+            _ = try method_table.put(m.name.lexeme, .{
                 .name = m.name.lexeme,
                 .is_public = m.is_public,
                 .is_static = m.is_static,
-                .return_type = ret_type_ptr,
-            };
-            _ = try method_table.put(m.name.lexeme, mi);
+                .signature = try self.methodSignature(m, return_type),
+            });
         }
         if (self.struct_methods.getPtr(sd.name.lexeme)) |existing| {
-            var mit = method_table.iterator();
-            while (mit.next()) |e| {
-                _ = try existing.put(e.key_ptr.*, e.value_ptr.*);
+            var it = method_table.iterator();
+            while (it.next()) |entry| {
+                try existing.put(entry.key_ptr.*, entry.value_ptr.*);
             }
+            method_table.deinit();
         } else {
             try self.struct_methods.put(sd.name.lexeme, method_table);
         }
+    }
+
+    /// The method's callable signature: its parameter types and alias flags,
+    /// joined to the return type the method table already resolved. An
+    /// unannotated parameter resolves to `Nothing`, which
+    /// `validateFunctionCallArguments` reads as "accepts anything" — the same
+    /// treatment an unannotated function parameter gets.
+    fn methodSignature(self: *SemanticAnalyzer, m: *ast.StructMethod, return_type: *ast.TypeInfo) ErrorList!*ast.FunctionType {
+        const params = try self.allocator.alloc(ast.TypeInfo, m.params.len);
+        const aliases = try self.allocator.alloc(bool, m.params.len);
+        for (m.params, 0..) |param, i| {
+            aliases[i] = param.is_alias;
+            params[i] = if (param.type_expr) |type_expr| blk: {
+                const resolved = try self.typeExprToTypeInfo(type_expr);
+                defer self.allocator.destroy(resolved);
+                break :blk resolved.*;
+            } else ast.TypeInfo{ .base = .Nothing };
+        }
+        const signature = try self.allocator.create(ast.FunctionType);
+        signature.* = .{ .params = params, .return_type = return_type, .param_aliases = aliases };
+        return signature;
     }
 
     /// Lazy module namespaces may be loaded after the initial imported-struct
@@ -707,6 +916,109 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
+    /// A type annotation can name a module that was never loaded — a re-export
+    /// hub's submodule referenced only from a type position
+    /// (`std.http.ServerRequest`). Such a module is normally materialized only
+    /// on a value access, so without this the annotated declaration is checked
+    /// against a struct whose methods and fields were never registered.
+    fn materializeTypeExprModules(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) void {
+        switch (type_expr.data) {
+            .Custom => |custom| _ = self.materializeQualifiedTypeName(custom.lexeme),
+            .Array => |array| self.materializeTypeExprModules(array.element_type),
+            .Union => |types| for (types) |t| self.materializeTypeExprModules(t),
+            .Map => |map| {
+                if (map.key_type) |k| self.materializeTypeExprModules(k);
+                self.materializeTypeExprModules(map.value_type);
+            },
+            .Struct => |fields| for (fields) |f| self.materializeTypeExprModules(f.type_expr),
+            .Basic, .Enum => {},
+        }
+    }
+
+    /// Materialize the module named by a possibly-qualified type reference and
+    /// register the public type it names, returning the bare type name. A bare
+    /// name is returned unchanged.
+    pub fn materializeQualifiedTypeName(self: *SemanticAnalyzer, qualified: []const u8) []const u8 {
+        const dot = std.mem.lastIndexOfScalar(u8, qualified, '.') orelse return qualified;
+        self.materializeNamespacePath(qualified[0..dot]);
+        self.registerNamedType(qualified[dot + 1 ..]);
+        return qualified[dot + 1 ..];
+    }
+
+    /// Ensure each dotted segment of a module path is loaded (`std.http` loads
+    /// `std`, then `std.http`).
+    fn materializeNamespacePath(self: *SemanticAnalyzer, path: []const u8) void {
+        const parser_const = self.parser orelse return;
+        const parser: *Parser = @constCast(parser_const);
+
+        var idx: usize = 0;
+        while (idx < path.len) {
+            const dot = std.mem.indexOfScalarPos(u8, path, idx, '.') orelse path.len;
+            const segment = path[idx..dot];
+            if (idx == 0) {
+                _ = parser.ensureModuleNamespace(segment) catch {};
+            } else {
+                _ = parser.ensureNestedModuleNamespace(path[0 .. idx - 1], segment) catch {};
+            }
+            idx = dot + 1;
+        }
+    }
+
+    /// Register the public struct/enum/group named `bare` from whatever module
+    /// is now loaded, so its methods and fields are available. Every loaded
+    /// module's public enums are registered first: a group can only be
+    /// flattened once each of its member enums exists in `custom_types`.
+    fn registerNamedType(self: *SemanticAnalyzer, bare: []const u8) void {
+        self.ensureImportedStructRegistered(bare) catch {};
+
+        const parser = self.parser orelse return;
+        var it = parser.module_namespaces.iterator();
+        while (it.next()) |entry| {
+            const module_ast = entry.value_ptr.ast orelse continue;
+            if (module_ast.data != .Block) continue;
+            for (module_ast.data.Block.statements) |stmt| {
+                switch (stmt.data) {
+                    .EnumDecl => |ed| {
+                        if (ed.is_public) _ = self.ensureEnumRegistered(ed) catch {};
+                    },
+                    .Expression => |maybe_expr| {
+                        const e = maybe_expr orelse continue;
+                        if (e.data == .EnumDecl) {
+                            const ed = e.data.EnumDecl;
+                            if (ed.is_public) _ = self.ensureEnumRegistered(ed) catch {};
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+
+        var group_it = parser.module_namespaces.iterator();
+        while (group_it.next()) |entry| {
+            const module_ast = entry.value_ptr.ast orelse continue;
+            if (module_ast.data != .Block) continue;
+            for (module_ast.data.Block.statements) |stmt| {
+                switch (stmt.data) {
+                    .GroupDecl => |gd| {
+                        if (gd.is_public and std.mem.eql(u8, gd.name.lexeme, bare)) {
+                            helpers.registerGroupType(self, gd.name.lexeme, gd.members) catch {};
+                        }
+                    },
+                    .Expression => |maybe_expr| {
+                        const e = maybe_expr orelse continue;
+                        if (e.data == .GroupDecl) {
+                            const gd = e.data.GroupDecl;
+                            if (gd.is_public and std.mem.eql(u8, gd.name.lexeme, bare)) {
+                                helpers.registerGroupType(self, gd.name.lexeme, gd.members) catch {};
+                            }
+                        }
+                    },
+                    else => {},
+                }
+            }
+        }
+    }
+
     fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {
         // Pre-pass A: pre-register local custom type declarations in custom_types so parameter
         // type annotations referring to these types (including alias params) can be validated.
@@ -721,6 +1033,7 @@ pub const SemanticAnalyzer = struct {
                                 // Lower field types from AST and register as a custom type
                                 const struct_fields = try self.allocator.alloc(ast.StructFieldType, struct_decl.fields.len);
                                 for (struct_decl.fields, struct_fields) |field, *sf| {
+                                    self.materializeTypeExprModules(field.type_expr);
                                     const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
                                     sf.* = .{ .name = field.name.lexeme, .type_info = field_type_info, .is_public = field.is_public };
                                 }
@@ -767,6 +1080,7 @@ pub const SemanticAnalyzer = struct {
                     for (func.params, 0..) |param, i| {
                         param_aliases[i] = param.is_alias;
                         if (param.type_expr) |type_expr| {
+                            self.materializeTypeExprModules(type_expr);
                             const param_type_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
                             defer self.allocator.destroy(param_type_ptr);
 
@@ -839,8 +1153,14 @@ pub const SemanticAnalyzer = struct {
                     };
                     func_type.return_type.* = func.return_type_info; // Use declared type if available
 
-                    // Add function to current scope BEFORE inferring return type (for recursive calls)
-                    if (scope.lookupVariable(func.name.lexeme) == null) {
+                    // Add function to current scope BEFORE inferring return type (for recursive calls).
+                    // Local-only lookup: a binding of the same name in an ancestor
+                    // scope is a different declaration that this one shadows, not
+                    // a duplicate. The ancestor-walking lookup would let an
+                    // enclosing scope suppress this registration, and the
+                    // function's own body would then resolve the name to the
+                    // outer binding instead.
+                    if (scope.lookupLocalVariable(func.name.lexeme) == null) {
                         const func_type_info = try ast.TypeInfo.createDefault(self.allocator);
                         func_type_info.* = .{ .base = .Function, .function_type = func_type };
 
@@ -1085,6 +1405,7 @@ pub const SemanticAnalyzer = struct {
                             // Convert struct fields to TypeInfo format
                             const struct_fields = try self.allocator.alloc(ast.StructFieldType, struct_decl.fields.len);
                             for (struct_decl.fields, struct_fields) |field, *struct_field| {
+                                self.materializeTypeExprModules(field.type_expr);
                                 const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
                                 struct_field.* = .{
                                     .name = field.name.lexeme,
@@ -1124,44 +1445,10 @@ pub const SemanticAnalyzer = struct {
                             // NEW: Register struct type for HIR generation
                             try helpers.registerStructType(self, struct_decl.name.lexeme, struct_fields);
 
-                            // Register struct methods (static and instance)
-                            var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
-
-                            for (struct_decl.methods) |m| {
-                                // Determine return type: use declared, or default for instance methods to the struct type when missing
-                                var ret_type_ptr: *ast.TypeInfo = undefined;
-                                if (m.return_type_info.base != .Nothing) {
-                                    const rtp = try ast.TypeInfo.createDefault(self.allocator);
-                                    rtp.* = try self.resolveTypeInfo(m.return_type_info);
-                                    ret_type_ptr = rtp;
-                                } else {
-                                    // Heuristic: if instance method without explicit return, default to this struct type
-                                    const rtp = try ast.TypeInfo.createDefault(self.allocator);
-                                    rtp.* = .{ .base = .Nothing, .is_mutable = false };
-                                    ret_type_ptr = rtp;
-                                }
-
-                                const mi = @This().StructMethodInfo{
-                                    .name = m.name.lexeme,
-                                    .is_public = m.is_public,
-                                    .is_static = m.is_static,
-                                    .return_type = ret_type_ptr,
-                                };
-                                // Last one wins if duplicate
-                                _ = try method_table.put(m.name.lexeme, mi);
-                            }
-                            // Store/merge into analyzer's method registry
-                            if (self.struct_methods.getPtr(struct_decl.name.lexeme)) |existing| {
-                                var it = method_table.iterator();
-                                while (it.next()) |entry| {
-                                    _ = try existing.put(entry.key_ptr.*, entry.value_ptr.*);
-                                }
-                                // method_table will be deinit'd by defer but entries are copied
-                            } else {
-                                try self.struct_methods.put(struct_decl.name.lexeme, method_table);
-                                // Prevent defer cleanup for stored table
-                                // Note: intentionally not calling method_table.deinit()
-                            }
+                            // Register struct methods (static and instance). A locally
+                            // declared struct keeps its private methods too — scope
+                            // visibility already governs who may call them.
+                            try self.registerStructMethods(struct_decl, .all);
                         }
                     }
                 },
@@ -1273,6 +1560,8 @@ pub const SemanticAnalyzer = struct {
                                 // Infer from initializer
                                 const inferred = try infer_type.inferTypeFromExpr(self, init_expr);
                                 type_info.* = inferred.*;
+                                // Preserve the mutability from the variable declaration, not from the initializer
+                                type_info.is_mutable = decl.type_info.is_mutable;
                             } else {
                                 // No type annotation and no initializer - this is invalid
                                 self.reporter.reportCompileError(
@@ -1281,7 +1570,7 @@ pub const SemanticAnalyzer = struct {
                                     "Variable declaration requires either type annotation (::) or initializer",
                                     .{},
                                 );
-                                self.fatal_error = true;
+self.fatal_error = true;
                                 continue;
                             }
 
@@ -1937,10 +2226,6 @@ pub const SemanticAnalyzer = struct {
             return enum_name;
         }
 
-        if (try self.findEnumVariantInModuleMap(@constCast(&parser.module_cache), member_name)) |enum_name| {
-            return enum_name;
-        }
-
         return null;
     }
 
@@ -2066,8 +2351,17 @@ pub const SemanticAnalyzer = struct {
                 } };
             },
             .Custom => |custom| {
-                const canonical_name = self.resolveTypeAlias(custom.lexeme);
+                const canonical_name = ast.bareTypeName(self.resolveTypeAlias(custom.lexeme));
                 type_info.* = .{ .base = .Custom, .custom_type = canonical_name };
+                // A type-position reference to a bare imported type (`x :: Board`)
+                // is a use; without this an import referenced only in an
+                // annotation warns as unused.
+                if (self.parser) |parser_const| {
+                    const parser: *Parser = @constCast(parser_const);
+                    if (parser.imported_symbols) |*syms| {
+                        if (syms.getPtr(custom.lexeme)) |sym| sym.used = true;
+                    }
+                }
             },
             .Array => |array| {
                 const element_type = try self.typeExprToTypeInfo(array.element_type);
@@ -2416,10 +2710,10 @@ pub const SemanticAnalyzer = struct {
 
         // Add parameters to function scope
         for (func.params) |param| {
-            const param_type_info = if (param.type_expr) |type_expr|
-                try ast.typeInfoFromExpr(self.allocator, type_expr)
-            else
-                try ast.TypeInfo.createDefault(self.allocator);
+            const param_type_info = if (param.type_expr) |type_expr| blk: {
+                self.materializeTypeExprModules(type_expr);
+                break :blk try ast.typeInfoFromExpr(self.allocator, type_expr);
+            } else try ast.TypeInfo.createDefault(self.allocator);
 
             if (param.type_expr == null) {
                 param_type_info.* = .{ .base = .Nothing }; // Default to nothing if no type specified
@@ -2635,6 +2929,28 @@ pub const SemanticAnalyzer = struct {
             .If => {
                 return self.validateIfExpressionReturns(expr, expected_return_type, func_span);
             },
+            .Match => |match_expr| {
+                // Every arm must return for a `match` to guarantee one, matching
+                // how `if` requires both of its branches.
+                if (match_expr.cases.len == 0) return false;
+                for (match_expr.cases) |case| {
+                    if (!try self.validateExpressionReturns(case.body, expected_return_type, func_span)) return false;
+                }
+                return true;
+            },
+            .Cast => |cast| {
+                // `x as T then .. else ..` narrows and branches: both sides must
+                // return for the cast to guarantee one. A bare `as` with no
+                // branches is a plain conversion and returns nothing.
+                if (cast.then_branch == null and cast.else_branch == null) return false;
+                if (cast.then_branch) |then_branch| {
+                    if (!try self.validateExpressionReturns(then_branch, expected_return_type, func_span)) return false;
+                }
+                if (cast.else_branch) |else_branch| {
+                    return self.validateExpressionReturns(else_branch, expected_return_type, func_span);
+                }
+                return cast.then_branch != null;
+            },
             .Block => |block| {
                 // Check statements in the block for return statements
                 const block_returns = try self.validateReturnPaths(block.statements, expected_return_type, func_span);
@@ -2711,11 +3027,10 @@ pub const SemanticAnalyzer = struct {
             const ParserType = @TypeOf(pconst.*);
             const p: *ParserType = @constCast(pconst);
 
-            // Try to get module info from cache; fall back to resolving
+            // Resolve through the graph: identity comes from the record, not a
+            // spelling-keyed cache.
             var mod_info: ?ast.ModuleInfo = null;
-            if (p.module_cache.get(import_info.module_path)) |mi| {
-                mod_info = mi;
-            } else {
+            {
                 // Import here to avoid a cyclic import at file top-level
                 const module_resolver = @import("../../parser/module_resolver.zig");
                 mod_info = module_resolver.resolveModule(p, import_info.module_path) catch null;
@@ -2750,41 +3065,15 @@ pub const SemanticAnalyzer = struct {
                                         // Convert fields to TypeInfo and register struct
                                         const field_types = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
                                         for (sd.fields, field_types) |field, *ft| {
+                                            self.materializeTypeExprModules(field.type_expr);
                                             const ti = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
                                             ft.* = .{ .name = field.name.lexeme, .type_info = ti };
                                         }
                                         try helpers.registerStructType(self, sd.name.lexeme, field_types);
 
-                                        // Register methods (static and instance)
-                                        var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
-                                        for (sd.methods) |m| {
-                                            if (!m.is_public) continue; // only export public methods
-                                            var ret_type_ptr: *ast.TypeInfo = undefined;
-                                            if (m.return_type_info.base != .Nothing) {
-                                                const rtp = try ast.TypeInfo.createDefault(self.allocator);
-                                                rtp.* = try self.resolveTypeInfo(m.return_type_info);
-                                                ret_type_ptr = rtp;
-                                            } else {
-                                                const rtp = try ast.TypeInfo.createDefault(self.allocator);
-                                                rtp.* = .{ .base = .Nothing, .is_mutable = false };
-                                                ret_type_ptr = rtp;
-                                            }
-                                            const mi2 = @This().StructMethodInfo{
-                                                .name = m.name.lexeme,
-                                                .is_public = m.is_public,
-                                                .is_static = m.is_static,
-                                                .return_type = ret_type_ptr,
-                                            };
-                                            _ = try method_table.put(m.name.lexeme, mi2);
-                                        }
-                                        if (self.struct_methods.getPtr(sd.name.lexeme)) |existing| {
-                                            var it = method_table.iterator();
-                                            while (it.next()) |e| {
-                                                _ = try existing.put(e.key_ptr.*, e.value_ptr.*);
-                                            }
-                                        } else {
-                                            try self.struct_methods.put(sd.name.lexeme, method_table);
-                                        }
+                                        // Register methods (static and instance); only the public
+                                        // ones cross the module boundary.
+                                        try self.registerStructMethods(sd, .public_only);
                                     };
                                 },
                                 .EnumDecl => |ed| {
@@ -2822,12 +3111,9 @@ pub const SemanticAnalyzer = struct {
             const ParserType = @TypeOf(pconst.*);
             const p: *ParserType = @constCast(pconst);
 
-            // If the module is already in-progress in the parser's resolution map, it's circular
-            if (p.module_resolution_status.get(module_path)) |status| {
-                return status == .IN_PROGRESS;
-            }
-
-            // Also check the active import stack for a re-entry
+            // A module is circular iff it is re-entered while its resolution is
+            // active; the graph owns that state, surfaced here as the parser's
+            // live import stack. After resolution completes the stack is empty.
             for (p.import_stack.items) |entry| {
                 if (std.mem.eql(u8, entry.module_path, module_path)) return true;
             }
@@ -2838,16 +3124,11 @@ pub const SemanticAnalyzer = struct {
     fn checkSymbolExists(self: *SemanticAnalyzer, module_path: []const u8, symbol: []const u8) bool {
         if (self.parser) |pconst| {
             const ParserType = @TypeOf(pconst.*);
-            var p: *ParserType = @constCast(pconst);
+            const p: *ParserType = @constCast(pconst);
             const module_resolver = @import("../../parser/module_resolver.zig");
 
-            // Get ModuleInfo (cached or resolve now)
-            var mod_info: ?ast.ModuleInfo = null;
-            if (p.module_cache.get(module_path)) |mi| {
-                mod_info = mi;
-            } else {
-                mod_info = module_resolver.resolveModule(p, module_path) catch null;
-            }
+            // Resolve through the graph: identity comes from the record.
+            const mod_info: ?ast.ModuleInfo = module_resolver.resolveModule(p, module_path) catch null;
             if (mod_info == null) return false;
 
             const info = mod_info.?;
@@ -3203,35 +3484,54 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
-    fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList!bool {
-        switch (expr.data) {
-            .Block => |block| {
-                return self.checkStatementsHaveReturns(block.statements);
-            },
-            .If => |if_data| {
-                // Check both branches - if either has returns, the expression has returns
-                var has_returns = false;
-                if (if_data.then_branch) |then_branch| {
-                    if (try self.checkExpressionHasReturns(then_branch)) has_returns = true;
-                }
-                if (if_data.else_branch) |else_branch| {
-                    if (try self.checkExpressionHasReturns(else_branch)) has_returns = true;
-                }
-                return has_returns;
-            },
-            .ReturnExpr => return true,
-            .Unreachable => return true,
-            .Loop => |loop_data| {
-                // For loops, check if the body contains return statements
-                if (loop_data.body.data == .Block) {
-                    return self.checkStatementsHaveReturns(loop_data.body.data.Block.statements);
-                } else {
-                    return self.checkExpressionHasReturns(loop_data.body);
-                }
-            },
-            else => return false,
+fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList!bool {
+            switch (expr.data) {
+                .Block => |block| {
+                    return self.checkStatementsHaveReturns(block.statements);
+                },
+                .If => |if_data| {
+                    // Check both branches - if either has returns, the expression has returns
+                    var has_returns = false;
+                    if (if_data.then_branch) |then_branch| {
+                        if (try self.checkExpressionHasReturns(then_branch)) has_returns = true;
+                    }
+                    if (if_data.else_branch) |else_branch| {
+                        if (try self.checkExpressionHasReturns(else_branch)) has_returns = true;
+                    }
+                    return has_returns;
+                },
+                .Match => |match_expr| {
+                    // A `match` carries returns when any arm does; the arms are
+                    // where every path out of a `match`-shaped function returns.
+                    for (match_expr.cases) |case| {
+                        if (try self.checkExpressionHasReturns(case.body)) return true;
+                    }
+                    return false;
+                },
+                .Cast => |cast| {
+                    // `x as T then .. else ..` is the narrowing form of a
+                    // conditional: its branches are where those paths return.
+                    if (cast.then_branch) |then_branch| {
+                        if (try self.checkExpressionHasReturns(then_branch)) return true;
+                    }
+                    if (cast.else_branch) |else_branch| {
+                        if (try self.checkExpressionHasReturns(else_branch)) return true;
+                    }
+                    return false;
+                },
+                .ReturnExpr => return true,
+                .Unreachable => return true,
+                .Loop => |loop_data| {
+                    // For loops, check if the body contains return statements
+                    if (loop_data.body.data == .Block) {
+                        return self.checkStatementsHaveReturns(loop_data.body.data.Block.statements);
+                    } else {
+                        return self.checkExpressionHasReturns(loop_data.body);
+                    }
+                },
+                else => return false,
+            }
         }
-    }
 
     fn checkStatementsHaveReturns(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!bool {
         for (statements) |stmt| {

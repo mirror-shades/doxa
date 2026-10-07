@@ -7,6 +7,8 @@ const MemoryImport = @import("../utils/memory.zig");
 const MemoryManager = MemoryImport.MemoryManager;
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const Parser = @import("../parser/parser_types.zig").Parser;
+const Resolver = @import("../resolver/resolver.zig").Resolver;
+const module_graph = @import("../module/graph.zig");
 const SemanticAnalyzer = @import("../analysis/semantic/semantic.zig").SemanticAnalyzer;
 const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
 const Errors = @import("../utils/errors.zig");
@@ -858,9 +860,24 @@ const Server = struct {
         var tokens = try lexer.lexTokens();
         defer tokens.deinit();
 
-        var parser = Parser.init(io, memory_manager.getAnalysisAllocator(), tokens.items, doc.path, uri, self.reporter);
+        var graph_store = module_graph.ModuleGraph.init(io, self.allocator, &.{
+            .{ .tag = "pkg", .path = std.fs.path.dirname(doc.path) orelse "." },
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return error.ModuleRootUnknown,
+        };
+        defer graph_store.deinit();
+
+        var parser = Parser.init(io, memory_manager.getAnalysisAllocator(), tokens.items, doc.path, uri, self.reporter, &graph_store);
         defer parser.deinit();
         const statements = try parser.execute();
+
+        // Load every reachable module before analysis: specific imports
+        // (`import Board from "board.doxa"`) and namespace imports are only
+        // materialized into the graph by the resolver, and semantic analysis
+        // reads their types and methods from there.
+        var resolver = Resolver.init(&parser);
+        try resolver.resolve();
 
         var semantic = SemanticAnalyzer.init(memory_manager.getAnalysisAllocator(), self.reporter, &memory_manager, &parser);
         defer semantic.deinit();

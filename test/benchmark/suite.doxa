@@ -244,13 +244,13 @@ function writeStats(^results :: Result[]) {
 }
 
 function prepareEnv() {
-    if std.file.IsDir("test/benchmark/d-bin") then {
+    if std.file.isDir("test/benchmark/d-bin") then {
         const result is std.file.delete("test/benchmark/d-bin", true) as nothing else {
             std.io.println("Failed to remove d-bin: {result}")
             return
         }
     }
-    if std.file.IsDir("test/benchmark/c-bin") then {
+    if std.file.isDir("test/benchmark/c-bin") then {
         const result is std.file.delete("test/benchmark/c-bin", true) as nothing else {
             std.io.println("Failed to remove c-bin: {result}")
             return

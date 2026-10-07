@@ -104,7 +104,7 @@ pub fn parseReturnStmt(self: *Parser) ErrorList!ast.Stmt {
         // newline behind (which would parse as a spurious empty statement and
         // trip the unreachable-code check).
         while (self.peek().type == .NEWLINE) self.advance();
-    } else if (next_type != .RIGHT_BRACE and next_type != .EOF) {
+    } else if (next_type != .ELSE and next_type != .COMMA and next_type != .RIGHT_BRACE and next_type != .EOF) {
         const location = Reporting.Location{
             .file = self.current_file,
             .file_uri = self.current_file_uri,
@@ -325,47 +325,29 @@ pub fn parseStructDeclStmt(self: *Parser) ErrorList!ast.Stmt {
 }
 
 pub fn parseContinueStmt(self: *Parser) ErrorList!ast.Stmt {
-    self.advance();
-
-    if (self.peek().type == .SEMICOLON) {
-        self.advance();
-    }
-    if (self.peek().type != .NEWLINE and self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-        const location = Reporting.Location{
-            .file = self.current_file,
-            .file_uri = self.current_file_uri,
-            .range = .{
-                .start_line = @intCast(self.peek().line),
-                .start_col = self.peek().column,
-                .end_line = @intCast(self.peek().line),
-                .end_col = self.peek().column + self.peek().lexeme.len,
-            },
-        };
-        self.reporter.reportCompileError(location, ErrorCode.EXPECTED_NEWLINE, "Expected newline", .{});
-        return error.ExpectedNewline;
-    }
-    if (self.peek().type == .NEWLINE) {
-        self.advance();
-    }
-
-    return ast.Stmt{
-        .base = .{
-            .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(self.peek()),
-        },
-        .data = .{
-            .Continue = {},
-        },
-    };
+    return parseJumpStmt(self, .CONTINUE);
 }
 
 pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
+    return parseJumpStmt(self, .BREAK);
+}
+
+/// `break` and `continue` differ only in the statement they build. Either may
+/// stand alone as a branch body or a `match` arm, so a following `else` belongs
+/// to the enclosing branch, and a following `,` to the next arm, rather than
+/// either being a stray token.
+fn parseJumpStmt(self: *Parser, comptime kind: token.TokenType) ErrorList!ast.Stmt {
     self.advance();
 
     if (self.peek().type == .SEMICOLON) {
         self.advance();
     }
-    if (self.peek().type != .NEWLINE and self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
+    if (self.peek().type != .NEWLINE and
+        self.peek().type != .ELSE and
+        self.peek().type != .COMMA and
+        self.peek().type != .RIGHT_BRACE and
+        self.peek().type != .EOF)
+    {
         const location = Reporting.Location{
             .file = self.current_file,
             .file_uri = self.current_file_uri,
@@ -388,8 +370,10 @@ pub fn parseBreakStmt(self: *Parser) ErrorList!ast.Stmt {
             .id = ast.generateNodeId(),
             .span = ast.SourceSpan.fromToken(self.peek()),
         },
-        .data = .{
-            .Break = {},
+        .data = switch (kind) {
+            .BREAK => .{ .Break = {} },
+            .CONTINUE => .{ .Continue = {} },
+            else => unreachable,
         },
     };
 }

@@ -1,0 +1,20 @@
+# A method call is argument-checked exactly like a function call: the arity
+# mismatch below must be diagnosed, not carried into codegen.
+public struct Counter {
+    public total :: int,
+
+    public function new() returns Counter {
+        return $Counter { total is 0 }
+    }
+
+    public method add(value :: int, doubled :: tetra) {
+        if doubled then this.total is this.total + value + value else this.total is this.total + value
+    }
+}
+
+entry function main() {
+    const c is Counter.new()
+    c.add(1, true)
+    c.add(1)
+    @print("{c.total}\n")
+}

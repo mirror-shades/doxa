@@ -201,27 +201,6 @@ zig Build {
     pub fn hostAbi() []const u8 {
         return @tagName(builtin.abi);
     }
-
-    // The artifact's actual output path: appends `.exe` for a Windows target,
-    // mirroring the compiler's target-true output naming.
-    pub fn exePath(out: []const u8, os: []const u8) []const u8 {
-        if (std.mem.eql(u8, os, "windows")) {
-            if (std.mem.endsWith(u8, out, ".exe")) return out;
-            return std.fmt.allocPrint(std.heap.page_allocator, "{s}.exe", .{out}) catch return out;
-        }
-        return out;
-    }
-
-    // Modification time of `path` in nanoseconds, or -1 when the file cannot be
-    // stat'd (missing, permission denied, ...). Used by the artifact-level
-    // up-to-date check in `run`.
-    pub fn fileMtime(path: []const u8) i64 {
-        const io = buildIo();
-        const file = std.Io.Dir.cwd().openFile(io, path, .{}) catch return -1;
-        defer file.close(io);
-        const stat = file.stat(io) catch return -1;
-        return @intCast(stat.mtime.toNanoseconds());
-    }
 }
 
 function mapBuildError(code :: int) returns error.StdError {
@@ -407,23 +386,18 @@ public struct Context {
     }
 }
 
-# True when the artifact's output exists and is newer than its entry source, so
-# `run` can skip re-invoking the compiler. This is a cheap artifact-level pre-
-# filter; content-accurate up-to-date checks live in the driver (incremental
-# builds). Linked `-l` libraries are not part of the check.
-function artifactIsUpToDate(art :: Executable, target_os :: string) returns tetra {
-    const output is Build.exePath(art.output, target_os)
-    const out_mtime is Build.fileMtime(output)
-    if out_mtime < 0 then return false
-    const src_mtime is Build.fileMtime(art.entry_point)
-    if src_mtime < 0 then return false
-    return src_mtime <= out_mtime
-}
-
 # Drive the compiler over every artifact in the context. Returns the first
-# non-zero exit code or mapped error encountered, or 0 on success. `force`
-# bypasses the artifact-level up-to-date skip.
-public function run(c :: Context, force :: tetra) returns int | error.StdError {
+# non-zero exit code or mapped error encountered, or 0 on success.
+#
+# There is deliberately no up-to-date skip here. An earlier version compared the
+# output's mtime against the entry source alone and skipped the compile when the
+# output looked newer, which silently ignored every change in an imported module
+# and reported success while leaving a stale binary in place — including when the
+# program no longer compiled at all. Re-deriving the module closure in this layer
+# would mean duplicating the compiler's import resolution, so the check is the
+# driver's alone; `plan/incremental-builds.md` tracks the whole-unit manifest
+# that will make the driver able to answer this content-accurately.
+public function run(c :: Context) returns int | error.StdError {
     # A cross target must name its OS; an empty OS is never silently resolved to
     # the host.
     if @length(c.target.os) == 0 then return error.Common.InvalidArgument
@@ -434,11 +408,6 @@ public function run(c :: Context, force :: tetra) returns int | error.StdError {
     var i is 0
     while i < @length(c.artifacts) {
         const art is c.artifacts[i]
-
-        if not force and artifactIsUpToDate(art, c.target.os) then {
-            i is i + 1
-            continue
-        }
 
         const links is joinLines(art.links)
         const libdirs is joinLines(art.libdirs)
@@ -458,8 +427,8 @@ public function run(c :: Context, force :: tetra) returns int | error.StdError {
 # process exit code: a successful build exits 0, an `int` result exits with that
 # code, and an `error.StdError` prints a mapped message to stderr and exits 1.
 # `execute` is the terminal statement of a build script; it never returns.
-public function execute(c :: Context, force :: tetra) {
-    const outcome is run(c, force)
+public function execute(c :: Context) {
+    const outcome is run(c)
     outcome as int then {
         @print("build exit code: {@string(outcome)}\n")
         if outcome != 0 then @exit(outcome)

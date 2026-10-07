@@ -1,0 +1,4 @@
+public function broken() returns int {
+    const x is
+    return 1
+}

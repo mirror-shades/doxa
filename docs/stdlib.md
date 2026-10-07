@@ -244,6 +244,31 @@ else {
   }
   ```
 
+- Client WebSockets connect out to a `ws://` or `wss://` endpoint with
+  `wsConnect(url, headers)`, where `headers` is a preformatted `Name: value\r\n`
+  blob added to the handshake (TLS and certificate validation come from the
+  pooled HTTP client). It returns a connection handle or an error. Client frames
+  are masked automatically. `wsClientSend(connection, op, data)` sends one
+  frame; `wsClientNext(connection)` blocks until a message is ready and returns
+  `1` (read it with `wsClientMessage`), `2` when the peer closed, or `-1` on
+  error. The codec answers inbound pings automatically and surfaces a close as
+  `WsOp.Close`. Call `wsClientClose(connection)` for the close handshake, then
+  `wsClientRelease(connection)` to free the connection.
+
+  ```doxa
+  const ws is std.http.wsConnect("wss://example.com/socket", "") as int else 0
+  if ws > 0 then {
+      std.http.wsClientSend(ws, std.http.WsOp.Text, "hello")
+      const status is std.http.wsClientNext(ws)
+      if status == 1 then {
+          const m is std.http.wsClientMessage(ws)
+          @print("{m.data}\n")
+      }
+      std.http.wsClientClose(ws)
+      std.http.wsClientRelease(ws)
+  }
+  ```
+
 
 ## IO
 
