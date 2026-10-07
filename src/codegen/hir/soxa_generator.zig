@@ -46,6 +46,7 @@ const AssignmentsHandler = @import("expressions/assignments.zig").AssignmentsHan
 const IOHandler = @import("expressions/io.zig").IOHandler;
 const ModuleCall = @import("module_call.zig");
 const union_handling = @import("../../analysis/semantic/union_handling.zig");
+const module_graph = @import("../../module/graph.zig");
 
 /// Whether `return` with no value appears anywhere in the statement list (including inside expr trees).
 fn functionStmtsHaveBareReturn(stmts: []ast.Stmt) bool {
@@ -225,16 +226,11 @@ pub const HIRGenerator = struct {
 
     slot_manager: SlotManager,
 
-    function_signatures: std.StringHashMap(FunctionInfo),
+    function_signatures: SoxaTypes.FunctionSignatureMap,
     function_bodies: std.array_list.Managed(FunctionBody),
     semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo) = null,
     semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
     current_function: ?[]const u8,
-    /// Alias of the imported module whose body is currently being generated
-    /// (null for main-file functions). Lets a bare callee inside an imported
-    /// struct method resolve against that module's namespace, e.g. `helper`
-    /// inside `S.go` from `module a` resolves to `a.helper`.
-    current_function_module: ?[]const u8,
     current_function_return_type: HIRType,
     is_global_init_phase: bool,
 
@@ -244,9 +240,21 @@ pub const HIRGenerator = struct {
 
     module_namespaces: std.StringHashMap(ast.ModuleInfo),
 
+    /// The compilation's module graph and the entry record. Codegen identity for
+    /// module-owned symbols is keyed by the *defining* record (via its
+    /// `link_prefix`), never by a source-written alias, so two files that use
+    /// the same alias for different targets cannot share an internal key.
+    graph: *module_graph.ModuleGraph,
+    entry_module: module_graph.ModuleId,
+    /// The record whose body is currently being lowered (entry for the root
+    /// program and global init). Owner-scoped name resolution reads this
+    /// record's `bindings`.
+    current_module: module_graph.ModuleId,
+
     imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
-    module_field_slots: std.StringHashMap(u32),
-    current_module_context: ?[]const u8 = null,
+    module_field_slots: std.HashMap(module_graph.SymbolKey, u32, module_graph.SymbolKeyContext, std.hash_map.default_max_load_percentage),
+    /// The defining record whose module globals are currently being emitted.
+    current_module_context: ?module_graph.ModuleId = null,
 
     current_enum_type: ?[]const u8 = null,
     current_assignment_target: ?[]const u8 = null,
@@ -280,9 +288,12 @@ pub const HIRGenerator = struct {
         function_name: []const u8,
         function_params: []ast.FunctionParam,
         return_type_info: ast.TypeInfo,
-        /// Imported-module alias this body was defined in, or null for the main
-        /// file. Drives bare-callee resolution in `resolveQualifiedModuleLocalFunction`.
-        module_alias: ?[]const u8 = null,
+        /// The record this body was defined in. Bare-callee resolution reads
+        /// this record's owner-scoped `bindings`; the entry record for the root
+        /// file.
+        module_id: module_graph.ModuleId,
+        /// The body's internal identity `(defining record, declared name)`.
+        key: module_graph.SymbolKey,
     };
 
     pub const FunctionCallSite = struct {
@@ -339,7 +350,7 @@ pub const HIRGenerator = struct {
         field_types: []HIRType,
     };
 
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, reporter: *Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol), semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo), semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer) HIRGenerator {
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, reporter: *Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol), semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo), semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer, graph: *module_graph.ModuleGraph, entry_module: module_graph.ModuleId) HIRGenerator {
         return HIRGenerator{
             .io = io,
             .allocator = allocator,
@@ -355,19 +366,21 @@ pub const HIRGenerator = struct {
             .type_system = TypeSystem.init(allocator, reporter, semantic_analyzer),
             .struct_methods = std.StringHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
             .slot_manager = SlotManager.init(allocator),
-            .function_signatures = std.StringHashMap(FunctionInfo).init(allocator),
+            .function_signatures = SoxaTypes.FunctionSignatureMap.init(allocator),
             .function_bodies = std.array_list.Managed(FunctionBody).init(allocator),
             .semantic_function_return_types = semantic_function_return_types,
             .semantic_analyzer = semantic_analyzer,
             .current_function = null,
-            .current_function_module = null,
             .current_function_return_type = .Nothing,
             .is_global_init_phase = false,
             .function_calls = std.array_list.Managed(FunctionCallSite).init(allocator),
             .reflected_structs = std.StringHashMap(void).init(allocator),
             .module_namespaces = module_namespaces,
+            .graph = graph,
+            .entry_module = entry_module,
+            .current_module = entry_module,
             .imported_symbols = imported_symbols,
-            .module_field_slots = std.StringHashMap(u32).init(allocator),
+            .module_field_slots = std.HashMap(module_graph.SymbolKey, u32, module_graph.SymbolKeyContext, std.hash_map.default_max_load_percentage).init(allocator),
             .current_module_context = null,
             .current_enum_type = null,
             .stats = HIRStats.init(allocator),
@@ -577,7 +590,10 @@ pub const HIRGenerator = struct {
                         .param_types = param_types,
                     };
 
-                    try self.function_signatures.put(func.name.lexeme, function_info);
+                    try self.function_signatures.put(
+                        module_graph.SymbolKey{ .module = self.entry_module, .name = func.name.lexeme },
+                        function_info,
+                    );
 
                     try self.function_bodies.append(FunctionBody{
                         .function_info = function_info,
@@ -586,12 +602,14 @@ pub const HIRGenerator = struct {
                         .function_name = func.name.lexeme,
                         .function_params = func.params,
                         .return_type_info = eff_rti,
+                        .module_id = self.entry_module,
+                        .key = .{ .module = self.entry_module, .name = func.name.lexeme },
                     });
                 },
                 .Expression => |maybe_expr| {
                     if (maybe_expr) |expr| {
                         if (expr.data == .StructDecl) {
-                            try self.registerStructMethodSignatures(expr.data.StructDecl, null);
+                            try self.registerStructMethodSignatures(expr.data.StructDecl, self.entry_module);
                         }
                     }
                 },
@@ -599,10 +617,18 @@ pub const HIRGenerator = struct {
             }
         }
 
-        var it = self.module_namespaces.iterator();
-        while (it.next()) |entry| {
-            const alias = entry.key_ptr.*;
-            const module_info = entry.value_ptr.*;
+        // Every parsed module record contributes its own function set. Iterating
+        // the graph (not the alias-keyed `module_namespaces`) emits a function
+        // once per defining record, and the internal key is the record's
+        // deterministic link prefix — never a source alias, so two files may use
+        // the same alias for different targets without collision.
+        for (self.graph.records.items) |record| {
+            if (record.id == self.entry_module) continue;
+            const module_info = record.module_info orelse continue;
+            // Inline-`zig` and `.zig`-file modules have no Doxa body: their
+            // functions are external wrapper symbols registered through
+            // `imported_symbols`.
+            if (module_info.is_inline_zig) continue;
 
             if (module_info.ast) |module_ast| {
                 if (module_ast.data == .Block) {
@@ -610,7 +636,9 @@ pub const HIRGenerator = struct {
                     for (mod_statements) |mod_stmt| {
                         switch (mod_stmt.data) {
                             .FunctionDecl => |func| {
-                                const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ alias, func.name.lexeme });
+                                const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ record.link_prefix, func.name.lexeme });
+                                const key = module_graph.SymbolKey{ .module = record.id, .name = func.name.lexeme };
+                                if (self.function_signatures.contains(key)) continue;
                                 const eff_rti = try effectiveReturnTypeForSignature(self.allocator, func.return_type_info, func.body, &self.type_system);
                                 const return_type = self.convertTypeInfo(eff_rti);
                                 const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified_name}));
@@ -640,7 +668,7 @@ pub const HIRGenerator = struct {
                                     .param_types = param_types_imported,
                                 };
 
-                                try self.function_signatures.put(qualified_name, function_info);
+                                try self.function_signatures.put(key, function_info);
 
                                 try self.function_bodies.append(FunctionBody{
                                     .function_info = function_info,
@@ -649,100 +677,18 @@ pub const HIRGenerator = struct {
                                     .function_name = qualified_name,
                                     .function_params = func.params,
                                     .return_type_info = eff_rti,
-                                    .module_alias = alias,
+                                    .module_id = record.id,
+                                    .key = key,
                                 });
                             },
                             .Expression => |maybe_expr| {
                                 if (maybe_expr) |mod_expr| {
                                     if (mod_expr.data == .StructDecl) {
-                                        try self.registerStructMethodSignatures(mod_expr.data.StructDecl, alias);
+                                        try self.registerStructMethodSignatures(mod_expr.data.StructDecl, record.id);
                                     }
                                 }
                             },
                             else => {},
-                        }
-                    }
-                }
-            }
-        }
-
-        if (self.imported_symbols) |symbols| {
-            var sym_it = symbols.iterator();
-            while (sym_it.next()) |entry2| {
-                const sym_name = entry2.key_ptr.*;
-                const sym = entry2.value_ptr.*;
-                if (sym.kind != .Function) continue;
-
-                var it2 = self.module_namespaces.iterator();
-                while (it2.next()) |m_entry| {
-                    const module_info2 = m_entry.value_ptr.*;
-                    if (module_info2.ast) |module_ast| {
-                        const mod_statements2 = module_ast.data.Block.statements;
-                        var found = false;
-                        var func_return_type: HIRType = .Nothing;
-                        var func_body: []ast.Stmt = &[_]ast.Stmt{};
-                        var func_params: []ast.FunctionParam = &[_]ast.FunctionParam{};
-                        var eff_sym_rti: ast.TypeInfo = .{ .base = .Nothing };
-                        const mod_alias = m_entry.key_ptr.*;
-                        for (mod_statements2) |mod_stmt2| {
-                            switch (mod_stmt2.data) {
-                                .FunctionDecl => |func2| {
-                                    const qualified_guess = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ mod_alias, func2.name.lexeme });
-                                    defer self.allocator.free(qualified_guess);
-                                    const sym_is_qualified = std.mem.indexOfScalar(u8, sym_name, '.') != null;
-                                    const matches = if (sym_is_qualified)
-                                        std.mem.eql(u8, qualified_guess, sym_name)
-                                    else
-                                        std.mem.eql(u8, func2.name.lexeme, sym_name);
-                                    if (!matches) continue;
-                                    found = true;
-                                    eff_sym_rti = try effectiveReturnTypeForSignature(self.allocator, func2.return_type_info, func2.body, &self.type_system);
-                                    func_return_type = self.convertTypeInfo(eff_sym_rti);
-                                    func_body = func2.body;
-                                    func_params = func2.params;
-                                },
-                                else => {},
-                            }
-                            if (found) break;
-                        }
-
-                        if (found) {
-                            const start_label2 = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{sym_name}));
-                            var function_info2 = FunctionInfo{
-                                .name = sym_name,
-                                .arity = if (sym.param_count) |pc| pc else @intCast(func_params.len),
-                                .return_type = func_return_type,
-                                .start_label = start_label2,
-                                .local_var_count = 0,
-                                .is_entry = false,
-                                .param_is_alias = try self.allocator.alloc(bool, func_params.len),
-                                .param_is_readonly = try self.allocator.alloc(bool, func_params.len),
-                                .param_types = try self.allocator.alloc(HIRType, func_params.len),
-                            };
-
-                            if (!self.function_signatures.contains(sym_name)) {
-                                for (func_params, 0..) |p, i| {
-                                    function_info2.param_is_alias[i] = p.is_alias;
-                                    function_info2.param_is_readonly[i] = !ParamMutation.bodyMutatesVariable(func_body, p.name.lexeme);
-                                    function_info2.param_types[i] = sanitizeParamType(if (p.type_expr) |te|
-                                        self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, te)).*)
-                                    else
-                                        .Int);
-                                }
-
-                                try self.function_signatures.put(sym_name, function_info2);
-                                try self.function_bodies.append(FunctionBody{
-                                    .function_info = function_info2,
-                                    .statements = func_body,
-                                    .start_instruction_index = 0,
-                                    .function_name = sym_name,
-                                    .function_params = func_params,
-                                    .return_type_info = eff_sym_rti,
-                                    .module_alias = mod_alias,
-                                });
-                            }
-
-                            break;
                         }
                     }
                 }
@@ -759,7 +705,7 @@ pub const HIRGenerator = struct {
 
         for (self.function_bodies.items) |*function_body| {
             self.current_function = function_body.function_info.name;
-            self.current_function_module = function_body.module_alias;
+            self.current_module = function_body.module_id;
             self.current_function_return_type = function_body.function_info.return_type;
             self.is_global_init_phase = false;
             try self.symbol_table.enterFunctionScope(function_body.function_info.name);
@@ -879,9 +825,8 @@ pub const HIRGenerator = struct {
                     }
                 }
                 if (!is_instance_method) {
-                    if (self.function_signatures.get(function_body.function_info.name)) |func_info| {
-                        is_instance_method = func_info.arity > 0 and func_info.param_is_alias.len > 0 and func_info.param_is_alias[0];
-                    }
+                    const func_info = function_body.function_info;
+                    is_instance_method = func_info.arity > 0 and func_info.param_is_alias.len > 0 and func_info.param_is_alias[0];
                 }
 
                 if (is_instance_method) {
@@ -907,7 +852,7 @@ pub const HIRGenerator = struct {
             const body_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}_body", .{function_body.function_info.name}));
             try self.instructions.append(.{ .Label = .{ .name = body_label } });
 
-            if (self.function_signatures.getPtr(function_body.function_info.name)) |func_info| {
+            if (self.function_signatures.getPtr(function_body.key)) |func_info| {
                 func_info.body_label = body_label;
             }
             var has_returned = false;
@@ -945,12 +890,12 @@ pub const HIRGenerator = struct {
             }
             self.current_function_scope_id = null;
 
-            if (self.function_signatures.getPtr(function_body.function_info.name)) |func_info| {
+            if (self.function_signatures.getPtr(function_body.key)) |func_info| {
                 func_info.local_var_count = self.symbol_table.local_variable_count;
             }
 
             self.current_function = null;
-            self.current_function_module = null;
+            self.current_module = self.entry_module;
             self.current_function_return_type = .Nothing;
             self.current_function_scope_id = null;
             self.symbol_table.exitFunctionScope();
@@ -974,11 +919,10 @@ pub const HIRGenerator = struct {
 
         var entry_function: ?FunctionInfo = null;
         var entry_function_name: ?[]const u8 = null;
-        var it = self.function_signatures.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.is_entry) {
-                entry_function = entry.value_ptr.*;
-                entry_function_name = entry.key_ptr.*;
+        for (self.function_bodies.items) |body| {
+            if (body.function_info.is_entry) {
+                entry_function = body.function_info;
+                entry_function_name = body.function_info.name;
                 break;
             }
         }
@@ -1117,12 +1061,15 @@ pub const HIRGenerator = struct {
         self.current_function = null;
         defer self.current_function = previous_function;
 
-        var it = self.module_namespaces.iterator();
-        while (it.next()) |entry| {
-            const module_alias = entry.key_ptr.*;
-            self.current_module_context = module_alias;
+        // Module globals are emitted per defining record, keyed by the record's
+        // deterministic link prefix rather than a source alias.
+        for (self.graph.records.items) |record| {
+            if (record.id == self.entry_module) continue;
+            const module_info = record.module_info orelse continue;
+            if (module_info.is_inline_zig) continue;
+            self.current_module = record.id;
+            self.current_module_context = record.id;
             defer self.current_module_context = null;
-            const module_info = entry.value_ptr.*;
             if (module_info.ast) |module_ast| {
                 if (module_ast.data == .Block) {
                     const mod_statements = module_ast.data.Block.statements;
@@ -1138,6 +1085,7 @@ pub const HIRGenerator = struct {
                 }
             }
         }
+        self.current_module = self.entry_module;
         _ = statements;
     }
 
@@ -1177,21 +1125,15 @@ pub const HIRGenerator = struct {
         return null;
     }
 
-    /// Resolve `simple_name` to `Module.simple_name` when compiling a body nested under that
-    /// module (e.g. inside `Lexer.lex`, callee `makeAlpha` -> existing body `Lexer.makeAlpha`).
-    ///
-    /// The module an imported function body lives in is tracked explicitly
-    /// (`current_function_module`): a struct method's name is `Struct.method`
-    /// with no module qualifier, so deriving the prefix from `current_function`
-    /// alone would look for `Struct.simple_name` instead of `Module.simple_name`.
+    /// Resolve `simple_name` to `<module-prefix>.simple_name` when compiling a
+    /// body nested under that module (e.g. inside `Lexer.lex`, callee
+    /// `makeAlpha` -> the defining record's `makeAlpha`). The current record is
+    /// tracked explicitly (`current_module`), so a struct method's bare
+    /// `Struct.method` name never misleads the lookup.
     pub fn resolveQualifiedModuleLocalFunction(self: *HIRGenerator, simple_name: []const u8) ?[]const u8 {
-        if (self.current_function_module) |module_prefix| {
-            if (self.findModuleLocalFunction(module_prefix, simple_name)) |name| return name;
-        }
-
-        const cf = self.current_function orelse return null;
-        const last_dot = std.mem.lastIndexOfScalar(u8, cf, '.') orelse return null;
-        return self.findModuleLocalFunction(cf[0..last_dot], simple_name);
+        if (self.current_module == self.entry_module) return null;
+        const record = self.graph.record(self.current_module);
+        return self.findModuleLocalFunction(record.link_prefix, simple_name);
     }
 
     fn findModuleLocalFunction(self: *HIRGenerator, module_prefix: []const u8, simple_name: []const u8) ?[]const u8 {
@@ -1233,6 +1175,16 @@ pub const HIRGenerator = struct {
             if (std.mem.eql(u8, function_body.function_info.name, function_name)) {
                 return function_body;
             }
+        }
+        return null;
+    }
+
+    /// The signature of a function by its emitted link name. The authoritative
+    /// store is keyed by `(ModuleId, declared name)`; this scan serves the call
+    /// sites that only carry the temporary link spelling.
+    pub fn functionInfoByLink(self: *HIRGenerator, link_name: []const u8) ?FunctionInfo {
+        for (self.function_bodies.items) |body| {
+            if (std.mem.eql(u8, body.function_info.name, link_name)) return body.function_info;
         }
         return null;
     }
@@ -1383,9 +1335,67 @@ pub const HIRGenerator = struct {
         return self.symbol_table.getOrCreateVariable(name);
     }
 
-    pub fn trackModuleFieldSlot(self: *HIRGenerator, module_name: []const u8, field_name: []const u8, slot: u32) !void {
-        const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name });
-        try self.module_field_slots.put(key, slot);
+    pub fn trackModuleFieldSlot(self: *HIRGenerator, module_id: module_graph.ModuleId, field_name: []const u8, slot: u32) !void {
+        try self.module_field_slots.put(.{ .module = module_id, .name = field_name }, slot);
+    }
+
+    /// A resolved namespace: the target record and the deterministic prefix its
+    /// symbols are keyed/emitted under. For a physical `.doxa` record that is
+    /// the record's `link_prefix`; for an inline-`zig` synthetic record or a
+    /// `.zig`-file record it is the access name (the inline wrapper ABI name
+    /// until Phase 6).
+    pub const NamespaceRef = struct {
+        id: module_graph.ModuleId,
+        prefix: []const u8,
+    };
+
+    pub fn linkPrefixForRecord(self: *HIRGenerator, id: module_graph.ModuleId, access_name: []const u8) []const u8 {
+        const record = self.graph.record(id);
+        if (record.physical_key == null) return access_name;
+        if (record.module_info) |info| {
+            if (info.is_inline_zig) return access_name;
+        }
+        return record.link_prefix;
+    }
+
+    /// Resolve a bare name in the *current* record's owner-scoped bindings to a
+    /// namespace. Two files that both bind `util` resolve independently.
+    pub fn namespaceRefForName(self: *HIRGenerator, name: []const u8) ?NamespaceRef {
+        const record = self.graph.record(self.current_module);
+        if (record.bindings.get(name)) |bound| {
+            return switch (bound.binding) {
+                .namespace => |id| .{ .id = id, .prefix = self.linkPrefixForRecord(id, name) },
+                .symbol => null,
+            };
+        }
+        // MIGRATION (Phase 2 → deleted in Phase 3): a name with no owner-scoped
+        // binding but present in the flat alias map (e.g. a blessed module like
+        // `error`). Only a lookup shim; identity is still the record's link
+        // prefix, never the alias.
+        if (self.module_namespaces.get(name)) |info| {
+            if (info.record_id) |id| return .{ .id = id, .prefix = self.linkPrefixForRecord(id, name) };
+        }
+        return null;
+    }
+
+    /// Resolve a (possibly nested) expression as a module-namespace path
+    /// (`std`, `std.io`) through owner-scoped bindings. Qualified chains step
+    /// through each target record's public surface.
+    pub fn namespaceRefForExpr(self: *HIRGenerator, expr: *ast.Expr) ?NamespaceRef {
+        switch (expr.data) {
+            .Variable => |tok| return self.namespaceRefForName(tok.lexeme),
+            .FieldAccess => |fa| {
+                const parent = self.namespaceRefForExpr(fa.object) orelse return null;
+                const parent_record = self.graph.record(parent.id);
+                const bound = parent_record.public_bindings.get(fa.field.lexeme) orelse
+                    parent_record.bindings.get(fa.field.lexeme) orelse return null;
+                return switch (bound.binding) {
+                    .namespace => |id| .{ .id = id, .prefix = self.linkPrefixForRecord(id, fa.field.lexeme) },
+                    .symbol => null,
+                };
+            },
+            else => return null,
+        }
     }
 
     pub fn resolveModuleBindings(self: *HIRGenerator, module_name: []const u8) !struct { names: []const []const u8, slots: []const u32 } {
@@ -1394,19 +1404,24 @@ pub const HIRGenerator = struct {
         errdefer names.deinit();
         errdefer slots.deinit();
 
-        if (self.module_namespaces.get(module_name)) |module_info| {
-            if (module_info.ast) |module_ast| {
-                if (module_ast.data == .Block) {
-                    for (module_ast.data.Block.statements) |stmt| {
-                        if (stmt.data == .VarDecl) {
-                            const decl = stmt.data.VarDecl;
-                            if (!decl.is_public) continue;
+        if (self.namespaceRefForName(module_name)) |ns| {
+            const record = self.graph.record(ns.id);
+            if (record.module_info) |module_info| {
+                if (module_info.ast) |module_ast| {
+                    if (module_ast.data == .Block) {
+                        for (module_ast.data.Block.statements) |stmt| {
+                            if (stmt.data == .VarDecl) {
+                                const decl = stmt.data.VarDecl;
+                                if (!decl.is_public) continue;
 
-                            const key = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, decl.name.lexeme });
-                            defer self.allocator.free(key);
-                            if (self.module_field_slots.get(key)) |slot_idx| {
-                                try names.append(decl.name.lexeme);
-                                try slots.append(slot_idx);
+                                if (self.module_field_slots.get(.{ .module = ns.id, .name = decl.name.lexeme })) |slot_idx| {
+                                    // The module struct field carries the bare
+                                    // declaration name; the slot key is
+                                    // `(defining module, field)` so two modules'
+                                    // same-named field never share a slot.
+                                    try names.append(decl.name.lexeme);
+                                    try slots.append(slot_idx);
+                                }
                             }
                         }
                     }
@@ -1432,7 +1447,7 @@ pub const HIRGenerator = struct {
         return id;
     }
 
-    fn registerStructMethodSignatures(self: *HIRGenerator, s: ast.StructDecl, module_alias: ?[]const u8) !void {
+    fn registerStructMethodSignatures(self: *HIRGenerator, s: ast.StructDecl, module_id: module_graph.ModuleId) !void {
         for (s.methods) |method| {
             const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name.lexeme, method.name.lexeme });
             var eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method.return_type_info, method.body, &self.type_system);
@@ -1440,7 +1455,7 @@ pub const HIRGenerator = struct {
 
             if (self.struct_methods.get(s.name.lexeme)) |method_table| {
                 if (method_table.get(method.name.lexeme)) |method_info| {
-                    eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method_info.return_type.*, method.body, &self.type_system);
+                    eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method_info.signature.return_type.*, method.body, &self.type_system);
                     return_type = self.convertTypeInfo(eff_method_rti);
                 }
             }
@@ -1488,8 +1503,9 @@ pub const HIRGenerator = struct {
                 .param_types = param_types,
             };
 
-            if (!self.function_signatures.contains(qualified)) {
-                try self.function_signatures.put(qualified, function_info);
+            const key = module_graph.SymbolKey{ .module = module_id, .name = qualified };
+            if (!self.function_signatures.contains(key)) {
+                try self.function_signatures.put(key, function_info);
                 try self.function_bodies.append(FunctionBody{
                     .function_info = function_info,
                     .statements = method.body,
@@ -1497,7 +1513,8 @@ pub const HIRGenerator = struct {
                     .function_name = qualified,
                     .function_params = method.params,
                     .return_type_info = eff_method_rti,
-                    .module_alias = module_alias,
+                    .module_id = module_id,
+                    .key = key,
                 });
             }
         }
@@ -1632,7 +1649,7 @@ pub const HIRGenerator = struct {
         });
     }
 
-    pub fn generateInternalMethodCall(self: *HIRGenerator, method: Token, receiver: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
+    pub fn generateInternalMethodCall(self: *HIRGenerator, method: Token, receiver: *ast.Expr, callee: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
         const name = method.lexeme;
 
         const receiver_type = self.inferTypeFromExpression(receiver);
@@ -1641,6 +1658,13 @@ pub const HIRGenerator = struct {
                 const recv_var_name = receiver.data.Variable.lexeme;
                 const struct_name = blk: {
                     if (self.symbol_table.getVariableCustomType(recv_var_name)) |ctype| break :blk ctype;
+                    // Stopgap only: guessing that a variable is named after its
+                    // type is wrong almost always, and when it is wrong the
+                    // method table lookup below misses and the call is dropped
+                    // (see the `!is_known_builtin` early return). Declarations
+                    // now track the concrete name, so this should be
+                    // unreachable; `plan/module-graph.md` Phase 4 removes the
+                    // bare-name fallbacks entirely.
                     break :blk recv_var_name;
                 };
 
@@ -1655,7 +1679,7 @@ pub const HIRGenerator = struct {
                             try self.generateExpression(arg.expr, true, false);
                         }
 
-                        const ret_type: HIRType = self.convertTypeInfo(mi.return_type.*);
+                        const ret_type: HIRType = self.convertTypeInfo(mi.signature.return_type.*);
 
                         const fn_index: u32 = blk: {
                             if (self.getFunctionIndex(qualified_name)) |idx| {
@@ -1701,13 +1725,13 @@ pub const HIRGenerator = struct {
                 var is_static = false;
                 if (self.struct_methods.get(struct_name)) |method_table| {
                     if (method_table.get(name)) |mi| {
-                        ret_type = self.convertTypeInfo(mi.return_type.*);
+                        ret_type = self.convertTypeInfo(mi.signature.return_type.*);
                         is_static = mi.is_static;
                     }
                 }
 
                 if (ret_type == .Nothing and has_function) {
-                    if (self.function_signatures.get(qualified_name)) |func_info| {
+                    if (self.functionInfoByLink(qualified_name)) |func_info| {
                         ret_type = func_info.return_type;
                         is_static = func_info.arity == 0;
                     }
@@ -1760,6 +1784,26 @@ pub const HIRGenerator = struct {
             std.mem.eql(u8, name, "float") or
             std.mem.eql(u8, name, "byte");
         if (!is_known_builtin) {
+            // A struct receiver that matched no method table and is not a builtin
+            // operation is an unresolvable method call. It used to evaluate the
+            // receiver and return, which silently dropped the call: a
+            // value-returning method yielded the receiver and a void method did
+            // nothing at all. Report it instead. `hasErrors` guards the "exactly
+            // one diagnostic" rule — when the semantic layer already rejected
+            // this expression it has reported E1012 itself, and
+            // `plan/module-graph.md` requires one diagnostic per problem.
+            if (receiver_type == .Struct and !self.reporter.hasErrors()) {
+                const display_name = if (receiver.data == .Variable)
+                    (self.symbol_table.getVariableCustomType(receiver.data.Variable.lexeme) orelse "<struct>")
+                else
+                    "<struct>";
+                self.reporter.reportCompileError(
+                    callee.base.location(),
+                    ErrorCode.UNKNOWN_METHOD,
+                    "Unknown method '{s}' on struct '{s}'",
+                    .{ name, display_name },
+                );
+            }
             try self.generateExpression(receiver, true, should_pop_after_use);
             return;
         }
@@ -2311,10 +2355,17 @@ pub const HIRGenerator = struct {
         };
     }
 
+    /// Adapter installed on `TypeSystem` so nested call expressions resolve
+    /// their return type through the generator's owner-aware module resolution.
+    pub fn resolveCallReturnTypeThunk(ctx: *anyopaque, call_expr: *ast.Expr) HIRType {
+        const self: *HIRGenerator = @ptrCast(@alignCast(ctx));
+        return ModuleCall.inferFunctionCallReturnType(self, call_expr);
+    }
+
     pub fn inferCallReturnType(self: *HIRGenerator, function_name: []const u8, call_kind: CallKind) !HIRType {
         switch (call_kind) {
             .LocalFunction => {
-                if (self.function_signatures.get(function_name)) |func_info| {
+                if (self.functionInfoByLink(function_name)) |func_info| {
                     return func_info.return_type;
                 }
                 return .Nothing;
@@ -2330,13 +2381,13 @@ pub const HIRGenerator = struct {
                 }
                 // Fall back: check if this is really a user-defined function
                 // that was misclassified as a builtin.
-                if (self.function_signatures.get(function_name)) |func_info| {
+                if (self.functionInfoByLink(function_name)) |func_info| {
                     return func_info.return_type;
                 }
                 return .Unknown;
             },
             .ModuleFunction => {
-                if (self.function_signatures.get(function_name)) |func_info| {
+                if (self.functionInfoByLink(function_name)) |func_info| {
                     return func_info.return_type;
                 }
                 if (self.imported_symbols) |imported_symbols| {
@@ -2384,6 +2435,10 @@ pub const HIRGenerator = struct {
     }
 
     pub fn isModuleNamespace(self: *HIRGenerator, name: []const u8) bool {
+        if (self.namespaceRefForName(name) != null) return true;
+        // MIGRATION (Phase 3 removes this flat-alias fallback): a name reached
+        // through the compaction-era alias map or an import alias rather than an
+        // owner-scoped binding. It only gates member resolution, never identity.
         if (self.module_namespaces.contains(name)) return true;
         var it = self.module_namespaces.iterator();
         while (it.next()) |entry| {

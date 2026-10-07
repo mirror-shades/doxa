@@ -1,0 +1,10 @@
+module a from "./moddata/collide_mod_a.doxa"
+module b from "./moddata/collide_mod_b.doxa"
+
+# Regression: a qualified call must bind to the named module's function even
+# when another loaded module exports a public function of the same bare name.
+# The old resolver searched every module by bare name and validated `a.collide`
+# against `b`'s two-argument signature.
+entry function main() {
+    @print("{a.collide(5)} {b.collide(5, 6)}\n")
+}

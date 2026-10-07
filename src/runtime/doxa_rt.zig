@@ -129,6 +129,16 @@ pub export fn doxa_exit(code: i64) callconv(.c) void {
     std.process.exit(@intCast(code));
 }
 
+/// Integer division or modulo by zero. LLVM's `sdiv`/`srem`/`udiv`/`urem` are
+/// undefined behaviour on a zero divisor and the optimizer duly folds them to
+/// junk, so the lowering guards every runtime divisor and lands here. Declared
+/// `noreturn` so the optimizer treats the guard's taken arm as a genuine
+/// control-flow end rather than continuing into the division.
+pub export fn doxa_trap_div_by_zero() callconv(.c) void {
+    writeStderr("Division by zero\n");
+    std.process.exit(1);
+}
+
 /// User-facing panic: write the message to stderr and terminate with code 1.
 /// Code 2 is reserved for compiler-internal traps (`doxa_trap_unreachable`).
 pub export fn doxa_panic(ptr: ?[*]const u8, len: u64) callconv(.c) void {
@@ -1124,6 +1134,72 @@ fn structTotalWords(tags: []const u64, field_count: usize) usize {
     return total;
 }
 
+/// Construct defaults for a fixed array of structs that is not flat-allocatable
+/// (a struct with a heap/union field, or a multidimensional struct array).
+/// Every innermost struct-tagged slot is filled with a zeroed struct registered
+/// under `desc`. Scalars default to zero and a union/group field (tag 9)
+/// defaults to a `nothing` box. A string/array/nested-struct field is left
+/// null. TODO: recursively default those field kinds.
+pub export fn doxa_array_fill_default_structs(hdr: *ArrayHeader, desc: ?*const StructDesc) callconv(.c) void {
+    const d = desc orelse return;
+    fillDefaultStructsRec(hdr, d);
+}
+
+fn fillDefaultStructsRec(hdr: *ArrayHeader, desc: *const StructDesc) void {
+    if (hdr.len == 0) return;
+
+    if (hdr.elem_tag == ARRAY_TAG) {
+        var i: u64 = 0;
+        while (i < hdr.len) : (i += 1) {
+            const elem = doxa_array_get_i64(hdr, i);
+            if (elem == 0) continue;
+            fillDefaultStructsRec(@ptrFromInt(@as(usize, @intCast(elem))), desc);
+        }
+        return;
+    }
+    if (hdr.elem_tag != 7) return;
+
+    const field_count: usize = @intCast(desc.field_count);
+    const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
+    const words = structTotalWords(tags, field_count);
+    const scope = scope_arena.currentScope();
+
+    var i: u64 = 0;
+    while (i < hdr.len) : (i += 1) {
+        if (doxa_array_get_i64(hdr, i) != 0) continue;
+
+        const dst = scope_arena.allocSliceInScope(scope, i64, words);
+        @memset(dst, 0);
+
+        var word: usize = 0;
+        for (0..field_count) |fi| {
+            const ftag: u64 = if (fi < tags.len) tags[fi] else 255;
+            if (ftag == 9) {
+                const box_words = scope_arena.allocSliceInScope(scope, i64, 3);
+                const box: *DoxaValue = @ptrCast(@alignCast(box_words.ptr));
+                box.* = .{ .tag = @intFromEnum(DoxaTag.Nothing), .reserved = 0, .payload_bits = 0, .payload_len = 0 };
+                dst[word] = @intCast(@intFromPtr(box));
+            }
+            word += structFieldWordCount(ftag);
+        }
+
+        const inst: *anyopaque = @ptrCast(dst.ptr);
+        struct_registry.put(std.heap.page_allocator, @intFromPtr(inst), desc) catch {};
+        struct_scopes.put(std.heap.page_allocator, @intFromPtr(inst), scope) catch {};
+        doxa_array_set_i64(hdr, i, @as(i64, @intCast(@intFromPtr(inst))));
+    }
+}
+
+/// Word count of a registered struct instance, or null when it has no
+/// descriptor. Used to write an assigned element through a non-owning view's
+/// existing slot.
+fn structWordCountInRegistry(ptr: *anyopaque) ?usize {
+    const desc = struct_registry.get(@intFromPtr(ptr)) orelse return null;
+    const field_count: usize = @intCast(desc.field_count);
+    const tags = if (desc.field_tags) |p| p[0..field_count] else &[_]u64{};
+    return structTotalWords(tags, field_count);
+}
+
 fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
     const src = ptr orelse return null;
     const desc = struct_registry.get(@intFromPtr(src)) orelse return null;
@@ -1163,6 +1239,17 @@ fn structCloneInto(scope: ?*scope_arena.Scope, ptr: ?*anyopaque) ?*anyopaque {
             const nested_src: ?*anyopaque = @ptrFromInt(@as(usize, @intCast(bits)));
             const nested = structCloneInto(scope, nested_src);
             dst[word] = @intCast(@intFromPtr(nested orelse nested_src));
+            word += 1;
+        } else if (tag == 9 and bits != 0) {
+            // Boxed union/group field: the word is a pointer to a %DoxaValue.
+            // Deep-copy the box and its heap payload into the destination scope
+            // so the union survives the source arena being freed.
+            const src_box: *const DoxaValue = @ptrFromInt(@as(usize, @intCast(bits)));
+            const dst_words = scope_arena.allocSliceInScope(scope, i64, 3);
+            const dst_box: *DoxaValue = @ptrCast(@alignCast(dst_words.ptr));
+            dst_box.* = src_box.*;
+            cloneDoxaValueInto(scope, dst_box);
+            dst[word] = @intCast(@intFromPtr(dst_box));
             word += 1;
         } else {
             dst[word] = bits;
@@ -1439,6 +1526,100 @@ pub export fn doxa_array_new_nested(
     return outer;
 }
 
+/// Materialize a fixed-size array (row-major, all dimensions) into a heap
+/// nested `ArrayHeader` tree in the arena `levels` scopes above the current
+/// one. `sizes` lists each dimension outermost-first (`depth` entries); the
+/// innermost element is `inner_elem_size` bytes and carries `inner_elem_tag`.
+///
+/// A struct field is a single heap pointer, so a fixed (flat, stack-owned)
+/// array cannot be stored by reference: it is promoted to the heap form that
+/// dynamic arrays already use. Reads of the field therefore see a dynamic
+/// array, which is the general representation.
+pub export fn doxa_array_from_fixed_at(
+    levels: i64,
+    src: [*]const u8,
+    sizes: [*]const u64,
+    depth: u64,
+    inner_elem_size: u64,
+    inner_elem_tag: u64,
+) callconv(.c) *ArrayHeader {
+    return fixedArrayToNested(scope_arena.scopeAt(@intCast(levels)), src, sizes, depth, inner_elem_size, inner_elem_tag);
+}
+
+/// Materialize a fixed, flat array of scalar-only struct slots into a heap
+/// `ArrayHeader` of boxed struct pointers in the arena `levels` scopes above
+/// the current one.
+///
+/// A fixed array of structs stores each element inline as its raw
+/// `struct_words` i64 words (`emitArrayNew`'s flat path). A dynamic array's
+/// struct element is a heap pointer (tag 7) that the descriptor registry clones
+/// through, so each flat slot is boxed — allocated in the owning arena and
+/// registered under `desc` — and the array holds the box pointers.
+pub export fn doxa_array_from_fixed_structs_at(
+    levels: i64,
+    src: [*]const u8,
+    count: u64,
+    struct_words: u64,
+    desc: ?*const StructDesc,
+) callconv(.c) *ArrayHeader {
+    const scope = scope_arena.scopeAt(@intCast(levels));
+    const arr = arrayNewIn(scope, @sizeOf(*anyopaque), 7, count);
+    if (arr.data == null or count == 0) return arr;
+
+    const src_words: [*]const i64 = @ptrCast(@alignCast(src));
+    const slots: [*]?*anyopaque = @ptrCast(@alignCast(arr.data.?));
+    const words: usize = @intCast(struct_words);
+    var idx: u64 = 0;
+    while (idx < count) : (idx += 1) {
+        const box = scope_arena.allocSliceInScope(scope, i64, words);
+        @memcpy(box, src_words[@intCast(idx * struct_words)..][0..words]);
+        const box_ptr: *anyopaque = @ptrCast(box.ptr);
+        if (desc) |d| struct_registry.put(std.heap.page_allocator, @intFromPtr(box_ptr), d) catch {};
+        struct_scopes.put(std.heap.page_allocator, @intFromPtr(box_ptr), scope) catch {};
+        slots[@intCast(idx)] = box_ptr;
+    }
+    return arr;
+}
+
+fn fixedArrayToNested(
+    scope: ?*scope_arena.Scope,
+    src: [*]const u8,
+    sizes: [*]const u64,
+    depth: u64,
+    inner_elem_size: u64,
+    inner_elem_tag: u64,
+) *ArrayHeader {
+    const n = sizes[0];
+    if (depth <= 1) {
+        const arr = arrayNewIn(scope, inner_elem_size, inner_elem_tag, n);
+        const bytes: usize = @intCast(inner_elem_size * n);
+        if (arr.data != null and bytes != 0) {
+            const dst: [*]u8 = @ptrCast(arr.data.?);
+            @memcpy(dst[0..bytes], src[0..bytes]);
+        }
+        return arr;
+    }
+
+    const outer = arrayNewIn(scope, @sizeOf(*anyopaque), ARRAY_TAG, n);
+    var stride: u64 = inner_elem_size;
+    var d: u64 = 1;
+    while (d < depth) : (d += 1) stride *= sizes[d];
+
+    const data: [*]?*ArrayHeader = @ptrCast(@alignCast(outer.data.?));
+    var idx: u64 = 0;
+    while (idx < n) : (idx += 1) {
+        data[@intCast(idx)] = fixedArrayToNested(
+            scope,
+            src + @as(usize, @intCast(idx * stride)),
+            sizes + 1,
+            depth - 1,
+            inner_elem_size,
+            inner_elem_tag,
+        );
+    }
+    return outer;
+}
+
 fn arrayCloneIn(scope: ?*scope_arena.Scope, hdr: ?*ArrayHeader) *ArrayHeader {
     const src = hdr orelse return arrayNewIn(scope, 8, 0, 0);
     const result = arrayNewIn(scope, src.elem_size, src.elem_tag, src.len);
@@ -1601,10 +1782,25 @@ pub export fn doxa_array_set_i64(hdr: *ArrayHeader, idx: u64, value: i64) callco
         7 => { // struct (pointer encoded as bits)
             const sp: *?*anyopaque = @ptrCast(@alignCast(p));
             const addr: u64 = @bitCast(value);
-            sp.* = if (addr == 0)
-                null
-            else
-                structCloneInto(hdr.scope, @ptrFromInt(@as(usize, @intCast(addr))));
+            const src: ?*anyopaque = if (addr == 0) null else @ptrFromInt(@as(usize, @intCast(addr)));
+            // A non-owning view (`wrapFixedStructArrayHeader`) exposes a fixed
+            // array's by-value struct slots by pointer. An element assignment
+            // must copy the source's words through the existing slot instead of
+            // replacing the pointer, so the write lands in the owner's flat
+            // buffer. With no slot to write through, keep the raw pointer.
+            if (hdr.scope == null) {
+                if (sp.* != null and src != null) {
+                    if (structWordCountInRegistry(src.?)) |words| {
+                        const dst: [*]i64 = @ptrCast(@alignCast(sp.*.?));
+                        const src_words: [*]const i64 = @ptrCast(@alignCast(src.?));
+                        @memcpy(dst[0..words], src_words[0..words]);
+                        return;
+                    }
+                }
+                sp.* = src;
+                return;
+            }
+            sp.* = if (src == null) null else structCloneInto(hdr.scope, src.?);
         },
         // Default: store raw 64-bit payload (pointers/unknown).
         // When the element type is unknown (e.g. an empty `[]` literal) and the
@@ -2007,6 +2203,13 @@ fn printStructImpl(out: *std.Io.Writer, addr: u64) anyerror!void {
         } else if (tag == 8 and idx < enum_type_names.len) {
             const etn: []const u8 = if (enum_type_names[idx]) |n| std.mem.span(n) else "";
             try printEnumImpl(out, etn, bits);
+        } else if (tag == 9) {
+            // Boxed union/group field: render the boxed %DoxaValue.
+            const box: *const DoxaValue = @ptrFromInt(@as(usize, @intCast(bits)));
+            var box_ptr: ?[*]u8 = null;
+            var box_len: u64 = 0;
+            doxa_value_to_string(box, &box_ptr, &box_len);
+            if (box_ptr) |p| try out.writeAll(p[0..@intCast(box_len)]);
         } else {
             try printTaggedBitsImpl(out, tag, bits);
         }

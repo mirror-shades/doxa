@@ -22,6 +22,8 @@ pub const TokenType = enum {
     SLASH, // /
     SLASH_EQUAL, // /=
     DOUBLE_SLASH, // //
+    DOUBLE_SLASH_EQUAL, // //=
+    MODULO_EQUAL, // %=
     ASTERISK, // *
     ASTERISK_EQUAL, // *=
     POWER, // **

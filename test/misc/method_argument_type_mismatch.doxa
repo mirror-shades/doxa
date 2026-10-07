@@ -1,0 +1,24 @@
+# The parameter *types* of a method are checked too, not just its arity.
+# `greet` takes a Coord; a bare string must not reach codegen.
+public struct Coord {
+    public rank :: int,
+    public file :: int,
+}
+
+public struct Notifier {
+    public sent :: int,
+
+    public function new() returns Notifier {
+        return $Notifier { sent is 0 }
+    }
+
+    public method greet(target :: Coord) {
+        this.sent is this.sent + 1
+    }
+}
+
+entry function main() {
+    const n is Notifier.new()
+    n.greet("a1")
+    @print("{n.sent}\n")
+}

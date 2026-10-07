@@ -700,8 +700,23 @@ pub fn Methods(comptime Ctx: type) type {
 
                     try self.storeStructStringField(w, struct_type_llvm, struct_ptr, word_offset, cloned_ptr, cloned_len, id);
                 } else {
-                    const storage_bits: StackVal = switch (field_type) {
+                    const storage_bits: StackVal = if (field_type == .Array and canBoxFixedArrayField(field_val)) blk: {
+                        const levels = if (place_in_caller)
+                            try std.fmt.allocPrint(self.allocator, "{d}", .{caller_levels})
+                        else
+                            try self.allocator.dupe(u8, "0");
+                        defer self.allocator.free(levels);
+                        break :blk try self.boxFixedArrayField(w, field_val, levels, id);
+                    } else switch (field_type) {
                         .Nothing => StackVal{ .name = "0", .ty = .I64 },
+                        .Union, .Group => blk_box: {
+                            const levels = if (place_in_caller)
+                                try std.fmt.allocPrint(self.allocator, "{d}", .{caller_levels})
+                            else
+                                try self.allocator.dupe(u8, "0");
+                            defer self.allocator.free(levels);
+                            break :blk_box try self.boxBoxedMemberField(w, field_val, field_type, levels, id);
+                        },
                         else => try self.convertValueToArrayStorage(w, field_val, field_type, id),
                     };
 
@@ -851,7 +866,22 @@ pub fn Methods(comptime Ctx: type) type {
                 try w.writeAll(load_line);
 
                 const storage = StackVal{ .name = field_val, .ty = .I64 };
-                pushed = try self.convertArrayStorageToValue(w, storage, field_type, id);
+                if (field_type == .Union or field_type == .Group) {
+                    // A union/group field stores a pointer to a %DoxaValue box;
+                    // load the box so the caller sees the boxed member and its
+                    // tag/member index, not the raw pointer.
+                    const box_ptr = try self.nextTemp(id);
+                    const inttoptr_line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 {s} to ptr\n", .{ box_ptr, field_val });
+                    defer self.allocator.free(inttoptr_line);
+                    try w.writeAll(inttoptr_line);
+                    const dv = try self.nextTemp(id);
+                    const dv_load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load %DoxaValue, ptr {s}\n", .{ dv, box_ptr });
+                    defer self.allocator.free(dv_load_line);
+                    try w.writeAll(dv_load_line);
+                    pushed = .{ .name = dv, .ty = .Value, .boxed_type = field_type };
+                } else {
+                    pushed = try self.convertArrayStorageToValue(w, storage, field_type, id);
+                }
             }
             if (field_type == .Enum) {
                 const type_name = struct_val.struct_type_name orelse blk: {
@@ -996,8 +1026,41 @@ pub fn Methods(comptime Ctx: type) type {
 
                 try self.storeStructStringField(w, struct_type_llvm_set, struct_val.name, word_offset, cloned_ptr, cloned_len, id);
             } else {
-                const storage_bits: StackVal = switch (field_type) {
+                const storage_bits: StackVal = if (field_type == .Array and canBoxFixedArrayField(value)) blk: {
+                    // A fixed array is promoted into the arena that owns the
+                    // struct, mirroring the string clone above: a `^`/`this`
+                    // receiver's arena is the caller's, not the callee's.
+                    const base_levels: usize = self.scope_depth -| @as(usize, @intFromBool(self.in_function_context));
+                    if (struct_val.alias_owned) {
+                        const depth = struct_val.alias_depth_value orelse "0";
+                        const lvl = try self.nextTemp(id);
+                        const add_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {d}, {s}\n", .{ lvl, base_levels + 1, depth });
+                        defer self.allocator.free(add_line);
+                        try w.writeAll(add_line);
+                        break :blk try self.boxFixedArrayField(w, value, lvl, id);
+                    }
+                    const lvl = try std.fmt.allocPrint(self.allocator, "{d}", .{base_levels});
+                    defer self.allocator.free(lvl);
+                    break :blk try self.boxFixedArrayField(w, value, lvl, id);
+                } else switch (field_type) {
                     .Nothing => StackVal{ .name = "0", .ty = .I64 },
+                    .Union, .Group => blk_box: {
+                        // A union field is a pointer to a %DoxaValue box; the box
+                        // must live in the arena that owns the struct (the
+                        // caller's, when the struct came in through `this`/`^`).
+                        const base_levels: usize = self.scope_depth -| @as(usize, @intFromBool(self.in_function_context));
+                        if (struct_val.alias_owned) {
+                            const depth = struct_val.alias_depth_value orelse "0";
+                            const lvl = try self.nextTemp(id);
+                            const add_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 {d}, {s}\n", .{ lvl, base_levels + 1, depth });
+                            defer self.allocator.free(add_line);
+                            try w.writeAll(add_line);
+                            break :blk_box try self.boxBoxedMemberField(w, value, field_type, lvl, id);
+                        }
+                        const lvl = try std.fmt.allocPrint(self.allocator, "{d}", .{base_levels});
+                        defer self.allocator.free(lvl);
+                        break :blk_box try self.boxBoxedMemberField(w, value, field_type, lvl, id);
+                    },
                     else => try self.convertValueToArrayStorage(w, value, field_type, id),
                 };
 
@@ -1025,6 +1088,319 @@ pub fn Methods(comptime Ctx: type) type {
 
             // Push struct pointer back onto stack
             try stack.append(struct_val);
+        }
+
+        /// Whether a fixed-array value can be promoted to a heap array.
+        ///
+        /// A flat scalar array (`emitArrayNew`'s flat path) already matches the
+        /// dynamic element representation and is copied verbatim. A 1-D fixed
+        /// array of scalar-only structs uses by-value word slots, which
+        /// `doxa_array_from_fixed_structs_at` boxes into heap struct elements
+        /// (tag 7); its element type name is required so the boxes register
+        /// under the element struct's descriptor.
+        pub fn canBoxFixedArrayField(value: StackVal) bool {
+            if (value.fixed_array_depth == 0 or value.fixed_array_depth > 4) return false;
+            const elem_type = value.array_type orelse return false;
+            const inner = HIR.arrayInnermostElementType(elem_type) orelse elem_type;
+            if (inner == .Struct) {
+                // Only the 1-D flat struct layout exists; a multi-dimensional
+                // struct array is not flat-allocated in `emitArrayNew`.
+                if (value.fixed_array_depth != 1) return false;
+                if (value.struct_type_name == null) return false;
+                const fields = value.struct_field_types orelse return false;
+                return IRPrinter.structFieldsAllScalar(fields);
+            }
+            return switch (inner) {
+                .Int, .Byte, .Float, .Tetra, .Enum, .Nothing => true,
+                else => false,
+            };
+        }
+
+        /// Promote a fixed (flat, stack-owned) array value into a heap nested
+        /// `ArrayHeader` tree rooted `levels` scopes above the current one, and
+        /// return its pointer as i64 storage bits. Struct fields are single heap
+        /// pointers, so a fixed array cannot be stored by reference.
+        pub fn boxFixedArrayField(
+            self: *IRPrinter,
+            w: anytype,
+            value: StackVal,
+            levels: []const u8,
+            id: *usize,
+        ) !StackVal {
+            const elem_type = value.array_type orelse HIR.HIRType{ .Int = {} };
+            const inner = HIR.arrayInnermostElementType(elem_type) orelse elem_type;
+            if (inner == .Struct) return self.boxFixedStructArrayField(w, value, levels, id);
+            const inner_size = self.arrayElementSize(inner);
+            const inner_tag = self.arrayElementTag(inner);
+            const depth: usize = value.fixed_array_depth;
+
+            const sizes_ptr = try self.nextTemp(id);
+            const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca [{d} x i64]\n", .{ sizes_ptr, depth });
+            defer self.allocator.free(alloca_line);
+            try w.writeAll(alloca_line);
+
+            for (0..depth) |i| {
+                const slot = try self.nextTemp(id);
+                const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr [{d} x i64], ptr {s}, i32 0, i32 {d}\n", .{ slot, depth, sizes_ptr, i });
+                defer self.allocator.free(gep_line);
+                try w.writeAll(gep_line);
+
+                const store_line = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ value.fixed_array_sizes[i], slot });
+                defer self.allocator.free(store_line);
+                try w.writeAll(store_line);
+            }
+
+            const hdr = try self.nextTemp(id);
+            const call_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = call ptr @doxa_array_from_fixed_at(i64 {s}, ptr {s}, ptr {s}, i64 {d}, i64 {d}, i64 {d})\n",
+                .{ hdr, levels, value.name, sizes_ptr, depth, inner_size, inner_tag },
+            );
+            defer self.allocator.free(call_line);
+            try w.writeAll(call_line);
+
+            const bits = try self.nextTemp(id);
+            const ptrtoint_line = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ bits, hdr });
+            defer self.allocator.free(ptrtoint_line);
+            try w.writeAll(ptrtoint_line);
+            return StackVal{ .name = bits, .ty = .I64 };
+        }
+
+        /// Build a `%DoxaValue` box for a union/group-typed struct field and
+        /// return the box pointer as i64 storage bits. A union field is one i64
+        /// word holding a pointer to a heap `%DoxaValue` (the field has no room
+        /// for the box inline, and the tag/member metadata must survive), so the
+        /// member is boxed first, then written into an arena-owned box.
+        ///
+        /// `levels` is the owning arena as a runtime level expression (0 is the
+        /// current scope); the box must live in the same arena as the struct.
+        /// TODO: `buildDoxaValue` clones a string/array payload into the current
+        /// scope, so a boxed member with a heap payload under a caller placement
+        /// is not yet re-homed to `levels`.
+        pub fn boxBoxedMemberField(
+            self: *IRPrinter,
+            w: anytype,
+            value: StackVal,
+            field_type: HIR.HIRType,
+            levels: []const u8,
+            id: *usize,
+        ) !StackVal {
+            const dv = try self.buildDoxaValue(w, value, field_type, id);
+            const box = try self.nextTemp(id);
+            const alloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc_at(i64 {s}, i64 24, i64 8)\n", .{ box, levels });
+            defer self.allocator.free(alloc_line);
+            try w.writeAll(alloc_line);
+
+            const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ dv.name, box });
+            defer self.allocator.free(store_line);
+            try w.writeAll(store_line);
+
+            const bits = try self.nextTemp(id);
+            const pi = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ bits, box });
+            defer self.allocator.free(pi);
+            try w.writeAll(pi);
+            return StackVal{ .name = bits, .ty = .I64 };
+        }
+
+        /// Descriptor field tag. Matches the runtime's `structFieldWordCount`
+        /// and `structCloneInto`: string = 3 (two words), array = 6, nested
+        /// struct = 7, enum = 8, and a boxed union/group field = 9 (one word,
+        /// deep-copied as a `%DoxaValue` box).
+        pub fn structFieldDescTag(self: *IRPrinter, field_type: HIR.HIRType) u64 {
+            return switch (field_type) {
+                .Union, .Group => 9,
+                else => self.arrayElementTag(field_type),
+            };
+        }
+
+        /// Resolve a fixed array value's struct element layout: its type name,
+        /// field types, and flat `i64` word count. Prefers the whole-program
+        /// maps (keyed by struct id) and falls back to metadata carried on the
+        /// value.
+        pub fn fixedStructElementInfo(self: *IRPrinter, value: StackVal) !struct {
+            type_name: []const u8,
+            field_types: []HIR.HIRType,
+            words: usize,
+        } {
+            const sid = switch (value.array_type orelse return error.MissingStructType) {
+                .Struct => |s| s,
+                else => return error.MissingStructType,
+            };
+            const field_types = self.struct_fields_by_id.get(sid) orelse
+                value.struct_field_types orelse return error.MissingStructFields;
+            const type_name = self.struct_type_names_by_id.get(sid) orelse
+                value.struct_type_name orelse return error.MissingStructTypeName;
+            return .{
+                .type_name = type_name,
+                .field_types = field_types,
+                .words = structTotalWords(field_types, field_types.len),
+            };
+        }
+
+        /// Promote a 1-D fixed array of scalar-only structs into a heap
+        /// `ArrayHeader` of boxed struct elements (tag 7), returning the header
+        /// pointer. Each flat by-value slot is boxed and registered under the
+        /// element struct's descriptor, so later array clones and reflection can
+        /// walk it. The header and its boxes live in the arena `levels` scopes
+        /// above the current one.
+        pub fn emitFixedStructArrayHeader(
+            self: *IRPrinter,
+            w: anytype,
+            value: StackVal,
+            levels: []const u8,
+            id: *usize,
+        ) ![]const u8 {
+            const info = try self.fixedStructElementInfo(value);
+            const count: u64 = value.fixed_array_sizes[0];
+            const desc_global = try self.getOrCreateStructDescGlobalByName(info.type_name, info.field_types);
+
+            const hdr = try self.nextTemp(id);
+            const call_line = try std.fmt.allocPrint(
+                self.allocator,
+                "  {s} = call ptr @doxa_array_from_fixed_structs_at(i64 {s}, ptr {s}, i64 {d}, i64 {d}, ptr {s})\n",
+                .{ hdr, levels, value.name, count, info.words, desc_global },
+            );
+            defer self.allocator.free(call_line);
+            try w.writeAll(call_line);
+            return hdr;
+        }
+
+        /// Promote a 1-D fixed array of scalar-only structs into a heap boxed
+        /// array and return its pointer as `i64` storage bits, the encoding a
+        /// struct field holds.
+        pub fn boxFixedStructArrayField(
+            self: *IRPrinter,
+            w: anytype,
+            value: StackVal,
+            levels: []const u8,
+            id: *usize,
+        ) !StackVal {
+            const hdr = try self.emitFixedStructArrayHeader(w, value, levels, id);
+            const bits = try self.nextTemp(id);
+            const ptrtoint_line = try std.fmt.allocPrint(self.allocator, "  {s} = ptrtoint ptr {s} to i64\n", .{ bits, hdr });
+            defer self.allocator.free(ptrtoint_line);
+            try w.writeAll(ptrtoint_line);
+            return StackVal{ .name = bits, .ty = .I64 };
+        }
+
+        /// Build a non-owning `%ArrayHeader` whose `data` points at `data_name`,
+        /// with the given length and element layout and a null owning scope.
+        /// The header is entry-block alloca'd; a caller builds the backing
+        /// storage it views (a flat buffer or a pointer array).
+        pub fn buildNonOwningHeader(
+            self: *IRPrinter,
+            w: anytype,
+            data_name: []const u8,
+            total_elems: u64,
+            elem_size: u64,
+            elem_tag: u64,
+            id: *usize,
+        ) ![]const u8 {
+            // Named, not a numeric temp: the alloca is replayed in the entry
+            // block, and LLVM requires unnamed temps to be numbered in order.
+            const hdr_reg = try std.fmt.allocPrint(self.allocator, "%synth.hdr.{d}", .{self.synth_header_counter});
+            self.synth_header_counter += 1;
+            try self.entry_allocas.append(try std.fmt.allocPrint(self.allocator, "  {s} = alloca %ArrayHeader\n", .{hdr_reg}));
+
+            const data_ptr = try self.nextTemp(id);
+            const gep_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 0\n", .{ data_ptr, hdr_reg });
+            defer self.allocator.free(gep_line);
+            try w.writeAll(gep_line);
+            const store_data = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ data_name, data_ptr });
+            defer self.allocator.free(store_data);
+            try w.writeAll(store_data);
+
+            const len_ptr = try self.nextTemp(id);
+            const len_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 1\n", .{ len_ptr, hdr_reg });
+            defer self.allocator.free(len_gep);
+            try w.writeAll(len_gep);
+            const store_len = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ total_elems, len_ptr });
+            defer self.allocator.free(store_len);
+            try w.writeAll(store_len);
+
+            const cap_ptr = try self.nextTemp(id);
+            const cap_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 2\n", .{ cap_ptr, hdr_reg });
+            defer self.allocator.free(cap_gep);
+            try w.writeAll(cap_gep);
+            const store_cap = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ total_elems, cap_ptr });
+            defer self.allocator.free(store_cap);
+            try w.writeAll(store_cap);
+
+            const esz_ptr = try self.nextTemp(id);
+            const esz_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 3\n", .{ esz_ptr, hdr_reg });
+            defer self.allocator.free(esz_gep);
+            try w.writeAll(esz_gep);
+            const store_esz = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ elem_size, esz_ptr });
+            defer self.allocator.free(store_esz);
+            try w.writeAll(store_esz);
+
+            const tag_ptr = try self.nextTemp(id);
+            const tag_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 4\n", .{ tag_ptr, hdr_reg });
+            defer self.allocator.free(tag_gep);
+            try w.writeAll(tag_gep);
+            const store_tag = try std.fmt.allocPrint(self.allocator, "  store i64 {d}, ptr {s}\n", .{ elem_tag, tag_ptr });
+            defer self.allocator.free(store_tag);
+            try w.writeAll(store_tag);
+
+            // Field 5 (`scope`) must be initialised: a non-owning view has no
+            // owning arena, and leaving it undefined lets a stack garbage pointer
+            // reach the runtime's rehome/alloc paths.
+            const scope_ptr = try self.nextTemp(id);
+            const scope_gep = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr %ArrayHeader, ptr {s}, i32 0, i32 5\n", .{ scope_ptr, hdr_reg });
+            defer self.allocator.free(scope_gep);
+            try w.writeAll(scope_gep);
+            const store_scope = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{scope_ptr});
+            defer self.allocator.free(store_scope);
+            try w.writeAll(store_scope);
+
+            return hdr_reg;
+        }
+
+        /// Build a non-owning dynamic-array view over a fixed array of
+        /// scalar-only structs. The flat buffer stores each element inline as
+        /// `words` `i64`s, but the dynamic accessors expect one tag-7 pointer
+        /// per element, so a scope-allocated pointer array is filled with the
+        /// address of each flat slot. Field writes through the view land
+        /// directly in the owner's flat buffer (alias write-through).
+        pub fn wrapFixedStructArrayHeader(
+            self: *IRPrinter,
+            w: anytype,
+            fixed: StackVal,
+            id: *usize,
+        ) !StackVal {
+            const info = try self.fixedStructElementInfo(fixed);
+            var total_elems: u64 = fixed.fixed_array_sizes[0];
+            var d: u32 = 1;
+            while (d < fixed.fixed_array_depth) : (d += 1) total_elems *= fixed.fixed_array_sizes[d];
+
+            // Backed by the caller's scope arena, not an alloca: a large fixed
+            // struct array would otherwise put its pointer array on the stack.
+            const ptrs_reg = try self.nextTemp(id);
+            const ptrs_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {d}, i64 8)\n", .{ ptrs_reg, total_elems * 8 });
+            defer self.allocator.free(ptrs_line);
+            try w.writeAll(ptrs_line);
+
+            const elem_ty = try std.fmt.allocPrint(self.allocator, "[{d} x i64]", .{info.words});
+            defer self.allocator.free(elem_ty);
+            var i: u64 = 0;
+            while (i < total_elems) : (i += 1) {
+                const slot = try self.nextTemp(id);
+                const slot_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr inbounds {s}, ptr {s}, i64 {d}\n", .{ slot, elem_ty, fixed.name, i });
+                defer self.allocator.free(slot_line);
+                try w.writeAll(slot_line);
+
+                const dst = try self.nextTemp(id);
+                const dst_line = try std.fmt.allocPrint(self.allocator, "  {s} = getelementptr [{d} x ptr], ptr {s}, i64 0, i64 {d}\n", .{ dst, total_elems, ptrs_reg, i });
+                defer self.allocator.free(dst_line);
+                try w.writeAll(dst_line);
+
+                const st = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ slot, dst });
+                defer self.allocator.free(st);
+                try w.writeAll(st);
+            }
+
+            const hdr = try self.buildNonOwningHeader(w, ptrs_reg, total_elems, 8, 7, id);
+            return .{ .name = hdr, .ty = .PTR, .array_type = fixed.array_type };
         }
 
         pub fn buildI64StructType(self: *IRPrinter, total_words: usize) ![]u8 {
@@ -1234,7 +1610,7 @@ pub fn Methods(comptime Ctx: type) type {
                 var i: usize = 0;
                 while (i < field_count) : (i += 1) {
                     if (i != 0) try elems.appendSlice(self.allocator, ", ");
-                    const tag_val = self.arrayElementTag(field_types[i]);
+                    const tag_val = self.structFieldDescTag(field_types[i]);
                     const piece = try std.fmt.allocPrint(self.allocator, "i64 {d}", .{tag_val});
                     defer self.allocator.free(piece);
                     try elems.appendSlice(self.allocator, piece);
@@ -1328,6 +1704,24 @@ pub fn Methods(comptime Ctx: type) type {
 
             try self.struct_desc_globals_by_type.put(type_name, desc_global);
             return desc_global;
+        }
+
+        /// Resolve the descriptor global for `type_name`, creating it on first
+        /// sighting. Unlike `getOrCreateStructDescGlobal`, this takes no
+        /// `PeekEmitState`: it uses the state the current emit pass installed on
+        /// the printer, so the fixed-array promotion can reach it from
+        /// `emitSetField`, whose signature carries no peek state.
+        pub fn getOrCreateStructDescGlobalByName(
+            self: *IRPrinter,
+            type_name: []const u8,
+            field_types: []HIR.HIRType,
+        ) ![]const u8 {
+            if (self.struct_desc_globals_by_type.get(type_name)) |existing| return existing;
+            const peek_state = self.active_peek_state orelse return error.MissingPeekState;
+            const field_names = self.struct_field_names_by_type.get(type_name) orelse return error.MissingStructFieldNames;
+            if (field_names.len != field_types.len) return error.MissingStructFieldNames;
+            const enum_type_names = self.struct_field_enum_type_names_by_type.get(type_name) orelse &[_]?[]const u8{};
+            return self.getOrCreateStructDescGlobal(peek_state, type_name, field_names, field_types, enum_type_names);
         }
 
         pub fn getOrCreateEnumDescGlobal(
@@ -1536,3 +1930,4 @@ pub fn Methods(comptime Ctx: type) type {
         }
     };
 }
+

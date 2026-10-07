@@ -15,8 +15,9 @@ const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
 
 const Parser = @import("parser_types.zig").Parser;
-const ModuleResolutionStatus = @import("parser_types.zig").ModuleResolutionStatus;
 const ImportStackEntry = @import("parser_types.zig").ImportStackEntry;
+const graph = @import("../module/graph.zig");
+const module_graph = graph;
 
 pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.ModuleInfo {
     if (isZigModulePath(module_name)) {
@@ -26,46 +27,91 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
     const normalized_path = try normalizeModulePath(self, module_name);
     defer self.allocator.free(normalized_path);
 
-    if (self.module_resolution_status.get(normalized_path)) |status| {
-        switch (status) {
-            .IN_PROGRESS => {
-                return self.reportCircularImport(normalized_path);
-            },
-            .COMPLETED => {
-                if (self.module_cache.get(normalized_path)) |cached| {
-                    return cached;
-                }
-                // Recover from stale resolution state when a child parser inherited
-                // status without the corresponding cache entry.
-                _ = self.module_resolution_status.remove(normalized_path);
-            },
-            .NOT_STARTED => {
-                unreachable;
-            },
+    // A specifier is only a probe for a candidate path; identity comes from the
+    // graph keyed by `realpath`. Probe the file, then key by its real path so
+    // two spellings, aliases, or a symlink to the same file collapse to one
+    // record and one parse.
+    const module_data = try loadModuleSourceOrReport(self, module_name);
+    const physical = graph.physicalPath(self.io, self.allocator, module_data.resolved_path) catch |err| {
+        self.allocator.free(module_data.source);
+        self.allocator.free(module_data.resolved_path);
+        return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.ModuleLoadError,
+        };
+    };
+    defer self.allocator.free(physical);
+
+    const record = self.graph.ensureRecord(physical) catch |err| {
+        switch (err) {
+            error.ModuleRootUnknown => self.reporter.reportCompileError(
+                null,
+                ErrorCode.MODULE_ROOT_UNKNOWN,
+                "Module '{s}' resolves to '{s}', which is outside every declared root",
+                .{ module_name, module_data.resolved_path },
+            ),
+            error.DuplicateStableKey => self.reporter.reportCompileError(
+                null,
+                ErrorCode.DUPLICATE_STABLE_KEY,
+                "Two distinct modules claim the stable key '{s}'",
+                .{physical},
+            ),
+            error.OutOfMemory => {},
         }
-    }
-
-    if (self.module_cache.get(normalized_path)) |info| {
-        return info;
-    }
-
-    const status_key = try self.allocator.dupe(u8, normalized_path);
-    try self.module_resolution_status.put(status_key, .IN_PROGRESS);
-
-    const current_file_copy = try self.allocator.dupe(u8, self.current_file);
-    try self.import_stack.append(.{
-        .module_path = try self.allocator.dupe(u8, normalized_path),
-        .imported_from = if (self.import_stack.items.len > 0) current_file_copy else null,
-    });
-
-    defer {
-        _ = self.import_stack.pop();
-    }
-
-    const module_data = self.loadModuleSourceWithPath(module_name) catch |err| {
-        _ = self.module_resolution_status.remove(normalized_path);
+        self.allocator.free(module_data.source);
+        self.allocator.free(module_data.resolved_path);
         return err;
     };
+
+    try self.import_stack.append(.{
+        .module_path = try self.allocator.dupe(u8, normalized_path),
+        .imported_from = if (self.import_stack.items.len > 0)
+            try self.allocator.dupe(u8, self.current_file)
+        else
+            null,
+    });
+    defer _ = self.import_stack.pop();
+
+    var parse_ctx = ParseContext{
+        .parser = self,
+        .module_data = module_data,
+    };
+
+    switch (self.graph.ensureParsed(@ptrCast(&parse_ctx), parseModuleBody, record)) {
+        // A parse re-entry is a cycle: report it at the point the body is
+        // wanted, never hand back a half-parsed record.
+        .in_progress => return self.reportCircularImport(module_name),
+        // The record already failed in an earlier `ensure*`; propagate without
+        // emitting a second diagnostic.
+        .failed => return parse_ctx.err orelse error.ModuleParseError,
+        .ready => {},
+    }
+
+    return record.module_info orelse error.ModuleParseError;
+}
+
+/// Caller state for the Parse stage body. `err` carries the original error out
+/// of the infallible `EnsureResult` contract.
+const ParseContext = struct {
+    parser: *Parser,
+    module_data: ModuleData,
+    err: ?ErrorList = null,
+};
+
+fn parseModuleBody(ctx_ptr: *anyopaque, record: *module_graph.ModuleRecord) module_graph.StageOutcome {
+    const ctx: *ParseContext = @ptrCast(@alignCast(ctx_ptr));
+    parseModuleIntoRecord(ctx, record) catch |err| {
+        ctx.err = err;
+        return .{ .failed = null };
+    };
+    return .ok;
+}
+
+/// Lex and parse one module body into `record`. Runs at most once per file, for
+/// whichever spelling materialized the record first.
+fn parseModuleIntoRecord(ctx: *ParseContext, record: *module_graph.ModuleRecord) ErrorList!void {
+    const self = ctx.parser;
+    const module_data = ctx.module_data;
 
     if (self.reporter.source_cache) |sc| {
         sc.load(module_data.resolved_path, module_data.source) catch {};
@@ -83,30 +129,19 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
     }
 
     try module_lexer.initKeywords();
-    const tokens = module_lexer.lexTokens() catch |err| {
-        _ = self.module_resolution_status.remove(normalized_path);
-        return err;
-    };
+    const tokens = try module_lexer.lexTokens();
 
     const module_uri = try self.reporter.ensureFileUri(self.io, module_data.resolved_path);
-    var new_parser = Parser.init(self.io, self.allocator, tokens.items, module_data.resolved_path, module_uri, self.reporter);
-
-    new_parser.module_resolution_status = std.StringHashMap(ModuleResolutionStatus).init(self.allocator);
-    var it = self.module_resolution_status.iterator();
-    while (it.next()) |entry| {
-        if (!std.mem.eql(u8, entry.key_ptr.*, normalized_path)) {
-            try new_parser.module_resolution_status.put(entry.key_ptr.*, entry.value_ptr.*);
-        }
-    }
-    new_parser.module_cache = std.StringHashMap(ModuleInfo).init(self.allocator);
-    var cache_it = self.module_cache.iterator();
-    while (cache_it.next()) |entry| {
-        try new_parser.module_cache.put(entry.key_ptr.*, entry.value_ptr.*);
-    }
+    var new_parser = Parser.init(self.io, self.allocator, tokens.items, module_data.resolved_path, module_uri, self.reporter, self.graph);
+    // This module's record owns the inline `zig` synthetic records its body
+    // generates.
+    new_parser.owner_record = record;
     new_parser.import_stack = try self.import_stack.clone();
 
     const module_statements = new_parser.execute() catch |err| {
-        _ = self.module_resolution_status.remove(normalized_path);
+        if (!self.reporter.hasCompileErrors()) {
+            new_parser.reportParseError(err);
+        }
         return err;
     };
 
@@ -126,45 +161,35 @@ pub fn resolveModule(self: *Parser, module_name: []const u8) ErrorList!ast.Modul
 
     const info = try extractModuleInfoWithParser(self, module_block, module_data.resolved_path, null, &new_parser);
 
+    record.module_info = info;
+    record.source = module_data.source;
+    record.ast = module_block;
+
     // Propagate the child's *private* module dependencies to the parent so the
     // module's own flattened code can still resolve them (e.g. io.doxa's private
     // `module error from ...`). Public re-exports are intentionally NOT propagated:
     // they are reached via qualified access (`std.io`) or an explicit
     // `import io from ...`, so leaking them as bare names would be namespace
     // pollution.
-    {
-        var public_reexports = std.StringHashMap(void).init(self.allocator);
-        defer public_reexports.deinit();
-        var importer_it = new_parser.module_imports.iterator();
-        while (importer_it.next()) |importer| {
-            var alias_it = importer.value_ptr.iterator();
-            while (alias_it.next()) |alias_entry| {
-                if (alias_entry.value_ptr.is_public) {
-                    try public_reexports.put(alias_entry.key_ptr.*, {});
-                }
-            }
-        }
-
-        var child_ns_it = new_parser.module_namespaces.iterator();
-        while (child_ns_it.next()) |child_ns| {
-            if (public_reexports.contains(child_ns.key_ptr.*)) continue;
-            if (!self.module_namespaces.contains(child_ns.key_ptr.*)) {
-                try self.module_namespaces.put(child_ns.key_ptr.*, child_ns.value_ptr.*);
+    var public_reexports = std.StringHashMap(void).init(self.allocator);
+    defer public_reexports.deinit();
+    var importer_it = new_parser.module_imports.iterator();
+    while (importer_it.next()) |importer| {
+        var alias_it = importer.value_ptr.iterator();
+        while (alias_it.next()) |alias_entry| {
+            if (alias_entry.value_ptr.is_public) {
+                try public_reexports.put(alias_entry.key_ptr.*, {});
             }
         }
     }
 
-    if (self.module_resolution_status.getPtr(normalized_path)) |status_ptr| {
-        status_ptr.* = .COMPLETED;
-    } else {
-        const completed_key = try self.allocator.dupe(u8, normalized_path);
-        try self.module_resolution_status.put(completed_key, .COMPLETED);
+    var child_ns_it = new_parser.module_namespaces.iterator();
+    while (child_ns_it.next()) |child_ns| {
+        if (public_reexports.contains(child_ns.key_ptr.*)) continue;
+        if (!self.module_namespaces.contains(child_ns.key_ptr.*)) {
+            try self.module_namespaces.put(child_ns.key_ptr.*, child_ns.value_ptr.*);
+        }
     }
-
-    const cache_key = try self.allocator.dupe(u8, normalized_path);
-    try self.module_cache.put(cache_key, info);
-
-    return info;
 }
 
 pub fn isZigModulePath(module_path: []const u8) bool {
@@ -187,7 +212,19 @@ fn zigModuleStem(module_path: []const u8) []const u8 {
 // (`collectInlineZigDecls`) picks it up unchanged.
 // `display_name` becomes the module name used in calls (the import alias).
 pub fn resolveZigModule(self: *Parser, module_path: []const u8, display_name: []const u8) ErrorList!ast.ModuleInfo {
-    const module_data = try self.loadModuleSourceWithPath(module_path);
+    const module_data = try loadModuleSourceOrReport(self, module_path);
+
+    // A `.zig` file import uses the imported file's own physical identity; the
+    // alias only names the binding, it does not mint a second identity.
+    const physical = graph.physicalPath(self.io, self.allocator, module_data.resolved_path) catch |err| {
+        self.allocator.free(module_data.source);
+        self.allocator.free(module_data.resolved_path);
+        return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.ModuleLoadError,
+        };
+    };
+    defer self.allocator.free(physical);
 
     if (self.reporter.source_cache) |sc| {
         sc.load(module_data.resolved_path, module_data.source) catch {};
@@ -230,7 +267,7 @@ pub fn resolveZigModule(self: *Parser, module_path: []const u8, display_name: []
         } },
     };
 
-    return ast.ModuleInfo{
+    var info = ast.ModuleInfo{
         .name = name_owned,
         .imports = &[_]ast.ImportInfo{},
         .ast = module_block,
@@ -238,6 +275,39 @@ pub fn resolveZigModule(self: *Parser, module_path: []const u8, display_name: []
         .symbols = null,
         .is_inline_zig = true,
     };
+
+    const record = self.graph.ensureRecord(physical) catch |err| switch (err) {
+        error.ModuleRootUnknown => {
+            self.reporter.reportCompileError(
+                null,
+                ErrorCode.MODULE_ROOT_UNKNOWN,
+                "Zig module '{s}' resolves to '{s}', which is outside every declared root",
+                .{ module_path, module_data.resolved_path },
+            );
+            return error.ModuleRootUnknown;
+        },
+        error.DuplicateStableKey => {
+            self.reporter.reportCompileError(
+                null,
+                ErrorCode.DUPLICATE_STABLE_KEY,
+                "Two distinct modules claim the stable key '{s}'",
+                .{physical},
+            );
+            return error.DuplicateStableKey;
+        },
+        error.OutOfMemory => return error.OutOfMemory,
+    };
+    info.record_id = record.id;
+    if (record.module_info == null) {
+        record.module_info = info;
+        record.source = module_data.source;
+        record.ast = module_block;
+    }
+    // A `.zig` module cannot import, so it is parsed in one step and never
+    // re-enters the Parse stage.
+    record.status = .Parsed;
+
+    return info;
 }
 
 fn normalizeModulePath(self: *Parser, module_path: []const u8) ![]const u8 {
@@ -462,6 +532,25 @@ pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorLis
     }
 
     return error.ModuleNotFound;
+}
+
+/// Load a module's source, turning a missing file into a located diagnostic
+/// that names both the specifier and the importing file. Without this the
+/// `ModuleNotFound` error escapes the resolve phase and surfaces as a bare
+/// "internal compiler error", which says nothing about what was not found.
+fn loadModuleSourceOrReport(self: *Parser, module_name: []const u8) ErrorList!ModuleData {
+    return self.loadModuleSourceWithPath(module_name) catch |err| switch (err) {
+        error.ModuleNotFound => {
+            self.reporter.reportCompileError(
+                null,
+                ErrorCode.MODULE_NOT_FOUND,
+                "Module '{s}' could not be found (imported from '{s}')",
+                .{ module_name, self.current_file },
+            );
+            return error.ModuleNotFound;
+        },
+        else => return err,
+    };
 }
 
 pub fn loadModuleSource(self: *Parser, module_name: []const u8) ErrorList![]const u8 {
@@ -773,13 +862,17 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
 
     // Propagate nested module imported symbols (including enum type/variant metadata)
     // into the parent parser symbol table so downstream HIR generation can resolve
-    // imported enums used inside module bodies.
-    if (module_parser.imported_symbols) |nested_imported| {
-        var nested_it = nested_imported.iterator();
-        while (nested_it.next()) |nested_entry| {
-            const nested_key = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ name, nested_entry.key_ptr.* });
-            if (!self.getImportedSymbols().contains(nested_key)) {
-                try self.getImportedSymbols().put(nested_key, nested_entry.value_ptr.*);
+    // imported enums used inside module bodies. When the "child" parser *is* the
+    // parser (the entry file completing its own record), there is no parent to
+    // propagate into, so skip: the entry already holds its own symbols.
+    if (module_parser != self) {
+        if (module_parser.imported_symbols) |nested_imported| {
+            var nested_it = nested_imported.iterator();
+            while (nested_it.next()) |nested_entry| {
+                const nested_key = try std.fmt.allocPrint(self.allocator, "{s}::{s}", .{ name, nested_entry.key_ptr.* });
+                if (!self.getImportedSymbols().contains(nested_key)) {
+                    try self.getImportedSymbols().put(nested_key, nested_entry.value_ptr.*);
+                }
             }
         }
     }
@@ -796,6 +889,12 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
                     }
                 },
                 .ZigDecl => |zig_decl| {
+                    // The root file's `execute` already registered its inline
+                    // `zig` signatures into `imported_symbols`; re-registering
+                    // them while completing the entry record would report a
+                    // phantom duplicate. A child parser registers into its own
+                    // map, so this only runs for a real parent/child boundary.
+                    if (module_parser == self) continue;
                     for (zig_decl.sigs) |sig| {
                         const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ zig_decl.name.lexeme, sig.name });
                         if (self.getImportedSymbols().contains(full_name)) {
@@ -971,10 +1070,11 @@ pub fn extractModuleInfoWithParser(self: *Parser, module_ast: *ast.Expr, module_
         .ast = module_ast,
         .file_path = module_path,
         .symbols = module_symbols,
+        .record_id = if (module_parser.owner_record) |record| record.id else null,
     };
 }
 
-pub fn recordModuleImport(self: *Parser, importer_path: []const u8, alias: []const u8, imported_path: []const u8, is_public: bool) !void {
+pub fn recordModuleImport(self: *Parser, importer_path: []const u8, alias: []const u8, imported_path: []const u8, is_public: bool, span: ?ast.SourceSpan) !void {
     var module_aliases = try self.module_imports.getOrPut(importer_path);
     if (!module_aliases.found_existing) {
         module_aliases.value_ptr.* = std.StringHashMap(@import("parser_types.zig").ModuleImportEntry).init(self.allocator);
@@ -983,5 +1083,6 @@ pub fn recordModuleImport(self: *Parser, importer_path: []const u8, alias: []con
     try module_aliases.value_ptr.put(alias, .{
         .imported_path = imported_path,
         .is_public = is_public,
+        .span = span,
     });
 }

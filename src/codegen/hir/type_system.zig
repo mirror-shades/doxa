@@ -29,7 +29,14 @@ pub const TypeSystem = struct {
     group_table: ?*const GroupTable = null,
     union_id_map: std.StringHashMap(u32),
     next_union_id: u32,
-    function_signatures: ?*const std.StringHashMap(FunctionInfo) = null,
+    function_signatures: ?*const SoxaTypes.FunctionSignatureMap = null,
+    /// Owner-aware return-type resolution for function-call expressions. The
+    /// generator installs this so nested calls (`m.s() == m.s()`, `m.f() + 1`)
+    /// resolve through the module graph's owner-scoped bindings and link
+    /// prefixes rather than a source-written dotted alias. Null in isolated
+    /// `TypeSystem` tests, which fall back to the dotted-name lookup below.
+    call_return_resolver: ?*const fn (ctx: *anyopaque, call_expr: *ast.Expr) HIRType = null,
+    call_return_ctx: ?*anyopaque = null,
 
     pub const CustomTypeInfo = struct {
         name: []const u8,
@@ -794,6 +801,13 @@ pub const TypeSystem = struct {
                 return self.inferBinaryOpResultType(binary.operator.type, binary.left.?, binary.right.?, symbol_table);
             },
             .FunctionCall => |call| {
+                // The generator's owner-aware resolver is authoritative: it
+                // resolves the callee through the module graph. Without it
+                // (isolated TypeSystem tests), fall back to the registered
+                // signatures by source-written dotted name.
+                if (self.call_return_resolver) |resolver| {
+                    if (self.call_return_ctx) |ctx| return resolver(ctx, expr);
+                }
                 // Resolve a call's return type from the registered function signatures.
                 // The HIRGenerator wrapper handles top-level calls, but nested calls
                 // (e.g. `f() + g()`) recurse through here, so this must agree with it.
@@ -801,7 +815,7 @@ pub const TypeSystem = struct {
                     switch (call.callee.data) {
                         // Local function: `foo()`
                         .Variable => |v| {
-                            if (sigs.get(v.lexeme)) |info| return info.return_type;
+                            if (signatureByLink(sigs, v.lexeme)) |info| return info.return_type;
                         },
                         .FieldAccess => |fa| {
                             // Module function (`m.sq`) or, via the last two segments,
@@ -809,9 +823,9 @@ pub const TypeSystem = struct {
                             // (`rl.RGBA.new` -> `RGBA.new`).
                             if (self.buildDottedName(call.callee)) |dotted| {
                                 defer self.allocator.free(dotted);
-                                if (sigs.get(dotted)) |info| return info.return_type;
+                                if (signatureByLink(sigs, dotted)) |info| return info.return_type;
                                 if (lastTwoSegments(dotted)) |last2| {
-                                    if (sigs.get(last2)) |info| return info.return_type;
+                                    if (signatureByLink(sigs, last2)) |info| return info.return_type;
                                 }
                             }
                             // Instance method on a struct receiver: `inst.method()`.
@@ -1012,7 +1026,7 @@ pub const TypeSystem = struct {
     fn instanceMethodReturnType(
         self: *TypeSystem,
         fa: ast.FieldAccess,
-        sigs: *const std.StringHashMap(FunctionInfo),
+        sigs: *const SoxaTypes.FunctionSignatureMap,
         symbol_table: *SymbolTable,
     ) ?HIRType {
         var recv_name: ?[]const u8 = null;
@@ -1034,7 +1048,7 @@ pub const TypeSystem = struct {
         const sname = recv_name orelse return null;
         const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ sname, fa.field.lexeme }) catch return null;
         defer self.allocator.free(qualified);
-        if (sigs.get(qualified)) |info| return info.return_type;
+        if (signatureByLink(sigs, qualified)) |info| return info.return_type;
 
         // Method signatures are keyed by the bare struct name; a module-qualified
         // receiver (`mod.Type`) needs its scope prefix stripped.
@@ -1043,8 +1057,19 @@ pub const TypeSystem = struct {
             if (bare.len > 0) {
                 const bare_qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ bare, fa.field.lexeme }) catch return null;
                 defer self.allocator.free(bare_qualified);
-                if (sigs.get(bare_qualified)) |info| return info.return_type;
+                if (signatureByLink(sigs, bare_qualified)) |info| return info.return_type;
             }
+        }
+        return null;
+    }
+
+    /// Look up a signature by its emitted link name. The store is keyed by
+    /// `(ModuleId, declared name)`; this scan is only the fallback used when the
+    /// generator's owner-aware resolver is not installed.
+    fn signatureByLink(sigs: *const SoxaTypes.FunctionSignatureMap, name: []const u8) ?FunctionInfo {
+        var it = sigs.valueIterator();
+        while (it.next()) |info| {
+            if (std.mem.eql(u8, info.name, name)) return info.*;
         }
         return null;
     }

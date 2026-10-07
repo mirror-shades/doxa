@@ -1,0 +1,5 @@
+zig Common {
+    pub fn a() i64 {
+        return 1;
+    }
+}

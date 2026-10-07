@@ -1,0 +1,22 @@
+# A method that does not exist on a struct must be a compile error, not a
+# silently dropped call. This is the second half of the dropped-call regression
+# (see test/misc/dropped_method_on_copied_struct.doxa): the call used to
+# evaluate its receiver and return, so a bad method name on a struct-typed local
+# produced a working program that quietly did the wrong thing.
+struct Counter {
+    value :: int,
+
+    function new(start :: int) returns Counter {
+        return $Counter { value is start }
+    }
+
+    method get() returns int {
+        return this.value
+    }
+}
+
+entry function main() {
+    const original is Counter.new(7)
+    const copied is original
+    @print("{copied.nope()}\n")
+}

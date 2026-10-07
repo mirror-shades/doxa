@@ -26,8 +26,13 @@ fn runDoxaCommandEx(allocator: std.mem.Allocator, path: []const u8, input: ?[]co
     const exe_path = try harness.doxaExePath(allocator);
     defer allocator.free(exe_path);
 
-    const argv = [_][]const u8{ exe_path, "run", path };
-    return try harness.runCommandCapture(allocator, &argv, repo_root, input);
+    var argv = std.array_list.Managed([]const u8).init(allocator);
+    defer argv.deinit();
+    try argv.appendSlice(&[_][]const u8{ exe_path, "run", path });
+    if (repo_root) |rr| {
+        try argv.append(try std.fmt.allocPrint(allocator, "--include={s}", .{rr}));
+    }
+    return try harness.runCommandCapture(allocator, argv.items, repo_root, input);
 }
 
 fn runErrorCase(allocator: std.mem.Allocator, tc: ErrorCase) !test_results {
@@ -95,6 +100,11 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .expected = .{ .exit_code = 1, .contains_message = "equals sign '=' is not used for variable declarations", .error_code = "E2004" },
         },
         .{
+            .name = "syntax error in imported module",
+            .path = "./test/misc/module_syntax_error.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "expected an expression", .error_code = "E2001" },
+        },
+        .{
             .name = "alias argument on by-value parameter",
             .path = "./test/misc/alias_argument_not_needed.doxa",
             .expected = .{ .exit_code = 1, .contains_message = "does not require an alias argument", .error_code = "E1028" },
@@ -108,6 +118,26 @@ pub fn runAll(parent_allocator: std.mem.Allocator) !test_results {
             .name = "undefined variable",
             .path = "./test/misc/error_test.doxa",
             .expected = .{ .exit_code = 1, .contains_message = "Undefined variable", .error_code = "E1001" },
+        },
+        .{
+            .name = "const seeded from a const reference stays immutable",
+            .path = "./test/syntax/const_reassign_error.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Cannot assign to immutable variable", .error_code = "E1015" },
+        },
+        .{
+            .name = "method call with too few arguments",
+            .path = "./test/misc/method_too_few_args.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Too few arguments: expected 2, got 1", .error_code = "E5006" },
+        },
+        .{
+            .name = "method call argument type mismatch",
+            .path = "./test/misc/method_argument_type_mismatch.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "String is not assignable to type Coord", .error_code = "E1003" },
+        },
+        .{
+            .name = "unknown method on a struct-initialised local",
+            .path = "./test/misc/unknown_method_on_copied_struct.doxa",
+            .expected = .{ .exit_code = 1, .contains_message = "Unknown method 'nope' on struct 'Counter'", .error_code = "E1012" },
         },
         .{
             .name = "undefined variable suggestion",

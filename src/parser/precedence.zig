@@ -104,6 +104,8 @@ pub const rules = blk: {
     r.set(.POWER_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.ASTERISK_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
     r.set(.SLASH_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.DOUBLE_SLASH_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
+    r.set(.MODULO_EQUAL, .{ .infix = compound_assignment, .precedence = .ASSIGNMENT, .associativity = .RIGHT });
 
     // Comparison operators
     r.set(.EQUALITY, .{ .infix = binary, .precedence = .EQUALITY });
@@ -347,6 +349,8 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                             .POWER_EQUAL => token.TokenType.POWER,
                             .ASTERISK_EQUAL => token.TokenType.ASTERISK,
                             .SLASH_EQUAL => token.TokenType.SLASH,
+                            .DOUBLE_SLASH_EQUAL => token.TokenType.DOUBLE_SLASH,
+                            .MODULO_EQUAL => token.TokenType.MODULO,
                             else => unreachable,
                         };
 
@@ -404,6 +408,8 @@ fn compound_assignment(self: *Parser, left: ?*ast.Expr, _: Precedence) ErrorList
                             .POWER_EQUAL => token.TokenType.POWER,
                             .ASTERISK_EQUAL => token.TokenType.ASTERISK,
                             .SLASH_EQUAL => token.TokenType.SLASH,
+                            .DOUBLE_SLASH_EQUAL => token.TokenType.DOUBLE_SLASH,
+                            .MODULO_EQUAL => token.TokenType.MODULO,
                             else => unreachable,
                         };
 
