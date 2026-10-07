@@ -28,6 +28,40 @@ struct - no classes, no inheretance, only composition
 group -  can be used as an umbrella type for enums and structs
 union - can be handled with switch statements and type narrowing, see page on unions for more info
 
+### Names
+
+A name has one meaning wherever it can be seen. Doxa has no shadowing and no
+overloading:
+
+- A declaration inside a function, a block, a loop or a pattern may not reuse a
+  name already visible where it appears: an enclosing local or parameter, or any
+  top-level name of the file. A file's top-level names are visible throughout
+  it, so a parameter may not share a name with a global declared further down
+  (E1035).
+- A file binds each top-level name once, whether by a declaration, a `module`
+  alias, an `import`, or a `zig` block (E1002). Two imports of symbols that share
+  a name conflict; import one through a `module` alias instead
+  ([Modules](modules.md)).
+- A struct names each member once: no two fields, no two methods or functions,
+  and no method or function sharing a field's name (E1002).
+
+A binding that is not visible does not conflict, so sibling blocks may each
+declare the same name:
+
+```doxa
+{
+    var t :: int is 1
+}
+{
+    var t :: string is "two"   # fine: the first `t` is out of scope
+}
+```
+
+Narrowing does not declare anything: inside `x as int then { … }` or a match
+arm, `x` is the same variable seen at a narrower type. Likewise, inside the
+branches of `const v is expr as T else { … }`, `v` is the declaration itself,
+holding the subject narrowed to that branch's type.
+
 ### Line Continuation
 
 A newline ends a statement. To continue one expression across lines, begin the
@@ -269,6 +303,22 @@ function log(message :: string) {
 
 function add(a :: int, b :: int) {
     return a + b # error: 'add' declares no `returns`, so it cannot return a value
+}
+```
+
+The converse holds too: a bare `return` returns `nothing`, so a function that
+declares `returns` may use one only when its return type includes `nothing`. A
+function returns exactly what it declares; nothing widens the type for it.
+
+```doxa
+function check(n :: int) returns nothing | Error {
+    if n > 0 then return   # fine: the declared type includes nothing
+    return IOError.Denied
+}
+
+function strict(n :: int) returns Error {
+    if n > 0 then return   # error: 'strict' returns Error, so a bare `return` has no value to give
+    return IOError.Denied
 }
 ```
 

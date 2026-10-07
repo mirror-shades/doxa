@@ -13,15 +13,15 @@ exists), and a collapsible copy of the full source declaration.
 ### `print`
 
 ```doxa
-public function print(input :: string) returns error.StdError
+public function print(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function print(input :: string) returns error.StdError {
-    IO.print(input);
+public function print(text :: string) returns nothing | error.StdError {
+    IO.print(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
@@ -33,15 +33,15 @@ public function print(input :: string) returns error.StdError {
 ### `println`
 
 ```doxa
-public function println(input :: string) returns error.StdError
+public function println(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function println(input :: string) returns error.StdError {
-    IO.printlnStdout(input);
+public function println(text :: string) returns nothing | error.StdError {
+    IO.printlnStdout(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
@@ -53,15 +53,15 @@ public function println(input :: string) returns error.StdError {
 ### `eprint`
 
 ```doxa
-public function eprint(input :: string) returns error.StdError
+public function eprint(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function eprint(input :: string) returns error.StdError {
-    IO.eprint(input);
+public function eprint(text :: string) returns nothing | error.StdError {
+    IO.eprint(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
@@ -73,15 +73,15 @@ public function eprint(input :: string) returns error.StdError {
 ### `eprintln`
 
 ```doxa
-public function eprintln(input :: string) returns error.StdError
+public function eprintln(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function eprintln(input :: string) returns error.StdError {
-    IO.eprintlnStderr(input);
+public function eprintln(text :: string) returns nothing | error.StdError {
+    IO.eprintlnStderr(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
@@ -195,15 +195,15 @@ public function execCapture(input :: string) returns string | error.StdError {
 ### `execCaptureEnv`
 
 ```doxa
-public function execCaptureEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError
+public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function execCaptureEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
-    const output is Process.exec_capture_stdout_env(program, args, env_keys, env_values)
+public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
+    const output is Process.exec_capture_stdout_env(program, arguments, env_keys, env_values)
     const err is Process.takeLastErrorCode()
     if err == 0 then return output
     return mapProcessError(err)
@@ -215,15 +215,15 @@ public function execCaptureEnv(program :: string, args :: string[], env_keys :: 
 ### `execArgs`
 
 ```doxa
-public function execArgs(program :: string, args :: string[]) returns int | error.StdError
+public function execArgs(program :: string, arguments :: string[]) returns int | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function execArgs(program :: string, args :: string[]) returns int | error.StdError {
-    const code is Process.exec_args(program, args)
+public function execArgs(program :: string, arguments :: string[]) returns int | error.StdError {
+    const code is Process.exec_args(program, arguments)
     const err is Process.takeLastErrorCode()
     if err == 0 then return code
     return mapProcessError(err)
@@ -235,15 +235,15 @@ public function execArgs(program :: string, args :: string[]) returns int | erro
 ### `execArgsEnv`
 
 ```doxa
-public function execArgsEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError
+public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function execArgsEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
-    const code is Process.exec_args_env(program, args, env_keys, env_values)
+public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
+    const code is Process.exec_args_env(program, arguments, env_keys, env_values)
     const err is Process.takeLastErrorCode()
     if err == 0 then return code
     return mapProcessError(err)
@@ -760,14 +760,14 @@ public function mapIOError(code :: int) returns error.StdError {
 ### `downloadUrl`
 
 ```doxa
-public function downloadUrl(url :: string, destination :: string) returns error.StdError
+public function downloadUrl(url :: string, destination :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function downloadUrl(url :: string, destination :: string) returns error.StdError {
+public function downloadUrl(url :: string, destination :: string) returns nothing | error.StdError {
     HTTP.downloadUrl(url, destination)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -780,14 +780,14 @@ public function downloadUrl(url :: string, destination :: string) returns error.
 ### `download`
 
 ```doxa
-public function download(url :: string) returns error.StdError
+public function download(url :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function download(url :: string) returns error.StdError {
+public function download(url :: string) returns nothing | error.StdError {
     HTTP.download(url)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -1304,7 +1304,7 @@ public struct Message {
 ### `upgradeWebSocket`
 
 ```doxa
-public function upgradeWebSocket(connection :: int) returns error.StdError
+public function upgradeWebSocket(connection :: int) returns nothing | error.StdError
 ```
 
 Accept the pending request's upgrade to a WebSocket (RFC 6455). Call after
@@ -1315,7 +1315,7 @@ called at once and its frames follow the handshake.
 <summary>Source</summary>
 
 ```doxa
-public function upgradeWebSocket(connection :: int) returns error.StdError {
+public function upgradeWebSocket(connection :: int) returns nothing | error.StdError {
     HTTP.upgradeWebSocket(connection)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -1328,7 +1328,7 @@ public function upgradeWebSocket(connection :: int) returns error.StdError {
 ### `wsSend`
 
 ```doxa
-public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError
 ```
 
 Queue one WebSocket frame with `data` as its payload. Returns at once: a
@@ -1340,7 +1340,7 @@ and the call returns `error.IO.WriteFailed`.
 <summary>Source</summary>
 
 ```doxa
-public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
     HTTP.wsSend(connection, wsOpCode(op), data)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -1639,7 +1639,7 @@ public enum Limit {
 ### `setLimit`
 
 ```doxa
-public function setLimit(which :: Limit, value :: int) returns error.StdError
+public function setLimit(which :: Limit, value :: int) returns nothing | error.StdError
 ```
 
 Set one limit for connections opened from now on.
@@ -1648,7 +1648,7 @@ Set one limit for connections opened from now on.
 <summary>Source</summary>
 
 ```doxa
-public function setLimit(which :: Limit, value :: int) returns error.StdError {
+public function setLimit(which :: Limit, value :: int) returns nothing | error.StdError {
     HTTP.setLimit(limitCode(which), value)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -1871,14 +1871,14 @@ public method find(verb :: string, path :: string) returns Route | nothing {
 ### `respond`
 
 ```doxa
-public function respond(connection :: int, status :: int, headers :: string, body :: string) returns error.StdError
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function respond(connection :: int, status :: int, headers :: string, body :: string) returns error.StdError {
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | error.StdError {
     HTTP.respond(connection, status, headers, body)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -1891,14 +1891,14 @@ public function respond(connection :: int, status :: int, headers :: string, bod
 ### `close`
 
 ```doxa
-public function close(handle :: int) returns error.StdError
+public function close(handle :: int) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function close(handle :: int) returns error.StdError {
+public function close(handle :: int) returns nothing | error.StdError {
     HTTP.close(handle)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -2159,7 +2159,7 @@ public function wsRead(connection :: int) returns Message | nothing | error.StdE
 ### `wsWrite`
 
 ```doxa
-public function wsWrite(connection :: int, op :: WsOp, data :: string) returns error.StdError
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError
 ```
 
 Send one frame with an explicit opcode.
@@ -2168,7 +2168,7 @@ Send one frame with an explicit opcode.
 <summary>Source</summary>
 
 ```doxa
-public function wsWrite(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
     return wsSend(connection, op, data)
 }
 ```
@@ -2178,14 +2178,14 @@ public function wsWrite(connection :: int, op :: WsOp, data :: string) returns e
 ### `wsText`
 
 ```doxa
-public function wsText(connection :: int, data :: string) returns error.StdError
+public function wsText(connection :: int, data :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsText(connection :: int, data :: string) returns error.StdError {
+public function wsText(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Text, data)
 }
 ```
@@ -2195,14 +2195,14 @@ public function wsText(connection :: int, data :: string) returns error.StdError
 ### `wsBinary`
 
 ```doxa
-public function wsBinary(connection :: int, data :: string) returns error.StdError
+public function wsBinary(connection :: int, data :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsBinary(connection :: int, data :: string) returns error.StdError {
+public function wsBinary(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Binary, data)
 }
 ```
@@ -2212,14 +2212,14 @@ public function wsBinary(connection :: int, data :: string) returns error.StdErr
 ### `wsPing`
 
 ```doxa
-public function wsPing(connection :: int, data :: string) returns error.StdError
+public function wsPing(connection :: int, data :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsPing(connection :: int, data :: string) returns error.StdError {
+public function wsPing(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Ping, data)
 }
 ```
@@ -2229,14 +2229,14 @@ public function wsPing(connection :: int, data :: string) returns error.StdError
 ### `wsPong`
 
 ```doxa
-public function wsPong(connection :: int, data :: string) returns error.StdError
+public function wsPong(connection :: int, data :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsPong(connection :: int, data :: string) returns error.StdError {
+public function wsPong(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Pong, data)
 }
 ```
@@ -2246,7 +2246,7 @@ public function wsPong(connection :: int, data :: string) returns error.StdError
 ### `wsClose`
 
 ```doxa
-public function wsClose(connection :: int) returns error.StdError
+public function wsClose(connection :: int) returns nothing | error.StdError
 ```
 
 Send a Close frame (empty payload) and drop the connection.
@@ -2255,7 +2255,7 @@ Send a Close frame (empty payload) and drop the connection.
 <summary>Source</summary>
 
 ```doxa
-public function wsClose(connection :: int) returns error.StdError {
+public function wsClose(connection :: int) returns nothing | error.StdError {
     wsSend(connection, WsOp.Close, "")
     return close(connection)
 }
@@ -2370,10 +2370,10 @@ public function isMac() returns tetra {
 ### `pathFor`
 
 ```doxa
-public function pathFor(os :: string, parts :: string[]) returns string
+public function pathFor(platform :: string, parts :: string[]) returns string
 ```
 
-Joins `parts` with the separator for `os` (one of the names returned by
+Joins `parts` with the separator for `platform` (one of the names returned by
 `os()`, e.g. `"windows"`, `"linux"`, `"macos"`). Empty segments are skipped,
 an absolute segment resets the result, and a separator already at the join
 point is not doubled.
@@ -2382,8 +2382,8 @@ point is not doubled.
 <summary>Source</summary>
 
 ```doxa
-public function pathFor(os :: string, parts :: string[]) returns string {
-    const sep is sepFor(os)
+public function pathFor(platform :: string, parts :: string[]) returns string {
+    const sep is sepFor(platform)
     var result is ""
     var i is 0
     while i < @length(parts) {
@@ -2393,11 +2393,11 @@ public function pathFor(os :: string, parts :: string[]) returns string {
             continue
         }
 
-        if isAbsolute(part, os) then {
+        if isAbsolute(part, platform) then {
             result is part
         } else if @length(result) == 0 then {
             result is part
-        } else if isSep(result[@length(result) - 1], os) then {
+        } else if isSep(result[@length(result) - 1], platform) then {
             result is result + part
         } else {
             result is result + sep + part
@@ -4226,14 +4226,14 @@ public method booleanValue() returns tetra | nothing {
 ### `beginObject`
 
 ```doxa
-public function beginObject() returns error.StdError
+public function beginObject() returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function beginObject() returns error.StdError {
+public function beginObject() returns nothing | error.StdError {
     JSON.writerBeginObject()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4246,14 +4246,14 @@ public function beginObject() returns error.StdError {
 ### `beginArray`
 
 ```doxa
-public function beginArray() returns error.StdError
+public function beginArray() returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function beginArray() returns error.StdError {
+public function beginArray() returns nothing | error.StdError {
     JSON.writerBeginArray()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4266,14 +4266,14 @@ public function beginArray() returns error.StdError {
 ### `end`
 
 ```doxa
-public function end() returns error.StdError
+public function end() returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function end() returns error.StdError {
+public function end() returns nothing | error.StdError {
     JSON.writerEnd()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4286,14 +4286,14 @@ public function end() returns error.StdError {
 ### `writeKey`
 
 ```doxa
-public function writeKey(name :: string) returns error.StdError
+public function writeKey(name :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeKey(name :: string) returns error.StdError {
+public function writeKey(name :: string) returns nothing | error.StdError {
     JSON.writerKey(name)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4306,14 +4306,14 @@ public function writeKey(name :: string) returns error.StdError {
 ### `writeText`
 
 ```doxa
-public function writeText(text :: string) returns error.StdError
+public function writeText(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeText(text :: string) returns error.StdError {
+public function writeText(text :: string) returns nothing | error.StdError {
     JSON.writerText(text)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4326,14 +4326,14 @@ public function writeText(text :: string) returns error.StdError {
 ### `writeInt`
 
 ```doxa
-public function writeInt(value :: int) returns error.StdError
+public function writeInt(value :: int) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeInt(value :: int) returns error.StdError {
+public function writeInt(value :: int) returns nothing | error.StdError {
     JSON.writerInt(value)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4346,14 +4346,14 @@ public function writeInt(value :: int) returns error.StdError {
 ### `writeFloat`
 
 ```doxa
-public function writeFloat(value :: float) returns error.StdError
+public function writeFloat(value :: float) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeFloat(value :: float) returns error.StdError {
+public function writeFloat(value :: float) returns nothing | error.StdError {
     JSON.writerFloat(value)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4366,14 +4366,14 @@ public function writeFloat(value :: float) returns error.StdError {
 ### `writeBoolean`
 
 ```doxa
-public function writeBoolean(value :: tetra) returns error.StdError
+public function writeBoolean(value :: tetra) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeBoolean(value :: tetra) returns error.StdError {
+public function writeBoolean(value :: tetra) returns nothing | error.StdError {
     if value == both or value == neither then {
         JSON.writerReject(1)
         return error.Common.InvalidArgument
@@ -4390,14 +4390,14 @@ public function writeBoolean(value :: tetra) returns error.StdError {
 ### `writeNull`
 
 ```doxa
-public function writeNull() returns error.StdError
+public function writeNull() returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeNull() returns error.StdError {
+public function writeNull() returns nothing | error.StdError {
     JSON.writerNull()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
