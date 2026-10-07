@@ -1,0 +1,7 @@
+public struct Node {
+    public value :: int,
+
+    public method describe() returns string {
+        return "a:{this.value}"
+    }
+}

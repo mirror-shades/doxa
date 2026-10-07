@@ -212,9 +212,14 @@ pub fn build(b: *std.Build) void {
     const answers_module = b.createModule(.{
         .root_source_file = b.path("test/answers.zig"),
     });
-
     const platform_module = b.createModule(.{
         .root_source_file = b.path("src/utils/platform.zig"),
+    });
+    const reporting_module = b.createModule(.{
+        .root_source_file = b.path("src/utils/reporting.zig"),
+    });
+    const constants_module = b.createModule(.{
+        .root_source_file = b.path("src/common/constants.zig"),
     });
 
     // Dedicated install location for tests so a long-running editor/LSP instance
@@ -225,90 +230,298 @@ pub fn build(b: *std.Build) void {
     const exe_name = if (target.result.os.tag == .windows) "doxa.exe" else "doxa";
     const test_doxa_path = b.getInstallPath(.{ .custom = "test-bin" }, exe_name);
 
-    const test_suite_exe = b.addTest(.{
+    // Three test executables, each run from the build root. The unit and LSP
+    // roots are in-process tests on the test runner's protocol. The program
+    // suites drive the installed binary for about a minute, so they run as a
+    // plain process (`test/suites.zig` says why). Every run is marked as having
+    // side effects: the unit root reads `std/` and fixtures at runtime and the
+    // suites drive a binary built elsewhere, so no result is a function of its
+    // executable alone, and a cached pass would be a claim nothing re-checked.
+    const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    test_suite_exe.root_module.addImport("answers", answers_module);
-    test_suite_exe.root_module.addImport("platform", platform_module);
-    const run_test_suite = b.addRunArtifact(test_suite_exe);
-    run_test_suite.skip_foreign_checks = true;
-    run_test_suite.step.dependOn(&test_install.step);
-    // Ensure bundled runtime assets (lib/std and bundled zig under lib/zig)
-    // are installed, because test-bin/doxa.exe resolves them via ../lib.
-    run_test_suite.step.dependOn(b.getInstallStep());
-    run_test_suite.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
-    run_test_suite.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+    run_unit_tests.has_side_effects = true;
+    run_unit_tests.skip_foreign_checks = true;
+    run_unit_tests.setCwd(b.path("."));
 
-    const reporting_module = b.createModule(.{
-        .root_source_file = b.path("src/utils/reporting.zig"),
-    });
-
-    const test_lsp_exe = b.addTest(.{
+    const lsp_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/test_lsp.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    test_lsp_exe.root_module.addImport("reporting", reporting_module);
-    const run_test_lsp = b.addRunArtifact(test_lsp_exe);
-    run_test_lsp.skip_foreign_checks = true;
-    run_test_lsp.step.dependOn(&test_install.step);
-    run_test_lsp.step.dependOn(b.getInstallStep());
-    run_test_lsp.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
-    run_test_lsp.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
+    lsp_tests.root_module.addImport("reporting", reporting_module);
+    const run_lsp_tests = b.addRunArtifact(lsp_tests);
+    run_lsp_tests.has_side_effects = true;
+    run_lsp_tests.skip_foreign_checks = true;
+    run_lsp_tests.setCwd(b.path("."));
 
-    // The program suites drive the installed `doxa` binary through hundreds of
-    // subprocesses and run for about a minute. They are their own test
-    // executable, launched with `Step.Run` rather than `addRunArtifact` so that
-    // no `--listen` protocol is used: the runner's 60s response window between
-    // messages is a poor fit for a suite that spawns children for a minute, and
-    // a child that outlives the suite would hold the protocol pipes open.
-    const test_suites_exe = b.addTest(.{
+    const program_suites = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("test/suites.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    test_suites_exe.root_module.addImport("answers", answers_module);
-    test_suites_exe.root_module.addImport("platform", platform_module);
-    const run_test_suites = std.Build.Step.Run.create(b, "run program suites");
-    run_test_suites.has_side_effects = true;
-    run_test_suites.addArtifactArg(test_suites_exe);
-    run_test_suites.skip_foreign_checks = true;
-    run_test_suites.step.dependOn(&test_install.step);
-    run_test_suites.step.dependOn(b.getInstallStep());
-    run_test_suites.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
-    run_test_suites.setEnvironmentVariable("DOXA_REPO_ROOT", b.pathFromRoot("."));
+    program_suites.root_module.addImport("answers", answers_module);
+    program_suites.root_module.addImport("platform", platform_module);
+    program_suites.root_module.addImport("reporting", reporting_module);
+    program_suites.root_module.addImport("constants", constants_module);
+    const run_program_suites = std.Build.Step.Run.create(b, "run program suites");
+    run_program_suites.has_side_effects = true;
+    run_program_suites.addArtifactArg(program_suites);
+    run_program_suites.skip_foreign_checks = true;
+    run_program_suites.setCwd(b.path("."));
+    run_program_suites.step.dependOn(&test_install.step);
+    // test-bin/doxa resolves the bundled std and zig through ../lib.
+    run_program_suites.step.dependOn(b.getInstallStep());
+    run_program_suites.setEnvironmentVariable("DOXA_BIN", test_doxa_path);
 
-    // The suites spawn hundreds of `doxa` children for about a minute. Under
-    // load that can starve the `--listen=-` protocol roots above and trip the
-    // runner's 60s idle-response window ("test runner failed to respond"), even
-    // though every test passes. Serialize the protocol roots after the
-    // subprocess suite to remove the contention; if a serialized run ever flakes
-    // again, contention is ruled out and the next suspect is pipe/EOF teardown
-    // (see `plan/http.md`, Phase 0B remaining work).
-    run_test_suite.step.dependOn(&run_test_suites.step);
-    run_test_lsp.step.dependOn(&run_test_suites.step);
+    // Unit, then LSP, then the program suites: run steps never spawn
+    // concurrently. On Windows, Zig creates each child's pipe ends inheritable
+    // and spawns with `bInheritHandles` and no handle list, so a child spawned
+    // while another spawn is in flight inherits that sibling's stdout, and a
+    // short protocol root whose pipe a long-lived sibling captured sees no EOF
+    // until the sibling exits ("test runner failed to respond"). Zig has no
+    // order-only edge, so the chain is also a success gate: a failing root
+    // skips the roots after it. The cheap, precise roots go first so the
+    // minute-long suites never hide them.
+    // TODO: drop this chain once Zig spawns with
+    // `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`.
+    run_lsp_tests.step.dependOn(&run_unit_tests.step);
+    run_program_suites.step.dependOn(&run_lsp_tests.step);
+
+    const wiring = TestWiring.create(b, &.{
+        .{ .path = "test.zig", .cached = true },
+        .{ .path = "test/test_lsp.zig", .cached = true },
+        .{ .path = "test/suites.zig", .cached = false },
+    }, &.{
+        .{ .name = "answers", .path = "test/answers.zig" },
+        .{ .name = "platform", .path = "src/utils/platform.zig" },
+        .{ .name = "reporting", .path = "src/utils/reporting.zig" },
+        .{ .name = "constants", .path = "src/common/constants.zig" },
+    });
 
     const test_step = b.step("test", "Run all tests");
+    test_step.dependOn(&wiring.step);
     if (can_run_target) {
-        test_step.dependOn(&run_test_suite.step);
-        test_step.dependOn(&run_test_lsp.step);
-        test_step.dependOn(&run_test_suites.step);
+        test_step.dependOn(&run_unit_tests.step);
+        test_step.dependOn(&run_lsp_tests.step);
+        test_step.dependOn(&run_program_suites.step);
     } else {
         // Cross-target: compile tests + doxa, but don't execute anything.
         test_step.dependOn(&test_install.step);
-        test_step.dependOn(&test_suite_exe.step);
-        test_step.dependOn(&test_lsp_exe.step);
-        test_step.dependOn(&test_suites_exe.step);
+        test_step.dependOn(&unit_tests.step);
+        test_step.dependOn(&lsp_tests.step);
+        test_step.dependOn(&program_suites.step);
     }
 
     const test_lsp_step = b.step("test-lsp", "Run LSP tests");
-    test_lsp_step.dependOn(&run_test_lsp.step);
+    test_lsp_step.dependOn(&run_lsp_tests.step);
 }
+
+/// Fails `zig build test` when a test would silently never run, or a cached
+/// root could drive the installed binary. It reads the sources on every
+/// invocation, so unlike a test it can never be served from a cache.
+///
+/// Zig compiles a file's tests only when a `test` block names the file, as in
+/// `test { _ = @import("x.zig"); }`; a top-level import compiles the file but
+/// never its tests. So this walks `@import`s from the test roots and requires:
+///
+/// - every `test/*.zig` is reached by some root, through any import;
+/// - every file declaring a `test`, among `test/*.zig` and `src/**`, is a root
+///   or is named in a `test` block of a file whose tests run, within the same
+///   module (a named module's tests never run from another module's root);
+/// - no cached root reaches `test/process.zig`, the suites' only spawner: a
+///   cached root's result is a function of its own executable, which knows
+///   nothing of the binary under test.
+const TestWiring = struct {
+    step: std.Build.Step,
+    roots: []const Root,
+    modules: []const Module,
+
+    const Root = struct {
+        path: []const u8,
+        /// Run through the test runner's protocol.
+        cached: bool,
+    };
+
+    /// A named module (`b.createModule`) one of the roots imports.
+    const Module = struct {
+        name: []const u8,
+        path: []const u8,
+    };
+
+    const spawner = "test/process.zig";
+
+    fn create(b: *std.Build, roots: []const Root, modules: []const Module) *TestWiring {
+        const wiring = b.allocator.create(TestWiring) catch @panic("OOM");
+        wiring.* = .{
+            .step = .init(.{ .id = .custom, .name = "check test wiring", .owner = b, .makeFn = make }),
+            .roots = b.allocator.dupe(Root, roots) catch @panic("OOM"),
+            .modules = b.allocator.dupe(Module, modules) catch @panic("OOM"),
+        };
+        return wiring;
+    }
+
+    /// A source file's imports of other repository files, and whether it
+    /// declares tests.
+    const File = struct {
+        imports: []const Import,
+        declares_tests: bool,
+    };
+
+    const Import = struct {
+        path: []const u8,
+        /// Names the file inside a `test` block.
+        in_test: bool,
+        /// Crosses into a named module.
+        named: bool,
+    };
+
+    const Files = std.StringArrayHashMapUnmanaged(File);
+    const Paths = std.StringArrayHashMapUnmanaged(void);
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
+        const wiring: *TestWiring = @fieldParentPtr("step", step);
+        const b = step.owner;
+        const io = b.graph.io;
+        var arena_state: std.heap.ArenaAllocator = .init(options.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+
+        var files: Files = .empty;
+        // Files reached through any import; through any import from a cached
+        // root; and through test-block imports alone, whose tests therefore run.
+        var reached: Paths = .empty;
+        var cached_reach: Paths = .empty;
+        var tested: Paths = .empty;
+        for (wiring.roots) |root| {
+            try wiring.walk(arena, io, &files, &reached, root.path, .any);
+            if (root.cached) try wiring.walk(arena, io, &files, &cached_reach, root.path, .any);
+            try wiring.walk(arena, io, &files, &tested, root.path, .tests);
+        }
+
+        var candidates: std.ArrayList([]const u8) = .empty;
+        var test_dir = try b.build_root.handle.openDir(io, "test", .{ .iterate = true });
+        defer test_dir.close(io);
+        var test_entries = test_dir.iterate();
+        while (try test_entries.next(io)) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.name, ".zig")) continue;
+            const path = try std.fmt.allocPrint(arena, "test/{s}", .{entry.name});
+            if (reached.contains(path)) {
+                try candidates.append(arena, path);
+            } else {
+                try step.addError("{s} is not imported by any test root", .{path});
+            }
+        }
+        var src_dir = try b.build_root.handle.openDir(io, "src", .{ .iterate = true });
+        defer src_dir.close(io);
+        var src_walker = try src_dir.walk(arena);
+        defer src_walker.deinit();
+        while (try src_walker.next(io)) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".zig")) continue;
+            const path = try std.fmt.allocPrint(arena, "src/{s}", .{entry.path});
+            std.mem.replaceScalar(u8, path, '\\', '/');
+            try candidates.append(arena, path);
+        }
+        for (candidates.items) |path| {
+            if (tested.contains(path)) continue;
+            if ((try wiring.load(arena, io, &files, path)).declares_tests) {
+                try step.addError("{s} declares tests that never run; name it in a root's `test {{ _ = @import(...); }}` block", .{path});
+            }
+        }
+
+        if (cached_reach.contains(spawner)) {
+            try step.addError("a cached test root reaches {s}; suites that drive the installed binary belong under test/suites.zig", .{spawner});
+        }
+        if (step.result_error_msgs.items.len != 0) return error.MakeFailed;
+    }
+
+    /// Adds every file reachable from `start` to `seen`, following every import
+    /// (`.any`) or only same-module imports inside `test` blocks (`.tests`).
+    fn walk(
+        wiring: *const TestWiring,
+        arena: std.mem.Allocator,
+        io: std.Io,
+        files: *Files,
+        seen: *Paths,
+        start: []const u8,
+        follow: enum { any, tests },
+    ) !void {
+        var pending: std.ArrayList([]const u8) = .empty;
+        try pending.append(arena, start);
+        while (pending.pop()) |path| {
+            if ((try seen.getOrPut(arena, path)).found_existing) continue;
+            for ((try wiring.load(arena, io, files, path)).imports) |import| {
+                if (follow == .tests and (!import.in_test or import.named)) continue;
+                try pending.append(arena, import.path);
+            }
+        }
+    }
+
+    fn load(wiring: *const TestWiring, arena: std.mem.Allocator, io: std.Io, files: *Files, path: []const u8) !File {
+        if (files.get(path)) |file| return file;
+        const source = try wiring.step.owner.build_root.handle.readFileAllocOptions(io, path, arena, .unlimited, .of(u8), 0);
+        const file = try wiring.scan(arena, path, source);
+        try files.put(arena, path, file);
+        return file;
+    }
+
+    /// Tokenizes `source`, so comments and string contents never count.
+    fn scan(wiring: *const TestWiring, arena: std.mem.Allocator, path: []const u8, source: [:0]const u8) !File {
+        var imports: std.ArrayList(Import) = .empty;
+        var declares_tests = false;
+        var tokens: std.zig.Tokenizer = .init(source);
+        var depth: usize = 0;
+        // Brace depth of the open `test` body, if any.
+        var test_depth: ?usize = null;
+        var test_opening = false;
+        while (true) {
+            const token = tokens.next();
+            switch (token.tag) {
+                .eof => break,
+                .keyword_test => {
+                    declares_tests = true;
+                    if (test_depth == null) test_opening = true;
+                },
+                .l_brace => {
+                    depth += 1;
+                    if (test_opening) {
+                        test_depth = depth;
+                        test_opening = false;
+                    }
+                },
+                .r_brace => {
+                    if (test_depth == depth) test_depth = null;
+                    depth -= 1;
+                },
+                .builtin => {
+                    if (!std.mem.eql(u8, source[token.loc.start..token.loc.end], "@import")) continue;
+                    if (tokens.next().tag != .l_paren) continue;
+                    const operand = tokens.next();
+                    if (operand.tag != .string_literal) continue;
+                    const spelled = source[operand.loc.start + 1 .. operand.loc.end - 1];
+                    const in_test = test_depth != null;
+                    if (std.mem.endsWith(u8, spelled, ".zig")) {
+                        const dir = std.fs.path.dirnamePosix(path) orelse "";
+                        const resolved = try std.fs.path.resolvePosix(arena, &.{ dir, spelled });
+                        try imports.append(arena, .{ .path = resolved, .in_test = in_test, .named = false });
+                    } else for (wiring.modules) |module| {
+                        if (std.mem.eql(u8, module.name, spelled)) {
+                            try imports.append(arena, .{ .path = module.path, .in_test = in_test, .named = true });
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
+        return .{ .imports = try imports.toOwnedSlice(arena), .declares_tests = declares_tests };
+    }
+};

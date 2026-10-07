@@ -1,0 +1,5 @@
+# `%` is integer-only: a float operand is rejected rather than truncated.
+public entry function main() {
+    var f is 7.5
+    @print("{f % 2}\n")
+}

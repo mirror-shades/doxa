@@ -1,0 +1,15 @@
+# `<`, `<=`, `>`, `>=` on strings are byte-wise lexicographic.
+
+function less(x :: string, y :: string) returns tetra {
+    return x < y
+}
+
+const apple is "apple"
+var app is "app"
+var empty is ""
+var acute is "é"
+var z is "z"
+
+@print("{apple < "banana"} {apple > "banana"} {apple <= apple} {apple >= "banana"}\n")
+@print("{app < apple} {apple < app} {empty < app} {empty <= empty} {empty < empty}\n")
+@print("{less("Z", "a")} {less("a", "Z")} {z < acute} {acute >= z}\n")

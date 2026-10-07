@@ -7,13 +7,9 @@ const Precedence = @import("./precedence.zig").Precedence;
 const precedence = @import("./precedence.zig");
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const import_parser = @import("import_parser.zig");
-const module_resolver = @import("module_resolver.zig");
-const module_graph = @import("../module/graph.zig");
-const ModuleGraph = module_graph.ModuleGraph;
-const ModuleRecord = module_graph.ModuleRecord;
+const internal_call_parser = @import("internal_call_parser.zig");
 
 const ast = @import("../ast/ast.zig");
-const ModuleInfo = ast.ModuleInfo;
 
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -27,41 +23,6 @@ const TokenStyle = enum {
     Keyword,
     Symbol,
     Undefined,
-};
-
-pub const ImportStackEntry = struct {
-    module_path: []const u8,
-    imported_from: ?[]const u8,
-
-    pub fn format(self: ImportStackEntry, writer: *std.Io.Writer) std.Io.Writer.Error!void {
-        if (self.imported_from) |from| {
-            try writer.print("{s} (imported from {s})", .{ self.module_path, from });
-        } else {
-            try writer.print("{s}", .{self.module_path});
-        }
-    }
-};
-
-pub const ModuleImportEntry = struct {
-    imported_path: []const u8,
-    is_public: bool,
-    /// Source span of the alias token, for duplicate-binding diagnostics.
-    span: ?ast.SourceSpan = null,
-};
-
-pub const SpecificImportEntry = struct {
-    importer_path: []const u8,
-    module_path: []const u8,
-    symbol_name: []const u8,
-    is_public: bool,
-    /// Source span of the imported name token, for duplicate-binding diagnostics.
-    span: ?ast.SourceSpan = null,
-};
-
-const PendingModuleDependency = struct {
-    module_path: []const u8,
-    alias: []const u8,
-    parent_file: []const u8,
 };
 
 fn parserErrorHint(err: anyerror) []const u8 {
@@ -127,31 +88,18 @@ pub const Parser = struct {
 
     current_file: []const u8,
     current_file_uri: []const u8,
-    /// The one authoritative module store, shared by every parser in a
-    /// compilation.
-    graph: *ModuleGraph,
-    /// The graph record for the file this parser is parsing. It owns the
-    /// synthetic records generated for inline `zig Name { … }` blocks, whose
-    /// stable keys derive from it. Null only for a parser that is not parsing a
-    /// file (a temporary expression parser).
-    owner_record: ?*ModuleRecord = null,
-    current_module: ?ModuleInfo = null,
-    module_namespaces: std.StringHashMap(ModuleInfo),
-
-    module_imports: std.StringHashMap(std.StringHashMap(ModuleImportEntry)),
-    specific_imports: std.array_list.Managed(SpecificImportEntry),
-
-    imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
-
-    import_stack: std.array_list.Managed(ImportStackEntry),
 
     // Match path pattern tracking
     current_path_pattern_tokens: ?[]const token.Token = null,
     current_path_pattern_is_wildcard: bool = false,
     current_path_pattern_field_names: ?[]const token.Token = null,
 
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter, graph_store: *ModuleGraph) Parser {
-        const parser = Parser{
+    /// A parser is pure syntax: it turns one file's tokens into statements and
+    /// knows nothing of other files. `module` and `import` statements stay in
+    /// the statement list; the module loader binds them when it collects the
+    /// file's declarations.
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, tokens: []const token.Token, current_file: []const u8, current_file_uri: []const u8, reporter: *Reporter) Parser {
+        return Parser{
             .io = io,
             .allocator = allocator,
             .tokens = tokens,
@@ -159,100 +107,7 @@ pub const Parser = struct {
             .reporter = reporter,
             .current_file = current_file,
             .current_file_uri = current_file_uri,
-            .graph = graph_store,
-            .module_namespaces = std.StringHashMap(ModuleInfo).init(allocator),
-            .module_imports = std.StringHashMap(std.StringHashMap(ModuleImportEntry)).init(allocator),
-            .specific_imports = std.array_list.Managed(SpecificImportEntry).init(allocator),
-            .imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(allocator),
-            .import_stack = std.array_list.Managed(ImportStackEntry).init(allocator),
         };
-
-        return parser;
-    }
-
-    pub fn deinit(self: *Parser) void {
-        self.module_namespaces.deinit();
-        self.module_imports.deinit();
-        self.specific_imports.deinit();
-        if (self.imported_symbols) |*imported_symbols| {
-            imported_symbols.deinit();
-        }
-        self.import_stack.deinit();
-    }
-
-    pub fn getImportedSymbols(self: *Parser) *std.StringHashMap(import_parser.ImportedSymbol) {
-        if (self.imported_symbols == null) {
-            self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
-        }
-        return &self.imported_symbols.?;
-    }
-
-    /// Record a top-level declaration in this file's own namespace. The entry
-    /// file and every imported module has an owner record; a temporary
-    /// expression parser does not, and this is a no-op for it.
-    fn bindLocalDeclaration(self: *Parser, name: token.Token, kind: module_graph.SymbolKind, is_public: bool) ErrorList!void {
-        const record = self.owner_record orelse return;
-        try self.checkTopLevelNameAvailable(name.lexeme, ast.SourceSpan.fromToken(name));
-        try self.graph.bindSymbol(
-            record,
-            name.lexeme,
-            kind,
-            if (is_public) .Public else .Private,
-            ast.SourceSpan.fromToken(name),
-        );
-    }
-
-    /// A name already bound in this file's namespace by a declaration, a
-    /// `module` alias, or an `import`. `span` is the winning declaration's span
-    /// when known (an inline `zig` block binds without one).
-    const BindingConflict = struct { span: ?ast.SourceSpan };
-
-    fn findTopLevelConflict(self: *Parser, name: []const u8) ?BindingConflict {
-        if (self.owner_record) |record| {
-            if (record.bindings.get(name)) |bound| return .{ .span = bound.span };
-        }
-        if (self.module_imports.get(self.current_file)) |aliases| {
-            if (aliases.get(name)) |entry| return .{ .span = entry.span };
-        }
-        for (self.specific_imports.items) |entry| {
-            if (std.mem.eql(u8, entry.importer_path, self.current_file) and
-                std.mem.eql(u8, entry.symbol_name, name))
-            {
-                return .{ .span = entry.span };
-            }
-        }
-        return null;
-    }
-
-    /// Reject a declaration or import whose name is already bound in this file.
-    /// Bindings are owner-scoped, so the check is per file: two files may each
-    /// bind the same name to different targets. Reports the previous site as
-    /// related information so the diagnostic points at both declarations.
-    fn checkTopLevelNameAvailable(self: *Parser, name: []const u8, span: ast.SourceSpan) ErrorList!void {
-        const conflict = self.findTopLevelConflict(name) orelse return;
-        if (conflict.span) |previous_span| {
-            const related = [_]Reporting.RelatedInformation{.{
-                .message = "previous declaration here",
-                .location = previous_span.location,
-            }};
-            self.reporter.reportWithRelated(
-                .CompileTime,
-                .Error,
-                span.location,
-                ErrorCode.DUPLICATE_VARIABLE,
-                &related,
-                "Duplicate binding name '{s}'",
-                .{name},
-            );
-        } else {
-            self.reporter.reportCompileError(
-                span.location,
-                ErrorCode.DUPLICATE_VARIABLE,
-                "Duplicate binding name '{s}'",
-                .{name},
-            );
-        }
-        return error.DuplicateVariableName;
     }
 
     pub fn peek(self: *Parser) token.Token {
@@ -443,7 +298,7 @@ pub const Parser = struct {
     /// Report a parser-phase failure at the token the parser stopped on.
     /// `execute` returns errors without emitting a diagnostic — the caller owns
     /// presentation — so every caller must route through here: the root file in
-    /// `main.zig` and each lazily parsed imported module in `module_resolver.zig`.
+    /// `main.zig` and each lazily parsed imported module in `module/loader.zig`.
     /// Otherwise a parse failure in an imported module surfaces as an unlocated
     /// internal compiler error instead of a syntax error at the offending line.
     pub fn reportParseError(self: *Parser, err: anyerror) void {
@@ -527,63 +382,6 @@ pub const Parser = struct {
                         return error.MisplacedPublicModifier;
                     }
                     const zig_decl = try declaration_parser.parseZigDecl(self);
-                    const module_name = zig_decl.data.ZigDecl.name.lexeme;
-                    const sigs = zig_decl.data.ZigDecl.sigs;
-
-                    if (self.module_namespaces.get(module_name)) |existing| {
-                        if (existing.is_inline_zig) {
-                            const location = Location{
-                                .file = self.current_file,
-                                .file_uri = self.current_file_uri,
-                                .range = .{
-                                    .start_line = zig_decl.base.span.?.location.range.start_line,
-                                    .start_col = zig_decl.base.span.?.location.range.start_col,
-                                    .end_line = zig_decl.base.span.?.location.range.end_line,
-                                    .end_col = zig_decl.base.span.?.location.range.end_col,
-                                },
-                            };
-                            self.reporter.reportCompileError(location, ErrorCode.DUPLICATE_VARIABLE, "Duplicate zig block '{s}'", .{module_name});
-                            return error.ModuleAlreadyExists;
-                        }
-                    } else {
-                        try self.module_namespaces.put(module_name, .{
-                            .name = module_name,
-                            .imports = &[_]ast.ImportInfo{},
-                            .ast = null,
-                            .file_path = self.current_file,
-                            .symbols = null,
-                            .is_inline_zig = true,
-                        });
-                    }
-
-                    // An inline `zig` block is a namespace, and every namespace
-                    // is a synthetic module record owned by the file that
-                    // declares it. Its stable key derives from the owner, so two
-                    // files may each declare `zig Name` without collision. The
-                    // owner binds the block name; the block's own namespace is
-                    // its function surface.
-                    if (self.owner_record) |owner| {
-                        const generated = try self.graph.addGeneratedRecord(self.allocator, owner, module_name);
-                        try self.graph.bindNamespace(owner, module_name, generated.id, .Private, null);
-                        for (sigs) |sig| {
-                            try self.graph.bindSymbol(generated, sig.name, .Function, .Private, null);
-                        }
-                    }
-
-                    const imported_symbols = self.getImportedSymbols();
-                    for (sigs) |sig| {
-                        const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, sig.name });
-                        try imported_symbols.put(full_name, .{
-                            .kind = .Function,
-                            .name = sig.name,
-                            .original_module = module_name,
-                            .namespace_alias = null,
-                            .param_count = @intCast(sig.param_types.len),
-                            .param_types = sig.param_types,
-                            .return_type_info = sig.return_type,
-                        });
-                    }
-
                     try statements.append(zig_decl);
                 },
                 .VAR, .CONST => {
@@ -592,11 +390,6 @@ pub const Parser = struct {
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
-                    try self.bindLocalDeclaration(
-                        decl.data.VarDecl.name,
-                        if (stmt_token_type == .CONST) .Constant else .Variable,
-                        is_public,
-                    );
                     try statements.append(decl);
                 },
                 .MAP_KEYWORD => {
@@ -604,7 +397,6 @@ pub const Parser = struct {
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
-                    try self.bindLocalDeclaration(map_stmt.data.VarDecl.name, .Variable, is_public);
                     try statements.append(map_stmt);
                 },
                 .FUNCTION => {
@@ -620,29 +412,25 @@ pub const Parser = struct {
                             }
                         }
                     }
-                    try self.bindLocalDeclaration(func.data.FunctionDecl.name, .Function, is_public);
                     try statements.append(func);
                 },
                 .IMPORT => {
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
-                    _ = try import_parser.parseImportStmt(self, is_public);
+                    try statements.append(try import_parser.parseImportStmt(self, is_public));
                 },
                 .MODULE => {
                     if (is_entry) {
                         return error.MisplacedEntryPoint;
                     }
-                    _ = try import_parser.parseModuleStmt(self, is_public);
+                    try statements.append(try import_parser.parseModuleStmt(self, is_public));
                 },
                 .STRUCT_KEYWORD => {
                     const expr = try declaration_parser.parseStructDecl(self, null, .NONE);
                     if (expr) |non_null_expr| {
                         switch (non_null_expr.data) {
-                            .StructDecl => |*struct_decl| {
-                                struct_decl.is_public = is_public;
-                                try self.bindLocalDeclaration(struct_decl.name, .Type, is_public);
-                            },
+                            .StructDecl => |*struct_decl| struct_decl.is_public = is_public,
                             else => {},
                         }
                     }
@@ -665,7 +453,6 @@ pub const Parser = struct {
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
-                    try self.bindLocalDeclaration(enum_decl.data.EnumDecl.name, .Type, is_public);
                     try statements.append(enum_decl);
                 },
                 .GROUP_KEYWORD => {
@@ -674,7 +461,6 @@ pub const Parser = struct {
                     if (is_entry) {
                         return error.InvalidEntryPoint;
                     }
-                    try self.bindLocalDeclaration(group_decl.data.GroupDecl.name, .Type, is_public);
                     try statements.append(group_decl);
                 },
                 .IF, .WHILE, .RETURN, .LEFT_BRACE, .EACH, .DEFER => {
@@ -746,63 +532,6 @@ pub const Parser = struct {
         }
 
         return statements.toOwnedSlice();
-    }
-
-    /// Complete the entry file's record from the externally-driven root parse.
-    /// The entry file is record 0 in the module graph; like any module it owns
-    /// its source and body, so `Parsed` never means `ast == null`. `record` is
-    /// the graph record for `self.current_file`, registered before imports
-    /// resolved. The body is wrapped in a block so the record carries the same
-    /// shape an imported module's record does.
-    pub fn completeEntryRecord(self: *Parser, record: *ModuleRecord, source: []const u8, statements: []ast.Stmt) ErrorList!void {
-        const module_block = try self.allocator.create(ast.Expr);
-        module_block.* = .{
-            .base = .{ .id = ast.generateNodeId(), .span = null },
-            .data = .{ .Block = .{ .statements = statements, .value = null } },
-        };
-
-        const info = try module_resolver.extractModuleInfoWithParser(self, module_block, self.current_file, null, self);
-        self.graph.completeExternalParse(record, source, module_block, info);
-    }
-
-    pub fn hasReturnWithValue(self: *Parser) !bool {
-        var pos = self.current;
-        while (pos < self.tokens.len and self.tokens[pos].type != .LEFT_BRACE) {
-            pos += 1;
-        }
-        if (pos >= self.tokens.len) return false;
-
-        pos += 1;
-        var brace_count: usize = 1;
-        var found_return_value = false;
-
-        while (pos < self.tokens.len) {
-            const current_token = self.tokens[pos];
-
-            switch (current_token.type) {
-                .LEFT_BRACE => {
-                    brace_count += 1;
-                },
-                .RIGHT_BRACE => {
-                    brace_count -= 1;
-                    if (brace_count == 0) break;
-                },
-                .RETURN => {
-                    if (pos + 1 < self.tokens.len) {
-                        const next_token = self.tokens[pos + 1];
-                        if (next_token.type != .NEWLINE) {
-                            found_return_value = true;
-                            break;
-                        }
-                    }
-                },
-                else => {},
-            }
-
-            pos += 1;
-        }
-
-        return found_return_value;
     }
 
     pub fn call(self: *Parser, callee: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -883,11 +612,8 @@ pub const Parser = struct {
         self.advance();
 
         if (self.peek().type == .DOT) {
-            const namespace = struct_name.lexeme;
-            if (!self.module_namespaces.contains(namespace)) {
-                return error.ExpectedIdentifier;
-            }
-
+            // A module-qualified type (`ns.Type{...}`) keeps its full spelling;
+            // semantic analysis resolves it through the file's bindings.
             var builder = std.array_list.Managed(u8).init(self.allocator);
             errdefer builder.deinit();
             try builder.appendSlice(struct_name.lexeme);
@@ -1111,6 +837,10 @@ pub const Parser = struct {
 
         const current_token = self.peek();
 
+        // `value.@push(1)` is `@push(value, 1)`.
+        if (internal_call_parser.isPostfixIntrinsic(current_token.type)) {
+            return try internal_call_parser.postfixInternalCall(self, left.?);
+        }
         if (current_token.type != .IDENTIFIER) {
             return error.ExpectedIdentifier;
         }
@@ -1145,7 +875,6 @@ pub const Parser = struct {
     }
 
     pub fn internalCallExpr(self: *Parser, left: ?*ast.Expr, prec: Precedence) ErrorList!?*ast.Expr {
-        const internal_call_parser = @import("internal_call_parser.zig");
         return internal_call_parser.internalCallExpr(self, left, prec);
     }
 
@@ -1302,46 +1031,6 @@ pub const Parser = struct {
         return expr;
     }
 
-    pub fn parseBlock(self: *Parser) ErrorList!?*ast.Expr {
-        var statements = std.array_list.Managed(ast.Stmt).init(self.allocator);
-        errdefer {
-            for (statements.items) |*stmt| {
-                stmt.deinit(self.allocator);
-            }
-            statements.deinit();
-        }
-
-        while (self.peek().type != .RIGHT_BRACE and self.peek().type != .EOF) {
-            const stmt = try statement_parser.parseExpressionStmt(self);
-            try statements.append(stmt);
-
-            if (self.peek().type == .RIGHT_BRACE) {
-                break;
-            }
-        }
-
-        if (self.peek().type != .RIGHT_BRACE) {
-            return error.ExpectedRightBrace;
-        }
-        self.advance();
-
-        const block_expr = try self.allocator.create(ast.Expr);
-        block_expr.* = .{
-            .base = .{
-                .id = ast.generateNodeId(),
-                .span = ast.SourceSpan.fromToken(self.peek()),
-            },
-            .data = .{
-                .Block = .{
-                    .statements = try statements.toOwnedSlice(),
-                    .value = null,
-                },
-            },
-        };
-
-        return block_expr;
-    }
-
     fn reportWarning(self: *Parser, message: []const u8) void {
         _ = self;
         var reporting = Reporting.init();
@@ -1350,18 +1039,6 @@ pub const Parser = struct {
 
     fn check(self: *Parser, token_type: token.TokenType) bool {
         return self.peek().type == token_type;
-    }
-
-    pub fn reportCircularImport(self: *Parser, current_module: []const u8) ErrorList!ast.ModuleInfo {
-        return module_resolver.reportCircularImport(self, current_module);
-    }
-
-    pub fn loadModuleSourceWithPath(self: *Parser, module_name: []const u8) ErrorList!module_resolver.ModuleData {
-        return module_resolver.loadModuleSourceWithPath(self, module_name);
-    }
-
-    pub fn loadModuleSource(self: *Parser, module_name: []const u8) ErrorList![]const u8 {
-        return module_resolver.loadModuleSource(self, module_name);
     }
 
     pub fn arrayPush(self: *Parser, array: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
@@ -1466,1025 +1143,5 @@ pub const Parser = struct {
         };
 
         return length_expr;
-    }
-
-    pub fn registerModuleAlias(self: *Parser, importer_path: []const u8, namespace: []const u8, module_path: []const u8, is_public: bool, span: ast.SourceSpan) ErrorList!void {
-        try self.checkTopLevelNameAvailable(namespace, span);
-        try module_resolver.recordModuleImport(self, importer_path, namespace, module_path, is_public, span);
-        if (!self.module_namespaces.contains(namespace)) {
-            try self.module_namespaces.put(namespace, .{
-                .name = namespace,
-                .imports = &[_]ast.ImportInfo{},
-                .ast = null,
-                .file_path = module_path,
-                .importer_path = importer_path,
-                .symbols = null,
-            });
-        }
-    }
-
-    pub fn recordSpecificImport(self: *Parser, importer_path: []const u8, module_path: []const u8, symbol_name: []const u8, is_public: bool, span: ?ast.SourceSpan) ErrorList!void {
-        if (span) |decl_span| {
-            try self.checkTopLevelNameAvailable(symbol_name, decl_span);
-        }
-        for (self.specific_imports.items) |entry| {
-            if (std.mem.eql(u8, entry.importer_path, importer_path) and
-                std.mem.eql(u8, entry.module_path, module_path) and
-                std.mem.eql(u8, entry.symbol_name, symbol_name))
-            {
-                return;
-            }
-        }
-
-        try self.specific_imports.append(.{
-            .importer_path = importer_path,
-            .module_path = module_path,
-            .symbol_name = symbol_name,
-            .is_public = is_public,
-            .span = span,
-        });
-    }
-
-    /// The record that owns `namespace`'s binding: the record of the file that
-    /// declared the alias, recovered from the namespace entry's importer path.
-    /// A path that is not on disk (a synthetic test file) falls back to this
-    /// parser's own record.
-    fn ownerRecordForModuleFile(self: *Parser, importer_path: []const u8) ?*ModuleRecord {
-        if (importer_path.len == 0) return self.owner_record;
-        const physical = module_graph.physicalPath(self.io, self.allocator, importer_path) catch return self.owner_record;
-        defer self.allocator.free(physical);
-        return self.graph.findPhysical(physical) orelse self.owner_record;
-    }
-
-    /// Visibility of an alias as declared in `importer_path`'s `module`/`import`
-    /// statements. Defaults to private when the declaration is not found.
-    fn aliasVisibility(self: *Parser, importer_path: []const u8, alias: []const u8) module_graph.Visibility {
-        if (self.module_imports.get(importer_path)) |aliases| {
-            if (aliases.get(alias)) |entry| {
-                return if (entry.is_public) .Public else .Private;
-            }
-        }
-        return .Private;
-    }
-
-    /// Record a resolved namespace alias in its owning file's binding map. This
-    /// is the owner-scoped replacement for the flat `module_namespaces` key: the
-    /// alias belongs to the record of the file that declared it, so two files
-    /// may bind the same alias to different targets. `importer_path` must be
-    /// captured before resolution, because `loadAndRegisterModule` replaces the
-    /// namespace entry with the parsed payload (which does not carry it).
-    pub fn bindResolvedNamespace(self: *Parser, namespace: []const u8, info: ast.ModuleInfo, importer_path: []const u8) ErrorList!void {
-        const target_id = info.record_id orelse return;
-        const owner = self.ownerRecordForModuleFile(importer_path) orelse return;
-        try self.graph.bindNamespace(owner, namespace, target_id, self.aliasVisibility(importer_path, namespace), null);
-    }
-
-    /// Record a nested namespace alias (`bundle.a`) in the parent module's own
-    /// namespace under its local alias (`a`), not the qualified key.
-    fn bindNestedNamespace(self: *Parser, parent_info: ast.ModuleInfo, field_name: []const u8, child_info: ast.ModuleInfo) ErrorList!void {
-        const parent_id = parent_info.record_id orelse return;
-        const child_id = child_info.record_id orelse return;
-        const owner = self.graph.record(parent_id);
-        try self.graph.bindNamespace(owner, field_name, child_id, self.aliasVisibility(parent_info.file_path, field_name), null);
-    }
-
-    /// The parsed payload of the module an imported symbol came from, recovered
-    /// from the graph rather than the deleted spelling-keyed `module_cache`. A
-    /// symbol's `original_module` is a module's resolved path (as recorded in
-    /// `ModuleInfo.file_path`); the match is exact, so identity comes from a
-    /// record and never from a key spelling. A symbol registered under a raw
-    /// specifier is covered by the `module_namespaces` scan, not this lookup.
-    pub fn lookupModuleInfo(self: *const Parser, original_module: []const u8) ?ast.ModuleInfo {
-        for (self.graph.records.items) |record| {
-            const info = record.module_info orelse continue;
-            if (std.mem.eql(u8, info.file_path, original_module)) return info;
-        }
-        return null;
-    }
-
-    pub fn ensureModuleNamespace(self: *Parser, namespace: []const u8) ErrorList!?ast.ModuleInfo {
-        if (self.module_namespaces.get(namespace)) |existing| {
-            if (existing.ast != null) return existing;
-            if (existing.is_inline_zig) return existing;
-            // When resolving a lazily-loaded module, set current_file to the
-            // importer's path so that relative module_paths resolve correctly.
-            const prev_file = self.current_file;
-            const prev_uri = self.current_file_uri;
-            const importer_path = existing.importer_path;
-            if (importer_path.len > 0) {
-                self.current_file = importer_path;
-                self.current_file_uri = try self.reporter.ensureFileUri(self.io,importer_path);
-            }
-            defer {
-                self.current_file = prev_file;
-                self.current_file_uri = prev_uri;
-            }
-            const module_info = try self.loadAndRegisterModule(existing.file_path, namespace, null);
-            try self.bindResolvedNamespace(namespace, module_info, importer_path);
-            return module_info;
-        }
-        return null;
-    }
-
-    pub fn ensureNestedModuleNamespace(self: *Parser, module_name: []const u8, field_name: []const u8) ErrorList!?ast.ModuleInfo {
-        const parent_info = (try self.ensureModuleNamespace(module_name)) orelse return null;
-        for (parent_info.imports) |import| {
-            if (!import.is_public or import.import_type != .Module) continue;
-            const alias = import.namespace_alias orelse continue;
-            if (!std.mem.eql(u8, alias, field_name)) continue;
-
-            const qualified_alias = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ module_name, field_name });
-            if (try self.namespaceChainContainsImport(module_name, parent_info.file_path, import.module_path)) {
-                _ = self.reportCircularImport(import.module_path) catch {};
-                return error.CircularImport;
-            }
-            if (self.module_namespaces.get(qualified_alias)) |existing| {
-                if (existing.ast != null) {
-                    try self.bindNestedNamespace(parent_info, field_name, existing);
-                    return existing;
-                }
-            }
-
-            const previous_current_file = self.current_file;
-            const previous_current_file_uri = self.current_file_uri;
-            self.current_file = parent_info.file_path;
-            self.current_file_uri = try self.reporter.ensureFileUri(self.io,parent_info.file_path);
-            defer {
-                self.current_file = previous_current_file;
-                self.current_file_uri = previous_current_file_uri;
-            }
-
-            const child_info = try self.loadAndRegisterModule(import.module_path, qualified_alias, import.specific_symbol);
-            try self.bindNestedNamespace(parent_info, field_name, child_info);
-            return child_info;
-        }
-        return null;
-    }
-
-    /// Materialize every nested module namespace referenced by a module's
-    /// bodies (`std.host` in `std.host.isWindows`). Semantic analysis performs
-    /// this lazily for the entry file, but imported module bodies are lowered by
-    /// codegen without a semantic pass, so a nested call inside one would
-    /// otherwise resolve against a namespace that was never loaded.
-    pub fn materializeNestedNamespacesInModule(self: *Parser, module_ast: *ast.Expr) void {
-        if (module_ast.data != .Block) return;
-        _ = walkStatements(NamespaceContext{ .parser = self }, module_ast.data.Block.statements);
-    }
-
-    /// The single pre-order traversal over a module body's expression tree.
-    /// `ReferenceContext` (does this body name X?) and `NamespaceContext`
-    /// (materialize nested namespaces) both build on it, so the node enumeration
-    /// lives in exactly one place. `ctx.visit` runs for every expression before
-    /// its children and returns true to stop.
-    fn walkStatements(ctx: anytype, statements: []ast.Stmt) bool {
-        for (statements) |stmt| {
-            if (walkStmt(ctx, stmt)) return true;
-        }
-        return false;
-    }
-
-    fn walkStmt(ctx: anytype, stmt: ast.Stmt) bool {
-        switch (stmt.data) {
-            .Expression => |maybe_expr| {
-                if (maybe_expr) |expr| {
-                    // A struct declaration carries field types and method
-                    // bodies, which are not statements of the block but do
-                    // reference imported names.
-                    if (expr.data == .StructDecl) {
-                        for (expr.data.StructDecl.fields) |field| {
-                            if (walkTypeExpr(ctx, field.type_expr)) return true;
-                        }
-                        for (expr.data.StructDecl.methods) |method| {
-                            for (method.params) |param| {
-                                if (param.type_expr) |te| {
-                                    if (walkTypeExpr(ctx, te)) return true;
-                                }
-                            }
-                            if (walkStatements(ctx, method.body)) return true;
-                        }
-                        return false;
-                    }
-                    return walkExpr(ctx, expr);
-                }
-            },
-            .VarDecl => |decl| if (decl.initializer) |initializer| return walkExpr(ctx, initializer),
-            .Block => |inner| return walkStatements(ctx, inner),
-            .FunctionDecl => |func| {
-                for (func.params) |param| {
-                    if (param.type_expr) |te| {
-                        if (walkTypeExpr(ctx, te)) return true;
-                    }
-                }
-                return walkStatements(ctx, func.body);
-            },
-            .Return => |ret| if (ret.value) |value| return walkExpr(ctx, value),
-            .MapLiteral => |lit| {
-                if (walkMapEntries(ctx, lit.entries)) return true;
-                if (lit.else_value) |else_value| return walkExpr(ctx, else_value);
-            },
-            .Assert => |assert_stmt| {
-                if (walkExpr(ctx, assert_stmt.condition)) return true;
-                if (assert_stmt.message) |message| return walkExpr(ctx, message);
-            },
-            .Cast => |cast| {
-                if (walkExpr(ctx, cast.value)) return true;
-                if (cast.then_branch) |then_expr| {
-                    if (walkExpr(ctx, then_expr)) return true;
-                }
-                if (cast.else_branch) |else_expr| return walkExpr(ctx, else_expr);
-            },
-            .Defer => |expr| return walkExpr(ctx, expr),
-            .Lift => |lift| return walkExpr(ctx, lift.value),
-            else => {},
-        }
-        return false;
-    }
-
-    fn walkMapEntries(ctx: anytype, entries: []*ast.MapEntry) bool {
-        for (entries) |entry| {
-            if (walkExpr(ctx, entry.key)) return true;
-            if (walkExpr(ctx, entry.value)) return true;
-        }
-        return false;
-    }
-
-    /// Type-position counterpart of `walkExpr`: a name can be referenced from a
-    /// field, parameter, or return type (`board :: Board`), which the expression
-    /// walk alone never reaches. `ctx.visitType` is the type-position hook.
-    fn walkTypeExpr(ctx: anytype, type_expr: *ast.TypeExpr) bool {
-        if (ctx.visitType(type_expr)) return true;
-        switch (type_expr.data) {
-            .Array => |array| {
-                if (walkTypeExpr(ctx, array.element_type)) return true;
-                if (array.size) |size| if (walkExpr(ctx, size)) return true;
-            },
-            .Struct => |fields| for (fields) |field| {
-                if (walkTypeExpr(ctx, field.type_expr)) return true;
-            },
-            .Union => |types| for (types) |type_expr_item| {
-                if (walkTypeExpr(ctx, type_expr_item)) return true;
-            },
-            .Map => |map| {
-                if (map.key_type) |key_type| if (walkTypeExpr(ctx, key_type)) return true;
-                if (walkTypeExpr(ctx, map.value_type)) return true;
-            },
-            .Basic, .Custom, .Enum => {},
-        }
-        return false;
-    }
-
-    fn walkExpr(ctx: anytype, expr: *ast.Expr) bool {
-        if (ctx.visit(expr)) return true;
-        switch (expr.data) {
-            .InterpolatedString => |template| for (template.parts) |part| switch (part) {
-                .String => {},
-                .Expression => |part_expr| if (walkExpr(ctx, part_expr)) return true,
-            },
-            .Binary => |binary| {
-                if (binary.left) |left| if (walkExpr(ctx, left)) return true;
-                if (binary.right) |right| if (walkExpr(ctx, right)) return true;
-            },
-            .Unary => |unary| if (unary.right) |right| return walkExpr(ctx, right),
-            .Peek => |peek_expr| return walkExpr(ctx, peek_expr.expr),
-            .Print => |print_expr| return walkExpr(ctx, print_expr.expr),
-            .PeekStruct => |peek_struct| return walkExpr(ctx, peek_struct.expr),
-            .Assignment => |assign| if (assign.value) |value| return walkExpr(ctx, value),
-            .Grouping => |maybe_inner| if (maybe_inner) |inner| return walkExpr(ctx, inner),
-            .If => |if_expr| {
-                if (if_expr.condition) |condition| if (walkExpr(ctx, condition)) return true;
-                if (if_expr.then_branch) |then_branch| if (walkExpr(ctx, then_branch)) return true;
-                if (if_expr.else_branch) |else_branch| return walkExpr(ctx, else_branch);
-            },
-            .Block => |block_expr| {
-                if (walkStatements(ctx, block_expr.statements)) return true;
-                if (block_expr.value) |value| return walkExpr(ctx, value);
-            },
-            .Array => |items| for (items) |item| if (walkExpr(ctx, item)) return true,
-            .Struct => |fields| for (fields) |field| if (walkExpr(ctx, field.value)) return true,
-            .Index => |index_expr| {
-                if (walkExpr(ctx, index_expr.array)) return true;
-                return walkExpr(ctx, index_expr.index);
-            },
-            .IndexAssign => |assign| {
-                if (walkExpr(ctx, assign.array)) return true;
-                if (walkExpr(ctx, assign.index)) return true;
-                return walkExpr(ctx, assign.value);
-            },
-            .FunctionCall => |call_expr| {
-                if (walkExpr(ctx, call_expr.callee)) return true;
-                for (call_expr.arguments) |arg| if (walkExpr(ctx, arg.expr)) return true;
-            },
-            .Logical => |logical| {
-                if (walkExpr(ctx, logical.left)) return true;
-                return walkExpr(ctx, logical.right);
-            },
-            .FieldAccess => |field| return walkExpr(ctx, field.object),
-            .StructLiteral => |literal| for (literal.fields) |field| if (walkExpr(ctx, field.value)) return true,
-            .FieldAssignment => |field_assignment| {
-                if (walkExpr(ctx, field_assignment.object)) return true;
-                return walkExpr(ctx, field_assignment.value);
-            },
-            .Exists => |exists| {
-                if (walkExpr(ctx, exists.array)) return true;
-                return walkExpr(ctx, exists.condition);
-            },
-            .ForAll => |forall| {
-                if (walkExpr(ctx, forall.array)) return true;
-                return walkExpr(ctx, forall.condition);
-            },
-            .ArrayType => |array_type| if (array_type.size) |size| return walkExpr(ctx, size),
-            .Match => |match_expr| {
-                if (walkExpr(ctx, match_expr.value)) return true;
-                for (match_expr.cases) |case| if (walkExpr(ctx, case.body)) return true;
-            },
-            .Map => |map_expr| return walkMapEntries(ctx, map_expr.entries),
-            .MapLiteral => |map_expr| {
-                if (walkMapEntries(ctx, map_expr.entries)) return true;
-                if (map_expr.else_value) |else_value| return walkExpr(ctx, else_value);
-            },
-            .InternalCall => |internal_call| {
-                if (walkExpr(ctx, internal_call.receiver)) return true;
-                for (internal_call.arguments) |arg| if (walkExpr(ctx, arg)) return true;
-            },
-            .Increment => |inner| return walkExpr(ctx, inner),
-            .Decrement => |inner| return walkExpr(ctx, inner),
-            .CompoundAssign => |assign| if (assign.value) |value| return walkExpr(ctx, value),
-            .Assert => |assert_expr| {
-                if (walkExpr(ctx, assert_expr.condition)) return true;
-                if (assert_expr.message) |message| return walkExpr(ctx, message);
-            },
-            .Cast => |cast| {
-                if (walkExpr(ctx, cast.value)) return true;
-                if (cast.then_branch) |then_expr| {
-                    if (walkExpr(ctx, then_expr)) return true;
-                }
-                if (cast.else_branch) |else_expr| return walkExpr(ctx, else_expr);
-            },
-            .ReturnExpr => |ret| if (ret.value) |value| return walkExpr(ctx, value),
-            .Loop => |loop| {
-                if (loop.var_decl) |var_decl| if (walkStmt(ctx, var_decl.*)) return true;
-                if (loop.condition) |condition| if (walkExpr(ctx, condition)) return true;
-                if (loop.step) |step| if (walkExpr(ctx, step)) return true;
-                return walkExpr(ctx, loop.body);
-            },
-            .Range => |range| {
-                if (walkExpr(ctx, range.start)) return true;
-                return walkExpr(ctx, range.end);
-            },
-            else => {},
-        }
-        return false;
-    }
-
-    /// Name-reference visitor: true when the expression itself names `name`.
-    const ReferenceContext = struct {
-        name: []const u8,
-
-        fn visit(self: ReferenceContext, expr: *ast.Expr) bool {
-            return switch (expr.data) {
-                .Variable => |tok| std.mem.eql(u8, tok.lexeme, self.name),
-                .EnumMember => |tok| std.mem.eql(u8, tok.lexeme, self.name),
-                .StructLiteral => |literal| std.mem.eql(u8, literal.name.lexeme, self.name),
-                .Assignment => |assign| std.mem.eql(u8, assign.name.lexeme, self.name),
-                .CompoundAssign => |assign| std.mem.eql(u8, assign.name.lexeme, self.name),
-                else => false,
-            };
-        }
-
-        fn visitType(self: ReferenceContext, type_expr: *ast.TypeExpr) bool {
-            return switch (type_expr.data) {
-                .Custom => |tok| std.mem.eql(u8, tok.lexeme, self.name),
-                else => false,
-            };
-        }
-    };
-
-    /// Nested-namespace visitor: resolve each field-access chain rooted at a
-    /// module namespace, loading the namespace segments it names.
-    const NamespaceContext = struct {
-        parser: *Parser,
-
-        fn visit(self: NamespaceContext, expr: *ast.Expr) bool {
-            if (expr.data == .FieldAccess) self.parser.materializeNamespacePath(expr);
-            return false;
-        }
-
-        fn visitType(_: NamespaceContext, _: *ast.TypeExpr) bool {
-            return false;
-        }
-    };
-
-    /// Resolve `expr` as a module-namespace path (`std`, `std.host`) when every
-    /// segment is a loaded namespace. Returns an allocator-owned name the caller
-    /// must free, or null.
-    fn namespacePathIfModule(self: *Parser, expr: *ast.Expr) ?[]const u8 {
-        switch (expr.data) {
-            .Variable => |v| {
-                if (!self.module_namespaces.contains(v.lexeme)) return null;
-                return self.allocator.dupe(u8, v.lexeme) catch null;
-            },
-            .FieldAccess => |field| {
-                const parent = self.namespacePathIfModule(field.object) orelse return null;
-                defer self.allocator.free(parent);
-                const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ parent, field.field.lexeme }) catch return null;
-                if (self.module_namespaces.contains(qualified)) return qualified;
-                self.allocator.free(qualified);
-                return null;
-            },
-            else => return null,
-        }
-    }
-
-    /// Ensure each nested namespace along `expr`'s module path is loaded.
-    fn materializeNamespacePath(self: *Parser, expr: *ast.Expr) void {
-        switch (expr.data) {
-            .Variable => |v| {
-                _ = self.ensureModuleNamespace(v.lexeme) catch {};
-            },
-            .FieldAccess => |field| {
-                self.materializeNamespacePath(field.object);
-                if (self.namespacePathIfModule(field.object)) |parent| {
-                    defer self.allocator.free(parent);
-                    _ = self.ensureNestedModuleNamespace(parent, field.field.lexeme) catch {};
-                }
-            },
-            else => {},
-        }
-    }
-
-    fn namespaceChainContainsImport(self: *Parser, module_name: []const u8, importer_file: []const u8, import_path: []const u8) !bool {
-        const target_path = try normalizeImportPathForCycleCheck(self.allocator, importer_file, import_path);
-        defer self.allocator.free(target_path);
-
-        var current_name = module_name;
-        while (true) {
-            if (self.module_namespaces.get(current_name)) |module_info| {
-                const current_path = try normalizeImportPathForCycleCheck(self.allocator, ".", module_info.file_path);
-                defer self.allocator.free(current_path);
-                if (std.mem.eql(u8, current_path, target_path)) return true;
-            }
-
-            const dot_idx = std.mem.lastIndexOfScalar(u8, current_name, '.') orelse break;
-            current_name = current_name[0..dot_idx];
-        }
-
-        return false;
-    }
-
-    fn normalizeImportPathForCycleCheck(allocator: std.mem.Allocator, importer_file: []const u8, module_path: []const u8) ![]const u8 {
-        var clean_path = module_path;
-        if (std.mem.startsWith(u8, clean_path, "./")) {
-            clean_path = clean_path[2..];
-        }
-        if (!std.mem.endsWith(u8, clean_path, ".doxa")) {
-            clean_path = try std.fmt.allocPrint(allocator, "{s}.doxa", .{clean_path});
-        } else {
-            clean_path = try allocator.dupe(u8, clean_path);
-        }
-        defer allocator.free(clean_path);
-
-        if (std.fs.path.isAbsolute(clean_path)) {
-            return try std.fs.path.resolve(allocator, &.{clean_path});
-        }
-
-        const base_dir = std.fs.path.dirname(importer_file) orelse ".";
-        return try std.fs.path.resolve(allocator, &.{ base_dir, clean_path });
-    }
-
-    pub fn ensureImportedSymbol(self: *Parser, symbol_name: []const u8) ErrorList!bool {
-        if (self.imported_symbols) |symbols| {
-            if (symbols.contains(symbol_name)) return true;
-        }
-
-        var matched = false;
-        for (self.specific_imports.items) |import_entry| {
-            if (!std.mem.eql(u8, import_entry.symbol_name, symbol_name)) continue;
-            matched = true;
-
-            {
-                const previous_current_file = self.current_file;
-                const previous_current_file_uri = self.current_file_uri;
-                self.current_file = import_entry.importer_path;
-                self.current_file_uri = try self.reporter.ensureFileUri(self.io,import_entry.importer_path);
-                defer {
-                    self.current_file = previous_current_file;
-                    self.current_file_uri = previous_current_file_uri;
-                }
-                try self.loadAndRegisterSpecificSymbol(
-                    import_entry.importer_path,
-                    import_entry.module_path,
-                    import_entry.symbol_name,
-                    import_entry.is_public,
-                );
-            }
-
-            if (self.imported_symbols) |symbols| {
-                if (symbols.contains(symbol_name)) return true;
-            }
-        }
-
-        if (!matched) return false;
-        return if (self.imported_symbols) |symbols| symbols.contains(symbol_name) else false;
-    }
-
-    pub fn ensureSpecificImports(self: *Parser) ErrorList!void {
-        var import_index: usize = 0;
-        while (import_index < self.specific_imports.items.len) : (import_index += 1) {
-            const import_entry = self.specific_imports.items[import_index];
-            _ = try self.ensureImportedSymbol(import_entry.symbol_name);
-        }
-    }
-
-    pub fn ensureReachableModuleDependencies(self: *Parser) ErrorList!void {
-        var made_progress = true;
-        while (made_progress) {
-            made_progress = false;
-
-            // Nested module namespaces referenced by loaded module bodies
-            // (`std.host` in `std.host.isWindows`) are not imports, so they are
-            // materialized here rather than through the import scan below.
-            // Loading one can add a module to the graph, so it shares the same
-            // fixpoint. The ASTs are snapshotted because materialization inserts
-            // into `module_namespaces`.
-            {
-                var module_asts = std.array_list.Managed(*ast.Expr).init(self.allocator);
-                defer module_asts.deinit();
-                var ast_it = self.module_namespaces.iterator();
-                while (ast_it.next()) |entry| {
-                    if (entry.value_ptr.ast) |module_ast| {
-                        _ = module_asts.append(module_ast) catch break;
-                    }
-                }
-                const loaded_before = self.loadedNamespaceCount();
-                for (module_asts.items) |module_ast| {
-                    self.materializeNestedNamespacesInModule(module_ast);
-                }
-                if (self.loadedNamespaceCount() > loaded_before) made_progress = true;
-            }
-
-            var pending = std.array_list.Managed(PendingModuleDependency).init(self.allocator);
-            defer pending.deinit();
-
-            var it = self.module_namespaces.iterator();
-            while (it.next()) |entry| {
-                const module_info = entry.value_ptr.*;
-                if (!moduleContributesBodies(module_info)) continue;
-
-                for (module_info.imports) |import| {
-                    switch (import.import_type) {
-                        .Module => {
-                            if (!moduleReferencesImport(module_info, import)) continue;
-                            const alias = import.namespace_alias orelse continue;
-                            // Owner-scoped: the declaring file's own record is
-                            // authoritative for whether its alias is resolved.
-                            // The flat `module_namespaces` entry cannot decide,
-                            // because two files may bind the same alias to
-                            // different targets (Phase 2c).
-                            if (self.ownerRecordForModuleFile(module_info.file_path)) |owner| {
-                                if (owner.bindings.contains(alias)) continue;
-                            }
-                            try pending.append(.{
-                                .module_path = import.module_path,
-                                .alias = alias,
-                                .parent_file = module_info.file_path,
-                            });
-                        },
-                        .Specific => {
-                            if (import.specific_symbols) |symbols| {
-                                for (symbols) |symbol_name| {
-                                    if (!moduleReferencesName(module_info, symbol_name)) continue;
-                                    try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public, null);
-                                }
-                            } else if (import.specific_symbol) |symbol_name| {
-                                if (!moduleReferencesName(module_info, symbol_name)) continue;
-                                try self.recordSpecificImport(module_info.file_path, import.module_path, symbol_name, import.is_public, null);
-                            }
-                        },
-                    }
-                }
-            }
-
-            try self.ensureSpecificImports();
-
-            for (pending.items) |dep| {
-                if (self.ownerRecordForModuleFile(dep.parent_file)) |owner| {
-                    if (owner.bindings.contains(dep.alias)) continue;
-                }
-
-                {
-                    const previous_current_file = self.current_file;
-                    const previous_current_file_uri = self.current_file_uri;
-                    self.current_file = dep.parent_file;
-                    self.current_file_uri = try self.reporter.ensureFileUri(self.io,dep.parent_file);
-                    defer {
-                        self.current_file = previous_current_file;
-                        self.current_file_uri = previous_current_file_uri;
-                    }
-
-                    const loaded = try self.loadAndRegisterModule(dep.module_path, dep.alias, null);
-                    // Bind the target returned for *this* dependency, not the
-                    // flat map's `dep.alias` entry, which a sibling file with the
-                    // same alias may have overwritten.
-                    try self.bindResolvedNamespace(dep.alias, loaded, dep.parent_file);
-                }
-                made_progress = true;
-            }
-        }
-    }
-
-    /// How many namespaces have an AST, i.e. are loaded. Used to detect whether
-    /// a reachability step made progress.
-    fn loadedNamespaceCount(self: *Parser) usize {
-        var count: usize = 0;
-        var it = self.module_namespaces.iterator();
-        while (it.next()) |entry| {
-            if (entry.value_ptr.ast != null) count += 1;
-        }
-        return count;
-    }
-
-    fn moduleReferencesImport(module_info: ast.ModuleInfo, import: ast.ImportInfo) bool {
-        return switch (import.import_type) {
-            .Module => if (import.namespace_alias) |alias| moduleReferencesName(module_info, alias) else false,
-            .Specific => blk: {
-                if (import.specific_symbols) |symbols| {
-                    for (symbols) |symbol_name| {
-                        if (moduleReferencesName(module_info, symbol_name)) break :blk true;
-                    }
-                    break :blk false;
-                }
-                if (import.specific_symbol) |symbol_name| {
-                    break :blk moduleReferencesName(module_info, symbol_name);
-                }
-                break :blk false;
-            },
-        };
-    }
-
-    fn moduleReferencesName(module_info: ast.ModuleInfo, name: []const u8) bool {
-        const module_ast = module_info.ast orelse return false;
-        if (module_ast.data != .Block) return false;
-        return walkStatements(ReferenceContext{ .name = name }, module_ast.data.Block.statements);
-    }
-
-    fn moduleContributesBodies(module_info: ast.ModuleInfo) bool {
-        const module_ast = module_info.ast orelse return false;
-        if (module_ast.data != .Block) return false;
-        for (module_ast.data.Block.statements) |stmt| {
-            switch (stmt.data) {
-                .FunctionDecl, .VarDecl, .ZigDecl, .EnumDecl, .GroupDecl => return true,
-                .Expression => |maybe_expr| {
-                    const expr = maybe_expr orelse continue;
-                    // A struct's fields and method bodies, and a group's
-                    // members, can name an import even when the module has no
-                    // top-level function or variable. A struct-only module must
-                    // therefore have its imports scanned too.
-                    switch (expr.data) {
-                        .StructDecl, .EnumDecl, .GroupDecl => return true,
-                        else => {},
-                    }
-                },
-                else => {},
-            }
-        }
-        return false;
-    }
-
-    pub fn collectReachableModuleNamespaces(self: *Parser, allocator: std.mem.Allocator) !std.StringHashMap(ModuleInfo) {
-        var reachable = std.StringHashMap(ModuleInfo).init(allocator);
-        var it = self.module_namespaces.iterator();
-        while (it.next()) |entry| {
-            const module_info = entry.value_ptr.*;
-            if (module_info.ast == null and !module_info.is_inline_zig) continue;
-            try reachable.put(entry.key_ptr.*, module_info);
-        }
-        return reachable;
-    }
-
-    pub fn loadAndRegisterModule(self: *Parser, module_path: []const u8, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!ast.ModuleInfo {
-        if (module_resolver.isZigModulePath(module_path)) {
-            const module_info = try module_resolver.resolveZigModule(self, module_path, namespace);
-            try self.module_namespaces.put(namespace, module_info);
-            try self.registerZigModuleSymbols(namespace, module_info);
-            return module_info;
-        }
-
-        const module_info = try module_resolver.resolveModule(self, module_path);
-
-        try self.module_namespaces.put(namespace, module_info);
-        try self.registerPublicSymbols(module_info, namespace, specific_symbol);
-
-        return module_info;
-    }
-
-    // Register the exported functions of an imported `.zig` module under the import
-    // alias, mirroring the inline `zig { ... }` registration so that `Alias.fn(...)`
-    // type-checks with exact parameter/return types.
-    fn registerZigModuleSymbols(self: *Parser, namespace: []const u8, module_info: ast.ModuleInfo) ErrorList!void {
-        const module_ast = module_info.ast orelse return;
-        if (module_ast.data != .Block) return;
-
-        const imported_symbols = self.getImportedSymbols();
-        for (module_ast.data.Block.statements) |stmt| {
-            if (stmt.data != .ZigDecl) continue;
-            for (stmt.data.ZigDecl.sigs) |sig| {
-                const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, sig.name });
-                try imported_symbols.put(full_name, .{
-                    .kind = .Function,
-                    .name = sig.name,
-                    .original_module = namespace,
-                    .namespace_alias = null,
-                    .param_count = @intCast(sig.param_types.len),
-                    .param_types = sig.param_types,
-                    .return_type_info = sig.return_type,
-                });
-            }
-        }
-    }
-
-    fn registerPublicSymbols(self: *Parser, module_info: ast.ModuleInfo, namespace: []const u8, specific_symbol: ?[]const u8) ErrorList!void {
-        if (self.imported_symbols == null) {
-            self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
-        }
-        if (module_info.symbols == null) return;
-
-        var it = module_info.symbols.?.iterator();
-        while (it.next()) |entry| {
-            const symbol = entry.value_ptr.*;
-            const symbol_name = entry.key_ptr.*;
-            if (!symbol.is_public) continue;
-            if (specific_symbol) |specific| {
-                if (!std.mem.eql(u8, specific, symbol_name)) continue;
-            }
-
-            const full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ namespace, symbol_name });
-            try self.getImportedSymbols().put(full_name, .{
-                .kind = switch (symbol.kind) {
-                    .Function => .Function,
-                    .Variable => .Variable,
-                    .Struct => .Struct,
-                    .Enum => .Enum,
-                    .Group => .Group,
-                },
-                .name = symbol_name,
-                // The defining module's resolved path, never the raw import
-                // specifier: `lookupModuleInfo` matches this against
-                // `ModuleInfo.file_path`.
-                .original_module = module_info.file_path,
-                .enum_role = if (symbol.kind == .Enum or symbol.kind == .Group) .Type else null,
-                .enum_type_name = if (symbol.kind == .Enum or symbol.kind == .Group) symbol_name else null,
-            });
-        }
-    }
-
-    /// Resolve one name named by `import n from S` and bind it, owner-scoped, on
-    /// the file that declared the import. `n` is classified against `S`'s public
-    /// surface: a public submodule re-export binds a namespace, any other public
-    /// declaration binds the defining symbol (kind preserved). The
-    /// `imported_symbols`/`module_namespaces` compatibility views are still
-    /// populated for codegen until they are deleted.
-    pub fn loadAndRegisterSpecificSymbol(self: *Parser, importer_path: []const u8, module_path: []const u8, symbol_name: []const u8, is_public: bool) ErrorList!void {
-        // Resolution dedups on the graph and returns the already-parsed payload
-        // for a known physical identity, so no separate cache lookup is needed.
-        const module_info = try module_resolver.resolveModule(self, module_path);
-
-        const owner = self.ownerRecordForModuleFile(importer_path) orelse self.owner_record;
-        const visibility: module_graph.Visibility = if (is_public) .Public else .Private;
-
-        // If the requested symbol is a public module re-exported by this module
-        // (`public module io from ...`), bind it directly as a namespace so
-        // `io.println(...)` resolves, without exposing the parent module itself.
-        for (module_info.imports) |import_info| {
-            if (import_info.import_type != .Module or !import_info.is_public) continue;
-            const reexport_alias = import_info.namespace_alias orelse continue;
-            if (!std.mem.eql(u8, reexport_alias, symbol_name)) continue;
-            const child_id = try self.registerReexportedSubmodule(module_info.file_path, import_info.module_path, symbol_name);
-            if (child_id) |target_id| {
-                if (owner) |record| {
-                    try self.graph.bindNamespace(record, symbol_name, target_id, visibility, null);
-                }
-            }
-            return;
-        }
-
-        // A public declaration of the target is the entity `n` names. The target
-        // record owns its public surface (populated when its declarations were
-        // collected at parse), so classification reads `public_bindings`, not
-        // the flat alias map.
-        if (module_info.record_id) |target_id| {
-            if (owner) |record| {
-                const target = self.graph.record(target_id);
-                if (target.public_bindings.get(symbol_name)) |bound| {
-                    try self.graph.bindName(record, symbol_name, bound.binding, visibility, null);
-                }
-            }
-        }
-
-        // A specific import binds only the named symbols; it must not lay claim
-        // to a user-visible namespace for the imported file. The module still
-        // needs an entry in `module_namespaces` so `collectFunctionSignatures`
-        // gathers its full function set (calls between functions of the
-        // imported module) and so its imported functions can be located.
-        // Key that entry by a hash of the resolved path — never the filename
-        // stem — so it can neither shadow nor be shadowed by a real `module`
-        // namespace whose private dependency happens to share the basename.
-        if (!self.moduleAlreadyRegistered(module_info.file_path)) {
-            const key = try std.fmt.allocPrint(
-                self.allocator,
-                "$import_{x}",
-                .{std.hash.Wyhash.hash(0, module_info.file_path)},
-            );
-            try self.module_namespaces.put(key, module_info);
-        }
-
-        if (module_info.ast) |module_ast| {
-            // Pass the defining module's resolved path, not the raw specifier:
-            // `original_module` must match `ModuleInfo.file_path` so
-            // `lookupModuleInfo` can recover the declaring module.
-            try self.registerSpecificSymbol(module_ast, module_info.file_path, symbol_name);
-        }
-    }
-
-    /// Whether some module namespace already refers to `file_path`, so a
-    /// specific import of the same module does not register it twice.
-    fn moduleAlreadyRegistered(self: *Parser, file_path: []const u8) bool {
-        var it = self.module_namespaces.iterator();
-        while (it.next()) |entry| {
-            if (std.mem.eql(u8, entry.value_ptr.file_path, file_path)) return true;
-        }
-        return false;
-    }
-
-    fn registerSpecificSymbol(self: *Parser, module_ast: *ast.Expr, module_path: []const u8, symbol_name: []const u8) !void {
-        if (self.imported_symbols == null) {
-            self.imported_symbols = std.StringHashMap(import_parser.ImportedSymbol).init(self.allocator);
-        }
-
-        switch (module_ast.data) {
-            .Block => {
-                const statements = module_ast.data.Block.statements;
-                for (statements) |stmt| {
-                    switch (stmt.data) {
-                        .FunctionDecl => |func| {
-                            const is_public = func.is_public;
-                            if (is_public and std.mem.eql(u8, func.name.lexeme, symbol_name)) {
-                                var param_types: ?[]ast.TypeInfo = null;
-                                if (func.params.len > 0) {
-                                    param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
-                                    for (func.params, 0..) |param, i| {
-                                        if (param.type_expr) |type_expr| {
-                                            const type_info_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-                                            param_types.?[i] = type_info_ptr.*;
-                                            self.allocator.destroy(type_info_ptr);
-                                        } else {
-                                            param_types.?[i] = .{ .base = .Nothing };
-                                        }
-                                    }
-                                }
-
-                                const param_aliases = try self.allocator.alloc(bool, func.params.len);
-                                for (func.params, 0..) |param, i| param_aliases[i] = param.is_alias;
-
-                                try self.getImportedSymbols().put(symbol_name, .{
-                                    .kind = .Function,
-                                    .name = func.name.lexeme,
-                                    .original_module = module_path,
-                                    .namespace_alias = null,
-                                    .param_count = @intCast(func.params.len),
-                                    .param_types = param_types,
-                                    .param_aliases = param_aliases,
-                                    .return_type_info = func.return_type_info,
-                                });
-                                return;
-                            }
-                        },
-                        .VarDecl => |var_decl| {
-                            const is_public = var_decl.is_public;
-                            if (is_public and std.mem.eql(u8, var_decl.name.lexeme, symbol_name)) {
-                                try self.getImportedSymbols().put(symbol_name, .{
-                                    .kind = .Variable,
-                                    .name = var_decl.name.lexeme,
-                                    .original_module = module_path,
-                                });
-                                return;
-                            }
-                        },
-                        .EnumDecl => |enum_decl| {
-                            const is_public = enum_decl.is_public;
-                            if (is_public and std.mem.eql(u8, enum_decl.name.lexeme, symbol_name)) {
-                                try self.getImportedSymbols().put(symbol_name, .{
-                                    .kind = .Enum,
-                                    .name = enum_decl.name.lexeme,
-                                    .original_module = module_path,
-                                    .enum_role = .Type,
-                                    .enum_type_name = enum_decl.name.lexeme,
-                                });
-                                for (enum_decl.variants) |variant| {
-                                    const variant_full_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ symbol_name, variant.lexeme });
-                                    try self.getImportedSymbols().put(variant_full_name, .{
-                                        .kind = .Enum,
-                                        .name = variant.lexeme,
-                                        .original_module = module_path,
-                                        .enum_role = .Variant,
-                                        .enum_type_name = enum_decl.name.lexeme,
-                                    });
-                                }
-                                return;
-                            }
-                        },
-                        .GroupDecl => |group_decl| {
-                            const is_public = group_decl.is_public;
-                            if (is_public and std.mem.eql(u8, group_decl.name.lexeme, symbol_name)) {
-                                try self.getImportedSymbols().put(symbol_name, .{
-                                    .kind = .Group,
-                                    .name = group_decl.name.lexeme,
-                                    .original_module = module_path,
-                                    .enum_role = .Type,
-                                    .enum_type_name = group_decl.name.lexeme,
-                                });
-                                return;
-                            }
-                        },
-                        .Expression => |maybe_expr| {
-                            if (maybe_expr) |expr| {
-                                if (expr.data == .StructDecl) {
-                                    const struct_decl = expr.data.StructDecl;
-                                    const is_public = struct_decl.is_public;
-                                    if (is_public and std.mem.eql(u8, struct_decl.name.lexeme, symbol_name)) {
-                                        try self.getImportedSymbols().put(symbol_name, .{
-                                            .kind = .Struct,
-                                            .name = struct_decl.name.lexeme,
-                                            .original_module = module_path,
-                                        });
-                                        return;
-                                    }
-                                }
-                            }
-                        },
-                        .ZigDecl => |zig_decl| {
-                            for (zig_decl.sigs) |sig| {
-                                if (!std.mem.eql(u8, sig.name, symbol_name)) continue;
-                                // The inline-Zig wrapper exports every function as
-                                // `<zig-stem>.<name>`, so register that qualified
-                                // symbol (return-type inference looks it up) and the
-                                // bare imported name (call resolution looks it up).
-                                const stem = std.fs.path.stem(module_path);
-                                const info = import_parser.ImportedSymbol{
-                                    .kind = .Function,
-                                    .name = sig.name,
-                                    .original_module = module_path,
-                                    .param_count = @intCast(sig.param_types.len),
-                                    .param_types = sig.param_types,
-                                    .return_type_info = sig.return_type,
-                                };
-                                try self.getImportedSymbols().put(symbol_name, info);
-                                const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ stem, sig.name });
-                                try self.getImportedSymbols().put(qualified, info);
-                                return;
-                            }
-                        },
-                        .Block, .Return, .MapLiteral, .Module, .Import, .Path, .Continue, .Break, .Assert, .Cast, .Defer, .Lift => {},
-                    }
-                }
-            },
-            else => {},
-        }
-    }
-
-    /// Load a submodule re-exported by `parent_path` (via `public module <name> from
-    /// child_rel_path`) and register it directly under `bind_name` as a namespace.
-    /// Returns the re-exported submodule's record id so the caller can also bind
-    /// the name on the importing file's own record.
-    fn registerReexportedSubmodule(self: *Parser, parent_path: []const u8, child_rel_path: []const u8, bind_name: []const u8) ErrorList!?module_graph.ModuleId {
-        if (self.module_namespaces.get(bind_name)) |existing| {
-            if (existing.ast != null) {
-                // The re-export belongs to the parent file that declared it.
-                if (existing.record_id) |target_id| {
-                    if (self.ownerRecordForModuleFile(parent_path)) |owner| {
-                        try self.graph.bindNamespace(owner, bind_name, target_id, self.aliasVisibility(parent_path, bind_name), null);
-                    }
-                    return target_id;
-                }
-                return null;
-            }
-        }
-
-        const previous_current_file = self.current_file;
-        const previous_current_file_uri = self.current_file_uri;
-        self.current_file = parent_path;
-        self.current_file_uri = try self.reporter.ensureFileUri(self.io,parent_path);
-        defer {
-            self.current_file = previous_current_file;
-            self.current_file_uri = previous_current_file_uri;
-        }
-
-        const child_info = try self.loadAndRegisterModule(child_rel_path, bind_name, null);
-        if (child_info.record_id) |target_id| {
-            if (self.ownerRecordForModuleFile(parent_path)) |owner| {
-                try self.graph.bindNamespace(owner, bind_name, target_id, self.aliasVisibility(parent_path, bind_name), null);
-            }
-            return target_id;
-        }
-        return null;
     }
 };

@@ -21,60 +21,25 @@ pub const AssignmentsHandler = struct {
     }
 
     /// Generate HIR for assignment expressions
-    pub fn generateAssignment(self: *AssignmentsHandler, assign: ast.Assignment, preserve_result: bool) !void {
-        // Set the current assignment target for enum type inference
-        const previous_target = self.generator.current_assignment_target;
-        self.generator.current_assignment_target = assign.name.lexeme;
+    pub fn generateAssignment(self: *AssignmentsHandler, expr: *ast.Expr, preserve_result: bool) !void {
+        const assign = expr.data.Assignment;
+        const value = assign.value.?;
+        try self.generator.generateExpression(value, true, false);
 
-        // Generate the value expression
-        try self.generator.generateExpression(assign.value.?, true, false);
+        // The value takes the type of the storage it lands in, which the
+        // analyzer resolved beneath any narrowing of the name.
+        const assigned_type = try self.generator.bindingTypeOf(&expr.base);
+        try self.generator.convertValue(try self.generator.typeOf(value), assigned_type);
 
-        // Restore the previous assignment target
-        self.generator.current_assignment_target = previous_target;
-
-        // NEW: Track the variable's type from the assigned value
-        const assigned_type = self.generator.inferTypeFromExpression(assign.value.?);
-
-        // Only update the variable's type if it wasn't already explicitly declared
-        // This preserves the original type annotation (e.g., "var ip :: int")
-        const existing_type = self.generator.getTrackedVariableType(assign.name.lexeme);
-        if (existing_type == null or existing_type.? == .Unknown) {
+        // TODO(type-authority step 5): the name-keyed type tables below are
+        // read by the generator-side inference that step deletes.
+        if (self.generator.getTrackedVariableType(assign.name.lexeme) == null) {
             try self.generator.trackVariableType(assign.name.lexeme, assigned_type);
         }
-
-        // NEW: Track array element type for array literals
-        if (assigned_type == .Array and assign.value.?.data == .Array) {
-            const elements = assign.value.?.data.Array;
-            if (elements.len > 0) {
-                const element_type: HIRType = switch (elements[0].data) {
-                    .Literal => |lit| switch (lit) {
-                        .int => .Int,
-                        .float => .Float,
-                        .string => .String,
-                        .tetra => .Tetra,
-                        .byte => .Byte,
-                        else => .Unknown,
-                    },
-                    .Array => HIRType.Unknown, // Handle nested arrays
-                    else => .Unknown,
-                };
-                if (element_type != .Unknown) {
-                    try self.generator.trackArrayElementType(assign.name.lexeme, element_type);
-                }
-            }
-        } else if (assigned_type == .Array and assign.value.?.data == .Variable) {
-            // When assigning from a variable with array type, transfer element type
-            const var_name = assign.value.?.data.Variable.lexeme;
-            if (self.generator.getTrackedArrayElementType(var_name)) |elem_type| {
-                try self.generator.trackArrayElementType(assign.name.lexeme, elem_type);
-            }
-        }
-
         if (assigned_type == .Array) {
             var storage_kind: ArrayStorageKind = .dynamic;
-            if (assign.value.?.data == .Variable) {
-                const source_var = assign.value.?.data.Variable.lexeme;
-                if (self.generator.getTrackedArrayStorageKind(source_var)) |tracked| {
+            if (value.data == .Variable) {
+                if (self.generator.getTrackedArrayStorageKind(value.data.Variable.lexeme)) |tracked| {
                     storage_kind = tracked;
                 }
             } else if (self.generator.array_storage_override) |override_kind| {
@@ -83,86 +48,25 @@ pub const AssignmentsHandler = struct {
             try self.generator.trackArrayStorageKind(assign.name.lexeme, storage_kind);
         }
 
-        // Check if this is an alias parameter
-        if (self.generator.symbol_table.isAliasParameter(assign.name.lexeme)) {
-            // For alias parameters, get the correct slot from the slot manager
-            if (self.generator.slot_manager.getAliasSlot(assign.name.lexeme)) |alias_slot| {
-                // Duplicate value to leave it on stack as assignment result
-                if (preserve_result) {
-                    try self.generator.instructions.append(.Dup);
-                }
-
-                try self.generator.instructions.append(.{
-                    .StoreAlias = .{
-                        .slot_index = alias_slot,
-                        .var_name = assign.name.lexeme,
-                        .expected_type = assigned_type,
-                    },
-                });
-                return;
-            } else {
-                return ErrorList.InvalidAliasArgument;
-            }
-        }
-
-        // Get or create variable index
-        const var_idx = try self.generator.getOrCreateVariable(assign.name.lexeme);
-
         // Duplicate value to leave it on stack as assignment result
         if (preserve_result) {
             try self.generator.instructions.append(.Dup);
         }
-
-        // Determine correct scope for the variable
-        const scope_kind = self.generator.symbol_table.determineVariableScope(assign.name.lexeme);
-
-        // Store to variable
-        try self.generator.instructions.append(.{ .StoreVar = .{
-            .var_index = var_idx,
-            .var_name = assign.name.lexeme,
-            .scope_kind = scope_kind,
-            .module_context = null,
-            .expected_type = assigned_type,
-        } });
+        try self.generator.storeName(&expr.base, assign.name.lexeme, assigned_type, .rehome);
     }
 
     /// Generate HIR for compound assignment expressions
-    pub fn generateCompoundAssign(self: *AssignmentsHandler, compound: ast.CompoundAssignment, preserve_result: bool) !void {
-        // Check if this is an alias parameter
-        if (self.generator.symbol_table.isAliasParameter(compound.name.lexeme)) {
-            // For alias parameters, get the correct slot from the slot manager
-            if (self.generator.slot_manager.getAliasSlot(compound.name.lexeme)) |alias_slot| {
-                try self.generator.instructions.append(.{
-                    .LoadAlias = .{
-                        .var_name = compound.name.lexeme,
-                        .slot_index = alias_slot,
-                    },
-                });
-            } else {
-                return ErrorList.InvalidAliasArgument;
-            }
-        } else {
-            // Regular variable - determine correct scope
-            const var_idx = try self.generator.getOrCreateVariable(compound.name.lexeme);
-
-            // Determine correct scope for the variable
-            const scope_kind = self.generator.symbol_table.determineVariableScope(compound.name.lexeme);
-
-            try self.generator.instructions.append(.{
-                .LoadVar = .{
-                    .var_index = var_idx,
-                    .var_name = compound.name.lexeme,
-                    .scope_kind = scope_kind,
-                    .module_context = null,
-                },
-            });
-        }
+    pub fn generateCompoundAssign(self: *AssignmentsHandler, expr: *ast.Expr, preserve_result: bool) !void {
+        const compound = expr.data.CompoundAssign;
+        try self.generator.loadName(&expr.base, compound.name.lexeme);
 
         // Generate the value expression (e.g., the "1" in "current += 1")
         try self.generator.generateExpression(compound.value.?, true, false);
 
-        const left_type = self.generator.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
-        const right_type = self.generator.inferTypeFromExpression(compound.value.?);
+        // The operation computes in what the name reads here — a narrowed
+        // member inside a view — and its result is stored as the slot's type.
+        const left_type = try self.generator.bindingReadTypeOf(&expr.base);
+        const right_type = try self.generator.typeOf(compound.value.?);
         switch (compound.operator.type) {
             .PLUS_EQUAL => {
                 try self.handlePlusEqual(left_type, right_type, compound.name);
@@ -206,41 +110,18 @@ pub const AssignmentsHandler = struct {
             },
         }
 
+        // `/` is float division whatever the operands; every other operator
+        // keeps the left operand's type.
+        const result_type: HIRType = if (compound.operator.type == .SLASH_EQUAL) .Float else left_type;
+        const expected_type = try self.generator.bindingTypeOf(&expr.base);
+        try self.generator.convertValue(result_type, expected_type);
+
         // Duplicate the result to leave it on stack as the expression result
         if (preserve_result) {
             try self.generator.instructions.append(.Dup);
         }
 
-        // Store the result back to the variable
-        const expected_type = self.generator.getTrackedVariableType(compound.name.lexeme) orelse .Unknown;
-        if (self.generator.symbol_table.isAliasParameter(compound.name.lexeme)) {
-            // For alias parameters, get the correct slot from the slot manager
-            if (self.generator.slot_manager.getAliasSlot(compound.name.lexeme)) |alias_slot| {
-                try self.generator.instructions.append(.{
-                    .StoreAlias = .{
-                        .var_name = compound.name.lexeme,
-                        .slot_index = alias_slot,
-                        .expected_type = expected_type,
-                    },
-                });
-            } else {
-                return ErrorList.InvalidAliasArgument;
-            }
-        } else {
-            // Regular variable - determine correct scope
-            const var_idx = try self.generator.getOrCreateVariable(compound.name.lexeme);
-
-            // Determine correct scope for the variable
-            const scope_kind = self.generator.symbol_table.determineVariableScope(compound.name.lexeme);
-
-            try self.generator.instructions.append(.{ .StoreVar = .{
-                .var_index = var_idx,
-                .var_name = compound.name.lexeme,
-                .scope_kind = scope_kind,
-                .module_context = null,
-                .expected_type = expected_type,
-            } });
-        }
+        try self.generator.storeName(&expr.base, compound.name.lexeme, expected_type, .rehome);
     }
 
     // Private helper methods for each compound operator type
@@ -406,7 +287,7 @@ pub const AssignmentsHandler = struct {
             try self.generator.instructions.append(.{ .Convert = .{ .from_type = .Int, .to_type = .Byte } });
             try self.generator.instructions.append(.{ .Arith = .{ .op = .IntDiv, .operand_type = .Byte } });
         } else {
-            try self.reportCompoundOperandMismatch("///=", left_type, right_type, name);
+            try self.reportCompoundOperandMismatch("//=", left_type, right_type, name);
             return ErrorList.TypeMismatch;
         }
     }

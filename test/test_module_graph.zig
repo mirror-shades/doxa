@@ -2,7 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 
 const graph = @import("../src/module/graph.zig");
-const harness = @import("harness.zig");
+const Reporter = @import("../src/utils/reporting.zig").Reporter;
 
 test "module graph: containment is component-wise, not textual" {
     try testing.expectEqualStrings("bar.doxa", graph.relativePart("/pkg/foo", "/pkg/foo/bar.doxa").?);
@@ -196,8 +196,8 @@ test "module graph: records get immutable ids and are indexed by both keys" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
 
-    const first = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa");
-    const second = try graph_store.addRecord("/pkg/b.doxa", "pkg//b.doxa");
+    const first = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    const second = try graph_store.addRecord("/pkg/b.doxa", "pkg//b.doxa", .doxa);
 
     try testing.expectEqual(@as(graph.ModuleId, 0), first.id);
     try testing.expectEqual(@as(graph.ModuleId, 1), second.id);
@@ -212,18 +212,18 @@ test "module graph: a stable key names exactly one record" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
 
-    _ = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa");
+    _ = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
 
     // A second physical file claiming the same stable key is a compiler error,
     // never a silent merge.
-    try testing.expectError(error.DuplicateStableKey, graph_store.addRecord("/pkg/other.doxa", "pkg//a.doxa"));
+    try testing.expectError(error.DuplicateStableKey, graph_store.addRecord("/pkg/other.doxa", "pkg//a.doxa", .doxa));
 }
 
 test "module graph: generated records have no physical key" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
 
-    const generated = try graph_store.addRecord(null, "pkg//main.doxa//zig/IO");
+    const generated = try graph_store.addRecord(null, "pkg//main.doxa//zig/IO", .inline_zig);
     try testing.expect(generated.physical_key == null);
     try testing.expect(graph_store.findStable("pkg//main.doxa//zig/IO").? == generated);
     try testing.expect(graph_store.findPhysical("pkg//main.doxa//zig/IO") == null);
@@ -233,7 +233,7 @@ test "module graph: a generated record derives its key from the owner" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
 
-    const owner = try graph_store.addRecord("/pkg/main.doxa", "pkg//main.doxa");
+    const owner = try graph_store.addRecord("/pkg/main.doxa", "pkg//main.doxa", .doxa);
     const zig_io = try graph_store.addGeneratedRecord(testing.allocator, owner, "IO");
 
     try testing.expect(zig_io.physical_key == null);
@@ -248,14 +248,14 @@ test "module graph: bindings are owner-scoped and mirror the public surface" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
 
-    const a = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa");
-    const b = try graph_store.addRecord("/pkg/b.doxa", "pkg//b.doxa");
+    const a = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    const b = try graph_store.addRecord("/pkg/b.doxa", "pkg//b.doxa", .doxa);
 
-    try graph_store.bindSymbol(a, "Node", .Type, .Public, null);
-    try graph_store.bindNamespace(a, "util", b.id, .Private, null);
+    try graph_store.bindName(a, "Node", .{ .symbol = .{ .module = a.id, .name = "Node", .kind = .Type } }, .Public, null);
+    try graph_store.bindName(a, "util", .{ .namespace = b.id }, .Private, null);
     // The same name in two modules is two bindings, each naming its own
     // defining module.
-    try graph_store.bindSymbol(b, "Node", .Type, .Private, null);
+    try graph_store.bindName(b, "Node", .{ .symbol = .{ .module = b.id, .name = "Node", .kind = .Type } }, .Private, null);
 
     try testing.expectEqual(a.id, a.bindings.get("Node").?.binding.symbol.module);
     try testing.expectEqual(b.id, b.bindings.get("Node").?.binding.symbol.module);
@@ -280,28 +280,118 @@ test "module graph: symbol keys are module-qualified" {
     try testing.expect(ctx.hash(a) != ctx.hash(b));
 }
 
-test "module graph: link prefixes are deterministic and distinct" {
+test "module graph: mangled symbols are deterministic, distinct, and decodable" {
     var g1 = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer g1.deinit();
-    const a1 = try g1.addRecord("/pkg/a.doxa", "pkg//a.doxa");
-    const b1 = try g1.addRecord("/pkg/b.doxa", "pkg//b.doxa");
+    const a1 = try g1.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    const b1 = try g1.addRecord("/pkg/b.doxa", "pkg//b.doxa", .doxa);
+    try g1.finalizeMangling();
 
-    // Distinct modules never share an internal key.
-    try testing.expect(!std.mem.eql(u8, a1.link_prefix, b1.link_prefix));
+    const a_node = try g1.mangle(testing.allocator, a1.id, .type, &.{"Node"});
+    defer testing.allocator.free(a_node);
+    const b_node = try g1.mangle(testing.allocator, b1.id, .type, &.{"Node"});
+    defer testing.allocator.free(b_node);
+    // The same name in two modules is two symbols.
+    try testing.expect(!std.mem.eql(u8, a_node, b_node));
 
-    // The prefix is derived from the stable key, so it is independent of the
-    // checkout path and of discovery order.
+    // A kind tag separates a function `S__m` from a method `S.m`.
+    const function = try g1.mangle(testing.allocator, a1.id, .function, &.{"S__m"});
+    defer testing.allocator.free(function);
+    const method = try g1.mangle(testing.allocator, a1.id, .method, &.{ "S", "m" });
+    defer testing.allocator.free(method);
+    try testing.expect(!std.mem.eql(u8, function, method));
+
+    // Display shows the declared name; identity never does.
+    try testing.expectEqualStrings("Node", graph.displayName(a_node));
+    try testing.expectEqualStrings("m", graph.displayName(method));
+    try testing.expectEqualStrings("plain", graph.displayName("plain"));
+
+    // The tag derives from the stable key alone: independent of the checkout
+    // path and of discovery order.
     var g2 = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer g2.deinit();
-    const b2 = try g2.addRecord("/elsewhere/b.doxa", "pkg//b.doxa");
-    try testing.expectEqualStrings(b1.link_prefix, b2.link_prefix);
+    _ = try g2.addRecord("/elsewhere/z.doxa", "pkg//z.doxa", .doxa);
+    const b2 = try g2.addRecord("/elsewhere/b.doxa", "pkg//b.doxa", .doxa);
+    try g2.finalizeMangling();
+    const b2_node = try g2.mangle(testing.allocator, b2.id, .type, &.{"Node"});
+    defer testing.allocator.free(b2_node);
+    try testing.expectEqualStrings(b_node, b2_node);
+}
+
+test "module graph: components are framed by byte count and cannot forge a delimiter" {
+    var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
+    defer graph_store.deinit();
+    const a = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    try graph_store.finalizeMangling();
+
+    // A quoted Zig identifier may carry any bytes. `héllo` is six bytes, and
+    // its length prefix counts bytes, so it decodes intact.
+    const unicode = try graph_store.mangle(testing.allocator, a.id, .function, &.{"h\xc3\xa9llo"});
+    defer testing.allocator.free(unicode);
+    try testing.expect(std.mem.endsWith(u8, unicode, "__f6$h\xc3\xa9llo"));
+    try testing.expectEqualStrings("h\xc3\xa9llo", graph.displayName(unicode));
+
+    // `$`, `_`, and `:` inside a component are content, not structure: the
+    // same bytes split differently are different symbols.
+    const left = try graph_store.mangle(testing.allocator, a.id, .method, &.{ "S$1", "m" });
+    defer testing.allocator.free(left);
+    const right = try graph_store.mangle(testing.allocator, a.id, .method, &.{ "S", "1$m" });
+    defer testing.allocator.free(right);
+    try testing.expect(!std.mem.eql(u8, left, right));
+    try testing.expectEqualStrings("1$m", graph.displayName(right));
+
+    const underscored = try graph_store.mangle(testing.allocator, a.id, .method, &.{ "S_", "_m" });
+    defer testing.allocator.free(underscored);
+    const coloned = try graph_store.mangle(testing.allocator, a.id, .method, &.{ "S:", ":m" });
+    defer testing.allocator.free(coloned);
+    try testing.expectEqualStrings("_m", graph.displayName(underscored));
+    try testing.expectEqualStrings(":m", graph.displayName(coloned));
+}
+
+test "module graph: a module-tag collision is extended, per record" {
+    var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
+    defer graph_store.deinit();
+    const a = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    const b = try graph_store.addRecord("/pkg/b.doxa", "pkg//b.doxa", .doxa);
+    const c = try graph_store.addRecord("/pkg/c.doxa", "pkg//c.doxa", .doxa);
+
+    // A 64-bit collision cannot be found by search; force one.
+    const forced = "0123456789abcdef";
+    a.mangle_tag = forced;
+    b.mangle_tag = forced;
+    c.mangle_tag = "fedcba9876543210";
+    try graph_store.disperseMangleTags();
+
+    // Both colliding records are extended, each by its own stable key, and
+    // keep the shared base; the record that did not collide is untouched.
+    try testing.expect(std.mem.startsWith(u8, a.mangle_tag.?, forced ++ "_"));
+    try testing.expect(std.mem.startsWith(u8, b.mangle_tag.?, forced ++ "_"));
+    try testing.expectEqual(forced.len * 2 + 1, a.mangle_tag.?.len);
+    try testing.expect(!std.mem.eql(u8, a.mangle_tag.?, b.mangle_tag.?));
+    try testing.expectEqualStrings("fedcba9876543210", c.mangle_tag.?);
+}
+
+test "module graph: a root-qualified specifier is a tag, two slashes, and a path" {
+    const std_entry = graph.rootSpecifier(graph.std_specifier).?;
+    try testing.expectEqualStrings("std", std_entry.tag);
+    try testing.expectEqualStrings("std.doxa", std_entry.relative);
+
+    const nested = graph.rootSpecifier("inc0//lib/util.doxa").?;
+    try testing.expectEqualStrings("inc0", nested.tag);
+    try testing.expectEqualStrings("lib/util.doxa", nested.relative);
+
+    // Anything else is an ordinary path.
+    try testing.expect(graph.rootSpecifier("./util.doxa") == null);
+    try testing.expect(graph.rootSpecifier("//server/share/a.doxa") == null);
+    try testing.expect(graph.rootSpecifier("../pkg//a.doxa") == null);
+    try testing.expect(graph.rootSpecifier("C:\\dev\\a.doxa") == null);
 }
 
 test "module graph: record pointers survive growth" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
 
-    const retained = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa");
+    const retained = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
 
     var i: usize = 0;
     while (i < 256) : (i += 1) {
@@ -309,7 +399,7 @@ test "module graph: record pointers survive growth" {
         defer testing.allocator.free(key);
         const stable = try std.fmt.allocPrint(testing.allocator, "pkg//m{d}.doxa", .{i});
         defer testing.allocator.free(stable);
-        _ = try graph_store.addRecord(key, stable);
+        _ = try graph_store.addRecord(key, stable, .doxa);
     }
 
     // A recursive resolution retains *ModuleRecord across ensure* calls; growth
@@ -334,16 +424,14 @@ test "module graph: identity pairs a real path with its stable key" {
     const file = try std.fs.path.join(allocator, &.{ base, "pkg", "a.doxa" });
     defer allocator.free(file);
 
-    var registry = try graph.RootRegistry.init(testing.io, allocator, &.{
+    var graph_store = try graph.ModuleGraph.init(testing.io, allocator, &.{
         .{ .tag = "pkg", .path = root },
     });
-    defer registry.deinit();
+    defer graph_store.deinit();
 
-    const identity = (try registry.identityFor(allocator, file)).?;
-    defer allocator.free(identity.physical_key);
-    defer allocator.free(identity.stable_module_key);
-    try testing.expectEqualStrings("pkg//a.doxa", identity.stable_module_key);
-    try testing.expect(std.mem.endsWith(u8, identity.physical_key, "a.doxa"));
+    const record = try graph_store.ensureRecord(file, .doxa);
+    try testing.expectEqualStrings("pkg//a.doxa", record.stable_module_key);
+    try testing.expectEqualStrings(file, record.physical_key.?);
 }
 
 test "module graph: two spellings of one file dedup to one record" {
@@ -376,8 +464,8 @@ test "module graph: two spellings of one file dedup to one record" {
     const roundabout_physical = try graph.physicalPath(testing.io, allocator, roundabout);
     defer allocator.free(roundabout_physical);
 
-    const first = try graph_store.ensureRecord(direct_physical);
-    const second = try graph_store.ensureRecord(roundabout_physical);
+    const first = try graph_store.ensureRecord(direct_physical, .doxa);
+    const second = try graph_store.ensureRecord(roundabout_physical, .doxa);
 
     try testing.expect(first == second);
     try testing.expectEqual(@as(usize, 1), graph_store.count());
@@ -419,8 +507,8 @@ test "module graph: a symlink and its target are one record" {
     defer allocator.free(link_physical);
     try testing.expectEqualStrings(direct_physical, link_physical);
 
-    const first = try graph_store.ensureRecord(direct_physical);
-    const second = try graph_store.ensureRecord(link_physical);
+    const first = try graph_store.ensureRecord(direct_physical, .doxa);
+    const second = try graph_store.ensureRecord(link_physical, .doxa);
     try testing.expect(first == second);
     try testing.expectEqual(@as(usize, 1), graph_store.count());
     try testing.expectEqualStrings("pkg//a.doxa", first.stable_module_key);
@@ -431,39 +519,63 @@ const StageCtx = struct {
     saw_parsing: bool = false,
     inner_in_progress: bool = false,
     graph: ?*graph.ModuleGraph = null,
+    reporter: *Reporter,
 };
 
-fn succeedStage(ctx_ptr: *anyopaque, record: *graph.ModuleRecord) graph.StageOutcome {
+fn testReporter() Reporter {
+    return Reporter.init(testing.io, testing.allocator, .{ .log_to_stderr = false }, null);
+}
+
+fn succeedStage(ctx_ptr: *anyopaque, record: *graph.ModuleRecord) anyerror!void {
     const ctx: *StageCtx = @ptrCast(@alignCast(ctx_ptr));
     ctx.runs += 1;
     ctx.saw_parsing = record.status == .Parsing;
     record.source = "module body";
-    return .ok;
 }
 
-fn reenterStage(ctx_ptr: *anyopaque, record: *graph.ModuleRecord) graph.StageOutcome {
+fn reenterStage(ctx_ptr: *anyopaque, record: *graph.ModuleRecord) anyerror!void {
     const ctx: *StageCtx = @ptrCast(@alignCast(ctx_ptr));
     ctx.runs += 1;
-    const inner = ctx.graph.?.ensureParsed(ctx_ptr, reenterStage, record);
+    const inner = ctx.graph.?.runStage(record, .Parse, ctx.reporter, ctx_ptr, reenterStage);
     ctx.inner_in_progress = std.meta.activeTag(inner) == .in_progress;
-    return .ok;
 }
 
-fn failStage(ctx_ptr: *anyopaque, record: *graph.ModuleRecord) graph.StageOutcome {
+/// Reports a warning, then the error it fails with.
+fn failStage(ctx_ptr: *anyopaque, record: *graph.ModuleRecord) anyerror!void {
     const ctx: *StageCtx = @ptrCast(@alignCast(ctx_ptr));
     ctx.runs += 1;
     _ = record;
-    return .{ .failed = 7 };
+    ctx.reporter.reportWarning(null, "W0", "noise before the failure", .{});
+    ctx.reporter.reportCompileError(null, "E0", "the stage's error", .{});
+    return error.StageFailed;
 }
 
-test "module graph: ensureParsed drives NotLoaded to Parsed exactly once" {
+/// Reports an error but returns normally.
+fn reportOnlyStage(ctx_ptr: *anyopaque, record: *graph.ModuleRecord) anyerror!void {
+    const ctx: *StageCtx = @ptrCast(@alignCast(ctx_ptr));
+    ctx.runs += 1;
+    _ = record;
+    ctx.reporter.reportCompileError(null, "E0", "reported, not returned", .{});
+}
+
+/// Returns an error without reporting one.
+fn silentStage(ctx_ptr: *anyopaque, record: *graph.ModuleRecord) anyerror!void {
+    const ctx: *StageCtx = @ptrCast(@alignCast(ctx_ptr));
+    ctx.runs += 1;
+    _ = record;
+    return error.Silent;
+}
+
+test "module graph: a stage drives NotLoaded to Parsed exactly once" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
+    var reporter = testReporter();
+    defer reporter.deinit();
 
-    const entry = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa");
-    var ctx = StageCtx{};
+    const entry = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    var ctx = StageCtx{ .reporter = &reporter };
 
-    const first = graph_store.ensureParsed(@ptrCast(&ctx), succeedStage, entry);
+    const first = graph_store.runStage(entry, .Parse, &reporter, @ptrCast(&ctx), succeedStage);
     try testing.expectEqual(std.meta.Tag(graph.EnsureResult).ready, std.meta.activeTag(first));
     try testing.expectEqual(@as(usize, 1), ctx.runs);
     try testing.expect(ctx.saw_parsing);
@@ -472,7 +584,7 @@ test "module graph: ensureParsed drives NotLoaded to Parsed exactly once" {
 
     // A second ensure* is a no-op: the active stage is never re-entered once
     // complete, and the body runs at most once.
-    const again = graph_store.ensureParsed(@ptrCast(&ctx), succeedStage, entry);
+    const again = graph_store.runStage(entry, .Parse, &reporter, @ptrCast(&ctx), succeedStage);
     try testing.expectEqual(std.meta.Tag(graph.EnsureResult).ready, std.meta.activeTag(again));
     try testing.expectEqual(@as(usize, 1), ctx.runs);
 }
@@ -480,35 +592,71 @@ test "module graph: ensureParsed drives NotLoaded to Parsed exactly once" {
 test "module graph: a parse re-entry reports in_progress, not ready" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
+    var reporter = testReporter();
+    defer reporter.deinit();
 
-    const entry = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa");
-    var ctx = StageCtx{ .graph = &graph_store };
+    const entry = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    var ctx = StageCtx{ .graph = &graph_store, .reporter = &reporter };
 
-    const result = graph_store.ensureParsed(@ptrCast(&ctx), reenterStage, entry);
+    const result = graph_store.runStage(entry, .Parse, &reporter, @ptrCast(&ctx), reenterStage);
     try testing.expectEqual(std.meta.Tag(graph.EnsureResult).ready, std.meta.activeTag(result));
     try testing.expect(ctx.inner_in_progress);
     try testing.expectEqual(@as(usize, 1), ctx.runs);
 }
 
-test "module graph: a failed stage is sticky and is not re-run" {
+test "module graph: a failed stage is sticky and points at its first error" {
     var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
     defer graph_store.deinit();
+    var reporter = testReporter();
+    defer reporter.deinit();
 
-    const entry = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa");
-    var ctx = StageCtx{};
+    const entry = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    var ctx = StageCtx{ .reporter = &reporter };
 
-    const first = graph_store.ensureParsed(@ptrCast(&ctx), failStage, entry);
+    const first = graph_store.runStage(entry, .Parse, &reporter, @ptrCast(&ctx), failStage);
     try testing.expectEqual(std.meta.Tag(graph.EnsureResult).failed, std.meta.activeTag(first));
     try testing.expectEqual(@as(usize, 1), ctx.runs);
     try testing.expectEqual(graph.ModuleStatus.Failed, entry.status);
     try testing.expectEqual(graph.ModuleStage.Parse, entry.failed_stage.?);
-    try testing.expectEqual(@as(?graph.DiagnosticIndex, 7), entry.failure);
+    // The warning reported first is not the failure; the error is.
+    try testing.expectEqual(@as(?graph.DiagnosticIndex, 1), entry.failure);
 
     // The second ensure* returns the same failure without emitting again.
-    const second = graph_store.ensureParsed(@ptrCast(&ctx), failStage, entry);
+    const second = graph_store.runStage(entry, .Parse, &reporter, @ptrCast(&ctx), failStage);
     try testing.expectEqual(std.meta.Tag(graph.EnsureResult).failed, std.meta.activeTag(second));
     try testing.expectEqual(@as(usize, 1), ctx.runs);
-    try testing.expectEqual(@as(?graph.DiagnosticIndex, 7), entry.failure);
+    try testing.expectEqual(@as(usize, 2), reporter.diagnostics.items.len);
+}
+
+test "module graph: a stage fails on an error it reported, returned or not" {
+    var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
+    defer graph_store.deinit();
+    var reporter = testReporter();
+    defer reporter.deinit();
+
+    const entry = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    var ctx = StageCtx{ .reporter = &reporter };
+
+    const result = graph_store.runStage(entry, .Parse, &reporter, @ptrCast(&ctx), reportOnlyStage);
+    try testing.expectEqual(std.meta.Tag(graph.EnsureResult).failed, std.meta.activeTag(result));
+    try testing.expectEqual(@as(?graph.DiagnosticIndex, 0), entry.failure);
+}
+
+test "module graph: a stage that fails silently is reported as a compiler bug" {
+    var graph_store = try graph.ModuleGraph.init(testing.io, testing.allocator, &.{});
+    defer graph_store.deinit();
+    var reporter = testReporter();
+    defer reporter.deinit();
+
+    const entry = try graph_store.addRecord("/pkg/a.doxa", "pkg//a.doxa", .doxa);
+    var ctx = StageCtx{ .reporter = &reporter };
+
+    const result = graph_store.runStage(entry, .Parse, &reporter, @ptrCast(&ctx), silentStage);
+    try testing.expectEqual(std.meta.Tag(graph.EnsureResult).failed, std.meta.activeTag(result));
+    try testing.expectEqual(@as(usize, 1), reporter.diagnostics.items.len);
+    const diagnostic = reporter.diagnostics.items[0];
+    try testing.expect(std.mem.indexOf(u8, diagnostic.message, "pkg//a.doxa") != null);
+    try testing.expect(std.mem.indexOf(u8, diagnostic.message, "compiler bug") != null);
 }
 
 test "module graph: a file outside every root is a hard error" {
@@ -535,65 +683,6 @@ test "module graph: a file outside every root is a hard error" {
     });
     defer graph_store.deinit();
 
-    try testing.expectError(error.ModuleRootUnknown, graph_store.ensureRecord(outside_physical));
+    try testing.expectError(error.ModuleRootUnknown, graph_store.ensureRecord(outside_physical, .doxa));
     try testing.expectEqual(@as(usize, 0), graph_store.count());
-}
-
-const checkout_program =
-    \\module u from "./util.doxa"
-    \\const v is u.helper()
-    \\@print("{v}\n")
-    \\
-;
-
-const checkout_util =
-    \\public function helper() returns int {
-    \\    return 42
-    \\}
-    \\
-;
-
-/// Compile the same two-file program inside `tmp` and return the optimized IR
-/// from the cache. The program imports a sibling module so the emitter has a
-/// real module reference to name.
-fn emittedIr(allocator: std.mem.Allocator, tmp: *std.testing.TmpDir) ![]u8 {
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "probe.doxa", .data = checkout_program });
-    try tmp.dir.writeFile(testing.io, .{ .sub_path = "util.doxa", .data = checkout_util });
-    try tmp.dir.createDirPath(testing.io, "cache");
-
-    var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd = cwd_buffer[0..try tmp.dir.realPath(testing.io, &cwd_buffer)];
-
-    const doxa = try harness.doxaExePath(allocator);
-    defer allocator.free(doxa);
-
-    const argv = [_][]const u8{ doxa, "run", "probe.doxa", "--emit-opt-ir", "--cache-dir=cache" };
-    const result = try harness.runCommandCapture(allocator, &argv, cwd, null);
-    defer {
-        allocator.free(result.stdout);
-        allocator.free(result.stderr);
-    }
-    if (result.exit_code != 0) {
-        std.debug.print("checkout-independence compile failed ({d}):\n{s}\n", .{ result.exit_code, result.stderr });
-        return error.CommandFailed;
-    }
-
-    return tmp.dir.readFileAlloc(testing.io, "cache/probe.opt.ll", allocator, .unlimited);
-}
-
-test "module graph: emitted IR is independent of the checkout directory" {
-    const allocator = testing.allocator;
-
-    var tmp_a = testing.tmpDir(.{});
-    defer tmp_a.cleanup();
-    var tmp_b = testing.tmpDir(.{});
-    defer tmp_b.cleanup();
-
-    // Two temp checkouts at different absolute paths emit byte-identical IR.
-    const ir_a = try emittedIr(allocator, &tmp_a);
-    defer allocator.free(ir_a);
-    const ir_b = try emittedIr(allocator, &tmp_b);
-    defer allocator.free(ir_b);
-
-    try testing.expectEqualStrings(ir_a, ir_b);
 }

@@ -2,8 +2,10 @@ const std = @import("std");
 const testing = std.testing;
 
 const StructTable = @import("../src/common/struct_table.zig").StructTable;
+const GroupTable = @import("../src/common/group_table.zig").GroupTable;
+const EnumTable = @import("../src/common/enum_table.zig").EnumTable;
 const ast = @import("../src/ast/ast.zig");
-const HIRType = @import("../src/codegen/hir/soxa_types.zig").HIRType;
+const ModuleGraph = @import("../src/module/graph.zig").ModuleGraph;
 const IRPrinter = @import("../src/codegen/llvmir/ir_printer.zig").IRPrinter;
 
 // `IRPrinter.registerStructTableLayouts` used to store the struct table's own
@@ -18,36 +20,46 @@ test "struct table field names survive IR printer deinit" {
     defer arena.deinit();
     const allocator = arena.allocator();
 
+    var graph = try ModuleGraph.init(testing.io, allocator, &.{});
+    defer graph.deinit();
+    const record = try graph.addRecord(null, "pkg//sample.doxa", .doxa);
+
     var table = StructTable.init(allocator);
     var int_field = ast.TypeInfo{ .base = .Int };
     const inputs = [_]StructTable.FieldInput{
         .{ .name = "alpha", .type_info = &int_field },
         .{ .name = "beta", .type_info = &int_field },
     };
-    const id = try table.registerStruct("Sample", &inputs);
+    const id = try table.registerStruct(.{ .module = record.id, .name = "Sample" }, &inputs);
     // `registerStructTableLayouts` skips entries whose field HIR types are not
-    // resolved, so make them concrete before the printer runs.
-    table.setFieldHIRType(id, 0, .Int);
-    table.setFieldHIRType(id, 1, .Int);
+    // resolved, so make them concrete before the printer runs, as
+    // `lowerStructFieldTypes` does once analysis is complete.
+    for (table.getEntryById(id).?.fields) |*field| field.hir_type = .Int;
 
     const table_fields = table.fields(id) orelse return error.MissingStruct;
     try testing.expectEqual(@as(usize, 2), table_fields.len);
 
-    const struct_table_ptr: *anyopaque = @ptrCast(&table);
+    // The printer names structs by canonical key, which a final graph fixes.
+    try graph.finalizeMangling();
+    try table.assignKeys(&graph);
+
+    var groups = GroupTable.init(allocator);
+    defer groups.deinit();
+    var enums = EnumTable.init(allocator);
+    defer enums.deinit();
     var printer = IRPrinter.init(
         testing.io,
         allocator,
-        null,
-        null,
-        struct_table_ptr,
-        std.StringHashMap([]HIRType).init(allocator),
+        &groups,
+        &enums,
+        &table,
         null,
         false,
         .Wrap,
     );
     try printer.registerStructTableLayouts();
 
-    const stored = printer.struct_field_names_by_type.get("Sample") orelse return error.MissingLayout;
+    const stored = printer.struct_field_names_by_type.get(table.keyOf(id).?) orelse return error.MissingLayout;
     try testing.expectEqual(@as(usize, 2), stored.len);
     // The map's inner names must be printer-owned copies. If they alias the
     // table's slices, `IRPrinter.deinit` frees the table's storage.

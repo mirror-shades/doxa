@@ -1,0 +1,11 @@
+# A private field is reached only through `this`, even in its own file.
+struct Account {
+    balance :: int,
+
+    public function open() returns Account {
+        return $Account { balance is 0 }
+    }
+}
+
+const account is Account.open()
+account.balance?

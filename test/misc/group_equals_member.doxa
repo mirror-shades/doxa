@@ -1,0 +1,19 @@
+# Regression (B016): a group value compared with a value of one of its enum
+# members. The comparison used to be annotated as a plain enum compare over a
+# boxed operand, which is not valid LLVM IR.
+#
+# This pins only what holds today. The comparison strips the box and compares
+# payloads without checking which member the box holds, so two members whose
+# variants share an index still compare equal; see the TODO(B015) on
+# `emitBoxedMemberEquality`. Those cases are deliberately absent here.
+enum IOError { NotFound, Denied }
+enum ParseError { BadToken, Eof, Depth }
+group Error { IOError, ParseError }
+
+public entry function main() {
+    const e :: Error is IOError.Denied
+    @print("{e == IOError.Denied} {e == IOError.NotFound} {e != IOError.Denied} {IOError.Denied == e}\n")
+    const p :: Error is ParseError.Depth
+    @print("{p == ParseError.Depth} {p == ParseError.Eof} {p != ParseError.BadToken}\n")
+    if e == IOError.Denied then @print("branch taken\n") else @print("branch skipped\n")
+}

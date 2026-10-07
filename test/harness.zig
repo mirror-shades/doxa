@@ -1,356 +1,209 @@
+//! What the black-box suites share: the binary under test, the outcome of a
+//! case, and the report that prints outcomes.
+
 const std = @import("std");
 const builtin = @import("builtin");
-const process = std.process;
+const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
-pub const CommandResult = struct {
-    stdout: []const u8,
-    stderr: []const u8,
-    exit_code: u8,
-};
+const platform = @import("platform");
+const process = @import("process.zig");
 
-pub const PeekRow = struct {
-    type: []const u8,
-    value: []const u8,
-};
+/// The deadline for one `doxa` invocation. A cold cache builds the runtime
+/// object before anything else, which takes seconds on its own and longer with
+/// every worker doing it at once, so this sits far above any case's honest
+/// cost. It exists to turn a hang into a named failure, not to measure speed.
+pub const timeout = Io.Duration.fromSeconds(120);
 
-pub const Counts = struct {
-    passed: usize,
-    failed: usize,
-    untested: usize,
-};
+/// The installed compiler under test, run from the repository root.
+pub const Doxa = struct {
+    /// Absolute path of the binary: `DOXA_BIN`, else the test install.
+    exe: [:0]const u8,
+    /// Absolute repository root. Every child runs here, and every compile
+    /// declares it as a root so cases may spell repo-relative module paths.
+    root: [:0]const u8,
+    /// `--include=<root>`.
+    include: []const u8,
 
-pub fn isClean(result: Counts) bool {
-    return result.failed == 0 and result.untested == 0;
-}
+    /// Resolves the binary and the root, which is the working directory:
+    /// `build.zig` runs every test executable from the build root.
+    pub fn init(gpa: Allocator, io: Io) !Doxa {
+        const cwd = Io.Dir.cwd();
+        const root = try cwd.realPathFileAlloc(io, ".", gpa);
+        errdefer gpa.free(root);
 
-pub fn printCase(name: []const u8, result: Counts, verbose: bool) void {
-    if (isClean(result)) {
-        if (verbose) std.debug.print("- {s}: ok ({d})\n", .{ name, result.passed });
-        return;
-    }
-    if (result.failed == 0 and result.passed == 0 and result.untested > 0) {
-        std.debug.print("- {s}: SKIP ({d})\n", .{ name, result.untested });
-        return;
-    }
-    if (result.failed == 0 and result.untested > 0) {
-        std.debug.print("- {s}: WARN ({d} ok, {d} untested)\n", .{ name, result.passed, result.untested });
-        return;
-    }
-    std.debug.print(
-        "- {s}: FAIL ({d} ok, {d} fail, {d} untested)\n",
-        .{ name, result.passed, result.failed, result.untested },
-    );
-}
+        const exe = if (std.testing.environ.getAlloc(gpa, "DOXA_BIN")) |configured| configured: {
+            defer gpa.free(configured);
+            break :configured try cwd.realPathFileAlloc(io, configured, gpa);
+        } else |err| switch (err) {
+            error.EnvironmentVariableMissing => try cwd.realPathFileAlloc(io, "doxa/test-bin/doxa" ++ comptime builtin.target.exeFileExt(), gpa),
+            else => |e| return e,
+        };
+        errdefer gpa.free(exe);
 
-pub fn printSuiteSummary(name: []const u8, result: Counts, verbose: bool) void {
-    if (isClean(result) and !verbose) {
-        // Under `zig build test` (Zig 0.16 `--listen=-` server mode) any
-        // stderr output on success makes the build runner print a misleading
-        // "failed command: ... --listen=-" line even though the step exits 0
-        // (see ziglang/zig#31077). Unit tests must stay silent on success;
-        // the build summary already reports pass counts. Opt back in with
-        // `DOXA_TEST_VERBOSE=1` (see `verboseFromEnv`).
-        return;
-    }
-    std.debug.print(
-        "{s}: {d} ok, {d} fail, {d} untested\n",
-        .{ name, result.passed, result.failed, result.untested },
-    );
-}
-
-/// Opt-in verbose test logging via `DOXA_TEST_VERBOSE=1` (any non-empty value
-/// other than "0"). Note: under `zig build test` verbose success output still
-/// triggers Zig's cosmetic "failed command" notice; the step itself exits 0.
-pub fn verboseFromEnv(allocator: std.mem.Allocator) bool {
-    const raw = process.Environ.getAlloc(std.testing.environ, allocator, "DOXA_TEST_VERBOSE") catch return false;
-    defer allocator.free(raw);
-    return raw.len > 0 and !std.mem.eql(u8, raw, "0");
-}
-
-pub fn repoRootFromEnv(allocator: std.mem.Allocator) !?[]const u8 {
-    return process.Environ.getAlloc(std.testing.environ, allocator, "DOXA_REPO_ROOT") catch null;
-}
-
-fn realPathAlloc(path: []const u8, allocator: std.mem.Allocator) ![]u8 {
-    const io = std.testing.io;
-    const resolved = if (std.fs.path.isAbsolute(path))
-        try std.Io.Dir.realPathFileAbsoluteAlloc(io, path, allocator)
-    else
-        try std.Io.Dir.cwd().realPathFileAlloc(io, path, allocator);
-    defer allocator.free(resolved);
-    return try allocator.dupe(u8, resolved);
-}
-
-pub fn doxaExePath(allocator: std.mem.Allocator) ![]const u8 {
-    if (process.Environ.getAlloc(std.testing.environ, allocator, "DOXA_BIN") catch null) |custom| {
-        defer allocator.free(custom);
-        return try realPathAlloc(custom, allocator);
-    }
-    const exe_name = if (builtin.os.tag == .windows) "doxa.exe" else "doxa";
-    const joined = try std.fs.path.join(allocator, &[_][]const u8{ "doxa", "test-bin", exe_name });
-    defer allocator.free(joined);
-    return try realPathAlloc(joined, allocator);
-}
-
-pub fn runCommandCapture(
-    allocator: std.mem.Allocator,
-    argv: []const []const u8,
-    cwd: ?[]const u8,
-    input: ?[]const u8,
-) !CommandResult {
-    const io = std.testing.io;
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const child_allocator = arena.allocator();
-
-    var child = try process.spawn(io, .{
-        .argv = argv,
-        .cwd = if (cwd) |dir| .{ .path = dir } else .inherit,
-        .stdin = if (input != null) .pipe else .ignore,
-        .stdout = .pipe,
-        .stderr = .pipe,
-    });
-    defer child.kill(io);
-
-    if (input) |input_data| {
-        var stdin_buffer: [1024]u8 = undefined;
-        var stdin_writer = child.stdin.?.writer(io, &stdin_buffer);
-        const stdin = &stdin_writer.interface;
-        try stdin.writeAll(input_data);
-        try stdin.flush();
-        child.stdin.?.close(io);
-        child.stdin = null;
+        return .{
+            .exe = exe,
+            .root = root,
+            .include = try std.fmt.allocPrint(gpa, "--include={s}", .{root}),
+        };
     }
 
-    // Poll both pipes concurrently to avoid deadlock when one pipe fills up.
-    var multi_reader_buffer: std.Io.File.MultiReader.Buffer(2) = undefined;
-    var multi_reader: std.Io.File.MultiReader = undefined;
-    multi_reader.init(child_allocator, io, multi_reader_buffer.toStreams(), &.{ child.stdout.?, child.stderr.? });
-    defer multi_reader.deinit();
-
-    while (multi_reader.fill(64, .none)) |_| {} else |err| switch (err) {
-        error.EndOfStream => {},
-        else => |e| return e,
+    pub fn deinit(doxa: Doxa, gpa: Allocator) void {
+        gpa.free(doxa.exe);
+        gpa.free(doxa.root);
+        gpa.free(doxa.include);
     }
-    try multi_reader.checkAnyError();
 
-    const term = try child.wait(io);
-    const out_slice = try multi_reader.toOwnedSlice(0);
-    const err_slice = try multi_reader.toOwnedSlice(1);
-
-    const exit_code: u8 = switch (term) {
-        .exited => |code| code,
-        .signal => |signal| {
-            std.debug.print("Command terminated with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{err_slice});
-            return error.CommandFailed;
-        },
-        .stopped => |signal| {
-            std.debug.print("Command stopped with signal {}:\n", .{signal});
-            std.debug.print("stderr: {s}\n", .{err_slice});
-            return error.CommandFailed;
-        },
-        .unknown => {
-            std.debug.print("Command failed with unknown error:\n", .{});
-            std.debug.print("stderr: {s}\n", .{err_slice});
-            return error.CommandFailed;
-        },
+    pub const Invocation = struct {
+        args: []const []const u8,
+        /// The repository root when null.
+        cwd: ?[]const u8 = null,
+        stdin: ?[]const u8 = null,
     };
 
-    return .{
-        .stdout = try allocator.dupe(u8, out_slice),
-        .stderr = try allocator.dupe(u8, err_slice),
-        .exit_code = exit_code,
-    };
-}
-
-/// Compiles `source` through the installed `doxa compile` with `opt` and
-/// returns the emitted (unoptimized) `<stem>.ll`, read from the cache. The
-/// unoptimized artifact is what shows the shape the emitter chose rather than
-/// what LLVM made of it, so IR-shape probes assert on this.
-pub fn emitIrFor(
-    allocator: std.mem.Allocator,
-    tmp: *std.testing.TmpDir,
-    source: []const u8,
-    opt: []const u8,
-) ![]u8 {
-    const doxa = try doxaExePath(allocator);
-    defer allocator.free(doxa);
-
-    try tmp.dir.writeFile(std.testing.io, .{ .sub_path = "probe.doxa", .data = source });
-    try tmp.dir.createDirPath(std.testing.io, "cache");
-
-    var cwd_buffer: [std.fs.max_path_bytes]u8 = undefined;
-    const cwd = cwd_buffer[0..try tmp.dir.realPath(std.testing.io, &cwd_buffer)];
-
-    const argv = [_][]const u8{
-        doxa, "compile", "probe.doxa", "-o", "probe", opt, "--cache-dir=cache",
-    };
-    const result = try runCommandCapture(allocator, &argv, cwd, null);
-    if (result.exit_code != 0) {
-        std.debug.print("doxa compile failed ({d}):\n{s}\n{s}\n", .{ result.exit_code, result.stdout, result.stderr });
-        return error.CommandFailed;
-    }
-    allocator.free(result.stdout);
-    allocator.free(result.stderr);
-
-    return tmp.dir.readFileAlloc(std.testing.io, "cache/probe.ll", allocator, .unlimited);
-}
-
-pub fn parsePeekOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed(PeekRow) {
-    var outputs = std.array_list.Managed(PeekRow).init(allocator);
-
-    var lines = std.mem.splitScalar(u8, output, '\n');
-    while (lines.next()) |line| {
-        if (isDiagnosticLine(line)) continue;
-        const close_bracket = std.mem.indexOfScalar(u8, line, ']') orelse continue;
-        const line_with_var = line[close_bracket + 1 ..];
-        const colon = std.mem.indexOfScalar(u8, line_with_var, ':') orelse continue;
-        if (colon + 3 > line_with_var.len) continue;
-        const line_without_var = line_with_var[colon + 3 ..];
-
-        try outputs.append(.{
-            .type = grabType(line_without_var),
-            .value = grabValue(line_without_var),
+    /// `doxa <args>` under the standard deadline.
+    pub fn run(doxa: Doxa, gpa: Allocator, io: Io, invocation: Invocation) !process.Capture {
+        const argv = try std.mem.concat(gpa, []const u8, &.{ &.{doxa.exe}, invocation.args });
+        defer gpa.free(argv);
+        return process.run(gpa, io, .{
+            .argv = argv,
+            .cwd = invocation.cwd orelse doxa.root,
+            .stdin = invocation.stdin,
+            .timeout = timeout,
         });
     }
-    return outputs;
-}
+};
 
-/// Diagnostic headers are rendered by `src/utils/source_render.zig` as
-/// `Doxa: [<Phase>][<Severity>]...` and land on the same stream (stderr) as peek
-/// output. Match on that structural `[<Phase>][<Severity>]` shape rather than
-/// the literal "Doxa: " prefix, so a rename never silently breaks peek parsing.
-pub fn isDiagnosticLine(line: []const u8) bool {
-    const phases = [_][]const u8{ "CompileTime", "Runtime", "Internal", "Debug" };
-    const severities = [_][]const u8{ "Error", "Warning", "Info", "Hint", "Internal" };
+/// A persistent directory under `.zig-cache/doxa-tests/`, held by this process
+/// alone until `release`.
+///
+/// Compiler caches are worth keeping between runs: a cold cache rebuilds the
+/// runtime object and every inline-Zig shim, and persisting one is sound
+/// because objects are named by their full key, so a stale one is never
+/// served. But a cache is not safe to share between concurrent compiles, whose
+/// staged runtime sources and `<stem>.*` outputs are written in place. So each
+/// slot carries a lock file, and a slot another run holds (a second
+/// `zig build test` in the same checkout) is passed over for the next.
+pub const Slot = struct {
+    /// Absolute path of the directory.
+    path: [:0]const u8,
+    lock: Io.File,
 
-    const start = std.mem.indexOfScalar(u8, line, '[') orelse return false;
-    var rest = line[start..];
-    rest = rest[1..]; // past the opening '['
-    for (phases) |phase| {
-        if (!std.mem.startsWith(u8, rest, phase)) continue;
-        const after_phase = rest[phase.len..];
-        if (!std.mem.startsWith(u8, after_phase, "][")) continue;
-        const after_sev_bracket = after_phase[2..];
-        for (severities) |sev| {
-            if (!std.mem.startsWith(u8, after_sev_bracket, sev)) continue;
-            if (after_sev_bracket.len > sev.len and after_sev_bracket[sev.len] == ']') return true;
+    /// Claims the lowest-numbered `<kind>-<n>` slot that no one holds,
+    /// creating it when it does not exist yet.
+    pub fn claim(gpa: Allocator, io: Io, kind: []const u8) !Slot {
+        var index: usize = 0;
+        while (true) : (index += 1) {
+            var name_buffer: [128]u8 = undefined;
+            const relative = try std.fmt.bufPrint(&name_buffer, ".zig-cache/doxa-tests/{s}-{d}", .{ kind, index });
+            var dir = try Io.Dir.cwd().createDirPathOpen(io, relative, .{});
+            defer dir.close(io);
+            const lock = try dir.createFile(io, ".lock", .{ .truncate = false });
+            errdefer lock.close(io);
+            if (!try lock.tryLock(io, .exclusive)) {
+                lock.close(io);
+                continue;
+            }
+            return .{ .path = try Io.Dir.cwd().realPathFileAlloc(io, relative, gpa), .lock = lock };
         }
     }
-    return false;
-}
 
-pub fn parsePrintOutput(output: []const u8, allocator: std.mem.Allocator) !std.array_list.Managed([]const u8) {
-    var outputs = std.array_list.Managed([]const u8).init(allocator);
-
-    var lines = std.mem.splitScalar(u8, output, '\n');
-    while (lines.next()) |raw_line| {
-        // Normalize Windows line endings: stdlib `io.println` emits the OS-native
-        // terminator (`\r\n`), so strip a trailing `\r` before comparing.
-        const line = std.mem.trimEnd(u8, raw_line, "\r");
-        if (line.len == 0) continue;
-        try outputs.append(line);
+    /// Closing the lock file releases the lock.
+    pub fn release(slot: Slot, gpa: Allocator, io: Io) void {
+        slot.lock.close(io);
+        gpa.free(slot.path);
     }
-    return outputs;
+};
+
+/// What one case concluded. A failure carries everything needed to diagnose it
+/// (the mismatch, how the child ended, and what it wrote) because the report
+/// is all a reader of a failed run has.
+pub const Outcome = union(enum) {
+    pass,
+    fail: []const u8,
+};
+
+/// Collects a case's mismatches. Nothing noted means the case passed.
+pub const Failure = struct {
+    text: Io.Writer.Allocating,
+
+    /// `arena` owns the text for as long as the report needs it.
+    pub fn init(arena: Allocator) Failure {
+        return .{ .text = .init(arena) };
+    }
+
+    pub fn note(failure: *Failure, comptime fmt: []const u8, args: anytype) !void {
+        try failure.text.writer.print(fmt ++ "\n", args);
+    }
+
+    /// `.pass` when nothing was noted. Otherwise the notes, then how `capture`
+    /// ended and an excerpt of each stream it wrote.
+    pub fn outcome(failure: *Failure, capture: process.Capture) !Outcome {
+        if (failure.text.written().len == 0) return .pass;
+        const w = &failure.text.writer;
+        switch (capture.end) {
+            .exited => |code| try w.print("exit status: {d}\n", .{code}),
+            .abnormal => |term| try w.print("ended abnormally: {any}\n", .{term}),
+            .timed_out => try w.print("timed out after {d}s; process tree killed\n", .{timeout.toSeconds()}),
+        }
+        try excerpt(w, "stdout", capture.stdout);
+        try excerpt(w, "stderr", capture.stderr);
+        return .{ .fail = failure.text.written() };
+    }
+};
+
+/// Writes `bytes` under `label`, indented. Long streams keep their head, where
+/// compile diagnostics land, and their tail, where a runtime failure lands.
+fn excerpt(w: *Io.Writer, label: []const u8, bytes: []const u8) !void {
+    const kept_each_end = 20;
+    const text = std.mem.trimEnd(u8, bytes, "\r\n");
+    if (text.len == 0) return;
+
+    const total = std.mem.count(u8, text, "\n") + 1;
+    try w.print("{s}:\n", .{label});
+    var lines = std.mem.splitScalar(u8, text, '\n');
+    var index: usize = 0;
+    while (lines.next()) |line| : (index += 1) {
+        const elided = total > 2 * kept_each_end and index >= kept_each_end and index < total - kept_each_end;
+        if (!elided) {
+            try w.print("  | {s}\n", .{std.mem.trimEnd(u8, line, "\r")});
+        } else if (index == kept_each_end) {
+            try w.print("  | ... {d} lines elided ...\n", .{total - 2 * kept_each_end});
+        }
+    }
 }
 
-pub fn grabType(output: []const u8) []const u8 {
-    const idx = std.mem.indexOf(u8, output, " is ") orelse return output;
-    return output[0..idx];
-}
+/// One row of a suite's report.
+pub const Result = struct {
+    name: []const u8,
+    /// What the case exercised, printed beside a failure.
+    subject: []const u8,
+    outcome: Outcome,
+};
 
-pub fn grabValue(output: []const u8) []const u8 {
-    const idx = std.mem.indexOf(u8, output, " is ") orelse return "";
-    return output[idx + 4 ..];
-}
-
-pub fn validatePrintResults(output: []const u8, expected_results: anytype, allocator: std.mem.Allocator) !Counts {
-    const outputs = try parsePrintOutput(output, allocator);
-    defer outputs.deinit();
-
-    var passed: usize = 0;
+/// Prints every failure in table order, then the suite's tally, and fails when
+/// any case did. `DOXA_TEST_VERBOSE=1` also lists the passes.
+pub fn report(gpa: Allocator, suite: []const u8, results: []const Result) error{CasesFailed}!void {
+    // Failures quote program output, which is UTF-8.
+    platform.enableUtf8Console();
+    const verbose = verboseFromEnv(gpa);
     var failed: usize = 0;
-    var untested: usize = 0;
-
-    const actual_count = outputs.items.len;
-    const expected_count = expected_results.len;
-
-    var i: usize = 0;
-    while (i < actual_count and i < expected_count) : (i += 1) {
-        if (!std.mem.eql(u8, outputs.items[i], expected_results[i].value)) {
-            std.debug.print(
-                "Print test case {d} failed:\n  Expected: {s}\n  Found:    {s}\n",
-                .{ i + 1, expected_results[i].value, outputs.items[i] },
-            );
+    for (results) |result| switch (result.outcome) {
+        .pass => if (verbose) std.debug.print("ok   {s}: {s}\n", .{ suite, result.name }),
+        .fail => |detail| {
             failed += 1;
-        } else {
-            passed += 1;
-        }
-    }
-
-    if (expected_count > actual_count) {
-        untested = expected_count - actual_count;
-        std.debug.print("WARN: {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
-    } else if (actual_count > expected_count) {
-        const surplus = actual_count - expected_count;
-        std.debug.print("ERROR: {d} unexpected extra line(s) of output:\n", .{surplus});
-        var extra_i: usize = expected_count;
-        while (extra_i < actual_count) : (extra_i += 1) {
-            std.debug.print("  Extra: {s}\n", .{outputs.items[extra_i]});
-        }
-        failed += surplus;
-    }
-
-    return .{ .passed = passed, .failed = failed, .untested = untested };
+            std.debug.print("FAIL {s}: {s} ({s})\n", .{ suite, result.name, result.subject });
+            var lines = std.mem.splitScalar(u8, std.mem.trimEnd(u8, detail, "\n"), '\n');
+            while (lines.next()) |line| std.debug.print("     {s}\n", .{line});
+        },
+    };
+    std.debug.print("{s}: {d} passed, {d} failed\n", .{ suite, results.len - failed, failed });
+    if (failed != 0) return error.CasesFailed;
 }
 
-pub fn validatePeekResults(output: []const u8, expected_results: anytype, allocator: std.mem.Allocator) !Counts {
-    const outputs = try parsePeekOutput(output, allocator);
-    defer outputs.deinit();
-
-    var passed: usize = 0;
-    var failed: usize = 0;
-    var untested: usize = 0;
-
-    const actual_count = outputs.items.len;
-    const expected_count = expected_results.len;
-
-    var i: usize = 0;
-    while (i < actual_count and i < expected_count) : (i += 1) {
-        if (!std.mem.eql(u8, outputs.items[i].type, expected_results[i].type) or
-            !std.mem.eql(u8, outputs.items[i].value, expected_results[i].value))
-        {
-            std.debug.print(
-                "Peek test case {d} failed:\n  Expected: {s} = {s}\n  Found:    {s} = {s}\n",
-                .{ i + 1, expected_results[i].type, expected_results[i].value, outputs.items[i].type, outputs.items[i].value },
-            );
-            failed += 1;
-        } else {
-            passed += 1;
-        }
-    }
-
-    if (expected_count > actual_count) {
-        untested = expected_count - actual_count;
-        std.debug.print("WARN: {d} test case(s) were not executed (program may have crashed early)\n", .{untested});
-    } else if (actual_count > expected_count) {
-        const surplus = actual_count - expected_count;
-        std.debug.print("ERROR: {d} unexpected extra peek result(s):\n", .{surplus});
-        var extra_i: usize = expected_count;
-        while (extra_i < actual_count) : (extra_i += 1) {
-            std.debug.print("  Extra: {s} = {s}\n", .{ outputs.items[extra_i].type, outputs.items[extra_i].value });
-        }
-        failed += surplus;
-    }
-
-    return .{ .passed = passed, .failed = failed, .untested = untested };
-}
-
-pub fn getBinaryPath(alloc: std.mem.Allocator, base: []const u8) ![]const u8 {
-    if (builtin.os.tag == .windows) {
-        if (std.mem.endsWith(u8, base, ".exe")) return try alloc.dupe(u8, base);
-        return try std.fmt.allocPrint(alloc, "{s}.exe", .{base});
-    }
-    return try alloc.dupe(u8, base);
+/// `DOXA_TEST_VERBOSE` set to anything but empty or "0".
+fn verboseFromEnv(gpa: Allocator) bool {
+    const raw = std.testing.environ.getAlloc(gpa, "DOXA_TEST_VERBOSE") catch return false;
+    defer gpa.free(raw);
+    return raw.len > 0 and !std.mem.eql(u8, raw, "0");
 }

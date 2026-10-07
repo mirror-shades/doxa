@@ -69,13 +69,9 @@ pub const CollectionsHandler = struct {
         return .{ .generator = generator };
     }
 
-    /// Generate HIR for array literals
-    pub fn generateArray(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
-        return self.generateArrayInternal(elements, preserve_result);
-    }
-
-    /// Internal array generation with nesting control
-    pub fn generateArrayInternal(self: *CollectionsHandler, elements: []const *ast.Expr, preserve_result: bool) !void {
+    /// Generate HIR for an array literal.
+    pub fn generateArray(self: *CollectionsHandler, array_expr: *ast.Expr, preserve_result: bool) !void {
+        const elements = array_expr.data.Array;
         // A3: consume a pending return-placement intent. Clearing it before the
         // elements are lowered keeps nested arrays/literals in the callee arena;
         // the element-store path re-homes them into this array's arena.
@@ -91,52 +87,17 @@ pub const CollectionsHandler = struct {
 
         const have_expected = if (expected_element) |e| (e != .Unknown and e != .Nothing) else false;
 
-        var element_type: HIRType = .Unknown;
-        var nested_element_type: ?HIRType = null;
-
-        if (have_expected) {
-            // The declared type is authoritative for the element type. Nested
-            // element typing is handled by the per-element recursion below, so
-            // (matching the inference path) nested_element_type stays null here.
-            element_type = expected_element.?;
-        } else if (elements.len > 0) {
-            // Try to infer type from first element
-            const first = elements[0];
-            switch (first.data) {
-                .Literal => |lit| element_type = switch (lit) {
-                    .int => .Int,
-                    .float => .Float,
-                    .string => .String,
-                    .tetra => .Tetra,
-                    .byte => .Byte,
-                    else => .Unknown,
-                },
-                .Array => |nested_elements| {
-                    // For nested arrays, determine the element type of the nested array
-                    if (nested_elements.len > 0) {
-                        const inner_element_type = self.generator.inferTypeFromExpression(nested_elements[0]);
-                        // For nested arrays like [["hello"]], the element_type should be Array(String)
-                        const inner_type_ptr = self.generator.allocator.create(HIRType) catch return ErrorList.OutOfMemory;
-                        inner_type_ptr.* = inner_element_type;
-                        element_type = HIRType{ .Array = inner_type_ptr };
-                    } else {
-                        // Empty nested array - element type is Array with unknown inner type
-                        const unknown_ptr = self.generator.allocator.create(HIRType) catch return ErrorList.OutOfMemory;
-                        unknown_ptr.* = .Unknown;
-                        element_type = HIRType{ .Array = unknown_ptr };
-                    }
-                    // For nested arrays, the nested_element_type is not used in the same way
-                    nested_element_type = null;
-                },
-                else => {
-                    // Use the general type system to infer the element type.
-                    // This lets us correctly detect structs/enums/functions, so
-                    // arrays like Animal[] carry HIRType.Struct instead of Unknown.
-                    element_type = self.generator.inferTypeFromExpression(first);
-                },
-            }
-        }
-
+        // The declared element type is authoritative; without one, the literal
+        // has the type analysis gave it, whose elements are already promoted
+        // (a float among ints makes it float[]).
+        const element_type: HIRType = if (have_expected)
+            expected_element.?
+        else if (elements.len == 0)
+            .Unknown
+        else switch (try self.generator.typeOf(array_expr)) {
+            .Array => |inner| inner.*,
+            else => .Unknown,
+        };
         const storage_kind = self.generator.array_storage_override orelse ArrayStorageKind.dynamic;
 
         var nested_sizes: [4]u32 = [_]u32{0} ** 4;
@@ -153,7 +114,8 @@ pub const CollectionsHandler = struct {
         try self.generator.instructions.append(.{ .ArrayNew = .{
             .element_type = element_type,
             .size = @intCast(elements.len),
-            .nested_element_type = nested_element_type,
+            // Nested element typing is handled by the per-element recursion below.
+            .nested_element_type = null,
             .storage_kind = storage_kind,
             .nested_sizes = nested_sizes,
             .nested_depth = nested_depth,
@@ -177,25 +139,15 @@ pub const CollectionsHandler = struct {
 
             // Generate the element value
             if (element.data == .Array) {
-                // Set nested context flag and thread the inner declared element
-                // type down before generating the nested array.
+                // Thread the inner declared element type down before
+                // generating the nested array.
                 const prev_override = self.generator.array_element_type_override;
                 self.generator.array_element_type_override = inner_override;
                 defer self.generator.array_element_type_override = prev_override;
 
-                const prev_nested_flag = self.generator.is_generating_nested_array;
-                self.generator.is_generating_nested_array = true;
-                defer self.generator.is_generating_nested_array = prev_nested_flag;
-
                 try self.generator.generateExpression(element, true, false);
-            } else {
-                var emitted = false;
-                if (have_expected) {
-                    emitted = try self.emitCoercedLiteral(element, inner_override.?);
-                }
-                if (!emitted) {
-                    try self.generator.generateExpression(element, true, false);
-                }
+            } else if (!try self.emitCoercedLiteral(element, element_type)) {
+                try self.generator.generateExpression(element, true, false);
             }
 
             // ArraySet pops: value, index, array; and pushes updated array back
@@ -208,7 +160,7 @@ pub const CollectionsHandler = struct {
         }
     }
 
-    /// Emit a comptime numeric literal element coerced to the declared element
+    /// Emit a comptime numeric literal element coerced to the array's element
     /// type, with a compile-time bounds check for byte. Handles plain and
     /// unary-negated numeric literals; returns false for anything else so the
     /// normal lowering path handles it.
@@ -265,7 +217,6 @@ pub const CollectionsHandler = struct {
                 .qualified_name = "range",
                 .arg_count = 2,
                 .call_kind = .BuiltinFunction,
-                .target_module = null,
                 .return_type = HIRType{ .Array = int_type_ptr },
             },
         });
@@ -500,23 +451,15 @@ pub const CollectionsHandler = struct {
         // Skip this for compound assignments since they are atomic operations
         if (!is_compound_assignment and assign_data.array.data == .Variable) {
             const var_name = assign_data.array.data.Variable.lexeme;
-
-            const var_idx = try self.generator.getOrCreateVariable(var_name);
-            const expected_type = self.generator.getTrackedVariableType(var_name) orelse .Unknown;
+            const expected_type = try self.generator.bindingTypeOf(&assign_data.array.base);
+            try self.generator.convertValue(try self.generator.typeOf(assign_data.array), expected_type);
 
             // Duplicate the result to leave it on stack as the expression result
             if (preserve_result) {
                 try self.generator.instructions.append(.Dup);
             }
 
-            try self.generator.instructions.append(.{ .StoreVar = .{
-                .var_index = var_idx,
-                .var_name = var_name,
-                .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                .module_context = null,
-                .expected_type = expected_type,
-                .heap_copy = .keep,
-            } });
+            try self.generator.storeName(&assign_data.array.base, var_name, expected_type, .keep);
         }
     }
 
@@ -530,9 +473,7 @@ pub const CollectionsHandler = struct {
         // Generate array expression
         try self.generator.generateExpression(forall_data.array, true, false);
 
-        // Add bound variable to symbol table so it can be referenced in the condition
         const bound_var_name = forall_data.variable.lexeme;
-        _ = try self.generator.symbol_table.getOrCreateVariable(bound_var_name);
 
         // Check if the condition is a simple binary comparison
         if (forall_data.condition.data == .Binary) {
@@ -557,35 +498,7 @@ pub const CollectionsHandler = struct {
                             },
                             .Variable => |var_token| {
                                 // Handle variable comparisons like "e == checkAgainst"
-                                const var_name = var_token.lexeme;
-                                if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
-                                    try self.generator.instructions.append(.{
-                                        .LoadVar = .{
-                                            .var_index = var_index,
-                                            .var_name = var_name,
-                                            .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                                            .module_context = null,
-                                        },
-                                    });
-                                } else {
-                                    const location = Location{
-                                        .file = var_token.file,
-                                        .file_uri = var_token.file_uri,
-                                        .range = .{
-                                            .start_line = var_token.line,
-                                            .start_col = var_token.column,
-                                            .end_line = var_token.line,
-                                            .end_col = var_token.column + var_token.lexeme.len,
-                                        },
-                                    };
-                                    self.generator.reporter.reportCompileError(
-                                        location,
-                                        ErrorCode.UNDEFINED_VARIABLE,
-                                        "Undefined variable in quantifier condition: {s}",
-                                        .{var_name},
-                                    );
-                                    return ErrorList.UndefinedVariable;
-                                }
+                                try self.generator.loadName(&right.base, var_token.lexeme);
                             },
                             else => {
                                 // Complex condition - generate the expression
@@ -615,35 +528,7 @@ pub const CollectionsHandler = struct {
                             },
                             .Variable => |var_token| {
                                 // Handle variable comparisons like "checkAgainst == e"
-                                const var_name = var_token.lexeme;
-                                if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
-                                    try self.generator.instructions.append(.{
-                                        .LoadVar = .{
-                                            .var_index = var_index,
-                                            .var_name = var_name,
-                                            .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                                            .module_context = null,
-                                        },
-                                    });
-                                } else {
-                                    const location = Location{
-                                        .file = var_token.file,
-                                        .file_uri = var_token.file_uri,
-                                        .range = .{
-                                            .start_line = var_token.line,
-                                            .start_col = var_token.column,
-                                            .end_line = var_token.line,
-                                            .end_col = var_token.column + var_token.lexeme.len,
-                                        },
-                                    };
-                                    self.generator.reporter.reportCompileError(
-                                        location,
-                                        ErrorCode.UNDEFINED_VARIABLE,
-                                        "Undefined variable in quantifier condition: {s}",
-                                        .{var_name},
-                                    );
-                                    return ErrorList.UndefinedVariable;
-                                }
+                                try self.generator.loadName(&left.base, var_token.lexeme);
                             },
                             else => {
                                 // Complex condition - generate the expression
@@ -677,7 +562,6 @@ pub const CollectionsHandler = struct {
                 .qualified_name = operator_name,
                 .arg_count = 2, // array + comparison value
                 .call_kind = .BuiltinFunction,
-                .target_module = null,
                 .return_type = .Tetra,
             },
         });
@@ -693,9 +577,7 @@ pub const CollectionsHandler = struct {
         // Generate array expression
         try self.generator.generateExpression(exists_data.array, true, false);
 
-        // Add bound variable to symbol table so it can be referenced in the condition
         const bound_var_name = exists_data.variable.lexeme;
-        _ = try self.generator.symbol_table.getOrCreateVariable(bound_var_name);
 
         // Check if the condition is a simple binary comparison
         if (exists_data.condition.data == .Binary) {
@@ -720,35 +602,7 @@ pub const CollectionsHandler = struct {
                             },
                             .Variable => |var_token| {
                                 // Handle variable comparisons like "e == checkAgainst"
-                                const var_name = var_token.lexeme;
-                                if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
-                                    try self.generator.instructions.append(.{
-                                        .LoadVar = .{
-                                            .var_index = var_index,
-                                            .var_name = var_name,
-                                            .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                                            .module_context = null,
-                                        },
-                                    });
-                                } else {
-                                    const location = Location{
-                                        .file = var_token.file,
-                                        .file_uri = var_token.file_uri,
-                                        .range = .{
-                                            .start_line = var_token.line,
-                                            .start_col = var_token.column,
-                                            .end_line = var_token.line,
-                                            .end_col = var_token.column + var_token.lexeme.len,
-                                        },
-                                    };
-                                    self.generator.reporter.reportCompileError(
-                                        location,
-                                        ErrorCode.UNDEFINED_VARIABLE,
-                                        "Undefined variable in quantifier condition: {s}",
-                                        .{var_name},
-                                    );
-                                    return ErrorList.UndefinedVariable;
-                                }
+                                try self.generator.loadName(&right.base, var_token.lexeme);
                             },
                             else => {
                                 // Complex condition - generate the expression
@@ -778,35 +632,7 @@ pub const CollectionsHandler = struct {
                             },
                             .Variable => |var_token| {
                                 // Handle variable comparisons like "checkAgainst == e"
-                                const var_name = var_token.lexeme;
-                                if (self.generator.symbol_table.getVariable(var_name)) |var_index| {
-                                    try self.generator.instructions.append(.{
-                                        .LoadVar = .{
-                                            .var_index = var_index,
-                                            .var_name = var_name,
-                                            .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                                            .module_context = null,
-                                        },
-                                    });
-                                } else {
-                                    const location = Location{
-                                        .file = var_token.file,
-                                        .file_uri = var_token.file_uri,
-                                        .range = .{
-                                            .start_line = var_token.line,
-                                            .start_col = var_token.column,
-                                            .end_line = var_token.line,
-                                            .end_col = var_token.column + var_token.lexeme.len,
-                                        },
-                                    };
-                                    self.generator.reporter.reportCompileError(
-                                        location,
-                                        ErrorCode.UNDEFINED_VARIABLE,
-                                        "Undefined variable in quantifier condition: {s}",
-                                        .{var_name},
-                                    );
-                                    return ErrorList.UndefinedVariable;
-                                }
+                                try self.generator.loadName(&left.base, var_token.lexeme);
                             },
                             else => {
                                 // Complex condition - generate the expression
@@ -840,7 +666,6 @@ pub const CollectionsHandler = struct {
                 .qualified_name = operator_name,
                 .arg_count = 2, // array + comparison value
                 .call_kind = .BuiltinFunction,
-                .target_module = null,
                 .return_type = .Tetra,
             },
         });
@@ -850,17 +675,9 @@ pub const CollectionsHandler = struct {
     pub fn generateIncrement(self: *CollectionsHandler, operand: *ast.Expr) !void {
         if (operand.data == .Variable) {
             const var_name = operand.data.Variable.lexeme;
-            const var_idx = try self.generator.getOrCreateVariable(var_name);
 
             // Load current value
-            try self.generator.instructions.append(.{
-                .LoadVar = .{
-                    .var_index = var_idx,
-                    .var_name = var_name,
-                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                    .module_context = null,
-                },
-            });
+            try self.generator.loadName(&operand.base, var_name);
 
             // Add 1 (create constant 1)
             const one_value = HIRValue{ .int = 1 };
@@ -868,22 +685,16 @@ pub const CollectionsHandler = struct {
             try self.generator.instructions.append(.{ .Const = .{ .value = one_value, .constant_id = one_idx } });
 
             // Add the values
-            const operand_type = self.generator.getTrackedVariableType(var_name) orelse .Int;
+            const operand_type = try self.generator.typeOf(operand);
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = operand_type } });
 
             // Duplicate result so we can both return it and store it
             try self.generator.instructions.append(.Dup);
+            const slot_type = try self.generator.bindingTypeOf(&operand.base);
+            try self.generator.convertValue(operand_type, slot_type);
 
             // Store back to variable
-            try self.generator.instructions.append(.{
-                .StoreVar = .{
-                    .var_index = var_idx,
-                    .var_name = var_name,
-                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                    .module_context = null,
-                    .expected_type = operand_type,
-                },
-            });
+            try self.generator.storeName(&operand.base, var_name, slot_type, .rehome);
         } else {
             // For non-variable expressions, generate the expression and add 1
             try self.generator.generateExpression(operand, true, false);
@@ -894,7 +705,7 @@ pub const CollectionsHandler = struct {
             try self.generator.instructions.append(.{ .Const = .{ .value = one_value, .constant_id = one_idx } });
 
             // Add the values
-            const operand_type = self.generator.inferTypeFromExpression(operand);
+            const operand_type = try self.generator.typeOf(operand);
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Add, .operand_type = operand_type } });
         }
     }
@@ -905,17 +716,9 @@ pub const CollectionsHandler = struct {
         // First, check if this is a variable reference
         if (operand.data == .Variable) {
             const var_name = operand.data.Variable.lexeme;
-            const var_idx = try self.generator.getOrCreateVariable(var_name);
 
             // Load current value
-            try self.generator.instructions.append(.{
-                .LoadVar = .{
-                    .var_index = var_idx,
-                    .var_name = var_name,
-                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                    .module_context = null,
-                },
-            });
+            try self.generator.loadName(&operand.base, var_name);
 
             // Add 1 (create constant 1)
             const one_value = HIRValue{ .int = 1 };
@@ -923,22 +726,16 @@ pub const CollectionsHandler = struct {
             try self.generator.instructions.append(.{ .Const = .{ .value = one_value, .constant_id = one_idx } });
 
             // Subtract the values
-            const operand_type = self.generator.getTrackedVariableType(var_name) orelse .Int;
+            const operand_type = try self.generator.typeOf(operand);
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = operand_type } });
 
             // Duplicate result so we can both return it and store it
             try self.generator.instructions.append(.Dup);
+            const slot_type = try self.generator.bindingTypeOf(&operand.base);
+            try self.generator.convertValue(operand_type, slot_type);
 
             // Store back to variable
-            try self.generator.instructions.append(.{
-                .StoreVar = .{
-                    .var_index = var_idx,
-                    .var_name = var_name,
-                    .scope_kind = self.generator.symbol_table.determineVariableScope(var_name),
-                    .module_context = null,
-                    .expected_type = operand_type,
-                },
-            });
+            try self.generator.storeName(&operand.base, var_name, slot_type, .rehome);
         } else {
             // For non-variable expressions, generate the expression and subtract 1
             try self.generator.generateExpression(operand, true, false);
@@ -949,7 +746,7 @@ pub const CollectionsHandler = struct {
             try self.generator.instructions.append(.{ .Const = .{ .value = one_value, .constant_id = one_idx } });
 
             // Subtract the values
-            const operand_type = self.generator.inferTypeFromExpression(operand);
+            const operand_type = try self.generator.typeOf(operand);
             try self.generator.instructions.append(.{ .Arith = .{ .op = .Sub, .operand_type = operand_type } });
         }
     }

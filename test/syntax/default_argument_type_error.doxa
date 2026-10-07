@@ -1,0 +1,7 @@
+# A parameter's default is typed against the parameter, as an argument is.
+
+function scaled(value :: int, factor :: int is "two") returns int {
+    return value
+}
+
+@print("{scaled(3, ~)}\n")

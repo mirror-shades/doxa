@@ -9,15 +9,7 @@ const Range = reporting.Range;
 const RelatedInformation = reporting.RelatedInformation;
 const convertPathToUri = reporting.convertPathToUri;
 
-fn runCheck(name: []const u8, func: anytype) anyerror!void {
-    func() catch |err| {
-        if (err == error.SkipZigTest) return;
-        std.debug.print("LSP check '{s}' failed: {t}\n", .{ name, err });
-        return err;
-    };
-}
-
-fn checkConvertPathToUriPosixPath() !void {
+test "lsp: convertPathToUri: posix path" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     const uri = try convertPathToUri(testing.allocator, "/tmp/project/main.doxa");
@@ -25,7 +17,7 @@ fn checkConvertPathToUriPosixPath() !void {
     try testing.expectEqualStrings("file:///tmp/project/main.doxa", uri);
 }
 
-fn checkConvertPathToUriWindowsDrive() !void {
+test "lsp: convertPathToUri: windows drive" {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const uri = try convertPathToUri(testing.allocator, "C:\\dev\\doxa\\file.doxa");
@@ -33,7 +25,7 @@ fn checkConvertPathToUriWindowsDrive() !void {
     try testing.expectEqualStrings("file:///C:/dev/doxa/file.doxa", uri);
 }
 
-fn checkConvertPathToUriWindowsUnc() !void {
+test "lsp: convertPathToUri: windows unc" {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const uri = try convertPathToUri(testing.allocator, "\\\\server\\share\\sub\\file.doxa");
@@ -41,7 +33,7 @@ fn checkConvertPathToUriWindowsUnc() !void {
     try testing.expectEqualStrings("file://server/share/sub/file.doxa", uri);
 }
 
-fn checkConvertUriToPathPosixPath() !void {
+test "lsp: convertUriToPath: posix path" {
     if (builtin.os.tag == .windows) return error.SkipZigTest;
 
     const path = try reporting.convertUriToPath(testing.allocator, "file:///tmp/project/main.doxa");
@@ -49,7 +41,7 @@ fn checkConvertUriToPathPosixPath() !void {
     try testing.expectEqualStrings("/tmp/project/main.doxa", path);
 }
 
-fn checkConvertUriToPathWindowsDrive() !void {
+test "lsp: convertUriToPath: windows drive" {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const path = try reporting.convertUriToPath(testing.allocator, "file:///C:/dev/doxa/file.doxa");
@@ -57,7 +49,7 @@ fn checkConvertUriToPathWindowsDrive() !void {
     try testing.expectEqualStrings("C:\\dev\\doxa\\file.doxa", path);
 }
 
-fn checkConvertUriToPathWindowsUnc() !void {
+test "lsp: convertUriToPath: windows unc" {
     if (builtin.os.tag != .windows) return error.SkipZigTest;
 
     const path = try reporting.convertUriToPath(testing.allocator, "file://server/share/sub/file.doxa");
@@ -65,7 +57,7 @@ fn checkConvertUriToPathWindowsUnc() !void {
     try testing.expectEqualStrings("\\\\server\\share\\sub\\file.doxa", path);
 }
 
-fn checkReporterToLspDiagnosticsSerializesRelatedInfo() !void {
+test "lsp: Reporter: toLspDiagnostics serializes related information" {
     var reporter = Reporter.init(testing.io, testing.allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
 
@@ -114,7 +106,7 @@ fn checkReporterToLspDiagnosticsSerializesRelatedInfo() !void {
     try testing.expectEqualStrings(expected, diagnostics);
 }
 
-fn checkReporterPublishTrackingDetectsChangesAndThrottles() !void {
+test "lsp: Reporter: publish tracking detects changes and throttles" {
     var reporter = Reporter.init(testing.io, testing.allocator, .{
         .log_to_stderr = false,
         .publish_debounce_ns = std.time.ns_per_ms,
@@ -149,15 +141,4 @@ fn checkReporterPublishTrackingDetectsChangesAndThrottles() !void {
     try reporter.markDiagnosticsPublished(uri, 2 * std.time.ns_per_ms);
     reporter.dropPublishedDiagnostics(uri);
     try testing.expect(reporter.diagnosticsChanged(uri));
-}
-
-test "lsp suite" {
-    try runCheck("convertPathToUri posix path", checkConvertPathToUriPosixPath);
-    try runCheck("convertPathToUri windows drive", checkConvertPathToUriWindowsDrive);
-    try runCheck("convertPathToUri windows unc", checkConvertPathToUriWindowsUnc);
-    try runCheck("convertUriToPath posix path", checkConvertUriToPathPosixPath);
-    try runCheck("convertUriToPath windows drive", checkConvertUriToPathWindowsDrive);
-    try runCheck("convertUriToPath windows unc", checkConvertUriToPathWindowsUnc);
-    try runCheck("Reporter.toLspDiagnostics", checkReporterToLspDiagnosticsSerializesRelatedInfo);
-    try runCheck("Reporter publish tracking", checkReporterPublishTrackingDetectsChangesAndThrottles);
 }

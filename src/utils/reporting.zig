@@ -367,6 +367,15 @@ pub const Reporter = struct {
         return self.diagnostics.items.len;
     }
 
+    /// The index of the first error diagnostic recorded at or after `start`.
+    /// A unit of work that began at `start` failed iff this is non-null.
+    pub fn firstErrorSince(self: *const Reporter, start: usize) ?usize {
+        for (self.diagnostics.items[start..], start..) |diag, index| {
+            if (diag.severity == .Error or diag.severity == .Internal) return index;
+        }
+        return null;
+    }
+
     pub fn hasCompileErrors(self: *Reporter) bool {
         for (self.diagnostics.items) |diag| {
             if (diag.phase == .CompileTime and (diag.severity == .Error or diag.severity == .Internal)) return true;

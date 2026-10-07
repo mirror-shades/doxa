@@ -1,0 +1,15 @@
+# A union that can be `nothing` is not returned through a type that cannot.
+
+enum Kind { Bad }
+group Err { Kind }
+
+function inner(fail :: tetra) returns nothing | Err {
+    if fail then return Kind.Bad
+    return
+}
+
+function outer() returns Err {
+    return inner(false)
+}
+
+outer()

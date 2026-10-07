@@ -28,6 +28,40 @@ struct - no classes, no inheretance, only composition
 group -  can be used as an umbrella type for enums and structs
 union - can be handled with switch statements and type narrowing, see page on unions for more info
 
+### Names
+
+A name has one meaning wherever it can be seen. Doxa has no shadowing and no
+overloading:
+
+- A declaration inside a function, a block, a loop or a pattern may not reuse a
+  name already visible where it appears: an enclosing local or parameter, or any
+  top-level name of the file. A file's top-level names are visible throughout
+  it, so a parameter may not share a name with a global declared further down
+  (E1035).
+- A file binds each top-level name once, whether by a declaration, a `module`
+  alias, an `import`, or a `zig` block (E1002). Two imports of symbols that share
+  a name conflict; import one through a `module` alias instead
+  ([Modules](modules.md)).
+- A struct names each member once: no two fields, no two methods or functions,
+  and no method or function sharing a field's name (E1002).
+
+A binding that is not visible does not conflict, so sibling blocks may each
+declare the same name:
+
+```doxa
+{
+    var t :: int is 1
+}
+{
+    var t :: string is "two"   # fine: the first `t` is out of scope
+}
+```
+
+Narrowing does not declare anything: inside `x as int then { … }` or a match
+arm, `x` is the same variable seen at a narrower type. Likewise, inside the
+branches of `const v is expr as T else { … }`, `v` is the declaration itself,
+holding the subject narrowed to that branch's type.
+
 ### Line Continuation
 
 A newline ends a statement. To continue one expression across lines, begin the
@@ -147,6 +181,24 @@ var result is match status {
 
 Match expressions must be exhaustive or include an `else` clause.
 
+### Enum variant shorthand
+
+`.Variant` names a variant of the enum its position expects, and nothing else
+gives it a type. The context must be explicit: a parameter, an annotated or
+already-declared variable, a struct field, an annotated array or map key, a
+return, or the other side of a comparison.
+
+```doxa
+var status :: Status is .Pending   # annotation
+status is .Success                 # declared variable
+if status == .Error then { … }     # comparison
+report(.Error)                     # parameter
+
+const bad is .Success              # error: no context; write `Status.Success`
+```
+
+A shorthand the expected enum does not declare is an error naming the enum.
+
 ### Error Handling
 
 Errors are best handled with custom enum and type unions.
@@ -235,20 +287,40 @@ Be aware assigning an expression without a value will assign `nothing`:
 Functions can specify return types using the `returns` syntax. Any type can be returned, including composite types, but only one type at a time. This is one of the places where type unions can come in handy.
 
 ```doxa
-fn add(a: int, b: int) returns int {
+function add(a :: int, b :: int) returns int {
     return a + b
 }
 ```
 
-Return types are optional and inferred by default:
+A function or method without `returns` returns `nothing`. It may `return` early,
+but returning a value from it is an error:
 
 ```doxa
-fn add(a :: int, b :: int) {
-    return a + b # inferred as returning an int
+function log(message :: string) {
+    if message == "" then return  # fine: returns nothing
+    @print(message)
+}
+
+function add(a :: int, b :: int) {
+    return a + b # error: 'add' declares no `returns`, so it cannot return a value
 }
 ```
 
-Explicit typing is encouraged as unions will be inferred if more than one type is returned.
+The converse holds too: a bare `return` returns `nothing`, so a function that
+declares `returns` may use one only when its return type includes `nothing`. A
+function returns exactly what it declares; nothing widens the type for it.
+
+```doxa
+function check(n :: int) returns nothing | Error {
+    if n > 0 then return   # fine: the declared type includes nothing
+    return IOError.Denied
+}
+
+function strict(n :: int) returns Error {
+    if n > 0 then return   # error: 'strict' returns Error, so a bare `return` has no value to give
+    return IOError.Denied
+}
+```
 
 ## Logic
 

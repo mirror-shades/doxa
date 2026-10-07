@@ -1,0 +1,46 @@
+# A name may be reused where the earlier binding is not visible: sibling blocks
+# each bind their own, each with its own storage and type.
+
+function siblings() {
+    {
+        var x :: int | string is 1
+        x is "b"
+        x?
+    }
+    {
+        var x :: float is 2.5
+        x?
+    }
+}
+
+function pick(n :: int) returns int | string {
+    if n > 0 then return "s"
+    return n
+}
+
+# Inside an `as` branch the declared name is the declaration seen early: the
+# subject narrowed to that branch's type.
+function castBranch(n :: int) {
+    const v is pick(n) as string else {
+        v?
+        return
+    }
+    v?
+}
+
+siblings()
+castBranch(1)
+castBranch(-4)
+{
+    var t :: int is 1
+    t?
+}
+{
+    var t :: string is "two"
+    t?
+}
+const w is pick(-9) as string else {
+    w?
+    lift "fallback"
+}
+w?

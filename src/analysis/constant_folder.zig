@@ -3,15 +3,9 @@ const ast = @import("../ast/ast.zig");
 const token = @import("../types/token.zig");
 const TokenLiteral = @import("../types/types.zig").TokenLiteral;
 
-const Memory = @import("../utils/memory.zig");
-const Scope = Memory.Scope;
-
 pub const ConstantFolder = struct {
     allocator: std.mem.Allocator,
     optimizations_made: u32 = 0,
-    root_scope: *Scope,
-    current_scope: *Scope,
-    scope_child_index: std.AutoHashMap(u32, usize),
     /// Bindings whose initializers folded to literals in this pass. Semantic
     /// analysis stores placeholder values (e.g. `0`) for runtime calls, so the
     /// folder must not read those as compile-time constants.
@@ -22,12 +16,11 @@ pub const ConstantFolder = struct {
     /// reference is never folded to a value it does not actually hold.
     shadowed_names: std.array_list.Managed(std.StringHashMap(void)),
 
-    pub fn init(allocator: std.mem.Allocator, root_scope: *Scope) ConstantFolder {
+    /// A folder is syntax-local: it sees one file's statements and folds a
+    /// name only to a constant it watched that file bind.
+    pub fn init(allocator: std.mem.Allocator) ConstantFolder {
         var folder = ConstantFolder{
             .allocator = allocator,
-            .root_scope = root_scope,
-            .current_scope = root_scope,
-            .scope_child_index = std.AutoHashMap(u32, usize).init(allocator),
             .comptime_bindings = std.array_list.Managed(std.StringHashMap(TokenLiteral)).init(allocator),
             .shadowed_names = std.array_list.Managed(std.StringHashMap(void)).init(allocator),
         };
@@ -41,7 +34,6 @@ pub const ConstantFolder = struct {
         }
         self.comptime_bindings.deinit();
         self.shadowed_names.deinit();
-        self.scope_child_index.deinit();
     }
 
     fn pushBindingScope(self: *ConstantFolder) void {
@@ -94,23 +86,10 @@ pub const ConstantFolder = struct {
 
     fn enterScope(self: *ConstantFolder) void {
         self.pushBindingScope();
-        var idx = self.scope_child_index.get(self.current_scope.id) orelse 0;
-        const children = self.current_scope.children.items;
-        while (idx < children.len) : (idx += 1) {
-            const child = children[idx];
-            if (!child.is_deinited) {
-                self.scope_child_index.put(self.current_scope.id, idx + 1) catch {};
-                self.current_scope = child;
-                return;
-            }
-        }
     }
 
     fn leaveScope(self: *ConstantFolder) void {
         self.popBindingScope();
-        if (self.current_scope.parent) |parent| {
-            self.current_scope = parent;
-        }
     }
 
     pub fn foldExpr(self: *ConstantFolder, expr: *ast.Expr) std.mem.Allocator.Error!*ast.Expr {
@@ -503,14 +482,6 @@ pub const ConstantFolder = struct {
                     ret.value = try self.foldExpr(value);
                 }
             },
-            .Block => |statements| {
-                self.enterScope();
-                defer self.leaveScope();
-
-                for (statements) |*inner_stmt| {
-                    _ = try self.foldStmt(inner_stmt);
-                }
-            },
             .FunctionDecl => |*func| {
                 self.enterScope();
                 defer self.leaveScope();
@@ -538,21 +509,13 @@ pub const ConstantFolder = struct {
                     map_literal.else_value = try self.foldExpr(else_value);
                 }
             },
-            .Module => {},
             .Import => {},
-            .Path => {},
             .Continue => {},
             .Break => {},
             .Assert => |*assert_stmt| {
                 assert_stmt.condition = try self.foldExpr(assert_stmt.condition);
                 if (assert_stmt.message) |message| {
                     assert_stmt.message = try self.foldExpr(message);
-                }
-            },
-            .Cast => |*cast_stmt| {
-                cast_stmt.value = try self.foldExpr(cast_stmt.value);
-                if (cast_stmt.else_branch) |else_branch| {
-                    cast_stmt.else_branch = try self.foldExpr(else_branch);
                 }
             },
             .Defer => |defer_expr| {

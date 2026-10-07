@@ -22,7 +22,3 @@ test/benchmark/d-bin/**
 test/out/**
 test/advent2025/**
 test/**/.doxa-cache/**
-
-# Artifacts the build-script suite produces in its fixture project.
-test/build_script/bin/**
-test/build_script/.doxa-cache-run*

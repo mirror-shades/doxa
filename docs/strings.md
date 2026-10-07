@@ -85,6 +85,23 @@ the leading byte of a three-byte character, not the whole character, and
 `each c in "日本語"` yields nine one-byte strings. To walk codepoints, `@unpack` the
 string and reconstruct with `@pack`, or use a Zig block for Unicode-aware processing.
 
+## Comparison
+
+`==` and `!=` compare strings byte for byte. `<`, `<=`, `>` and `>=` order them
+**lexicographically by byte**: the first differing byte decides, and a string sorts
+before any longer string it is a prefix of.
+
+```doxa
+"apple" < "banana"   # true
+"app" < "apple"      # true
+"Z" < "a"            # true — uppercase ASCII sorts before lowercase
+"z" < "é"            # true
+```
+
+For UTF-8 this is exactly Unicode code-point order, so it is total, locale-free and
+stable across platforms. It is not a collation: it knows nothing of case folding or
+accents. Locale-aware ordering belongs in a library, not an operator.
+
 ## Interop with Zig
 
 For **inline Zig modules** (`zig { … }` blocks compiled into the program), the generated

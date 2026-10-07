@@ -1,0 +1,4 @@
+module a from "../misc/moddata/status_enum.doxa"
+
+const s :: a.Status is .Ok
+const t is s == .Nope

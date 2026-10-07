@@ -109,13 +109,13 @@ pub fn Methods(comptime Ctx: type) type {
                 .GetField,
                 .SetField,
                 .StringOp,
-                .UnionConstruct,
+                .Box,
+                .Unbox,
                 .UnboxPayload,
                 .TypeCheck,
                 .Peek,
                 .PeekStruct,
                 .AssertFail,
-                .LoadModule,
                 => false,
             };
         }

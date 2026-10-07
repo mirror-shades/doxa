@@ -1,0 +1,6 @@
+# `/` is float division, so `/=` into an int is a narrowing and is rejected.
+public entry function main() {
+    var n is 10
+    n /= 4
+    @print("{n}\n")
+}

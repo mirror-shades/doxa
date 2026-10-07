@@ -1,0 +1,54 @@
+# A union is a set of member types: every spelling of one union is one type
+# with one member order, and a box keeps naming its member through every copy.
+
+struct Piece {
+    public kind :: int,
+}
+
+struct Board {
+    public cell :: nothing | Piece,
+}
+
+# The same union spelled in the other order, through a return.
+function pick(b :: Board) returns Piece | nothing {
+    return b.cell
+}
+
+function widen(value :: int | string) returns float | int | string {
+    return value
+}
+
+function kindOf(cell :: Piece | nothing) returns int {
+    match cell {
+        nothing then return -1,
+        Piece then return cell.kind,
+    }
+}
+
+const board is $Board{ cell is $Piece{ kind is 7 } }
+const picked is pick(board)
+kindOf(picked)?
+
+# Reordered: one union, so the box is copied as is.
+var x :: int | string is 3
+var y :: string | int is x
+y?
+
+# Widened into a union with more members: the member index is re-packed.
+var s :: int | string is "hi"
+var g :: float | string | int is s
+g?
+
+function locals() returns string {
+    var a :: int | string is "local"
+    var b :: string | float | int is a
+    b?
+    const r is widen(a)
+    r?
+    match r {
+        float then return "float",
+        int then return "int",
+        string then return "string",
+    }
+}
+locals()?

@@ -9,6 +9,7 @@ const ScopeKind = @import("../soxa_types.zig").ScopeKind;
 const ErrorCode = @import("../../../utils/errors.zig").ErrorCode;
 const ErrorList = @import("../../../utils/errors.zig").ErrorList;
 const Location = @import("../../../utils/reporting.zig").Location;
+const graph = @import("../../../module/graph.zig");
 
 /// Handle basic expression types: literals, variables, and grouping
 pub const BasicExpressionHandler = struct {
@@ -27,30 +28,6 @@ pub const BasicExpressionHandler = struct {
             .tetra => |t| HIRValue{ .tetra = HIRGeneratorType.tetraFromEnum(t) },
             .byte => |b| HIRValue{ .byte = b },
             .nothing => HIRValue.nothing,
-            .enum_variant => |variant| blk: {
-                // Handle enum variant literals - need to find the enum type
-                if (self.generator.current_enum_type) |enum_type_name| {
-                    const unknown_location = Location{
-                        .file = "",
-                        .file_uri = "",
-                        .range = .{ .start_line = 0, .start_col = 0, .end_line = 0, .end_col = 0 },
-                    };
-                    const variant_index = try self.resolveEnumVariantIndex(enum_type_name, variant, unknown_location);
-
-                    break :blk HIRValue{
-                        .enum_variant = HIREnum{
-                            .type_name = enum_type_name,
-                            .variant_name = variant,
-                            .variant_index = variant_index,
-                            .path = null,
-                        },
-                    };
-                } else {
-                    // Try to infer enum type from context or fallback to string
-                    // This is a fallback for when enum context is not available
-                    break :blk HIRValue{ .string = variant };
-                }
-            },
             else => HIRValue.nothing,
         };
         const const_idx = try self.generator.addConstant(hir_value);
@@ -102,87 +79,6 @@ pub const BasicExpressionHandler = struct {
         }
     }
 
-    /// Generate HIR for variable access
-    pub fn generateVariable(self: *BasicExpressionHandler, var_token: ast.Token) (std.mem.Allocator.Error || ErrorList)!void {
-        // Compile-time validation: Ensure variable has been declared
-        const maybe_idx: ?u32 = self.generator.symbol_table.getVariable(var_token.lexeme);
-        if (maybe_idx) |existing_idx| {
-            const var_idx = existing_idx;
-
-            // Check if this is an alias parameter
-            if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
-                // For alias parameters, get the correct slot from the slot manager
-                if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
-                    try self.generator.instructions.append(.{
-                        .LoadAlias = .{
-                            .var_name = var_token.lexeme,
-                            .slot_index = alias_slot,
-                        },
-                    });
-                } else {
-                    return ErrorList.InvalidAliasArgument;
-                }
-            } else {
-                // Regular variable
-                // Determine scope based on where the variable was found
-                const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-
-                const load_var_inst = HIRInstruction{
-                    .LoadVar = .{
-                        .var_index = var_idx,
-                        .var_name = var_token.lexeme,
-                        .scope_kind = scope_kind,
-                        .module_context = null,
-                    },
-                };
-                try self.generator.instructions.append(load_var_inst);
-            }
-        } else {
-            // Check if this is an alias parameter that wasn't found in the symbol table
-            if (self.generator.symbol_table.isAliasParameter(var_token.lexeme)) {
-                // For alias parameters, get the correct slot from the slot manager
-                if (self.generator.slot_manager.getAliasSlot(var_token.lexeme)) |alias_slot| {
-                    try self.generator.instructions.append(.{
-                        .LoadAlias = .{
-                            .var_name = var_token.lexeme,
-                            .slot_index = alias_slot,
-                        },
-                    });
-                } else {
-                    return ErrorList.InvalidAliasArgument;
-                }
-                return;
-            } else if (self.generator.isModuleNamespace(var_token.lexeme)) {
-                const bindings = try self.generator.resolveModuleBindings(var_token.lexeme);
-                try self.generator.instructions.append(.{
-                    .LoadModule = .{
-                        .module_name = var_token.lexeme,
-                        .field_names = bindings.names,
-                        .field_slots = bindings.slots,
-                    },
-                });
-                return;
-            }
-
-            // Regular variable - ensure it exists in the current scope and load it at runtime
-            const var_idx2 = try self.generator.getOrCreateVariable(var_token.lexeme);
-
-            // Determine scope based on where the variable was actually created
-            // This must happen AFTER getOrCreateVariable to ensure the variable is registered
-            const scope_kind = self.generator.symbol_table.determineVariableScope(var_token.lexeme);
-
-            const load_var_inst2 = HIRInstruction{
-                .LoadVar = .{
-                    .var_index = var_idx2,
-                    .var_name = var_token.lexeme,
-                    .scope_kind = scope_kind,
-                    .module_context = null,
-                },
-            };
-            try self.generator.instructions.append(load_var_inst2);
-        }
-    }
-
     /// Generate HIR for grouping expressions (parentheses)
     pub fn generateGrouping(self: *BasicExpressionHandler, grouping: ?*ast.Expr, preserve_result: bool) (std.mem.Allocator.Error || ErrorList)!void {
         _ = preserve_result; // Unused parameter
@@ -196,207 +92,57 @@ pub const BasicExpressionHandler = struct {
         }
     }
 
-    /// Generate HIR for this keyword
+    /// Generate HIR for `this`: the receiver, an alias parameter of the method
+    /// being lowered.
     pub fn generateThis(self: *BasicExpressionHandler) (std.mem.Allocator.Error || ErrorList)!void {
-        // Check if 'this' is an alias parameter (which it should be in instance methods)
-        if (self.generator.symbol_table.isAliasParameter("this")) {
-            // For alias parameters, get the correct slot from the slot manager
-            if (self.generator.slot_manager.getAliasSlot("this")) |alias_slot| {
-                try self.generator.instructions.append(.{
-                    .LoadAlias = .{
-                        .var_name = "this",
-                        .slot_index = alias_slot,
-                    },
-                });
-                return;
-            } else {
-                return ErrorList.InvalidAliasArgument;
-            }
-        }
-
-        // Fallback: Load 'this' as a regular variable (shouldn't happen in instance methods)
-        const this_idx = try self.generator.getOrCreateVariable("this");
-        try self.generator.instructions.append(.{ .LoadVar = .{
-            .var_index = this_idx,
+        const this_slot = self.generator.this_slot orelse return ErrorList.InvalidAliasArgument;
+        try self.generator.instructions.append(.{ .LoadAlias = .{
+            .slot = this_slot,
             .var_name = "this",
-            .scope_kind = .Local,
-            .module_context = null,
+            .slot_index = self.generator.alias_params.get(this_slot).?,
         } });
     }
 
-    /// Generate HIR for enum member expressions
-    pub fn generateEnumMember(self: *BasicExpressionHandler, member: ast.Token) (std.mem.Allocator.Error || ErrorList)!void {
-        // Generate enum member using current enum type context
-        if (self.generator.current_enum_type) |enum_type_name| {
-            const location = Location{
-                .file = member.file,
-                .file_uri = member.file_uri,
-                .range = .{
-                    .start_line = member.line,
-                    .start_col = member.column,
-                    .end_line = member.line,
-                    .end_col = member.column + member.lexeme.len,
-                },
-            };
-            // A group-typed context (`var c :: Palette is .Red`) has no variants
-            // of its own: the shorthand names the member enum that declares it.
-            const variant_type = self.resolveGroupVariantType(enum_type_name, member.lexeme) orelse enum_type_name;
-            const variant_index = try self.resolveEnumVariantIndex(variant_type, member.lexeme, location);
+    /// Generate HIR for a `.Variant` shorthand: a variant of the enum the
+    /// analyzer typed it as, from what its position expects.
+    pub fn generateEnumMember(self: *BasicExpressionHandler, expr: *ast.Expr) (std.mem.Allocator.Error || ErrorList)!void {
+        const member = expr.data.EnumMember;
+        const location = ast.SourceSpan.fromToken(member).location;
+        const type_info = self.generator.semantic.getCachedExprType(expr) orelse return ErrorList.MissingExpressionType;
+        // Analysis rejects a shorthand its context left untyped.
+        const key = self.generator.typeKeyOf(type_info.*).?;
 
-            // Generate proper enum variant with correct index
-            const enum_value = HIRValue{
-                .enum_variant = HIREnum{
-                    .type_name = variant_type,
-                    .variant_name = member.lexeme,
-                    .variant_index = variant_index,
-                    .path = null,
-                },
-            };
-            const const_idx = try self.generator.addConstant(enum_value);
-
-            try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
-        } else {
-            // Try to infer enum type from assignment context
-            // Look for the most recent assignment target in the current expression context
-            var inferred_enum_type: ?[]const u8 = null;
-
-            // Check if we can infer from the current assignment context
-            // This is a heuristic: if we're generating an enum member in an assignment,
-            // try to find the enum type of the target variable
-            if (self.generator.current_assignment_target) |target_var| {
-                if (self.generator.symbol_table.getVariableCustomType(target_var)) |custom_type| {
-                    if (self.generator.type_system.custom_types.get(custom_type)) |type_info| {
-                        if (type_info.kind == .Enum) {
-                            inferred_enum_type = custom_type;
-                        } else if (type_info.kind == .Group) {
-                            inferred_enum_type = self.resolveGroupVariantType(custom_type, member.lexeme);
-                        }
-                    }
-                }
-            }
-
-            if (inferred_enum_type) |enum_type_name| {
-                const location = Location{
-                    .file = member.file,
-                    .file_uri = member.file_uri,
-                    .range = .{
-                        .start_line = member.line,
-                        .start_col = member.column,
-                        .end_line = member.line,
-                        .end_col = member.column + member.lexeme.len,
-                    },
-                };
-                const variant_index = try self.resolveEnumVariantIndex(enum_type_name, member.lexeme, location);
-
-                // Generate proper enum variant with correct index
-                const enum_value = HIRValue{
-                    .enum_variant = HIREnum{
-                        .type_name = enum_type_name,
-                        .variant_name = member.lexeme,
-                        .variant_index = variant_index,
-                        .path = null,
-                    },
-                };
-                const const_idx = try self.generator.addConstant(enum_value);
-                try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
-            } else {
-                // Try to resolve uniquely by scanning custom types for a variant match
-                var matched_enum_name: ?[]const u8 = null;
-                var matches: u32 = 0;
-                var it = self.generator.type_system.custom_types.iterator();
-                while (it.next()) |entry| {
-                    if (entry.value_ptr.kind == .Enum) {
-                        if (entry.value_ptr.enum_variants) |variants| {
-                            for (variants) |variant| {
-                                if (std.mem.eql(u8, variant.name, member.lexeme)) {
-                                    matched_enum_name = entry.key_ptr.*;
-                                    matches += 1;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (matches == 1 and matched_enum_name != null) {
-                    const etype = matched_enum_name.?;
-                    const location = Location{
-                        .file = member.file,
-                        .file_uri = member.file_uri,
-                        .range = .{
-                            .start_line = member.line,
-                            .start_col = member.column,
-                            .end_line = member.line,
-                            .end_col = member.column + member.lexeme.len,
-                        },
-                    };
-                    const variant_index = try self.resolveEnumVariantIndex(etype, member.lexeme, location);
-                    const enum_value = HIRValue{ .enum_variant = HIREnum{ .type_name = etype, .variant_name = member.lexeme, .variant_index = variant_index, .path = null } };
-                    const const_idx = try self.generator.addConstant(enum_value);
-                    try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
-                } else {
-                    // Fallback to string constant if no enum context
-                    const enum_value = HIRValue{ .string = member.lexeme };
-                    const const_idx = try self.generator.addConstant(enum_value);
-                    try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
-                }
-            }
-        }
+        const enum_value = HIRValue{
+            .enum_variant = HIREnum{
+                .type_name = key,
+                .variant_name = member.lexeme,
+                .variant_index = try self.resolveEnumVariantIndex(key, member.lexeme, location),
+                .path = null,
+            },
+        };
+        const const_idx = try self.generator.addConstant(enum_value);
+        try self.generator.instructions.append(.{ .Const = .{ .value = enum_value, .constant_id = const_idx } });
     }
 
-    /// The enum member of `group_name` that declares `variant_name`, when there
-    /// is exactly one. A group has no variants of its own, so a `.Variant`
-    /// shorthand written under a group annotation has to be attributed to the
-    /// member enum that owns it.
-    fn resolveGroupVariantType(self: *BasicExpressionHandler, group_name: []const u8, variant_name: []const u8) ?[]const u8 {
-        const group_table = self.generator.type_system.group_table orelse return null;
-        const group_id = group_table.getIdByName(group_name) orelse return null;
-        const members = group_table.members(group_id) orelse return null;
-
-        var matched: ?[]const u8 = null;
-        var matches: u32 = 0;
-        for (members) |member| {
-            if (member.kind != .Enum) continue;
-            const member_type = self.generator.type_system.custom_types.get(member.qualifier) orelse continue;
-            if (member_type.kind != .Enum) continue;
-            if (member_type.getEnumVariantIndex(variant_name) == null) continue;
-            matched = member.qualifier;
-            matches += 1;
-        }
-        if (matches != 1) return null;
-        return matched;
-    }
-
-    fn resolveEnumVariantIndex(self: *BasicExpressionHandler, enum_type_name: []const u8, variant_name: []const u8, location: Location) ErrorList!u32 {
-        if (self.generator.type_system.custom_types.get(enum_type_name)) |custom_type| {
-            if (custom_type.kind != .Enum) {
-                self.generator.reporter.reportCompileError(
-                    location,
-                    ErrorCode.TYPE_MISMATCH,
-                    "'{s}' is not an enum type",
-                    .{enum_type_name},
-                );
-                return ErrorList.TypeMismatch;
-            }
-            if (custom_type.getEnumVariantIndex(variant_name)) |index| {
-                return index;
-            }
+    fn resolveEnumVariantIndex(self: *BasicExpressionHandler, enum_key: []const u8, variant_name: []const u8, location: Location) ErrorList!u32 {
+        const custom_type = self.generator.type_system.custom_types.get(enum_key).?;
+        if (custom_type.kind != .Enum) {
             self.generator.reporter.reportCompileError(
                 location,
-                ErrorCode.VARIABLE_NOT_FOUND,
-                "Unknown enum variant '{s}' for enum '{s}'",
-                .{ variant_name, enum_type_name },
+                ErrorCode.TYPE_MISMATCH,
+                "'{s}' is not an enum type",
+                .{graph.displayName(enum_key)},
             );
-            return ErrorList.InvalidEnumVariant;
+            return ErrorList.TypeMismatch;
         }
-
+        if (custom_type.getEnumVariantIndex(variant_name)) |index| return index;
         self.generator.reporter.reportCompileError(
             location,
-            ErrorCode.UNKNOWN_TYPE,
-            "Unknown enum type '{s}'",
-            .{enum_type_name},
+            ErrorCode.VARIABLE_NOT_FOUND,
+            "Unknown enum variant '{s}' for enum '{s}'",
+            .{ variant_name, graph.displayName(enum_key) },
         );
-        return ErrorList.UnknownCustomType;
+        return ErrorList.InvalidEnumVariant;
     }
 
     /// Generate HIR for default argument placeholders

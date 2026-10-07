@@ -1,0 +1,26 @@
+module std from @std()
+import error from @std()
+
+function g(k :: int) returns nothing | error.Common {
+    if k == 0 then return
+    return error.Common.InvalidArgument
+}
+
+function h(k :: int) returns string | error.Common {
+    if k == 1 then return error.Common.OutOfMemory
+    return "payload"
+}
+
+entry function main() {
+    const a is g(0)
+    a as error.Common then @print("a: error\n") else @print("a: nothing\n")
+
+    const b is g(1)
+    b as error.Common then @print("b: error\n") else @print("b: nothing\n")
+
+    const c is h(0)
+    c as error.Common then @print("c: error\n") else @print("c: {c}\n")
+
+    const d is h(1)
+    d as error.Common then @print("d: error\n") else @print("d: payload\n")
+}

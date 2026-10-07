@@ -95,15 +95,15 @@ pub const Context = struct {
 /// `loop_start_*` label names, so the emitter can look one up as it emits that
 /// label. Returns an empty map (no ranges) for any function the interpreter
 /// cannot model — the emitter then behaves exactly as before.
-pub fn analyzeLoops(ctx: *const Context, alloc: std.mem.Allocator, func: HIR.HIRProgram.HIRFunction, start: usize, end: usize) FlowError!std.StringHashMap(std.StringHashMap(IntRange)) {
-    var out = std.StringHashMap(std.StringHashMap(IntRange)).init(alloc);
+pub fn analyzeLoops(ctx: *const Context, alloc: std.mem.Allocator, func: HIR.HIRProgram.HIRFunction, start: usize, end: usize) FlowError!std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)) {
+    var out = std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)).init(alloc);
     var guard = std.StringHashMap(void).init(alloc);
     defer guard.deinit();
 
     var interp = Interp{
         .ctx = ctx,
         .alloc = alloc,
-        .env = std.StringHashMap(IntRange).init(alloc),
+        .env = std.AutoHashMap(HIR.Slot, IntRange).init(alloc),
         .guard = &guard,
         .loop_envs = &out,
         .allow_return = true,
@@ -117,11 +117,11 @@ pub fn analyzeLoops(ctx: *const Context, alloc: std.mem.Allocator, func: HIR.HIR
 
     interp.run(start + 1, end) catch {
         deinitLoopEnvs(&out);
-        return std.StringHashMap(std.StringHashMap(IntRange)).init(alloc);
+        return std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)).init(alloc);
     };
     if (!interp.ok) {
         deinitLoopEnvs(&out);
-        return std.StringHashMap(std.StringHashMap(IntRange)).init(alloc);
+        return std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)).init(alloc);
     }
     return out;
 }
@@ -148,13 +148,13 @@ pub fn returnRange(
     guard.put(func.start_label, {}) catch return null;
     defer _ = guard.remove(func.start_label);
 
-    var loop_envs = std.StringHashMap(std.StringHashMap(IntRange)).init(alloc);
+    var loop_envs = std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)).init(alloc);
     defer deinitLoopEnvs(&loop_envs);
 
     var interp = Interp{
         .ctx = ctx,
         .alloc = alloc,
-        .env = std.StringHashMap(IntRange).init(alloc),
+        .env = std.AutoHashMap(HIR.Slot, IntRange).init(alloc),
         .guard = guard,
         .loop_envs = &loop_envs,
         .depth = depth,
@@ -175,10 +175,10 @@ pub fn returnRange(
 const Interp = struct {
     ctx: *const Context,
     alloc: std.mem.Allocator,
-    env: std.StringHashMap(IntRange),
+    env: std.AutoHashMap(HIR.Slot, IntRange),
     stack: std.ArrayListUnmanaged(IntRange) = .empty,
     guard: *std.StringHashMap(void),
-    loop_envs: *std.StringHashMap(std.StringHashMap(IntRange)),
+    loop_envs: *std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange)),
     depth: usize = 0,
     ok: bool = true,
     allow_return: bool,
@@ -259,18 +259,18 @@ const Interp = struct {
                 if (lv.scope_kind == .GlobalLocal or lv.scope_kind == .ModuleGlobal or lv.scope_kind == .ImportedModule) {
                     try self.push(.unknown());
                 } else {
-                    try self.push(self.env.get(lv.var_name) orelse .unknown());
+                    try self.push(self.env.get(lv.slot) orelse .unknown());
                 }
             },
             .StoreVar => |sv| {
                 const r = self.pop();
                 if (!self.ok) return;
-                try self.env.put(sv.var_name, r);
+                try self.env.put(sv.slot, r);
             },
             .StoreDecl => |sd| {
                 const r = self.pop();
                 if (!self.ok) return;
-                try self.env.put(sd.var_name, r);
+                try self.env.put(sd.slot, r);
             },
             .Arith => |a| {
                 const rhs = self.pop();
@@ -295,14 +295,13 @@ const Interp = struct {
                 if (!self.ok) return;
                 try self.push(.unknown());
             },
-            .LoadModule => try self.push(.unknown()),
             .EnterScope, .ExitScope, .ResetScope => {},
             .Call => |c| {
                 const n = c.arg_count;
                 if (self.stack.items.len < n) return self.fail();
                 const base = self.stack.items.len - n;
                 const args = self.stack.items[base..];
-                const result = if (c.call_kind == .LocalFunction)
+                const result = if (c.call_kind == .DoxaFunction)
                     returnRange(self.ctx, self.alloc, c.function_index orelse std.math.maxInt(usize), args, self.guard, self.depth + 1)
                 else
                     null;
@@ -380,14 +379,14 @@ fn constRange(v: HIRValue) IntRange {
     };
 }
 
-fn copyEnv(alloc: std.mem.Allocator, src: *const std.StringHashMap(IntRange)) !std.StringHashMap(IntRange) {
-    var out = std.StringHashMap(IntRange).init(alloc);
+fn copyEnv(alloc: std.mem.Allocator, src: *const std.AutoHashMap(HIR.Slot, IntRange)) !std.AutoHashMap(HIR.Slot, IntRange) {
+    var out = std.AutoHashMap(HIR.Slot, IntRange).init(alloc);
     var it = src.iterator();
     while (it.next()) |e| try out.put(e.key_ptr.*, e.value_ptr.*);
     return out;
 }
 
-fn widenJoinEnv(alloc: std.mem.Allocator, old: *const std.StringHashMap(IntRange), new: *const std.StringHashMap(IntRange)) !std.StringHashMap(IntRange) {
+fn widenJoinEnv(alloc: std.mem.Allocator, old: *const std.AutoHashMap(HIR.Slot, IntRange), new: *const std.AutoHashMap(HIR.Slot, IntRange)) !std.AutoHashMap(HIR.Slot, IntRange) {
     var out = try copyEnv(alloc, old);
     var it = new.iterator();
     while (it.next()) |e| {
@@ -417,7 +416,7 @@ fn widenRange(old: IntRange, new: IntRange) IntRange {
     return out;
 }
 
-fn envEqual(a: *const std.StringHashMap(IntRange), b: *const std.StringHashMap(IntRange)) bool {
+fn envEqual(a: *const std.AutoHashMap(HIR.Slot, IntRange), b: *const std.AutoHashMap(HIR.Slot, IntRange)) bool {
     if (a.count() != b.count()) return false;
     var it = a.iterator();
     while (it.next()) |e| {
@@ -427,7 +426,7 @@ fn envEqual(a: *const std.StringHashMap(IntRange), b: *const std.StringHashMap(I
     return true;
 }
 
-fn deinitLoopEnvs(map: *std.StringHashMap(std.StringHashMap(IntRange))) void {
+fn deinitLoopEnvs(map: *std.StringHashMap(std.AutoHashMap(HIR.Slot, IntRange))) void {
     var it = map.iterator();
     while (it.next()) |e| e.value_ptr.deinit();
     map.deinit();

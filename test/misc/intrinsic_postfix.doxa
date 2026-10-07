@@ -1,0 +1,8 @@
+# `value.@name(args)` is `@name(value, args)` (docs/methods.md).
+var xs :: int[] is [1, 2]
+xs.@push(3)
+const n is xs.@pop()
+@print("{n} {xs.@length()} {@length(xs)}\n")
+
+const s is "abc"
+@print("{s.@length()} {s.@slice(0, 2)}\n")

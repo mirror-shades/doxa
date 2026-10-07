@@ -1,0 +1,9 @@
+zig IO {
+    pub fn x() i64 {
+        return 2;
+    }
+}
+
+public function read() returns int {
+    return IO.x()
+}

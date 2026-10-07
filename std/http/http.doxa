@@ -1,1584 +1,9 @@
 module error from "../error.doxa"
 
-zig HTTP {
-    const std = @import("std");
-    const builtin = @import("builtin");
-
-    pub fn errorState(mode: i64, value: i64) i64 {
-        const State = struct {
-            var last_error_code: i64 = 0;
-        };
-        if (mode == 0) {
-            State.last_error_code = value;
-            return 0;
-        }
-        if (mode == 1) {
-            return State.last_error_code;
-        }
-        if (mode == 2) {
-            const code = State.last_error_code;
-            State.last_error_code = 0;
-            return code;
-        }
-        return 0;
-    }
-
-    pub fn clearLastError() void {
-        _ = errorState(0, 0);
-    }
-
-    pub fn setLastError(code: i64) void {
-        _ = errorState(0, code);
-    }
-
-    pub fn takeLastErrorCode() i64 {
-        return errorState(2, 0);
-    }
-
-    fn httpIoStateType() type {
-        return struct {
-            var threaded: std.Io.Threaded = init: {
-                var t = std.Io.Threaded.init_single_threaded;
-                t.allocator = std.heap.page_allocator;
-                break :init t;
-            };
-            var base_io: std.Io = undefined;
-            var vtable: std.Io.VTable = undefined;
-            var io: std.Io = undefined;
-            var timeout: std.Io.Timeout = .none;
-            var initialized = false;
-        };
-    }
-
-    fn waitForReadable(socket_handle: std.Io.net.Socket.Handle) std.Io.net.Stream.Reader.Error!void {
-        const timeout = httpIoStateType().timeout;
-        const io = httpIoStateType().base_io;
-        const duration = timeout.toDurationFromNow(io) orelse return;
-        const ns = duration.raw.nanoseconds;
-        if (ns <= 0) return error.Timeout;
-
-        if (comptime builtin.os.tag == .windows) {
-            // Threaded.netReadWindows uses raw AFD handles, not Winsock SOCKETs,
-            // so WSAPoll cannot wait on them. Match the AFD_POLL_INFO ABI and
-            // use the kernel's AFD.POLL timeout before the normal AFD receive.
-            const PollHandle = extern struct {
-                handle: std.os.windows.HANDLE,
-                events: u32,
-                status: std.os.windows.NTSTATUS,
-            };
-            const PollInfo = extern struct {
-                timeout: i64,
-                count: u32,
-                exclusive: std.os.windows.BOOLEAN,
-                padding: [3]u8,
-                handles: [1]PollHandle,
-            };
-            const timeout_100ns: i64 = @intCast(@min(
-                @max(1, @divTrunc(ns + 99, 100)),
-                std.math.maxInt(i64),
-            ));
-            var poll_info: PollInfo = .{
-                .timeout = -timeout_100ns,
-                .count = 1,
-                .exclusive = .FALSE,
-                .padding = .{ 0, 0, 0 },
-                .handles = .{.{
-                    .handle = socket_handle,
-                    .events = 0x0001 | 0x0008 | 0x0010 | 0x0020,
-                    .status = .SUCCESS,
-                }},
-            };
-            const poll_bytes = std.mem.asBytes(&poll_info);
-            const result = io.operate(.{ .device_io_control = .{
-                .file = .{ .handle = socket_handle, .flags = .{ .nonblocking = true } },
-                .code = std.os.windows.IOCTL.AFD.POLL,
-                .in = poll_bytes,
-                .out = poll_bytes,
-            } }) catch |err| return switch (err) {
-                error.Canceled => error.Canceled,
-            };
-            if (result.device_io_control.u.Status == .TIMEOUT or poll_info.handles[0].events == 0) {
-                return error.Timeout;
-            }
-            if (poll_info.handles[0].status == .CONNECTION_RESET) return error.ConnectionResetByPeer;
-            if (result.device_io_control.u.Status != .SUCCESS) return error.Unexpected;
-            return;
-        }
-
-        if (comptime builtin.os.tag == .wasi or builtin.os.tag == .uefi or builtin.os.tag == .freestanding) {
-            return error.NetworkDown;
-        }
-
-        const timeout_ms: i32 = @intCast(@min(
-            @divTrunc(ns + std.time.ns_per_ms - 1, std.time.ns_per_ms),
-            std.math.maxInt(i32),
-        ));
-        var poll_fds = [_]std.posix.pollfd{.{
-            .fd = socket_handle,
-            .events = std.posix.POLL.IN,
-            .revents = 0,
-        }};
-        const ready = std.posix.poll(&poll_fds, timeout_ms) catch |err| return switch (err) {
-            error.SystemResources => error.SystemResources,
-            else => error.Unexpected,
-        };
-        if (ready == 0) return error.Timeout;
-    }
-
-    fn timeoutNetRead(
-        userdata: ?*anyopaque,
-        socket_handle: std.Io.net.Socket.Handle,
-        buffers: [][]u8,
-    ) std.Io.net.Stream.Reader.Error!usize {
-        if (httpIoStateType().timeout != .none) try waitForReadable(socket_handle);
-        return httpIoStateType().base_io.vtable.netRead(userdata, socket_handle, buffers);
-    }
-
-    fn httpIo() std.Io {
-        if (!httpIoStateType().initialized) {
-            httpIoStateType().base_io = httpIoStateType().threaded.io();
-            httpIoStateType().vtable = httpIoStateType().base_io.vtable.*;
-            httpIoStateType().vtable.netRead = timeoutNetRead;
-            httpIoStateType().io = .{
-                .userdata = httpIoStateType().base_io.userdata,
-                .vtable = &httpIoStateType().vtable,
-            };
-            httpIoStateType().initialized = true;
-        }
-        return httpIoStateType().io;
-    }
-
-    fn setReadTimeout(timeout_ms: i64) void {
-        _ = httpIo();
-        httpIoStateType().timeout = if (timeout_ms <= 0)
-            .none
-        else
-            .{ .deadline = .fromNow(
-                httpIoStateType().base_io,
-                .{
-                    .raw = .{ .nanoseconds = @as(i96, timeout_ms) * std.time.ns_per_ms },
-                    .clock = .awake,
-                },
-            ) };
-    }
-
-    fn validHeaderName(name: []const u8) bool {
-        if (name.len == 0) return false;
-        for (name) |c| {
-            if (std.ascii.isAlphanumeric(c)) continue;
-            if (std.mem.indexOfScalar(u8, "!#$%&'*+-.^_`|~", c) == null) return false;
-        }
-        return true;
-    }
-
-    fn parseRequestHeaders(allocator: std.mem.Allocator, blob: []const u8) !std.array_list.Managed(std.http.Header) {
-        var headers = std.array_list.Managed(std.http.Header).init(allocator);
-        errdefer headers.deinit();
-        var lines = std.mem.splitSequence(u8, blob, "\r\n");
-        while (lines.next()) |line| {
-            if (line.len == 0) continue;
-            const colon = std.mem.indexOfScalar(u8, line, ':') orelse return error.InvalidArgument;
-            const name = line[0..colon];
-            const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
-            if (!validHeaderName(name) or std.mem.indexOfAny(u8, value, "\r\n") != null) return error.InvalidArgument;
-            for (value) |c| {
-                if ((c < 32 and c != '\t') or c == 127) return error.InvalidArgument;
-            }
-            if (
-                std.ascii.eqlIgnoreCase(name, "host") or
-                std.ascii.eqlIgnoreCase(name, "content-length") or
-                std.ascii.eqlIgnoreCase(name, "transfer-encoding") or
-                std.ascii.eqlIgnoreCase(name, "connection")) return error.InvalidArgument;
-            try headers.append(.{ .name = name, .value = value });
-        }
-        return headers;
-    }
-
-    fn isCredentialHeader(name: []const u8) bool {
-        return std.ascii.eqlIgnoreCase(name, "authorization") or
-            std.ascii.eqlIgnoreCase(name, "proxy-authorization") or
-            std.ascii.eqlIgnoreCase(name, "cookie") or
-            std.ascii.eqlIgnoreCase(name, "cookie2");
-    }
-
-    fn sameOrigin(a: std.Uri, b: std.Uri) bool {
-        if (!std.ascii.eqlIgnoreCase(a.scheme, b.scheme)) return false;
-        const protocol_a = std.http.Client.Protocol.fromUri(a) orelse return false;
-        const protocol_b = std.http.Client.Protocol.fromUri(b) orelse return false;
-        if (protocol_a != protocol_b) return false;
-        var host_a_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
-        var host_b_buffer: [std.Io.net.HostName.max_len]u8 = undefined;
-        const host_a = a.getHost(&host_a_buffer) catch return false;
-        const host_b = b.getHost(&host_b_buffer) catch return false;
-        const default_port_a: u16 = if (protocol_a == .tls) 443 else 80;
-        const default_port_b: u16 = if (protocol_b == .tls) 443 else 80;
-        return std.Io.net.HostName.eql(host_a, host_b) and
-            (a.port orelse default_port_a) == (b.port orelse default_port_b);
-    }
-
-    fn stripRedirectCredentials(headers: *std.array_list.Managed(std.http.Header)) void {
-        var kept: usize = 0;
-        for (headers.items) |header| {
-            if (isCredentialHeader(header.name)) continue;
-            headers.items[kept] = header;
-            kept += 1;
-        }
-        headers.items.len = kept;
-    }
-
-    fn parseMethod(method: []const u8) ?std.http.Method {
-        return std.meta.stringToEnum(std.http.Method, method);
-    }
-
-    // A connection is Zig-owned state outside the Doxa arena system: the ABI
-    // crosses only scalars and `string`, so a `ConnectionState` can never be a
-    // Doxa value. Doxa holds an opaque `int` handle instead, exactly as the
-    // json module holds node handles. The struct is heap-pinned because
-    // `std.http.Server` and the stream `Reader`/`Writer` recover each other via
-    // `@fieldParentPtr`, so their addresses must never move.
-    fn listenerStateType() type {
-        return struct {
-            socket_handle: std.Io.net.Socket.Handle,
-            address: std.Io.net.IpAddress,
-            options: std.Io.net.Server.AcceptOptions,
-        };
-    }
-
-    fn connectionStateType() type {
-        return struct {
-            stream: std.Io.net.Stream,
-            write_buffer: [8 * 1024]u8 = undefined,
-            writer: std.Io.net.Stream.Writer = undefined,
-            // Socket bytes are drained here by `poll` (the sole reader of the
-            // socket). Request/frame decoding consumes from the front and never
-            // touches the socket, so a partial head or frame cannot stall the
-            // loop.
-            input: std.ArrayList(u8) = .empty,
-            // In-memory reader over the current complete request, kept in the
-            // connection so the parsed `Request` borrows state that outlives the
-            // parse call.
-            request_reader: std.Io.Reader = undefined,
-            consumed: usize = 0,
-            server: std.http.Server = undefined,
-            request: ?std.http.Server.Request = null,
-            method: []const u8 = "",
-            target: []const u8 = "",
-            head: []const u8 = "",
-            body: []const u8 = "",
-            keep_alive: bool = false,
-            is_websocket: bool = false,
-            ws_closed: bool = false,
-            ws_peer_closed: bool = false,
-            ws_frag_opcode: u4 = 0,
-            ws_frag: std.ArrayList(u8) = .empty,
-            ws_control: [125]u8 = undefined,
-            ws_msg_op: i64 = 0,
-            ws_msg_data: []const u8 = "",
-        };
-    }
-
-    fn serverStateType() type {
-        return struct {
-            var listeners: std.AutoHashMapUnmanaged(i64, listenerStateType()) = .{};
-            var connections: std.AutoHashMapUnmanaged(i64, *connectionStateType()) = .{};
-            var next_handle: i64 = 1;
-        };
-    }
-
-    // Handles are drawn from one monotonic counter shared by listeners and
-    // connections, so a stale handle always resolves to `null` rather than to
-    // whichever object later reused the number.
-    fn allocHandle() i64 {
-        const handle = serverStateType().next_handle;
-        serverStateType().next_handle += 1;
-        return handle;
-    }
-
-    fn connectionOf(handle: i64) ?*connectionStateType() {
-        return serverStateType().connections.get(handle);
-    }
-
-    fn freeOwned(bytes: *[]const u8) void {
-        if (bytes.*.len != 0) std.heap.page_allocator.free(@constCast(bytes.*));
-        bytes.* = "";
-    }
-
-    fn destroyConnection(state: *connectionStateType()) void {
-        freeOwned(&state.target);
-        freeOwned(&state.head);
-        freeOwned(&state.body);
-        state.ws_frag.deinit(std.heap.page_allocator);
-        state.input.deinit(std.heap.page_allocator);
-        state.stream.close(httpIo());
-        std.heap.page_allocator.destroy(state);
-    }
-
-
-    // Shifts the consumed prefix off the input buffer.
-    fn consumeInput(state: *connectionStateType(), n: usize) void {
-        const len = state.input.items.len;
-        if (n >= len) {
-            state.input.clearRetainingCapacity();
-            return;
-        }
-        std.mem.copyForwards(u8, state.input.items[0 .. len - n], state.input.items[n..]);
-        state.input.shrinkRetainingCapacity(len - n);
-    }
-
-    // One read from the socket into the connection's input buffer, called by
-    // `poll` after readiness reports bytes available. Returns false on EOF or a
-    // read error, which the caller reports as a closed connection.
-    fn drainInput(state: *connectionStateType()) bool {
-        var scratch: [16 * 1024]u8 = undefined;
-        var bufs: [1][]u8 = .{scratch[0..]};
-        const base = httpIoStateType().base_io;
-        const n = base.vtable.netRead(base.userdata, state.stream.socket.handle, bufs[0..]) catch return false;
-        if (n == 0) return false;
-        state.input.appendSlice(std.heap.page_allocator, scratch[0..n]) catch return false;
-        return true;
-    }
-
-    // Total length of the request whose head ends at `\r\n\r\n`: the head plus a
-    // Content-Length body. A chunked body is rejected because the buffered
-    // reactor needs the whole request length before it can parse.
-    fn requestBodyLength(head: []const u8) !usize {
-        var lines = std.mem.splitSequence(u8, head, "\r\n");
-        _ = lines.next(); // request line
-        var content_length: usize = 0;
-        while (lines.next()) |line| {
-            if (line.len == 0) break;
-            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
-            const name = std.mem.trim(u8, line[0..colon], " \t");
-            const value = std.mem.trim(u8, line[colon + 1 ..], " \t");
-            if (std.ascii.eqlIgnoreCase(name, "content-length")) {
-                content_length = std.fmt.parseInt(usize, value, 10) catch return error.InvalidArgument;
-                if (content_length > 1024 * 1024) return error.InvalidArgument;
-            } else if (std.ascii.eqlIgnoreCase(name, "transfer-encoding")) {
-                if (!std.ascii.eqlIgnoreCase(value, "identity")) return error.InvalidArgument;
-            }
-        }
-        return content_length;
-    }
-
-    fn mapNetworkError(err_name: []const u8) i64 {
-        const common = mapCommon(err_name);
-        if (common >= 0) return common;
-        if (std.mem.eql(u8, err_name, "Timeout")) return 115;
-        if (std.mem.eql(u8, err_name, "InvalidAddress") or
-            std.mem.eql(u8, err_name, "InvalidPort") or
-            std.mem.eql(u8, err_name, "AddressFamilyUnsupported") or
-            std.mem.eql(u8, err_name, "HttpExpectationFailed")) return 1;
-        if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
-        if (std.mem.eql(u8, err_name, "WriteFailed")) return 107;
-        return 114;
-    }
-
-    pub fn listen(port: i64) i64 {
-        clearLastError();
-        if (port < 0 or port > 65535) {
-            setLastError(1);
-            return 0;
-        }
-        const io = httpIo();
-        const address: std.Io.net.IpAddress = .{ .ip4 = .loopback(@intCast(port)) };
-        var server = address.listen(io, .{ .reuse_address = true }) catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return 0;
-        };
-        const handle = allocHandle();
-        serverStateType().listeners.put(std.heap.page_allocator, handle, .{
-            .socket_handle = server.socket.handle,
-            .address = server.socket.address,
-            .options = server.options,
-        }) catch {
-            server.deinit(io);
-            setLastError(2);
-            return 0;
-        };
-        return handle;
-    }
-
-    pub fn localAddr(handle: i64) i64 {
-        clearLastError();
-        if (serverStateType().listeners.get(handle)) |listener| return listener.address.getPort();
-        setLastError(1);
-        return 0;
-    }
-
-    fn acceptConnection(listener: listenerStateType()) i64 {
-        var server: std.Io.net.Server = .{
-            .socket = .{ .handle = listener.socket_handle, .address = listener.address },
-            .options = listener.options,
-        };
-        const stream = server.accept(httpIo()) catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return 0;
-        };
-        const allocator = std.heap.page_allocator;
-        const state = allocator.create(connectionStateType()) catch {
-            stream.close(httpIo());
-            setLastError(2);
-            return 0;
-        };
-        state.stream = stream;
-        state.writer = stream.writer(httpIo(), &state.write_buffer);
-        state.input = .empty;
-        state.consumed = 0;
-        state.request = null;
-        state.method = "";
-        state.target = "";
-        state.head = "";
-        state.body = "";
-        state.keep_alive = false;
-        state.is_websocket = false;
-        state.ws_closed = false;
-        state.ws_peer_closed = false;
-        state.ws_frag_opcode = 0;
-        state.ws_frag = .empty;
-        state.ws_msg_op = 0;
-        state.ws_msg_data = "";
-        const connection_handle = allocHandle();
-        serverStateType().connections.put(allocator, connection_handle, state) catch {
-            state.stream.close(httpIo());
-            allocator.destroy(state);
-            setLastError(2);
-            return 0;
-        };
-        return connection_handle;
-    }
-
-    pub fn accept(handle: i64) i64 {
-        clearLastError();
-        const listener = serverStateType().listeners.get(handle) orelse {
-            setLastError(1);
-            return 0;
-        };
-        return acceptConnection(listener);
-    }
-
-
-    // 1 = a complete request is parsed and buffered (use `takeRequest`),
-    // 0 = not enough bytes yet (retry on the next Readable event), -1 = error.
-    // Never reads the socket: `poll` fills `input`.
-    pub fn readRequest(handle: i64) i64 {
-        clearLastError();
-        const state = connectionOf(handle) orelse {
-            setLastError(1);
-            return -1;
-        };
-        // A parsed request not yet responded to is still ready (idempotent).
-        if (state.request != null) return 1;
-
-        const buf = state.input.items;
-        const head_end = std.mem.indexOf(u8, buf, "\r\n\r\n") orelse return 0;
-        const head_len = head_end + 4;
-        const body_len = requestBodyLength(buf[0..head_len]) catch {
-            setLastError(1);
-            return -1;
-        };
-        const total = head_len + body_len;
-        if (buf.len < total) return 0;
-
-        freeOwned(&state.target);
-        freeOwned(&state.head);
-        freeOwned(&state.body);
-        state.request_reader = std.Io.Reader.fixed(buf[0..total]);
-        state.server = std.http.Server.init(&state.request_reader, &state.writer.interface);
-        state.consumed = total;
-        state.request = state.server.receiveHead() catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            state.request = null;
-            return -1;
-        };
-        const request = &state.request.?;
-        state.method = @tagName(request.head.method);
-        state.target = copyToPage(request.head.target) orelse {
-            setLastError(2);
-            return -1;
-        };
-        state.head = copyToPage(request.head_buffer) orelse {
-            setLastError(2);
-            return -1;
-        };
-        state.keep_alive = request.head.keep_alive;
-        if (request.head.method.requestHasBody()) {
-            var transfer_buffer: [16 * 1024]u8 = undefined;
-            // `readerExpectContinue` answers `Expect: 100-continue` (writing the
-            // interim response) and is a no-op when the header is absent.
-            const body_reader = request.readerExpectContinue(&transfer_buffer) catch |err| {
-                setLastError(mapNetworkError(@errorName(err)));
-                return -1;
-            };
-            var collected: std.array_list.Aligned(u8, .of(u8)) = .empty;
-            defer collected.deinit(std.heap.page_allocator);
-            body_reader.appendRemaining(std.heap.page_allocator, &collected, .limited(1024 * 1024)) catch |err| {
-                setLastError(mapNetworkError(@errorName(err)));
-                return -1;
-            };
-            state.body = copyToPage(collected.items) orelse {
-                setLastError(2);
-                return -1;
-            };
-        } else {
-            state.body = "";
-        }
-        return 1;
-    }
-
-    pub fn isWebSocket(handle: i64) bool {
-        const state = connectionOf(handle) orelse return false;
-        return state.is_websocket;
-    }
-
-    pub fn requestMethod(handle: i64) []const u8 {
-        const state = connectionOf(handle) orelse return "";
-        return state.method;
-    }
-
-    pub fn requestTarget(handle: i64) []const u8 {
-        const state = connectionOf(handle) orelse return "";
-        return state.target;
-    }
-
-    pub fn requestHead(handle: i64) []const u8 {
-        const state = connectionOf(handle) orelse return "";
-        return state.head;
-    }
-
-    // The body captured by the last successful `readRequest`.
-    pub fn requestBody(handle: i64) []const u8 {
-        const state = connectionOf(handle) orelse return "";
-        return state.body;
-    }
-
-    pub fn keepAlive(handle: i64) bool {
-        const state = connectionOf(handle) orelse return false;
-        return state.keep_alive;
-    }
-
-    // Route-pattern matching. The Router itself is Doxa data (verbs, patterns,
-    // ids); only the pattern/path segmentation lives here, where splitting a
-    // string is a library call rather than a hand-rolled scan. Captures are
-    // copied into process-lifetime cells and drained by the Doxa matcher before
-    // the next call, mirroring the take-and-clear idiom used elsewhere. The
-    // copies are load-bearing: the cells must never alias the caller's arena
-    // strings, which the memory model forbids for process-lifetime state.
-    fn routeStateType() type {
-        return struct {
-            var param_names: std.ArrayList([]const u8) = .empty;
-            var param_values: std.ArrayList([]const u8) = .empty;
-        };
-    }
-
-    fn freeCapture(bytes: []const u8) void {
-        if (bytes.len != 0) std.heap.page_allocator.free(@constCast(bytes));
-    }
-
-    fn clearRouteCaptures() void {
-        const state = routeStateType();
-        for (state.param_names.items) |name| freeCapture(name);
-        for (state.param_values.items) |value| freeCapture(value);
-        state.param_names.clearRetainingCapacity();
-        state.param_values.clearRetainingCapacity();
-    }
-
-    fn segmentEnd(text: []const u8, start: usize) usize {
-        var i = start;
-        while (i < text.len and text[i] != '/') : (i += 1) {}
-        return i;
-    }
-
-    // A `:name` segment captures the corresponding path segment as `name`.
-    // `{}` is deliberately avoided: Doxa string literals interpolate on `{`,
-    // so a brace-delimited placeholder could never be written literally.
-    // Returns 1 on match, 0 on mismatch, and -1 on OOM.
-    pub fn matchPattern(pattern: []const u8, path: []const u8) i64 {
-        clearRouteCaptures();
-        const state = routeStateType();
-        var p: usize = 0;
-        var q: usize = 0;
-        while (true) {
-            const p_end = segmentEnd(pattern, p);
-            const q_end = segmentEnd(path, q);
-            const p_segment = pattern[p..p_end];
-            const q_segment = path[q..q_end];
-            if (p_segment.len >= 2 and p_segment[0] == ':') {
-                const name = copyToPage(p_segment[1..]) orelse return -1;
-                const value = copyToPage(q_segment) orelse {
-                    freeCapture(name);
-                    return -1;
-                };
-                state.param_names.append(std.heap.page_allocator, name) catch {
-                    freeCapture(name);
-                    freeCapture(value);
-                    return -1;
-                };
-                state.param_values.append(std.heap.page_allocator, value) catch {
-                    _ = state.param_names.pop();
-                    freeCapture(name);
-                    freeCapture(value);
-                    return -1;
-                };
-            } else if (!std.mem.eql(u8, p_segment, q_segment)) {
-                return 0;
-            }
-            const p_done = p_end >= pattern.len;
-            const q_done = q_end >= path.len;
-            if (p_done or q_done) return if (p_done and q_done) 1 else 0;
-            p = p_end + 1;
-            q = q_end + 1;
-        }
-    }
-
-    pub fn paramCount() i64 {
-        return @intCast(routeStateType().param_names.items.len);
-    }
-
-    pub fn paramNameAt(index: i64) []const u8 {
-        if (index < 0) return "";
-        const state = routeStateType();
-        const i: usize = @intCast(index);
-        if (i >= state.param_names.items.len) return "";
-        return state.param_names.items[i];
-    }
-
-    pub fn paramValueAt(index: i64) []const u8 {
-        if (index < 0) return "";
-        const state = routeStateType();
-        const i: usize = @intCast(index);
-        if (i >= state.param_values.items.len) return "";
-        return state.param_values.items[i];
-    }
-
-
-
-    fn validHeaderBlob(headers: []const u8) bool {
-        if (std.mem.indexOf(u8, headers, "\r\n\r\n") != null) return false;
-        var lines = std.mem.splitSequence(u8, headers, "\r\n");
-        while (lines.next()) |line| {
-            if (line.len == 0) continue;
-            const colon = std.mem.indexOfScalar(u8, line, ':') orelse return false;
-            if (colon == 0) return false;
-            const name = line[0..colon];
-            if (std.ascii.eqlIgnoreCase(name, "content-length") or
-                std.ascii.eqlIgnoreCase(name, "transfer-encoding") or
-                std.ascii.eqlIgnoreCase(name, "connection")) return false;
-            for (name) |c| {
-                if (c <= 32 or c >= 127 or c == ':') return false;
-            }
-        }
-        for (headers, 0..) |c, i| {
-            if (c == '\n' and (i == 0 or headers[i - 1] != '\r')) return false;
-            if (c == '\r' and (i + 1 == headers.len or headers[i + 1] != '\n')) return false;
-        }
-        return true;
-    }
-
-    pub fn respond(handle: i64, status: i64, headers: []const u8, body: []const u8) void {
-        clearLastError();
-        const state = connectionOf(handle) orelse {
-            setLastError(1);
-            return;
-        };
-        const request = if (state.request) |*request| request else {
-            setLastError(1);
-            return;
-        };
-        if (status < 100 or status > 999 or !validHeaderBlob(headers)) {
-            setLastError(1);
-            return;
-        }
-        const parsed = parseRequestHeaders(std.heap.page_allocator, headers) catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return;
-        };
-        defer parsed.deinit();
-        request.respond(body, .{
-            .status = @enumFromInt(@as(u10, @intCast(status))),
-            .keep_alive = state.keep_alive,
-            .extra_headers = parsed.items,
-        }) catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return;
-        };
-        state.request = null;
-        consumeInput(state, state.consumed);
-        state.consumed = 0;
-    }
-
-    // Server-side WebSockets. Zig ships the handshake (`respondWebSocket`) and
-    // the write half (`WebSocket.writeMessage`) but its `readSmallMessage` is
-    // single-frame, input-buffer-bounded, rejects fragmentation, and silently
-    // drops pongs, so the read path is a real frame codec here. Decoding consumes
-    // complete frames from the connection's input buffer (filled by `poll`) and
-    // returns `WsPending` when a frame is incomplete, so a slow sender never
-    // stalls the loop. A fragmented message is reassembled in `ws_frag` up to the
-    // size cap before it is surfaced.
-    fn appendUnmasked(dest: *std.ArrayList(u8), payload: []const u8, mask: [4]u8) std.mem.Allocator.Error!void {
-        try dest.ensureUnusedCapacity(std.heap.page_allocator, payload.len);
-        for (payload, 0..) |byte, i| dest.appendAssumeCapacity(byte ^ mask[i % 4]);
-    }
-
-    fn wsOpcodeFromCode(code: i64) ?std.http.Server.WebSocket.Opcode {
-        return switch (code) {
-            1 => .text,
-            2 => .binary,
-            8 => .connection_close,
-            9 => .ping,
-            10 => .pong,
-            else => null,
-        };
-    }
-
-    fn wsCodeFromOpcode(op: std.http.Server.WebSocket.Opcode) i64 {
-        return switch (op) {
-            .text => 1,
-            .binary => 2,
-            .connection_close => 8,
-            .ping => 9,
-            .pong => 10,
-            else => 0,
-        };
-    }
-
-    fn wsOf(state: *connectionStateType()) std.http.Server.WebSocket {
-        return .{
-            .key = "",
-            // Only `output` is used by `writeMessage`; `input` must merely be a
-            // live pointer.
-            .input = &state.request_reader,
-            .output = &state.writer.interface,
-        };
-    }
-
-    fn wsWrite(state: *connectionStateType(), opcode: std.http.Server.WebSocket.Opcode, data: []const u8) !void {
-        var ws = wsOf(state);
-        try ws.writeMessage(data, opcode);
-    }
-
-    // Fail the WebSocket connection (RFC 6455 §7.1.7): emit a Close frame with
-    // the status code, then stop reading and writing.
-    fn wsFail(state: *connectionStateType(), code: u16) void {
-        var payload: [2]u8 = undefined;
-        std.mem.writeInt(u16, &payload, code, .big);
-        wsWrite(state, .connection_close, &payload) catch {};
-        state.ws_closed = true;
-    }
-
-    // RFC 6455 §5.5.1/§7.4.1: a close payload is either empty, or a 2-byte
-    // status code followed by a UTF-8 reason. A 1-byte payload, an illegal
-    // status code, or a non-UTF-8 reason is a protocol failure.
-    fn validateClosePayload(payload: []const u8) (error{ WsProtocol, WsInvalidData })!void {
-        if (payload.len == 0) return;
-        if (payload.len == 1) return error.WsProtocol;
-        const code = std.mem.readInt(u16, payload[0..2], .big);
-        const code_ok = switch (code) {
-            1000...1003, 1007...1014, 3000...4999 => true,
-            else => false,
-        };
-        if (!code_ok) return error.WsProtocol;
-        if (!std.unicode.utf8ValidateSlice(payload[2..])) return error.WsInvalidData;
-    }
-
-    // Decodes and consumes one WebSocket frame (reassembling continuations) from
-    // the connection's input buffer. Returns `WsPending` when the buffer does not
-    // hold a complete frame yet; never touches the socket.
-    fn wsDecode(state: *connectionStateType()) (std.mem.Allocator.Error || error{ WsProtocol, WsOversize, WsInvalidData, WsPending })!std.http.Server.WebSocket.Opcode {
-        const max_message_size: usize = 16 * 1024 * 1024;
-        while (true) {
-            const buf = state.input.items;
-            if (buf.len < 2) return error.WsPending;
-            const h0: std.http.Server.WebSocket.Header0 = @bitCast(buf[0]);
-            const h1: std.http.Server.WebSocket.Header1 = @bitCast(buf[1]);
-
-            const is_control = switch (h0.opcode) {
-                .connection_close, .ping, .pong => true,
-                .continuation, .text, .binary => false,
-                else => return error.WsProtocol,
-            };
-            if (h0.rsv1 != 0 or h0.rsv2 != 0 or h0.rsv3 != 0) return error.WsProtocol;
-            if (!h1.mask) return error.WsProtocol;
-            if (is_control and !h0.fin) return error.WsProtocol;
-
-            var pos: usize = undefined;
-            const len: usize = switch (h1.payload_len) {
-                .len16 => blk: {
-                    if (buf.len < 4) return error.WsPending;
-                    pos = 4;
-                    break :blk std.mem.readInt(u16, buf[2..4], .big);
-                },
-                .len64 => blk: {
-                    if (buf.len < 10) return error.WsPending;
-                    pos = 10;
-                    const wide = std.mem.readInt(u64, buf[2..10], .big);
-                    break :blk std.math.cast(usize, wide) orelse return error.WsOversize;
-                },
-                else => blk: {
-                    pos = 2;
-                    break :blk @intFromEnum(h1.payload_len);
-                },
-            };
-            if (is_control and len > 125) return error.WsProtocol;
-
-            // Reject on the declared length before any addition: `len` is a
-            // client-controlled 64-bit value, so `ws_frag.items.len + len` could
-            // overflow before the cap check. `max_message_size - ws_frag.items.len`
-            // cannot underflow (the cap keeps the accumulated length at or below
-            // `max_message_size`).
-            if (h0.opcode == .continuation) {
-                if (len > max_message_size - state.ws_frag.items.len) return error.WsOversize;
-            } else if (len > max_message_size) {
-                return error.WsOversize;
-            }
-
-            const frame_len = pos + 4 + len; // masking key (4) + payload
-            if (buf.len < frame_len) return error.WsPending;
-            const mask: [4]u8 = buf[pos..][0..4].*;
-
-            switch (h0.opcode) {
-                .continuation => {
-                    if (state.ws_frag_opcode == 0) return error.WsProtocol;
-                    try appendUnmasked(&state.ws_frag, buf[pos + 4 .. frame_len], mask);
-                    consumeInput(state, frame_len);
-                    if (h0.fin) {
-                        const is_text = state.ws_frag_opcode == 1;
-                        state.ws_frag_opcode = 0;
-                        if (is_text and !std.unicode.utf8ValidateSlice(state.ws_frag.items)) return error.WsInvalidData;
-                        state.ws_msg_data = state.ws_frag.items;
-                        return if (is_text) .text else .binary;
-                    }
-                },
-                .text, .binary => {
-                    if (state.ws_frag_opcode != 0) return error.WsProtocol;
-                    state.ws_frag.clearRetainingCapacity();
-                    try appendUnmasked(&state.ws_frag, buf[pos + 4 .. frame_len], mask);
-                    consumeInput(state, frame_len);
-                    if (h0.fin) {
-                        // RFC 6455 §5.6: a text message must be valid UTF-8 (Doxa
-                        // strings are UTF-8, so surfacing non-UTF-8 would violate
-                        // the language's own invariant too).
-                        if (h0.opcode == .text and !std.unicode.utf8ValidateSlice(state.ws_frag.items)) return error.WsInvalidData;
-                        state.ws_msg_data = state.ws_frag.items;
-                        return h0.opcode;
-                    }
-                    state.ws_frag_opcode = @intFromEnum(h0.opcode);
-                },
-                .ping, .pong, .connection_close => {
-                    const payload = buf[pos + 4 .. frame_len];
-                    for (payload, 0..) |byte, i| state.ws_control[i] = byte ^ mask[i % 4];
-                    consumeInput(state, frame_len);
-                    if (h0.opcode == .connection_close) {
-                        try validateClosePayload(state.ws_control[0..len]);
-                        state.ws_peer_closed = true;
-                    }
-                    state.ws_msg_data = state.ws_control[0..len];
-                    return h0.opcode;
-                },
-                else => return error.WsProtocol,
-            }
-        }
-    }
-
-    // Upgrade a request that asked to switch protocols to a WebSocket. The
-    // connection must hold a pending request from `readRequest`.
-    pub fn upgradeWebSocket(handle: i64) i64 {
-        clearLastError();
-        const state = connectionOf(handle) orelse {
-            setLastError(1);
-            return 1;
-        };
-        if (state.is_websocket) {
-            setLastError(1);
-            return 1;
-        }
-        const request = if (state.request) |*request| request else {
-            setLastError(1);
-            return 1;
-        };
-        const key = switch (request.upgradeRequested()) {
-            .websocket => |maybe_key| maybe_key orelse {
-                setLastError(1);
-                return 1;
-            },
-            else => {
-                setLastError(1);
-                return 1;
-            },
-        };
-        _ = request.respondWebSocket(.{ .key = key }) catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return 1;
-        };
-        state.writer.interface.flush() catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return 1;
-        };
-        state.is_websocket = true;
-        state.request = null;
-        // Drop the handshake bytes; any pipelined frames remain in `input`.
-        consumeInput(state, state.consumed);
-        state.consumed = 0;
-        return 0;
-    }
-
-    pub fn wsSend(handle: i64, op: i64, data: []const u8) void {
-        clearLastError();
-        const state = connectionOf(handle) orelse {
-            setLastError(1);
-            return;
-        };
-        if (!state.is_websocket or state.ws_closed) {
-            setLastError(1);
-            return;
-        }
-        const opcode = wsOpcodeFromCode(op) orelse {
-            setLastError(1);
-            return;
-        };
-        wsWrite(state, opcode, data) catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return;
-        };
-    }
-
-    // 1 = message ready (`wsMessageOp`/`wsMessageData`), 0 = need more bytes
-    // (retry on the next Readable event), 2 = peer closed, -1 = error with
-    // `takeLastErrorCode` set.
-    pub fn wsNext(handle: i64) i64 {
-        clearLastError();
-        const state = connectionOf(handle) orelse {
-            setLastError(1);
-            return -1;
-        };
-        if (!state.is_websocket) {
-            setLastError(1);
-            return -1;
-        }
-        if (state.ws_closed or state.ws_peer_closed) return 2;
-        const opcode = wsDecode(state) catch |err| switch (err) {
-            error.WsPending => return 0,
-            error.WsOversize => {
-                wsFail(state, 1009);
-                setLastError(113);
-                return -1;
-            },
-            error.WsProtocol => {
-                wsFail(state, 1002);
-                setLastError(113);
-                return -1;
-            },
-            error.WsInvalidData => {
-                wsFail(state, 1007);
-                setLastError(113);
-                return -1;
-            },
-            error.OutOfMemory => {
-                setLastError(2);
-                return -1;
-            },
-        };
-        state.ws_msg_op = wsCodeFromOpcode(opcode);
-        return 1;
-    }
-
-    pub fn wsMessageOp(handle: i64) i64 {
-        const state = connectionOf(handle) orelse return 0;
-        return state.ws_msg_op;
-    }
-
-    pub fn wsMessageData(handle: i64) []const u8 {
-        const state = connectionOf(handle) orelse return "";
-        return state.ws_msg_data;
-    }
-
-    // Whether undecoded bytes are already buffered for the connection.
-    pub fn wsBuffered(handle: i64) bool {
-        const state = connectionOf(handle) orelse return false;
-        return state.input.items.len > 0;
-    }
-
-    pub fn close(handle: i64) void {
-        clearLastError();
-        if (serverStateType().connections.fetchRemove(handle)) |entry| {
-            destroyConnection(entry.value);
-            return;
-        }
-        if (serverStateType().listeners.fetchRemove(handle)) |entry| {
-            const socket: std.Io.net.Socket = .{
-                .handle = entry.value.socket_handle,
-                .address = entry.value.address,
-            };
-            socket.close(httpIo());
-            return;
-        }
-        setLastError(1);
-    }
-
-    // Readiness polling over the listener plus every live connection. Event
-    // kinds are 1 = a new connection was accepted, 2 = readable, 3 = the peer
-    // closed or errored. The loop owns the wait; Doxa only drains `Event[]`.
-    fn eventStateType() type {
-        return struct {
-            var handles: std.ArrayList(i64) = .empty;
-            var kinds: std.ArrayList(i64) = .empty;
-        };
-    }
-
-    pub fn eventCount() i64 {
-        return @intCast(eventStateType().handles.items.len);
-    }
-
-    pub fn eventHandle(index: i64) i64 {
-        if (index < 0 or index >= eventCount()) return 0;
-        return eventStateType().handles.items[@intCast(index)];
-    }
-
-    pub fn eventKind(index: i64) i64 {
-        if (index < 0 or index >= eventCount()) return 0;
-        return eventStateType().kinds.items[@intCast(index)];
-    }
-
-    fn pushEvent(handle: i64, kind: i64) void {
-        const state = eventStateType();
-        state.handles.append(std.heap.page_allocator, handle) catch return;
-        state.kinds.append(std.heap.page_allocator, kind) catch return;
-    }
-
-    // Each socket is polled through the Threaded backend's own APC batch, one
-    // `AFD_POLL` per handle, submitted concurrently. AFD cannot aggregate
-    // handles from different endpoints in a single poll (a second exclusive
-    // poll is rejected, and `NtCancelIoFileEx` never completes one), so the
-    // wait gives every poll a bounded timeout, lets them all complete
-    // naturally, and reports what became ready. This keeps the whole wait
-    // inside the backend's alertable APC discipline instead of a serial tick.
-    fn waitSet(handles: []const std.Io.net.Socket.Handle, listener_slot: usize, timeout_ms: i64, ready: []bool, closed: []bool) void {
-        if (comptime builtin.os.tag == .windows) {
-            const AfdPollHandle = extern struct {
-                handle: std.os.windows.HANDLE,
-                events: u32,
-                status: std.os.windows.NTSTATUS,
-            };
-            const AfdPoll = extern struct {
-                timeout: i64,
-                count: u32,
-                exclusive: std.os.windows.BOOLEAN,
-                padding: [3]u8,
-                handles: [1]AfdPollHandle,
-            };
-            const n = handles.len;
-            if (n == 0) return;
-            const io = httpIo();
-            const allocator = std.heap.page_allocator;
-            // Sized to the live handle count: one AFD_POLL per socket. The old
-            // fixed 64-slot stack buffers silently dropped connections beyond 64.
-            const polls = allocator.alloc(AfdPoll, n) catch return;
-            defer allocator.free(polls);
-            const storage = allocator.alloc(std.Io.Operation.Storage, n) catch return;
-            defer allocator.free(storage);
-            const tick_ms: i64 = 10;
-            const immediate = timeout_ms == 0;
-            const tick_100ns: i64 = if (immediate) 1 else tick_ms * std.time.ns_per_ms / 100;
-            var waited_ms: i64 = 0;
-            while (true) {
-                var batch = std.Io.Batch.init(storage);
-                for (handles[0..n], 0..) |native, i| {
-                    polls[i] = .{
-                        .timeout = -tick_100ns,
-                        .count = 1,
-                        .exclusive = .FALSE,
-                        .padding = .{ 0, 0, 0 },
-                        .handles = .{.{
-                            .handle = native,
-                            // Accept readiness for the listener; receive +
-                            // peer-close for connected sockets (AFD.POLL bits).
-                            .events = if (i == listener_slot)
-                                0x0080 | 0x0010 | 0x0020
-                            else
-                                0x0001 | 0x0008 | 0x0010 | 0x0020,
-                            .status = .SUCCESS,
-                        }},
-                    };
-                    const bytes = std.mem.asBytes(&polls[i]);
-                    _ = batch.add(.{ .device_io_control = .{
-                        .file = .{ .handle = native, .flags = .{ .nonblocking = true } },
-                        .code = std.os.windows.IOCTL.AFD.POLL,
-                        .in = bytes,
-                        .out = bytes,
-                    } });
-                }
-                var any = false;
-                const tick_deadline: std.Io.Timeout = .{ .deadline = .fromNow(
-                    httpIoStateType().base_io,
-                    .{
-                        .raw = .{ .nanoseconds = @as(i96, tick_ms + 100) * std.time.ns_per_ms },
-                        .clock = .awake,
-                    },
-                ) };
-                while (batch.submitted.head != .none or batch.pending.head != .none or batch.completed.head != .none) {
-                    if (batch.completed.head == .none) {
-                        batch.awaitConcurrent(io, tick_deadline) catch break;
-                    }
-                    while (batch.next()) |completion| {
-                        const i: usize = completion.index;
-                        if (completion.result.device_io_control.u.Status != .SUCCESS) continue;
-                        const events = polls[i].handles[0].events;
-                        const status = polls[i].handles[0].status;
-                        if (i == listener_slot) {
-                            if (events & (0x0080 | 0x0010 | 0x0020) != 0) {
-                                ready[i] = true;
-                                any = true;
-                            }
-                        } else if (events & 0x0001 != 0) {
-                            ready[i] = true;
-                            any = true;
-                        } else if (events & (0x0008 | 0x0010 | 0x0020) != 0 or
-                            status == .CONNECTION_RESET or status == .CONNECTION_ABORTED)
-                        {
-                            closed[i] = true;
-                            any = true;
-                        }
-                    }
-                }
-                // Every poll in the batch is bounded by the tick, so before the
-                // stack buffers go away, wait out any stragglers.
-                while (batch.pending.head != .none) std.Io.Threaded.waitForApcOrAlert();
-                if (any or immediate) return;
-                waited_ms += tick_ms;
-                if (timeout_ms >= 0 and waited_ms >= timeout_ms) return;
-            }
-        }
-
-        if (comptime builtin.os.tag == .wasi or builtin.os.tag == .uefi or builtin.os.tag == .freestanding) return;
-
-
-        const allocator = std.heap.page_allocator;
-        const fds = allocator.alloc(std.posix.pollfd, handles.len) catch return;
-        defer allocator.free(fds);
-        for (handles, 0..) |native, i| {
-            fds[i] = .{ .fd = native, .events = std.posix.POLL.IN, .revents = 0 };
-        }
-        const timeout_i32: i32 = if (timeout_ms < 0)
-            -1
-        else
-            @intCast(@min(timeout_ms, std.math.maxInt(i32)));
-        const waited = std.posix.poll(fds, timeout_i32) catch return;
-        if (waited == 0) return;
-        for (handles, 0..) |_, i| {
-            const revents = fds[i].revents;
-            if (revents & std.posix.POLL.IN != 0) {
-                ready[i] = true;
-            } else if (revents & (std.posix.POLL.HUP | std.posix.POLL.ERR | std.posix.POLL.NVAL) != 0) {
-                closed[i] = true;
-            }
-        }
-    }
-
-    pub fn poll(listener_handle: i64, timeout_ms: i64) i64 {
-        clearLastError();
-        const state = eventStateType();
-        state.handles.clearRetainingCapacity();
-        state.kinds.clearRetainingCapacity();
-        const listener = serverStateType().listeners.get(listener_handle) orelse {
-            setLastError(1);
-            return -1;
-        };
-        // One slot for the listener plus every live connection; sized to the
-        // live count so there is no arbitrary connection ceiling.
-        const total = 1 + serverStateType().connections.count();
-        const allocator = std.heap.page_allocator;
-        const handles = allocator.alloc(std.Io.net.Socket.Handle, total) catch {
-            setLastError(2);
-            return -1;
-        };
-        defer allocator.free(handles);
-        const ids = allocator.alloc(i64, total) catch {
-            setLastError(2);
-            return -1;
-        };
-        defer allocator.free(ids);
-        const ready = allocator.alloc(bool, total) catch {
-            setLastError(2);
-            return -1;
-        };
-        defer allocator.free(ready);
-        const closed = allocator.alloc(bool, total) catch {
-            setLastError(2);
-            return -1;
-        };
-        defer allocator.free(closed);
-        handles[0] = listener.socket_handle;
-        ids[0] = listener_handle;
-        var n: usize = 1;
-        var it = serverStateType().connections.iterator();
-        while (it.next()) |entry| {
-            handles[n] = entry.value_ptr.*.stream.socket.handle;
-            ids[n] = entry.key_ptr.*;
-            n += 1;
-        }
-        @memset(ready[0..n], false);
-        @memset(closed[0..n], false);
-        waitSet(handles[0..n], 0, timeout_ms, ready[0..n], closed[0..n]);
-        // Slot 0 is always the listener.
-        if (ready[0]) {
-            const connection = acceptConnection(listener);
-            if (connection != 0) pushEvent(connection, 1);
-        }
-        var i: usize = 1;
-        while (i < n) : (i += 1) {
-            if (ready[i]) {
-                // `poll` is the only reader of a socket's bytes: pull what is
-                // available into the connection buffer, then report readiness.
-                // A zero-length read is EOF, reported as closed.
-                const connection = connectionOf(ids[i]) orelse continue;
-                if (drainInput(connection)) {
-                    pushEvent(ids[i], 2);
-                } else {
-                    pushEvent(ids[i], 3);
-                }
-            } else if (closed[i]) {
-                pushEvent(ids[i], 3);
-            }
-        }
-        return @intCast(state.handles.items.len);
-    }
-
-    fn clientStateType() type {
-        return struct {
-            var client: ?std.http.Client = null;
-            var status_code: i64 = 0;
-            var raw_headers: []const u8 = "";
-            var owned_raw_headers: []const u8 = "";
-        };
-    }
-
-    fn httpClient() *std.http.Client {
-        if (clientStateType().client == null) {
-            clientStateType().client = .{
-                .allocator = std.heap.page_allocator,
-                .io = httpIo(),
-            };
-        }
-        return &clientStateType().client.?;
-    }
-
-    fn copyToPage(bytes: []const u8) ?[]const u8 {
-        if (bytes.len == 0) return "";
-        return std.heap.page_allocator.dupe(u8, bytes) catch null;
-    }
-
-    pub fn takeStatusCode() i64 {
-        const status = clientStateType().status_code;
-        clientStateType().status_code = 0;
-        return status;
-    }
-
-    pub fn takeResponseHeaders() []const u8 {
-        const headers = clientStateType().raw_headers;
-        clientStateType().raw_headers = "";
-        return headers;
-    }
-
-    fn requestResultType() type {
-        return struct {
-            var body: []const u8 = "";
-        };
-    }
-
-    // Free the page-owned response buffers. `takeResponseHeaders` and the body
-    // return cross the ABI with a fresh clone into the call-site arena, so once
-    // a Doxa wrapper has drained them the Zig copies are unreachable and must be
-    // released: the take-and-clear cells own page memory, not arena memory, and
-    // "nothing survives the call" (plan/http.md decision 3) is the contract.
-    // Idempotent; `requestCore` also calls it on entry as a backstop.
-    pub fn releaseResponse() void {
-        if (clientStateType().owned_raw_headers.len != 0) {
-            std.heap.page_allocator.free(@constCast(clientStateType().owned_raw_headers));
-        }
-        if (requestResultType().body.len != 0) {
-            std.heap.page_allocator.free(@constCast(requestResultType().body));
-        }
-        clientStateType().owned_raw_headers = "";
-        requestResultType().body = "";
-        clientStateType().raw_headers = "";
-        clientStateType().status_code = 0;
-    }
-
-    fn requestCore(
-        method_name: []const u8,
-        url: []const u8,
-        header_blob: []const u8,
-        body_bytes: []const u8,
-        timeout_ms: i64,
-        max_redirects: i64,
-        response_writer: ?*std.Io.Writer,
-    ) bool {
-        clearLastError();
-        releaseResponse();
-        if (url.len == 0 or timeout_ms < 0 or max_redirects < 0 or max_redirects >= std.math.maxInt(u16)) {
-            setLastError(1);
-            return false;
-        }
-        var method = parseMethod(method_name) orelse {
-            setLastError(1);
-            return false;
-        };
-        if (body_bytes.len != 0 and !method.requestHasBody()) {
-            setLastError(1);
-            return false;
-        }
-
-        const allocator = std.heap.page_allocator;
-        var headers = parseRequestHeaders(allocator, header_blob) catch |err| {
-            setLastError(mapNetworkError(@errorName(err)));
-            return false;
-        };
-        defer headers.deinit();
-        var uri = std.Uri.parse(url) catch {
-            setLastError(1);
-            return false;
-        };
-        setReadTimeout(timeout_ms);
-        defer setReadTimeout(0);
-
-        var redirects_left: u16 = @intCast(max_redirects);
-        var redirect_buffers: [2][8 * 1024]u8 = undefined;
-        var redirect_buffer_index: usize = 0;
-        while (true) {
-            var client_request = httpClient().request(method, uri, .{
-                .redirect_behavior = .unhandled,
-                .headers = .{ .accept_encoding = .omit },
-                .extra_headers = headers.items,
-            }) catch |err| {
-                setLastError(mapNetworkError(@errorName(err)));
-                return false;
-            };
-            defer client_request.deinit();
-
-            if (method.requestHasBody()) {
-                const mutable_body = allocator.dupe(u8, body_bytes) catch {
-                    setLastError(2);
-                    return false;
-                };
-                defer allocator.free(mutable_body);
-                client_request.sendBodyComplete(mutable_body) catch |err| {
-                    if (client_request.connection) |connection| {
-                        if (connection.stream_writer.err) |write_err| {
-                            setLastError(mapNetworkError(@errorName(write_err)));
-                            return false;
-                        }
-                    }
-                    setLastError(mapNetworkError(@errorName(err)));
-                    return false;
-                };
-            } else {
-                client_request.sendBodiless() catch |err| {
-                    setLastError(mapNetworkError(@errorName(err)));
-                    return false;
-                };
-            }
-
-            var response = client_request.receiveHead(&.{}) catch |err| {
-                if (client_request.connection) |connection| {
-                    if (connection.stream_reader.err) |read_err| {
-                        setLastError(mapNetworkError(@errorName(read_err)));
-                        return false;
-                    }
-                }
-                setLastError(mapNetworkError(@errorName(err)));
-                return false;
-            };
-
-            if (response.head.status.class() == .redirect and redirects_left > 0) {
-                const location = response.head.location orelse {
-                    setLastError(114);
-                    return false;
-                };
-                redirect_buffer_index = 1 - redirect_buffer_index;
-                const redirect_buffer = &redirect_buffers[redirect_buffer_index];
-                if (location.len > redirect_buffer.len) {
-                    setLastError(114);
-                    return false;
-                }
-                @memcpy(redirect_buffer[0..location.len], location);
-                const old_uri = uri;
-                var aux: []u8 = redirect_buffer[0..];
-                uri = uri.resolveInPlace(location.len, &aux) catch {
-                    setLastError(114);
-                    return false;
-                };
-                var discard_buffer: [1024]u8 = undefined;
-                const redirect_reader = response.reader(&discard_buffer);
-                _ = redirect_reader.discardRemaining() catch |err| {
-                    setLastError(mapNetworkError(@errorName(err)));
-                    return false;
-                };
-                if (!sameOrigin(old_uri, uri)) stripRedirectCredentials(&headers);
-                redirects_left -= 1;
-                if (response.head.status == .see_other or
-                    ((response.head.status == .moved_permanently or response.head.status == .found) and method == .POST))
-                {
-                    method = .GET;
-                }
-                continue;
-            }
-            if (response.head.status.class() == .redirect and redirects_left == 0 and response.head.location != null) {
-                setLastError(114);
-                return false;
-            }
-
-            clientStateType().status_code = @intFromEnum(response.head.status);
-            clientStateType().owned_raw_headers = copyToPage(response.head.bytes) orelse {
-                setLastError(2);
-                return false;
-            };
-            clientStateType().raw_headers = clientStateType().owned_raw_headers;
-            var transfer_buffer: [16 * 1024]u8 = undefined;
-            const reader = response.reader(&transfer_buffer);
-            if (response_writer) |writer| {
-                _ = reader.streamRemaining(writer) catch |err| {
-                    if (response.bodyErr()) |read_err| {
-                        setLastError(mapNetworkError(@errorName(read_err)));
-                    } else {
-                        const common = mapCommon(@errorName(err));
-                        setLastError(if (common >= 0) common else if (response_writer != null) 107 else mapNetworkError(@errorName(err)));
-                    }
-                    clientStateType().status_code = 0;
-                    clientStateType().raw_headers = "";
-                    return false;
-                };
-                return true;
-            }
-
-            var buffered_body: std.array_list.Aligned(u8, .of(u8)) = .empty;
-            defer buffered_body.deinit(allocator);
-            reader.appendRemaining(allocator, &buffered_body, .unlimited) catch |err| {
-                if (response.bodyErr()) |read_err| {
-                    setLastError(mapNetworkError(@errorName(read_err)));
-                } else {
-                    setLastError(mapNetworkError(@errorName(err)));
-                }
-                clientStateType().status_code = 0;
-                clientStateType().raw_headers = "";
-                return false;
-            };
-            requestResultType().body = copyToPage(buffered_body.items) orelse {
-                setLastError(2);
-                return false;
-            };
-            return true;
-        }
-    }
-
-    pub fn performRequest(method: []const u8, url: []const u8, headers: []const u8, body: []const u8, timeout_ms: i64, max_redirects: i64) []const u8 {
-        if (requestCore(method, url, headers, body, timeout_ms, max_redirects, null)) return requestResultType().body;
-        return "";
-    }
-
-    pub fn requestToFile(method: []const u8, url: []const u8, headers: []const u8, body: []const u8, timeout_ms: i64, max_redirects: i64, destination: []const u8) void {
-        clearLastError();
-        const io = httpIo();
-        var file = std.Io.Dir.cwd().createFile(io, destination, .{}) catch |err| {
-            const common = mapCommon(@errorName(err));
-            setLastError(if (common >= 0) common else 108);
-            return;
-        };
-        defer file.close(io);
-        var file_buffer: [16 * 1024]u8 = undefined;
-        var file_writer = file.writer(io, &file_buffer);
-        if (!requestCore(method, url, headers, body, timeout_ms, max_redirects, &file_writer.interface)) {
-            releaseResponse();
-            return;
-        }
-        file_writer.interface.flush() catch |err| {
-            const common = mapCommon(@errorName(err));
-            setLastError(if (common >= 0) common else 107);
-            releaseResponse();
-            return;
-        };
-        const status = clientStateType().status_code;
-        if (status < 200 or status >= 300) setLastError(116);
-        releaseResponse();
-    }
-
-    pub fn getText(url: []const u8, timeout_ms: i64) []const u8 {
-        return performRequest("GET", url, "", "", timeout_ms, 3);
-    }
-
-    fn headerAt(raw_headers: []const u8, wanted: usize) ?struct { name: []const u8, value: []const u8 } {
-        var lines = std.mem.splitSequence(u8, raw_headers, "\r\n");
-        _ = lines.next(); // status line
-        var index: usize = 0;
-        while (lines.next()) |line| {
-            if (line.len == 0) break;
-            const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
-            if (index == wanted) return .{
-                .name = line[0..colon],
-                .value = std.mem.trim(u8, line[colon + 1 ..], " \t"),
-            };
-            index += 1;
-        }
-        return null;
-    }
-
-    pub fn headerCount(raw_headers: []const u8) i64 {
-        var count: usize = 0;
-        while (headerAt(raw_headers, count) != null) : (count += 1) {}
-        return @intCast(count);
-    }
-
-    pub fn headerNameAt(raw_headers: []const u8, index: i64) []const u8 {
-        if (index < 0) return "";
-        return if (headerAt(raw_headers, @intCast(index))) |header| header.name else "";
-    }
-
-    pub fn headerValueAt(raw_headers: []const u8, index: i64) []const u8 {
-        if (index < 0) return "";
-        return if (headerAt(raw_headers, @intCast(index))) |header| header.value else "";
-    }
-
-    pub fn headerNameMatches(raw_headers: []const u8, index: i64, name: []const u8) bool {
-        if (index < 0) return false;
-        const header = headerAt(raw_headers, @intCast(index)) orelse return false;
-        return std.ascii.eqlIgnoreCase(header.name, name);
-    }
-
-    pub fn mapCommon(err_name: []const u8) i64 {
-        if (std.mem.eql(u8, err_name, "InvalidArgument")) return 1;
-        if (std.mem.eql(u8, err_name, "OutOfMemory")) return 2;
-        if (std.mem.eql(u8, err_name, "AccessDenied")) return 3;
-        if (std.mem.eql(u8, err_name, "PermissionDenied")) return 3;
-        if (std.mem.eql(u8, err_name, "NotSupported")) return 4;
-        if (std.mem.eql(u8, err_name, "OperationNotSupported")) return 4;
-        return -1;
-    }
-
-    pub fn filenameFromUrl(url: []const u8) []const u8 {
-        const query_idx = std.mem.indexOfScalar(u8, url, '?');
-        const without_query = if (query_idx) |idx| url[0..idx] else url;
-        const fragment_idx = std.mem.indexOfScalar(u8, without_query, '#');
-        const without_fragment = if (fragment_idx) |idx| without_query[0..idx] else without_query;
-        const trimmed = std.mem.trimEnd(u8, without_fragment, "/");
-        const slash_idx = std.mem.lastIndexOfScalar(u8, trimmed, '/');
-        const name = if (slash_idx) |idx| trimmed[idx + 1 ..] else trimmed;
-        return if (name.len == 0) "downloaded.bin" else name;
-    }
-
-    pub fn downloadUrl(url: []const u8, destination: []const u8) void {
-        if (url.len == 0 or destination.len == 0) {
-            clearLastError();
-            setLastError(1);
-            return;
-        }
-        requestToFile("GET", url, "", "", 30000, 3, destination);
-    }
-
-    pub fn download(url: []const u8) void {
-        clearLastError();
-        const name = filenameFromUrl(url);
-        downloadUrl(url, name);
-    }
-
-}
+/* The engine lives in `http.zig`: connections are served by Zig tasks and
+   reach this module as finished requests and messages, taken with `poll`.
+   Everything below is the single-threaded Doxa surface over it. */
+module HTTP from "http.zig"
 
 public function mapIOError(code :: int) returns error.StdError {
     return match code {
@@ -1608,14 +33,14 @@ public function mapIOError(code :: int) returns error.StdError {
     }
 }
 
-public function downloadUrl(url :: string, destination :: string) returns error.StdError {
+public function downloadUrl(url :: string, destination :: string) returns nothing | error.StdError {
     HTTP.downloadUrl(url, destination)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function download(url :: string) returns error.StdError {
+public function download(url :: string) returns nothing | error.StdError {
     HTTP.download(url)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -1626,6 +51,26 @@ public struct Response {
     status_code :: int,
     raw_headers :: string,
     body_text :: string,
+
+    /* Perform one request. The error arm means no response arrived; a non-2xx
+       status is still a `Response`. */
+    public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+        var header_blob is ""
+        for i while i < @length(req.headers) do i += 1 {
+            header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
+        }
+        const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
+        const status is HTTP.takeStatusCode()
+        const headers is HTTP.takeResponseHeaders()
+        const err is HTTP.takeLastErrorCode()
+        HTTP.releaseResponse()
+        if err == 0 then return $Response {
+            status_code is status,
+            raw_headers is headers,
+            body_text is value,
+        }
+        return mapIOError(err)
+    }
 
     public method statusCode() returns int {
         return this.status_code
@@ -1655,20 +100,6 @@ public struct Response {
     }
 }
 
-function performGet(url :: string, timeout_ms :: int) returns Response | error.StdError {
-    const value is HTTP.getText(url, timeout_ms)
-    const status is HTTP.takeStatusCode()
-    const headers is HTTP.takeResponseHeaders()
-    const err is HTTP.takeLastErrorCode()
-    HTTP.releaseResponse()
-    if err == 0 then return $Response {
-        status_code is status,
-        raw_headers is headers,
-        body_text is value,
-    }
-    return mapIOError(err)
-}
-
 public function listen(port :: int) returns int | error.StdError {
     const handle is HTTP.listen(port)
     const err is HTTP.takeLastErrorCode()
@@ -1695,6 +126,16 @@ public struct ServerRequest {
     public target :: string,
     public body_text :: string,
     raw_headers :: string,
+
+    /* The request `readRequest` reported. It stays available until `respond`. */
+    public function take(connection :: int) returns ServerRequest {
+        return $ServerRequest {
+            verb is HTTP.requestMethod(connection),
+            target is HTTP.requestTarget(connection),
+            body_text is HTTP.requestBody(connection),
+            raw_headers is HTTP.requestHead(connection),
+        }
+    }
 
     public method path() returns string {
         return this.target
@@ -1724,23 +165,13 @@ public struct ServerRequest {
     }
 }
 
-/* Parse the next request from the connection's buffer. Returns `1` when a
-   request is ready (read it with `takeRequest`), `0` when more bytes are needed
-   (retry on the next `Readable` event), and a negative status on a connection
-   error. Decoding is non-blocking, so a slow or partial sender cannot stall the
-   loop. */
+/* Whether a request is waiting on the connection. Returns `1` when one is
+   (read it with `ServerRequest.take`), `0` when none has arrived yet (retry on the
+   next `Readable` event), and a negative status once the connection has ended.
+   A request only appears here complete and valid: a malformed or oversized one
+   is answered by the library and the connection reports `Closed`. */
 public function readRequest(connection :: int) returns int {
     return HTTP.readRequest(connection)
-}
-
-/* The request parsed by the last successful `readRequest`. */
-public function takeRequest(connection :: int) returns ServerRequest {
-    return $ServerRequest {
-        verb is HTTP.requestMethod(connection),
-        target is HTTP.requestTarget(connection),
-        body_text is HTTP.requestBody(connection),
-        raw_headers is HTTP.requestHead(connection),
-    }
 }
 
 /* Whether the connection has completed the WebSocket handshake. */
@@ -1786,28 +217,32 @@ function wsOpFromCode(code :: int) returns WsOp {
     return WsOp.Close
 }
 
-/* Complete the RFC 6455 handshake on an accepted connection whose pending
-   request asked to upgrade. Call after `readRequest`, before `wsSend`/`wsNext`. */
-public function upgradeWebSocket(connection :: int) returns error.StdError {
+/* Accept the pending request's upgrade to a WebSocket (RFC 6455). Call after
+   `readRequest`. The handshake is written in the background; `wsSend` may be
+   called at once and its frames follow the handshake. */
+public function upgradeWebSocket(connection :: int) returns nothing | error.StdError {
     HTTP.upgradeWebSocket(connection)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-/* Send one WebSocket frame with `data` as its payload. */
-public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+/* Queue one WebSocket frame with `data` as its payload. Returns at once: a
+   peer that is slow to read never blocks the caller. A peer that falls further
+   behind than `Limit.OutboundBytes` is closed with `CloseReason.SlowConsumer`
+   and the call returns `error.IO.WriteFailed`. */
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
     HTTP.wsSend(connection, wsOpCode(op), data)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-/* Advance the connection's frame decoder. Returns `1` when a message is ready
-   (read it with `wsMessage`), `0` when more bytes are needed (retry on the next
-   `Readable` event), `2` when the peer closed, and a negative status on a
-   protocol or transport error. Fragmented messages are reassembled before they
-   are surfaced. Decoding is non-blocking. */
+/* Take the connection's next message. Returns `1` when one is ready (read it
+   with `wsMessage`), `0` when none is waiting (retry on the next `Readable`
+   event), `2` once the peer has closed, and a negative status when the peer
+   broke the protocol or a size limit. Messages arrive whole: fragments are
+   reassembled and text is validated before they are surfaced. */
 public function wsNext(connection :: int) returns int {
     return HTTP.wsNext(connection)
 }
@@ -1820,23 +255,28 @@ public function wsMessage(connection :: int) returns Message {
     }
 }
 
-/* Whether undecoded bytes are already buffered for the connection. A poll loop
-   uses `while std.http.wsBuffered(handle) { ... wsNext ... }` to drain frames
-   that arrived with (or pipelined behind) the handshake before waiting on
-   another readiness event. */
-public function wsBuffered(connection :: int) returns tetra {
-    return HTTP.wsBuffered(connection)
+/* How many messages are waiting for `wsNext`. The library stops reading from
+   a connection once `Limit.InboxMessages` are waiting, so this never grows
+   past it. */
+public function wsPending(connection :: int) returns int {
+    return HTTP.wsPending(connection)
 }
 
-/* The last error code left by `readRequest`/`ws*`, taken and cleared. */
+/* Whether messages are waiting for `wsNext`. */
+public function wsBuffered(connection :: int) returns tetra {
+    return HTTP.wsPending(connection) > 0
+}
+
+/* The last error code left by a `ws*` call, taken and cleared. */
 public function takeLastErrorCode() returns int {
     return HTTP.takeLastErrorCode()
 }
 
-/* Why a `poll` event fired. `Accepted` is a fresh connection, `Readable` is a
-   connection with bytes to read, and `Closed` is a peer that closed or errored.
-   The inline-Zig boundary only carries scalars, so the codes crossing it are
-   mapped by `eventKindFromCode`. */
+/* Why a `poll` event fired. `Accepted` is a fresh connection. `Readable` is a
+   connection with a complete request or message waiting. `Closed` is a
+   connection that has ended: it is reported once, after everything else from
+   that connection, and `closeReason` says why. The library has already cleaned
+   up; calling `close` afterwards is allowed and does nothing. */
 public enum EventKind {
     Accepted,
     Readable,
@@ -1856,9 +296,10 @@ public struct Event {
     public kind :: EventKind,
 }
 
-/* Wait for readiness across the listener and every live connection. Blocks up
-   to `timeout_ms` (0 polls immediately, negative waits indefinitely) and
-   returns the events that fired. */
+/* Wait for events on the listener's connections. Blocks up to `timeout_ms`
+   (0 does not wait, negative waits indefinitely) and returns every event that
+   is ready. Connections are read in the background whether or not the program
+   is polling; `poll` only collects what is finished. */
 public function poll(listener :: int, timeout_ms :: int) returns Event[] {
     HTTP.poll(listener, timeout_ms)
     var events :: Event[]
@@ -1872,11 +313,137 @@ public function poll(listener :: int, timeout_ms :: int) returns Event[] {
     return events
 }
 
+/* Why a connection ended. */
+public enum CloseReason {
+    Open,
+    PeerClosed,
+    Reset,
+    LocalClose,
+    IdleTimeout,
+    ReadTimeout,
+    WriteTimeout,
+    HandlerTimeout,
+    SlowConsumer,
+    TooLarge,
+    ProtocolError,
+    HandshakeFailed,
+    ConnectFailed,
+    TlsError,
+}
+
+function closeReasonFromCode(code :: int) returns CloseReason {
+    return match code {
+        0 then CloseReason.Open,
+        1 then CloseReason.PeerClosed,
+        2 then CloseReason.Reset,
+        4 then CloseReason.IdleTimeout,
+        5 then CloseReason.ReadTimeout,
+        6 then CloseReason.WriteTimeout,
+        7 then CloseReason.HandlerTimeout,
+        8 then CloseReason.SlowConsumer,
+        9 then CloseReason.TooLarge,
+        10 then CloseReason.ProtocolError,
+        11 then CloseReason.HandshakeFailed,
+        12 then CloseReason.ConnectFailed,
+        13 then CloseReason.TlsError,
+        else CloseReason.LocalClose,
+    }
+}
+
+/* Why `connection` ended; `CloseReason.Open` while it has not. Valid from the
+   `Closed` event until the next `poll`. A connection the program closed itself
+   reads as `LocalClose`. */
+public function closeReason(connection :: int) returns CloseReason {
+    return closeReasonFromCode(HTTP.closeReason(connection))
+}
+
+/* The caps and deadlines every connection runs under. Sizes are in bytes and
+   deadlines in milliseconds; a deadline of 0 is disabled.
+
+   - `HeadBytes`: a request's headers. Over it: `431`, then `TooLarge`.
+   - `BodyBytes`: a request's body. Over it: `413`, then `TooLarge`.
+   - `MessageBytes`: one reassembled WebSocket message. Over it: `TooLarge`.
+   - `OutboundBytes`: frames queued for one peer. Over it: `SlowConsumer`.
+   - `InboxMessages`: messages one connection may have waiting for the program
+     before the library stops reading from it.
+   - `PendingBytes`: bytes waiting for the program across all connections
+     before the library stops reading.
+   - `Connections`: open connections; further ones wait to be accepted.
+   - `HandshakeMs`: opening a client connection.
+   - `HeadMs`: the rest of a request's headers once they have started.
+   - `ReadMs`: a body or message making no progress.
+   - `WriteMs`: a send making no progress.
+   - `IdleMs`: a kept-alive connection with no request, or a WebSocket with
+     no incoming frame. Until heartbeats land, a WebSocket peer stays open by
+     sending something, a ping included, within it.
+   - `HandlerMs`: the program answering a request it was given.
+   - `LingerMs`: the peer acknowledging a close the library started. */
+public enum Limit {
+    HeadBytes,
+    BodyBytes,
+    MessageBytes,
+    OutboundBytes,
+    InboxMessages,
+    PendingBytes,
+    Connections,
+    HandshakeMs,
+    HeadMs,
+    ReadMs,
+    WriteMs,
+    IdleMs,
+    HandlerMs,
+    LingerMs,
+}
+
+function limitCode(which :: Limit) returns int {
+    return match which {
+        Limit.HeadBytes then 0,
+        Limit.BodyBytes then 1,
+        Limit.MessageBytes then 2,
+        Limit.OutboundBytes then 3,
+        Limit.InboxMessages then 4,
+        Limit.PendingBytes then 5,
+        Limit.Connections then 6,
+        Limit.HandshakeMs then 7,
+        Limit.HeadMs then 8,
+        Limit.ReadMs then 9,
+        Limit.WriteMs then 10,
+        Limit.IdleMs then 11,
+        Limit.HandlerMs then 12,
+        Limit.LingerMs then 13,
+    }
+}
+
+/* Set one limit for connections opened from now on. */
+public function setLimit(which :: Limit, value :: int) returns nothing | error.StdError {
+    HTTP.setLimit(limitCode(which), value)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+
 public struct Route {
     public id :: int,
     public pattern :: string,
     param_names :: string[],
     param_values :: string[],
+
+    /* The route `Router.find` just matched, with the segments it captured. */
+    public function captured(id :: int, pattern :: string) returns Route {
+        var names :: string[]
+        var values :: string[]
+        const count is HTTP.paramCount()
+        for i while i < count do i += 1 {
+            @push(names, HTTP.paramNameAt(i))
+            @push(values, HTTP.paramValueAt(i))
+        }
+        return $Route {
+            id is id,
+            pattern is pattern,
+            param_names is names,
+            param_values is values,
+        }
+    }
 
     public method param(name :: string) returns string | nothing {
         for i while i < @length(this.param_names) do i += 1 {
@@ -1907,54 +474,31 @@ public struct Router {
         @push(this.patterns, pattern)
         @push(this.ids, id)
     }
-}
 
-/* `^router` borrows the caller's Router instead of snapshotting its three
-   arrays on every call, which the arena model would otherwise deep-copy per
-   request (docs/memory.md by-value parameters snapshot). */
-public function route(^router :: Router, verb :: string, path :: string) returns Route | nothing {
-    for i while i < @length(router.patterns) do i += 1 {
-        if router.verbs[i] == verb then {
-            if HTTP.matchPattern(router.patterns[i], path) == 1 then {
-                var names :: string[]
-                var values :: string[]
-                const count is HTTP.paramCount()
-                for j while j < count do j += 1 {
-                    @push(names, HTTP.paramNameAt(j))
-                    @push(values, HTTP.paramValueAt(j))
-                }
-                return $Route {
-                    id is router.ids[i],
-                    pattern is router.patterns[i],
-                    param_names is names,
-                    param_values is values,
-                }
+    /* The first route added for `verb` whose pattern matches `path`, or
+       `nothing`. A `:name` pattern segment captures that path segment. */
+    public method find(verb :: string, path :: string) returns Route | nothing {
+        for i while i < @length(this.patterns) do i += 1 {
+            if this.verbs[i] == verb and HTTP.matchPattern(this.patterns[i], path) == 1 then {
+                return Route.captured(this.ids[i], this.patterns[i])
             }
         }
+        return nothing
     }
-    return nothing
 }
 
-public function respond(connection :: int, status :: int, headers :: string, body :: string) returns error.StdError {
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | error.StdError {
     HTTP.respond(connection, status, headers, body)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
 }
 
-public function close(handle :: int) returns error.StdError {
+public function close(handle :: int) returns nothing | error.StdError {
     HTTP.close(handle)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
-}
-
-public function get(url :: string) returns Response | error.StdError {
-    return performGet(url, 30000)
-}
-
-public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
-    return performGet(url, timeout_ms)
 }
 
 public struct Request {
@@ -1973,49 +517,38 @@ public struct Request {
     }
 }
 
-/* `^req` borrows the caller's Request so `req.headers` is not deep-copied. */
-public function request(verb :: string, url :: string, ^req :: Request) returns Response | error.StdError {
-    var header_blob is ""
-    for i while i < @length(req.headers) do i += 1 {
-        header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
-    }
-    const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
-    const status is HTTP.takeStatusCode()
-    const headers is HTTP.takeResponseHeaders()
-    const err is HTTP.takeLastErrorCode()
-    HTTP.releaseResponse()
-    if err == 0 then return $Response {
-        status_code is status,
-        raw_headers is headers,
-        body_text is value,
-    }
-    return mapIOError(err)
+public function get(url :: string) returns Response | error.StdError {
+    var req is Request.new()
+    return Response.send("GET", url, req)
+}
+
+public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
+    var req is Request.new()
+    req.timeout_ms is timeout_ms
+    return Response.send("GET", url, req)
 }
 
 public function post(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("POST", url, ^req)
+    return Response.send("POST", url, req)
 }
 
 public function put(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("PUT", url, ^req)
+    return Response.send("PUT", url, req)
 }
 
 public function delete(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("DELETE", url, ^req)
+    return Response.send("DELETE", url, req)
 }
 
 public function head(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("HEAD", url, ^req)
+    return Response.send("HEAD", url, req)
 }
 
+/* The body of a GET, whatever its status. */
 public function getText(url :: string) returns string | error.StdError {
-    const value is HTTP.getText(url, 30000)
-    const _status is HTTP.takeStatusCode()
-    const _headers is HTTP.takeResponseHeaders()
-    const err is HTTP.takeLastErrorCode()
-    HTTP.releaseResponse()
-    if err == 0 then return value
-    return mapIOError(err)
+    const response is get(url)
+    response as Response then return response.body()
+    else return response
 }
 
 public function checkStatus(response :: Response) returns Response | error.StdError {
@@ -2034,13 +567,15 @@ public function checkStatus(response :: Response) returns Response | error.StdEr
 
 /* Complete the handshake if `connection`'s buffered request is a WebSocket
    upgrade. Returns `true` once it is a WebSocket; while it is still `false`,
-   call again after the next readable event. */
+   call again after the next readable event. A request that is not an upgrade
+   is answered `426 Upgrade Required`, so its client is never left waiting. */
 public function wsAccept(connection :: int) returns tetra {
     if isWebSocket(connection) then return true
     const status is readRequest(connection)
     if status != 1 then return false
-    upgradeWebSocket(connection)
-    return takeLastErrorCode() == 0
+    if HTTP.upgradeWebSocket(connection) == 0 then return true
+    respond(connection, 426, "Upgrade: websocket\u{d}\u{a}Sec-WebSocket-Version: 13", "")
+    return false
 }
 
 /* The next complete message, `nothing` when none is buffered yet or the peer
@@ -2055,28 +590,28 @@ public function wsRead(connection :: int) returns Message | nothing | error.StdE
 }
 
 /* Send one frame with an explicit opcode. */
-public function wsWrite(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
     return wsSend(connection, op, data)
 }
 
-public function wsText(connection :: int, data :: string) returns error.StdError {
+public function wsText(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Text, data)
 }
 
-public function wsBinary(connection :: int, data :: string) returns error.StdError {
+public function wsBinary(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Binary, data)
 }
 
-public function wsPing(connection :: int, data :: string) returns error.StdError {
+public function wsPing(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Ping, data)
 }
 
-public function wsPong(connection :: int, data :: string) returns error.StdError {
+public function wsPong(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Pong, data)
 }
 
 /* Send a Close frame (empty payload) and drop the connection. */
-public function wsClose(connection :: int) returns error.StdError {
+public function wsClose(connection :: int) returns nothing | error.StdError {
     wsSend(connection, WsOp.Close, "")
     return close(connection)
 }

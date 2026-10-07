@@ -1,0 +1,8 @@
+# A file's top-level names are visible throughout it, so a parameter may not
+# reuse one even when it is declared further down.
+function scale(b :: int) returns int {
+    return b * 2
+}
+
+const b is 3
+@print("{scale(b)}\n")

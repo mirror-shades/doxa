@@ -395,9 +395,9 @@ return_maybe_double(21)?
 return_maybe_double(-1)?
 
 # union int | string — distinct return paths
-function return_sum_or_message(a :: int, b :: int) returns int | string {
-    if a < 0 or b < 0 then return "non_negative_only"
-    return a + b
+function return_sum_or_message(a :: int, rhs :: int) returns int | string {
+    if a < 0 or rhs < 0 then return "non_negative_only"
+    return a + rhs
 }
 
 return_sum_or_message(10, 20)?
@@ -491,16 +491,16 @@ struct Point {
         }
     }
 
-    public method getX() { # methods are always instance methods with implicit 'this'
+    public method getX() returns int { # methods are always instance methods with implicit 'this'
         return this.x
     }
 
-    public method getY() {
+    public method getY() returns int {
         return this.y
     }
 
-    public function safeSub(a :: int, b :: int) returns int { # functions are always static
-        const result is a - b
+    public function safeSub(a :: int, rhs :: int) returns int { # functions are always static
+        const result is a - rhs
         if result > 255 or result < 0 then return -1
         return result
     }
@@ -523,10 +523,10 @@ struct PubPoint {
     public y :: int
 }
 
-function add_points(a :: PubPoint, b :: PubPoint) returns PubPoint {
+function add_points(a :: PubPoint, rhs :: PubPoint) returns PubPoint {
     return $PubPoint {
-        x is a.x + b.x
-        y is a.y + b.y
+        x is a.x + rhs.x
+        y is a.y + rhs.y
     }
 }
 
@@ -754,8 +754,8 @@ popped_animal.name?
 ##
 # DEFAULT ARGUMENTS
 ##
-function foo(a :: int, b :: int is 5) returns int {
-    return a+b
+function foo(a :: int, rhs :: int is 5) returns int {
+    return a+rhs
 }
 
 foo(777, 2)? # 779
