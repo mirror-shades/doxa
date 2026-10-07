@@ -32,9 +32,9 @@ test "struct table field names survive IR printer deinit" {
     };
     const id = try table.registerStruct(.{ .module = record.id, .name = "Sample" }, &inputs);
     // `registerStructTableLayouts` skips entries whose field HIR types are not
-    // resolved, so make them concrete before the printer runs.
-    table.setFieldHIRType(id, 0, .Int);
-    table.setFieldHIRType(id, 1, .Int);
+    // resolved, so make them concrete before the printer runs, as
+    // `lowerStructFieldTypes` does once analysis is complete.
+    for (table.getEntryById(id).?.fields) |*field| field.hir_type = .Int;
 
     const table_fields = table.fields(id) orelse return error.MissingStruct;
     try testing.expectEqual(@as(usize, 2), table_fields.len);

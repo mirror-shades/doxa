@@ -1,0 +1,10 @@
+# An inner block may not reuse a name an enclosing block declared.
+function f() {
+    var x :: int | string is 1
+    {
+        var x :: float is 2.5
+        x?
+    }
+    x?
+}
+f()

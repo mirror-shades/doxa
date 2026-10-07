@@ -1,0 +1,14 @@
+# A destructured field binds a name, which may not reuse a visible one.
+struct Point {
+    public x :: int,
+    public y :: int,
+}
+
+group Shape { Point }
+
+function describe(s :: Shape, x :: int) returns int {
+    return match s {
+        Point { x, y } then x + y,
+    }
+}
+@print("{describe($Point { x is 1, y is 2 }, 0)}\n")

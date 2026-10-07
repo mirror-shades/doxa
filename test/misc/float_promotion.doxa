@@ -1,0 +1,97 @@
+# Numeric promotion, pinned from `docs/math.md`: operators promote int and
+# byte operands to float when either side is float, `/` is float division
+# whatever its operands, and an array literal promotes every element to its
+# element type — written or inferred — so the position of the first float
+# element cannot change the array's type. Value positions (declarations,
+# arguments, returns, struct fields) widen only a literal written in source.
+
+struct Point {
+    public x :: float,
+    public y :: float,
+}
+
+function takesFloat(x :: float) returns float {
+    return x
+}
+
+function literalReturn() returns float {
+    return 3
+}
+
+public entry function main() {
+    var i is 3
+    var b :: byte is 0x10
+    var f is 2.5
+
+    # Operators promote to float when either operand is a float.
+    @print("int_plus_float={i + f} {@type(i + f)}\n")
+    @print("float_times_int={f * i} {@type(f * i)}\n")
+    @print("byte_plus_float={b + f} {@type(b + f)}\n")
+    @print("float_minus_byte={f - b}\n")
+    @print("int_pow_float={i ** 2.0} {@type(i ** 2.0)}\n")
+    @print("float_pow_neg_int={2.0 ** -1}\n")
+    @print("int_pow_half={4 ** 0.5}\n")
+
+    # `/` is float division for every operand pair.
+    @print("int_div_int={i / 2} {@type(i / 2)}\n")
+    @print("exact_int_div={6 / 3} {@type(6 / 3)}\n")
+    @print("byte_div_byte={b / 0x04} {@type(b / 0x04)}\n")
+    @print("neg_int_div={-7 / 2}\n")
+    @print("int_div_float={1 / 4.0}\n")
+
+    # A promoted integer keeps float precision limits.
+    var big is 9007199254740993
+    @print("big_plus_zero={big + 0.0}\n")
+
+    # Compound assignment on a float stays float.
+    var h is 10.0
+    h /= 4
+    h += 1
+    h *= 2
+    h -= 0.5
+    h **= 2
+    @print("compound={h}\n")
+
+    # Literals widen in value positions.
+    var g :: float is 60
+    const p is $Point { x is 1, y is 2.5 }
+    @print("literal_decl={g} {@type(g)}\n")
+    @print("literal_arg={takesFloat(7)}\n")
+    @print("literal_return={literalReturn()}\n")
+    @print("literal_field={p.x} {p.y}\n")
+    @print("explicit_widen={takesFloat(@float(i))}\n")
+
+    # A literal widens when the float holds it exactly, however large.
+    var two_53 :: float is 9007199254740992
+    var two_62 :: float is 4611686018427387904
+    @print("exact_large={two_53} {takesFloat(-9007199254740992)} {two_62 == 4.611686018427387904e18}\n")
+
+    # Array literals promote every element, wherever the float element sits.
+    var all_int :: float[] is [1, 2, 3]
+    var float_first :: float[] is [1.5, 2, 3]
+    var float_middle :: float[] is [1, 2.5, 3]
+    var float_last :: float[] is [1, 2, 3.5]
+    @print("all_int={all_int}\n")
+    @print("float_first={float_first}\n")
+    @print("float_middle={float_middle}\n")
+    @print("float_last={float_last}\n")
+
+    var inferred_first is [2.5, 1]
+    var inferred_last is [1, 2.5]
+    @print("inferred_first={inferred_first} {@type(inferred_first[1])}\n")
+    @print("inferred_last={inferred_last} {@type(inferred_last[0])}\n")
+
+    # Element compound arithmetic is lowered separately from scalar arithmetic.
+    float_middle[0] += 1
+    float_middle[1] /= 4
+    float_middle[2] **= 2
+    float_middle[0] -= 0.25
+    float_middle[1] *= i
+    @print("element_compound={float_middle}\n")
+
+    var sum is 0.0
+    for k while k < @length(float_last) do k += 1 {
+        sum += float_last[k]
+    }
+    @print("sum={sum}\n")
+}

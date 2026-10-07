@@ -1,0 +1,5 @@
+# A `module` alias is a name the file binds; two aliases may not share one.
+module m from "../misc/moddata/collide_mod_a.doxa"
+module m from "../misc/moddata/collide_mod_b.doxa"
+
+@print("{m.collide(1)}")

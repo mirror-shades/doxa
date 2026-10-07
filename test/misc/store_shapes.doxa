@@ -1,0 +1,105 @@
+# A store converts its value to the type of the storage it writes, whatever
+# the form of the value and of the target: a member is boxed into a union
+# slot, `nothing` included, and a narrowed name is stored back as its slot.
+
+module values from "./moddata/store_values.doxa"
+
+struct Piece {
+    public kind :: int,
+}
+
+struct Board {
+    public cell :: nothing | Piece,
+    public v :: int | string,
+}
+
+function one() returns int {
+    return 1
+}
+
+# A parameter.
+function param(x :: int | string) {
+    x is "p"
+    x?
+}
+
+# A local, `nothing` included.
+function locals() {
+    var b :: int | string is 1
+    b is "s"
+    b?
+    var c :: nothing | Piece is $Piece{ kind is 3 }
+    c is nothing
+    c?
+}
+
+# A narrowed name is computed in its member and stored as its union.
+function narrowed() {
+    var x :: int | string is 1
+    x as int then {
+        x += 1
+        x++
+    } else {}
+    x?
+    var xs :: int[] | string is [1]
+    xs as int[] then {
+        xs[0] is 5
+        @push(xs, 6)
+    } else {}
+    xs?
+}
+
+# A global, `nothing` included.
+var a :: int | string is 1
+a is "s"
+a?
+var n :: nothing | Piece is $Piece{ kind is 2 }
+n is nothing
+n?
+
+locals()
+param(4)
+narrowed()
+
+# A field.
+var board is $Board{ cell is $Piece{ kind is 1 }, v is 1 }
+board.v is "f"
+board.v?
+board.cell is nothing
+board.cell?
+
+# An `each` binding.
+each e in [1, 2] {
+    var w :: int | string is e
+    w?
+}
+
+# A call result.
+var cr :: float | int is one()
+cr?
+
+# A module-qualified name and call.
+var mq :: int | string is values.LIMIT
+mq?
+mq is values.NAME
+mq?
+mq is values.seven()
+mq?
+
+# A literal for a byte.
+var small :: byte is 200
+small?
+
+# A binding narrowed to `nothing`.
+function maybe(fail :: tetra) returns nothing | string {
+    if fail then return "failed"
+    return
+}
+function bindNothing() {
+    const done is maybe(false) as nothing else {
+        @print("unexpected: {done}\n")
+        return
+    }
+    done?
+}
+bindNothing()

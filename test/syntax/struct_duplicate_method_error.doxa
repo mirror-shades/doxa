@@ -1,0 +1,16 @@
+# Methods are not overloaded: two methods may not share a name.
+struct Pair {
+    public a :: int,
+    public b :: int,
+
+    public method sum() returns int {
+        return this.a + this.b
+    }
+
+    public method sum(extra :: int) returns int {
+        return this.a + this.b + extra
+    }
+}
+
+const p is $Pair { a is 1, b is 2 }
+@print("{p.sum()}\n")

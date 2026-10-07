@@ -490,12 +490,18 @@ if limit_server_error != 0 then limit_ok is false
 if limit_ok then @print("redirect limit ok\n")
 else @print("redirect limit failed\n")
 
+# A download returns nothing on success, so its error is read out of the union.
+function isHttpStatus(result :: nothing | error.StdError) returns tetra {
+    const failure is result as error.StdError else { return false }
+    return failure == error.IO.HttpStatus
+}
+
 const stream_port is Fixture.startDownloadServer(11)
 const stream_path is "test/out/http_download.bin"
 const stream_result is std.http.downloadUrl("http://127.0.0.1:{stream_port}/large", stream_path)
 const stream_server_error is Fixture.finishServer()
 const stream_size is Fixture.downloadedBytes(stream_path)
-if stream_result == error.IO.HttpStatus then @print("download stream returned an error\n")
+if isHttpStatus(stream_result) then @print("download stream returned an error\n")
 else if stream_size == 262144 and stream_server_error == 0 then @print("download streaming ok\n")
 else @print("download streaming failed size={stream_size} server={stream_server_error}\n")
 
@@ -504,12 +510,12 @@ const named_download_result is std.http.download("http://127.0.0.1:{named_downlo
 const named_download_server is Fixture.finishServer()
 const named_download_size is Fixture.downloadedBytes("http_download.bin")
 Fixture.removeDownloadedFile("http_download.bin")
-if named_download_result == error.IO.HttpStatus then @print("download filename failed\n")
+if isHttpStatus(named_download_result) then @print("download filename failed\n")
 else if named_download_size == 262144 and named_download_server == 0 then @print("download filename ok\n")
 else @print("download filename failed size={named_download_size} server={named_download_server}\n")
 
 const download_error_port is Fixture.startDownloadServer(12)
 const download_error_result is std.http.downloadUrl("http://127.0.0.1:{download_error_port}/missing", "test/out/http_missing.bin")
 const download_error_server is Fixture.finishServer()
-if download_error_result == error.IO.HttpStatus and download_error_server == 0 then @print("download status ok\n")
+if isHttpStatus(download_error_result) and download_error_server == 0 then @print("download status ok\n")
 else @print("download status failed\n")

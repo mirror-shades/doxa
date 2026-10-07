@@ -1,0 +1,10 @@
+# A local may not reuse the name of a parameter, an alias parameter included.
+function bump(^n :: int) {
+    {
+        var n :: string is "local"
+        n?
+    }
+    n is n + 1
+}
+var k :: int is 1
+bump(^k)

@@ -1,0 +1,12 @@
+# `?` names a group a union was written with, not the members it flattened into.
+
+enum IOError { NotFound, Denied }
+struct FileError { public path :: string, public code :: int }
+group Error { IOError, FileError }
+
+var r :: string | Error is "fine"
+r?
+r is $FileError { path is "/", code is 13 }
+r?
+var e :: Error is $FileError { path is "/tmp", code is 2 }
+e?

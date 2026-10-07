@@ -1,0 +1,8 @@
+# A top-level declaration may not reuse a name the file imports.
+import collide from "../misc/moddata/collide_mod_a.doxa"
+
+function collide(x :: int) returns int {
+    return x
+}
+
+@print("{collide(1)}")
