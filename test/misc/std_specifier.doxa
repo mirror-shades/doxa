@@ -1,0 +1,8 @@
+module rooted from "std//std.doxa"
+import io from "std//std.doxa"
+
+# `@std()` is the standard library's specifier, a root-qualified path like any
+# other: importing through it, or through its spelling, is one module.
+const specifier is @std()
+io.println(specifier)
+rooted.io.println("rooted")

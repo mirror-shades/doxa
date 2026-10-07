@@ -1,0 +1,3 @@
+# A built-in type has no un-prefixed methods: compiler methods are `@`-prefixed.
+var xs :: int[] is [1, 2]
+xs.push(3)

@@ -1,0 +1,7 @@
+public struct Node {
+    public label :: string,
+
+    public method describe() returns string {
+        return "b:{this.label}"
+    }
+}

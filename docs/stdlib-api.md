@@ -13,15 +13,15 @@ exists), and a collapsible copy of the full source declaration.
 ### `print`
 
 ```doxa
-public function print(input :: string) returns error.StdError
+public function print(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function print(input :: string) returns error.StdError {
-    IO.print(input);
+public function print(text :: string) returns nothing | error.StdError {
+    IO.print(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
@@ -33,15 +33,15 @@ public function print(input :: string) returns error.StdError {
 ### `println`
 
 ```doxa
-public function println(input :: string) returns error.StdError
+public function println(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function println(input :: string) returns error.StdError {
-    IO.printlnStdout(input);
+public function println(text :: string) returns nothing | error.StdError {
+    IO.printlnStdout(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
@@ -53,15 +53,15 @@ public function println(input :: string) returns error.StdError {
 ### `eprint`
 
 ```doxa
-public function eprint(input :: string) returns error.StdError
+public function eprint(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function eprint(input :: string) returns error.StdError {
-    IO.eprint(input);
+public function eprint(text :: string) returns nothing | error.StdError {
+    IO.eprint(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
@@ -73,15 +73,15 @@ public function eprint(input :: string) returns error.StdError {
 ### `eprintln`
 
 ```doxa
-public function eprintln(input :: string) returns error.StdError
+public function eprintln(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function eprintln(input :: string) returns error.StdError {
-    IO.eprintlnStderr(input);
+public function eprintln(text :: string) returns nothing | error.StdError {
+    IO.eprintlnStderr(text);
     const err is IO.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
@@ -195,15 +195,15 @@ public function execCapture(input :: string) returns string | error.StdError {
 ### `execCaptureEnv`
 
 ```doxa
-public function execCaptureEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError
+public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function execCaptureEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
-    const output is Process.exec_capture_stdout_env(program, args, env_keys, env_values)
+public function execCaptureEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns string | error.StdError {
+    const output is Process.exec_capture_stdout_env(program, arguments, env_keys, env_values)
     const err is Process.takeLastErrorCode()
     if err == 0 then return output
     return mapProcessError(err)
@@ -215,15 +215,15 @@ public function execCaptureEnv(program :: string, args :: string[], env_keys :: 
 ### `execArgs`
 
 ```doxa
-public function execArgs(program :: string, args :: string[]) returns int | error.StdError
+public function execArgs(program :: string, arguments :: string[]) returns int | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function execArgs(program :: string, args :: string[]) returns int | error.StdError {
-    const code is Process.exec_args(program, args)
+public function execArgs(program :: string, arguments :: string[]) returns int | error.StdError {
+    const code is Process.exec_args(program, arguments)
     const err is Process.takeLastErrorCode()
     if err == 0 then return code
     return mapProcessError(err)
@@ -235,15 +235,15 @@ public function execArgs(program :: string, args :: string[]) returns int | erro
 ### `execArgsEnv`
 
 ```doxa
-public function execArgsEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError
+public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function execArgsEnv(program :: string, args :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
-    const code is Process.exec_args_env(program, args, env_keys, env_values)
+public function execArgsEnv(program :: string, arguments :: string[], env_keys :: string[], env_values :: string[]) returns int | error.StdError {
+    const code is Process.exec_args_env(program, arguments, env_keys, env_values)
     const err is Process.takeLastErrorCode()
     if err == 0 then return code
     return mapProcessError(err)
@@ -760,14 +760,14 @@ public function mapIOError(code :: int) returns error.StdError {
 ### `downloadUrl`
 
 ```doxa
-public function downloadUrl(url :: string, destination :: string) returns error.StdError
+public function downloadUrl(url :: string, destination :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function downloadUrl(url :: string, destination :: string) returns error.StdError {
+public function downloadUrl(url :: string, destination :: string) returns nothing | error.StdError {
     HTTP.downloadUrl(url, destination)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -780,14 +780,14 @@ public function downloadUrl(url :: string, destination :: string) returns error.
 ### `download`
 
 ```doxa
-public function download(url :: string) returns error.StdError
+public function download(url :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function download(url :: string) returns error.StdError {
+public function download(url :: string) returns nothing | error.StdError {
     HTTP.download(url)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -811,6 +811,26 @@ public struct Response {
     status_code :: int,
     raw_headers :: string,
     body_text :: string,
+
+    /* Perform one request. The error arm means no response arrived; a non-2xx
+       status is still a `Response`. */
+    public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+        var header_blob is ""
+        for i while i < @length(req.headers) do i += 1 {
+            header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
+        }
+        const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
+        const status is HTTP.takeStatusCode()
+        const headers is HTTP.takeResponseHeaders()
+        const err is HTTP.takeLastErrorCode()
+        HTTP.releaseResponse()
+        if err == 0 then return $Response {
+            status_code is status,
+            raw_headers is headers,
+            body_text is value,
+        }
+        return mapIOError(err)
+    }
 
     public method statusCode() returns int {
         return this.status_code
@@ -839,6 +859,40 @@ public struct Response {
         return false
     }
 }
+```
+
+</details>
+
+#### `Response.send`
+
+```doxa
+public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError
+```
+
+Perform one request. The error arm means no response arrived; a non-2xx
+status is still a `Response`.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function send(verb :: string, url :: string, req :: Request) returns Response | error.StdError {
+        var header_blob is ""
+        for i while i < @length(req.headers) do i += 1 {
+            header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
+        }
+        const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
+        const status is HTTP.takeStatusCode()
+        const headers is HTTP.takeResponseHeaders()
+        const err is HTTP.takeLastErrorCode()
+        HTTP.releaseResponse()
+        if err == 0 then return $Response {
+            status_code is status,
+            raw_headers is headers,
+            body_text is value,
+        }
+        return mapIOError(err)
+    }
 ```
 
 </details>
@@ -998,6 +1052,16 @@ public struct ServerRequest {
     public body_text :: string,
     raw_headers :: string,
 
+    /* The request `readRequest` reported. It stays available until `respond`. */
+    public function take(connection :: int) returns ServerRequest {
+        return $ServerRequest {
+            verb is HTTP.requestMethod(connection),
+            target is HTTP.requestTarget(connection),
+            body_text is HTTP.requestBody(connection),
+            raw_headers is HTTP.requestHead(connection),
+        }
+    }
+
     public method path() returns string {
         return this.target
     }
@@ -1025,6 +1089,30 @@ public struct ServerRequest {
         return false
     }
 }
+```
+
+</details>
+
+#### `ServerRequest.take`
+
+```doxa
+public function take(connection :: int) returns ServerRequest
+```
+
+The request `readRequest` reported. It stays available until `respond`.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function take(connection :: int) returns ServerRequest {
+        return $ServerRequest {
+            verb is HTTP.requestMethod(connection),
+            target is HTTP.requestTarget(connection),
+            body_text is HTTP.requestBody(connection),
+            raw_headers is HTTP.requestHead(connection),
+        }
+    }
 ```
 
 </details>
@@ -1114,11 +1202,11 @@ public method hasHeader(name :: string) returns tetra {
 public function readRequest(connection :: int) returns int
 ```
 
-Parse the next request from the connection's buffer. Returns `1` when a
-request is ready (read it with `takeRequest`), `0` when more bytes are needed
-(retry on the next `Readable` event), and a negative status on a connection
-error. Decoding is non-blocking, so a slow or partial sender cannot stall the
-loop.
+Whether a request is waiting on the connection. Returns `1` when one is
+(read it with `ServerRequest.take`), `0` when none has arrived yet (retry on the
+next `Readable` event), and a negative status once the connection has ended.
+A request only appears here complete and valid: a malformed or oversized one
+is answered by the library and the connection reports `Closed`.
 
 <details>
 <summary>Source</summary>
@@ -1126,30 +1214,6 @@ loop.
 ```doxa
 public function readRequest(connection :: int) returns int {
     return HTTP.readRequest(connection)
-}
-```
-
-</details>
-
-### `takeRequest`
-
-```doxa
-public function takeRequest(connection :: int) returns ServerRequest
-```
-
-The request parsed by the last successful `readRequest`.
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function takeRequest(connection :: int) returns ServerRequest {
-    return $ServerRequest {
-        verb is HTTP.requestMethod(connection),
-        target is HTTP.requestTarget(connection),
-        body_text is HTTP.requestBody(connection),
-        raw_headers is HTTP.requestHead(connection),
-    }
 }
 ```
 
@@ -1240,17 +1304,18 @@ public struct Message {
 ### `upgradeWebSocket`
 
 ```doxa
-public function upgradeWebSocket(connection :: int) returns error.StdError
+public function upgradeWebSocket(connection :: int) returns nothing | error.StdError
 ```
 
-Complete the RFC 6455 handshake on an accepted connection whose pending
-request asked to upgrade. Call after `readRequest`, before `wsSend`/`wsNext`.
+Accept the pending request's upgrade to a WebSocket (RFC 6455). Call after
+`readRequest`. The handshake is written in the background; `wsSend` may be
+called at once and its frames follow the handshake.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function upgradeWebSocket(connection :: int) returns error.StdError {
+public function upgradeWebSocket(connection :: int) returns nothing | error.StdError {
     HTTP.upgradeWebSocket(connection)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -1263,16 +1328,19 @@ public function upgradeWebSocket(connection :: int) returns error.StdError {
 ### `wsSend`
 
 ```doxa
-public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError
 ```
 
-Send one WebSocket frame with `data` as its payload.
+Queue one WebSocket frame with `data` as its payload. Returns at once: a
+peer that is slow to read never blocks the caller. A peer that falls further
+behind than `Limit.OutboundBytes` is closed with `CloseReason.SlowConsumer`
+and the call returns `error.IO.WriteFailed`.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsSend(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+public function wsSend(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
     HTTP.wsSend(connection, wsOpCode(op), data)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -1288,11 +1356,11 @@ public function wsSend(connection :: int, op :: WsOp, data :: string) returns er
 public function wsNext(connection :: int) returns int
 ```
 
-Advance the connection's frame decoder. Returns `1` when a message is ready
-(read it with `wsMessage`), `0` when more bytes are needed (retry on the next
-`Readable` event), `2` when the peer closed, and a negative status on a
-protocol or transport error. Fragmented messages are reassembled before they
-are surfaced. Decoding is non-blocking.
+Take the connection's next message. Returns `1` when one is ready (read it
+with `wsMessage`), `0` when none is waiting (retry on the next `Readable`
+event), `2` once the peer has closed, and a negative status when the peer
+broke the protocol or a size limit. Messages arrive whole: fragments are
+reassembled and text is validated before they are surfaced.
 
 <details>
 <summary>Source</summary>
@@ -1327,23 +1395,41 @@ public function wsMessage(connection :: int) returns Message {
 
 </details>
 
+### `wsPending`
+
+```doxa
+public function wsPending(connection :: int) returns int
+```
+
+How many messages are waiting for `wsNext`. The library stops reading from
+a connection once `Limit.InboxMessages` are waiting, so this never grows
+past it.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function wsPending(connection :: int) returns int {
+    return HTTP.wsPending(connection)
+}
+```
+
+</details>
+
 ### `wsBuffered`
 
 ```doxa
 public function wsBuffered(connection :: int) returns tetra
 ```
 
-Whether undecoded bytes are already buffered for the connection. A poll loop
-uses `while std.http.wsBuffered(handle) { ... wsNext ... }` to drain frames
-that arrived with (or pipelined behind) the handshake before waiting on
-another readiness event.
+Whether messages are waiting for `wsNext`.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
 public function wsBuffered(connection :: int) returns tetra {
-    return HTTP.wsBuffered(connection)
+    return HTTP.wsPending(connection) > 0
 }
 ```
 
@@ -1355,7 +1441,7 @@ public function wsBuffered(connection :: int) returns tetra {
 public function takeLastErrorCode() returns int
 ```
 
-The last error code left by `readRequest`/`ws*`, taken and cleared.
+The last error code left by a `ws*` call, taken and cleared.
 
 <details>
 <summary>Source</summary>
@@ -1374,10 +1460,11 @@ public function takeLastErrorCode() returns int {
 public enum EventKind
 ```
 
-Why a `poll` event fired. `Accepted` is a fresh connection, `Readable` is a
-connection with bytes to read, and `Closed` is a peer that closed or errored.
-The inline-Zig boundary only carries scalars, so the codes crossing it are
-mapped by `eventKindFromCode`.
+Why a `poll` event fired. `Accepted` is a fresh connection. `Readable` is a
+connection with a complete request or message waiting. `Closed` is a
+connection that has ended: it is reported once, after everything else from
+that connection, and `closeReason` says why. The library has already cleaned
+up; calling `close` afterwards is allowed and does nothing.
 
 <details>
 <summary>Source</summary>
@@ -1419,9 +1506,10 @@ public struct Event {
 public function poll(listener :: int, timeout_ms :: int) returns Event[]
 ```
 
-Wait for readiness across the listener and every live connection. Blocks up
-to `timeout_ms` (0 polls immediately, negative waits indefinitely) and
-returns the events that fired.
+Wait for events on the listener's connections. Blocks up to `timeout_ms`
+(0 does not wait, negative waits indefinitely) and returns every event that
+is ready. Connections are read in the background whether or not the program
+is polling; `poll` only collects what is finished.
 
 <details>
 <summary>Source</summary>
@@ -1443,6 +1531,133 @@ public function poll(listener :: int, timeout_ms :: int) returns Event[] {
 
 </details>
 
+### `CloseReason`
+
+```doxa
+public enum CloseReason
+```
+
+Why a connection ended.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public enum CloseReason {
+    Open,
+    PeerClosed,
+    Reset,
+    LocalClose,
+    IdleTimeout,
+    ReadTimeout,
+    WriteTimeout,
+    HandlerTimeout,
+    SlowConsumer,
+    TooLarge,
+    ProtocolError,
+    HandshakeFailed,
+    ConnectFailed,
+    TlsError,
+}
+```
+
+</details>
+
+### `closeReason`
+
+```doxa
+public function closeReason(connection :: int) returns CloseReason
+```
+
+Why `connection` ended; `CloseReason.Open` while it has not. Valid from the
+`Closed` event until the next `poll`. A connection the program closed itself
+reads as `LocalClose`.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function closeReason(connection :: int) returns CloseReason {
+    return closeReasonFromCode(HTTP.closeReason(connection))
+}
+```
+
+</details>
+
+### `Limit`
+
+```doxa
+public enum Limit
+```
+
+The caps and deadlines every connection runs under. Sizes are in bytes and
+deadlines in milliseconds; a deadline of 0 is disabled.
+
+- `HeadBytes`: a request's headers. Over it: `431`, then `TooLarge`.
+- `BodyBytes`: a request's body. Over it: `413`, then `TooLarge`.
+- `MessageBytes`: one reassembled WebSocket message. Over it: `TooLarge`.
+- `OutboundBytes`: frames queued for one peer. Over it: `SlowConsumer`.
+- `InboxMessages`: messages one connection may have waiting for the program
+before the library stops reading from it.
+- `PendingBytes`: bytes waiting for the program across all connections
+before the library stops reading.
+- `Connections`: open connections; further ones wait to be accepted.
+- `HandshakeMs`: opening a client connection.
+- `HeadMs`: the rest of a request's headers once they have started.
+- `ReadMs`: a body or message making no progress.
+- `WriteMs`: a send making no progress.
+- `IdleMs`: a kept-alive connection with no request, or a WebSocket with
+no incoming frame. Until heartbeats land, a WebSocket peer stays open by
+sending something, a ping included, within it.
+- `HandlerMs`: the program answering a request it was given.
+- `LingerMs`: the peer acknowledging a close the library started.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public enum Limit {
+    HeadBytes,
+    BodyBytes,
+    MessageBytes,
+    OutboundBytes,
+    InboxMessages,
+    PendingBytes,
+    Connections,
+    HandshakeMs,
+    HeadMs,
+    ReadMs,
+    WriteMs,
+    IdleMs,
+    HandlerMs,
+    LingerMs,
+}
+```
+
+</details>
+
+### `setLimit`
+
+```doxa
+public function setLimit(which :: Limit, value :: int) returns nothing | error.StdError
+```
+
+Set one limit for connections opened from now on.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function setLimit(which :: Limit, value :: int) returns nothing | error.StdError {
+    HTTP.setLimit(limitCode(which), value)
+    const err is HTTP.takeLastErrorCode()
+    if err == 0 then return
+    return mapIOError(err)
+}
+```
+
+</details>
+
 ### `Route`
 
 ```doxa
@@ -1459,6 +1674,23 @@ public struct Route {
     param_names :: string[],
     param_values :: string[],
 
+    /* The route `Router.find` just matched, with the segments it captured. */
+    public function captured(id :: int, pattern :: string) returns Route {
+        var names :: string[]
+        var values :: string[]
+        const count is HTTP.paramCount()
+        for i while i < count do i += 1 {
+            @push(names, HTTP.paramNameAt(i))
+            @push(values, HTTP.paramValueAt(i))
+        }
+        return $Route {
+            id is id,
+            pattern is pattern,
+            param_names is names,
+            param_values is values,
+        }
+    }
+
     public method param(name :: string) returns string | nothing {
         for i while i < @length(this.param_names) do i += 1 {
             if this.param_names[i] == name then {
@@ -1469,6 +1701,37 @@ public struct Route {
         return nothing
     }
 }
+```
+
+</details>
+
+#### `Route.captured`
+
+```doxa
+public function captured(id :: int, pattern :: string) returns Route
+```
+
+The route `Router.find` just matched, with the segments it captured.
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function captured(id :: int, pattern :: string) returns Route {
+        var names :: string[]
+        var values :: string[]
+        const count is HTTP.paramCount()
+        for i while i < count do i += 1 {
+            @push(names, HTTP.paramNameAt(i))
+            @push(values, HTTP.paramValueAt(i))
+        }
+        return $Route {
+            id is id,
+            pattern is pattern,
+            param_names is names,
+            param_values is values,
+        }
+    }
 ```
 
 </details>
@@ -1524,6 +1787,17 @@ public struct Router {
         @push(this.patterns, pattern)
         @push(this.ids, id)
     }
+
+    /* The first route added for `verb` whose pattern matches `path`, or
+       `nothing`. A `:name` pattern segment captures that path segment. */
+    public method find(verb :: string, path :: string) returns Route | nothing {
+        for i while i < @length(this.patterns) do i += 1 {
+            if this.verbs[i] == verb and HTTP.matchPattern(this.patterns[i], path) == 1 then {
+                return Route.captured(this.ids[i], this.patterns[i])
+            }
+        }
+        return nothing
+    }
 }
 ```
 
@@ -1569,42 +1843,27 @@ public method add(verb :: string, pattern :: string, id :: int) {
 
 </details>
 
-### `route`
+#### `Router.find`
 
 ```doxa
-public function route(^router :: Router, verb :: string, path :: string) returns Route | nothing
+public method find(verb :: string, path :: string) returns Route | nothing
 ```
 
-`^router` borrows the caller's Router instead of snapshotting its three
-arrays on every call, which the arena model would otherwise deep-copy per
-request (docs/memory.md by-value parameters snapshot).
+The first route added for `verb` whose pattern matches `path`, or
+`nothing`. A `:name` pattern segment captures that path segment.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function route(^router :: Router, verb :: string, path :: string) returns Route | nothing {
-    for i while i < @length(router.patterns) do i += 1 {
-        if router.verbs[i] == verb then {
-            if HTTP.matchPattern(router.patterns[i], path) == 1 then {
-                var names :: string[]
-                var values :: string[]
-                const count is HTTP.paramCount()
-                for j while j < count do j += 1 {
-                    @push(names, HTTP.paramNameAt(j))
-                    @push(values, HTTP.paramValueAt(j))
-                }
-                return $Route {
-                    id is router.ids[i],
-                    pattern is router.patterns[i],
-                    param_names is names,
-                    param_values is values,
-                }
+public method find(verb :: string, path :: string) returns Route | nothing {
+        for i while i < @length(this.patterns) do i += 1 {
+            if this.verbs[i] == verb and HTTP.matchPattern(this.patterns[i], path) == 1 then {
+                return Route.captured(this.ids[i], this.patterns[i])
             }
         }
+        return nothing
     }
-    return nothing
-}
 ```
 
 </details>
@@ -1612,14 +1871,14 @@ public function route(^router :: Router, verb :: string, path :: string) returns
 ### `respond`
 
 ```doxa
-public function respond(connection :: int, status :: int, headers :: string, body :: string) returns error.StdError
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function respond(connection :: int, status :: int, headers :: string, body :: string) returns error.StdError {
+public function respond(connection :: int, status :: int, headers :: string, body :: string) returns nothing | error.StdError {
     HTTP.respond(connection, status, headers, body)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
@@ -1632,52 +1891,18 @@ public function respond(connection :: int, status :: int, headers :: string, bod
 ### `close`
 
 ```doxa
-public function close(handle :: int) returns error.StdError
+public function close(handle :: int) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function close(handle :: int) returns error.StdError {
+public function close(handle :: int) returns nothing | error.StdError {
     HTTP.close(handle)
     const err is HTTP.takeLastErrorCode()
     if err == 0 then return
     return mapIOError(err)
-}
-```
-
-</details>
-
-### `get`
-
-```doxa
-public function get(url :: string) returns Response | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function get(url :: string) returns Response | error.StdError {
-    return performGet(url, 30000)
-}
-```
-
-</details>
-
-### `getWithTimeout`
-
-```doxa
-public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
-    return performGet(url, timeout_ms)
 }
 ```
 
@@ -1734,34 +1959,38 @@ public function new() returns Request {
 
 </details>
 
-### `request`
+### `get`
 
 ```doxa
-public function request(verb :: string, url :: string, ^req :: Request) returns Response | error.StdError
+public function get(url :: string) returns Response | error.StdError
 ```
-
-`^req` borrows the caller's Request so `req.headers` is not deep-copied.
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function request(verb :: string, url :: string, ^req :: Request) returns Response | error.StdError {
-    var header_blob is ""
-    for i while i < @length(req.headers) do i += 1 {
-        header_blob is header_blob + req.headers[i] + "\u{d}\u{a}"
-    }
-    const value is HTTP.performRequest(verb, url, header_blob, req.body, req.timeout_ms, req.max_redirects)
-    const status is HTTP.takeStatusCode()
-    const headers is HTTP.takeResponseHeaders()
-    const err is HTTP.takeLastErrorCode()
-    HTTP.releaseResponse()
-    if err == 0 then return $Response {
-        status_code is status,
-        raw_headers is headers,
-        body_text is value,
-    }
-    return mapIOError(err)
+public function get(url :: string) returns Response | error.StdError {
+    var req is Request.new()
+    return Response.send("GET", url, req)
+}
+```
+
+</details>
+
+### `getWithTimeout`
+
+```doxa
+public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError
+```
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function getWithTimeout(url :: string, timeout_ms :: int) returns Response | error.StdError {
+    var req is Request.new()
+    req.timeout_ms is timeout_ms
+    return Response.send("GET", url, req)
 }
 ```
 
@@ -1778,7 +2007,7 @@ public function post(url :: string, ^req :: Request) returns Response | error.St
 
 ```doxa
 public function post(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("POST", url, ^req)
+    return Response.send("POST", url, req)
 }
 ```
 
@@ -1795,7 +2024,7 @@ public function put(url :: string, ^req :: Request) returns Response | error.Std
 
 ```doxa
 public function put(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("PUT", url, ^req)
+    return Response.send("PUT", url, req)
 }
 ```
 
@@ -1812,7 +2041,7 @@ public function delete(url :: string, ^req :: Request) returns Response | error.
 
 ```doxa
 public function delete(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("DELETE", url, ^req)
+    return Response.send("DELETE", url, req)
 }
 ```
 
@@ -1829,7 +2058,7 @@ public function head(url :: string, ^req :: Request) returns Response | error.St
 
 ```doxa
 public function head(url :: string, ^req :: Request) returns Response | error.StdError {
-    return request("HEAD", url, ^req)
+    return Response.send("HEAD", url, req)
 }
 ```
 
@@ -1841,18 +2070,16 @@ public function head(url :: string, ^req :: Request) returns Response | error.St
 public function getText(url :: string) returns string | error.StdError
 ```
 
+The body of a GET, whatever its status.
+
 <details>
 <summary>Source</summary>
 
 ```doxa
 public function getText(url :: string) returns string | error.StdError {
-    const value is HTTP.getText(url, 30000)
-    const _status is HTTP.takeStatusCode()
-    const _headers is HTTP.takeResponseHeaders()
-    const err is HTTP.takeLastErrorCode()
-    HTTP.releaseResponse()
-    if err == 0 then return value
-    return mapIOError(err)
+    const response is get(url)
+    response as Response then return response.body()
+    else return response
 }
 ```
 
@@ -1885,7 +2112,8 @@ public function wsAccept(connection :: int) returns tetra
 
 Complete the handshake if `connection`'s buffered request is a WebSocket
 upgrade. Returns `true` once it is a WebSocket; while it is still `false`,
-call again after the next readable event.
+call again after the next readable event. A request that is not an upgrade
+is answered `426 Upgrade Required`, so its client is never left waiting.
 
 <details>
 <summary>Source</summary>
@@ -1895,8 +2123,9 @@ public function wsAccept(connection :: int) returns tetra {
     if isWebSocket(connection) then return true
     const status is readRequest(connection)
     if status != 1 then return false
-    upgradeWebSocket(connection)
-    return takeLastErrorCode() == 0
+    if HTTP.upgradeWebSocket(connection) == 0 then return true
+    respond(connection, 426, "Upgrade: websocket\u{d}\u{a}Sec-WebSocket-Version: 13", "")
+    return false
 }
 ```
 
@@ -1930,7 +2159,7 @@ public function wsRead(connection :: int) returns Message | nothing | error.StdE
 ### `wsWrite`
 
 ```doxa
-public function wsWrite(connection :: int, op :: WsOp, data :: string) returns error.StdError
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError
 ```
 
 Send one frame with an explicit opcode.
@@ -1939,7 +2168,7 @@ Send one frame with an explicit opcode.
 <summary>Source</summary>
 
 ```doxa
-public function wsWrite(connection :: int, op :: WsOp, data :: string) returns error.StdError {
+public function wsWrite(connection :: int, op :: WsOp, data :: string) returns nothing | error.StdError {
     return wsSend(connection, op, data)
 }
 ```
@@ -1949,14 +2178,14 @@ public function wsWrite(connection :: int, op :: WsOp, data :: string) returns e
 ### `wsText`
 
 ```doxa
-public function wsText(connection :: int, data :: string) returns error.StdError
+public function wsText(connection :: int, data :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsText(connection :: int, data :: string) returns error.StdError {
+public function wsText(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Text, data)
 }
 ```
@@ -1966,14 +2195,14 @@ public function wsText(connection :: int, data :: string) returns error.StdError
 ### `wsBinary`
 
 ```doxa
-public function wsBinary(connection :: int, data :: string) returns error.StdError
+public function wsBinary(connection :: int, data :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsBinary(connection :: int, data :: string) returns error.StdError {
+public function wsBinary(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Binary, data)
 }
 ```
@@ -1983,14 +2212,14 @@ public function wsBinary(connection :: int, data :: string) returns error.StdErr
 ### `wsPing`
 
 ```doxa
-public function wsPing(connection :: int, data :: string) returns error.StdError
+public function wsPing(connection :: int, data :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsPing(connection :: int, data :: string) returns error.StdError {
+public function wsPing(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Ping, data)
 }
 ```
@@ -2000,14 +2229,14 @@ public function wsPing(connection :: int, data :: string) returns error.StdError
 ### `wsPong`
 
 ```doxa
-public function wsPong(connection :: int, data :: string) returns error.StdError
+public function wsPong(connection :: int, data :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function wsPong(connection :: int, data :: string) returns error.StdError {
+public function wsPong(connection :: int, data :: string) returns nothing | error.StdError {
     return wsSend(connection, WsOp.Pong, data)
 }
 ```
@@ -2017,7 +2246,7 @@ public function wsPong(connection :: int, data :: string) returns error.StdError
 ### `wsClose`
 
 ```doxa
-public function wsClose(connection :: int) returns error.StdError
+public function wsClose(connection :: int) returns nothing | error.StdError
 ```
 
 Send a Close frame (empty payload) and drop the connection.
@@ -2026,7 +2255,7 @@ Send a Close frame (empty payload) and drop the connection.
 <summary>Source</summary>
 
 ```doxa
-public function wsClose(connection :: int) returns error.StdError {
+public function wsClose(connection :: int) returns nothing | error.StdError {
     wsSend(connection, WsOp.Close, "")
     return close(connection)
 }
@@ -2141,10 +2370,10 @@ public function isMac() returns tetra {
 ### `pathFor`
 
 ```doxa
-public function pathFor(os :: string, parts :: string[]) returns string
+public function pathFor(platform :: string, parts :: string[]) returns string
 ```
 
-Joins `parts` with the separator for `os` (one of the names returned by
+Joins `parts` with the separator for `platform` (one of the names returned by
 `os()`, e.g. `"windows"`, `"linux"`, `"macos"`). Empty segments are skipped,
 an absolute segment resets the result, and a separator already at the join
 point is not doubled.
@@ -2153,8 +2382,8 @@ point is not doubled.
 <summary>Source</summary>
 
 ```doxa
-public function pathFor(os :: string, parts :: string[]) returns string {
-    const sep is sepFor(os)
+public function pathFor(platform :: string, parts :: string[]) returns string {
+    const sep is sepFor(platform)
     var result is ""
     var i is 0
     while i < @length(parts) {
@@ -2164,11 +2393,11 @@ public function pathFor(os :: string, parts :: string[]) returns string {
             continue
         }
 
-        if isAbsolute(part, os) then {
+        if isAbsolute(part, platform) then {
             result is part
         } else if @length(result) == 0 then {
             result is part
-        } else if isSep(result[@length(result) - 1], os) then {
+        } else if isSep(result[@length(result) - 1], platform) then {
             result is result + part
         } else {
             result is result + sep + part
@@ -3722,6 +3951,13 @@ public struct Node {
         }
     }
 
+    public function parse(text :: string) returns Node | error.StdError {
+        const root is JSON.parseDocument(text)
+        const code is JSON.takeLastErrorCode()
+        if code == 0 then return Node.new(root)
+        return mapJSONError(code)
+    }
+
     public method kind() returns Kind {
         const code is JSON.nodeKind(this.handle)
         return match code {
@@ -3784,6 +4020,26 @@ public struct Node {
         return value
     }
 }
+```
+
+</details>
+
+#### `Node.parse`
+
+```doxa
+public function parse(text :: string) returns Node | error.StdError
+```
+
+<details>
+<summary>Source</summary>
+
+```doxa
+public function parse(text :: string) returns Node | error.StdError {
+        const root is JSON.parseDocument(text)
+        const code is JSON.takeLastErrorCode()
+        if code == 0 then return Node.new(root)
+        return mapJSONError(code)
+    }
 ```
 
 </details>
@@ -3967,37 +4223,17 @@ public method booleanValue() returns tetra | nothing {
 
 </details>
 
-### `parse`
-
-```doxa
-public function parse(text :: string) returns Node | error.StdError
-```
-
-<details>
-<summary>Source</summary>
-
-```doxa
-public function parse(text :: string) returns Node | error.StdError {
-    const root is JSON.parseDocument(text)
-    const code is JSON.takeLastErrorCode()
-    if code == 0 then return Node.new(root)
-    return mapJSONError(code)
-}
-```
-
-</details>
-
 ### `beginObject`
 
 ```doxa
-public function beginObject() returns error.StdError
+public function beginObject() returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function beginObject() returns error.StdError {
+public function beginObject() returns nothing | error.StdError {
     JSON.writerBeginObject()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4010,14 +4246,14 @@ public function beginObject() returns error.StdError {
 ### `beginArray`
 
 ```doxa
-public function beginArray() returns error.StdError
+public function beginArray() returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function beginArray() returns error.StdError {
+public function beginArray() returns nothing | error.StdError {
     JSON.writerBeginArray()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4030,14 +4266,14 @@ public function beginArray() returns error.StdError {
 ### `end`
 
 ```doxa
-public function end() returns error.StdError
+public function end() returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function end() returns error.StdError {
+public function end() returns nothing | error.StdError {
     JSON.writerEnd()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4050,14 +4286,14 @@ public function end() returns error.StdError {
 ### `writeKey`
 
 ```doxa
-public function writeKey(name :: string) returns error.StdError
+public function writeKey(name :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeKey(name :: string) returns error.StdError {
+public function writeKey(name :: string) returns nothing | error.StdError {
     JSON.writerKey(name)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4070,14 +4306,14 @@ public function writeKey(name :: string) returns error.StdError {
 ### `writeText`
 
 ```doxa
-public function writeText(text :: string) returns error.StdError
+public function writeText(text :: string) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeText(text :: string) returns error.StdError {
+public function writeText(text :: string) returns nothing | error.StdError {
     JSON.writerText(text)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4090,14 +4326,14 @@ public function writeText(text :: string) returns error.StdError {
 ### `writeInt`
 
 ```doxa
-public function writeInt(value :: int) returns error.StdError
+public function writeInt(value :: int) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeInt(value :: int) returns error.StdError {
+public function writeInt(value :: int) returns nothing | error.StdError {
     JSON.writerInt(value)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4110,14 +4346,14 @@ public function writeInt(value :: int) returns error.StdError {
 ### `writeFloat`
 
 ```doxa
-public function writeFloat(value :: float) returns error.StdError
+public function writeFloat(value :: float) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeFloat(value :: float) returns error.StdError {
+public function writeFloat(value :: float) returns nothing | error.StdError {
     JSON.writerFloat(value)
     const code is JSON.takeLastErrorCode()
     if code == 0 then return
@@ -4130,14 +4366,14 @@ public function writeFloat(value :: float) returns error.StdError {
 ### `writeBoolean`
 
 ```doxa
-public function writeBoolean(value :: tetra) returns error.StdError
+public function writeBoolean(value :: tetra) returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeBoolean(value :: tetra) returns error.StdError {
+public function writeBoolean(value :: tetra) returns nothing | error.StdError {
     if value == both or value == neither then {
         JSON.writerReject(1)
         return error.Common.InvalidArgument
@@ -4154,14 +4390,14 @@ public function writeBoolean(value :: tetra) returns error.StdError {
 ### `writeNull`
 
 ```doxa
-public function writeNull() returns error.StdError
+public function writeNull() returns nothing | error.StdError
 ```
 
 <details>
 <summary>Source</summary>
 
 ```doxa
-public function writeNull() returns error.StdError {
+public function writeNull() returns nothing | error.StdError {
     JSON.writerNull()
     const code is JSON.takeLastErrorCode()
     if code == 0 then return

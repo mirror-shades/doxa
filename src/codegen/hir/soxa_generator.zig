@@ -15,27 +15,26 @@ pub const HIRValue = SoxaValues.HIRValue;
 const HIREnum = SoxaValues.HIREnum;
 pub const HIRMapEntry = SoxaValues.HIRMapEntry;
 const SoxaTypes = @import("soxa_types.zig");
+const Slot = SoxaTypes.Slot;
+const ScopeKind = SoxaTypes.ScopeKind;
 pub const HIRType = SoxaTypes.HIRType;
 const CallKind = SoxaTypes.CallKind;
 const HIRProgram = SoxaTypes.HIRProgram;
-const builtin_methods = @import("../../runtime/builtin_methods.zig");
 
-/// Element types for a builtin's `.Array` return (e.g. `@unpack` -> `byte[]`).
-const builtin_byte_element: HIRType = .Byte;
-const builtin_unknown_element: HIRType = .Unknown;
-const import_parser = @import("../../parser/import_parser.zig");
 const ParamMutation = @import("param_mutation.zig");
 const ResourceManager = @import("resource_manager.zig");
 const LabelGenerator = ResourceManager.LabelGenerator;
 const ConstantManager = ResourceManager.ConstantManager;
 const SymbolTable = @import("symbol_table.zig").SymbolTable;
 const TypeSystem = @import("type_system.zig").TypeSystem;
-const SlotManager = @import("slot_manager.zig").SlotManager;
 const Errors = @import("../../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
-const SemanticAnalyzer = @import("../../analysis/semantic/semantic.zig");
-const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
+const semantic_module = @import("../../analysis/semantic/semantic.zig");
+const SemanticAnalyzer = semantic_module.SemanticAnalyzer;
+const StructMethodInfo = semantic_module.StructMethodInfo;
+const StoreTarget = semantic_module.StoreTarget;
+const Resolution = @import("../../analysis/semantic/resolution.zig").Resolution;
 const BasicHandler = @import("expressions/basic.zig").BasicExpressionHandler;
 const BinaryHandler = @import("expressions/binary.zig").BinaryExpressionHandler;
 const ControlFlowHandler = @import("expressions/control_flow.zig").ControlFlowHandler;
@@ -45,85 +44,8 @@ const StructsHandler = @import("expressions/structs.zig").StructsHandler;
 const AssignmentsHandler = @import("expressions/assignments.zig").AssignmentsHandler;
 const IOHandler = @import("expressions/io.zig").IOHandler;
 const ModuleCall = @import("module_call.zig");
-const union_handling = @import("../../analysis/semantic/union_handling.zig");
 const module_graph = @import("../../module/graph.zig");
-
-/// Whether `return` with no value appears anywhere in the statement list (including inside expr trees).
-fn functionStmtsHaveBareReturn(stmts: []ast.Stmt) bool {
-    for (stmts) |stmt| {
-        if (stmtHasBareReturn(stmt)) return true;
-    }
-    return false;
-}
-
-fn stmtHasBareReturn(stmt: ast.Stmt) bool {
-    switch (stmt.data) {
-        .Return => |r| return r.value == null,
-        .Block => |ss| return functionStmtsHaveBareReturn(ss),
-        .Expression => |opt| {
-            if (opt) |e| return exprHasBareReturn(e);
-            return false;
-        },
-        .FunctionDecl => |f| return functionStmtsHaveBareReturn(f.body),
-        .VarDecl => |v| {
-            if (v.initializer) |init| return exprHasBareReturn(init);
-            return false;
-        },
-        else => return false,
-    }
-}
-
-fn exprHasBareReturn(expr: *ast.Expr) bool {
-    switch (expr.data) {
-        .If => |i| {
-            if (i.condition) |c| if (exprHasBareReturn(c)) return true;
-            if (i.then_branch) |t| if (exprHasBareReturn(t)) return true;
-            if (i.else_branch) |e| if (exprHasBareReturn(e)) return true;
-            return false;
-        },
-        .Block => |b| {
-            if (functionStmtsHaveBareReturn(b.statements)) return true;
-            if (b.value) |v| if (exprHasBareReturn(v)) return true;
-            return false;
-        },
-        .Grouping => |g| return if (g) |inner| exprHasBareReturn(inner) else false,
-        .Loop => |l| return exprHasBareReturn(l.body),
-        .Match => |m| {
-            if (exprHasBareReturn(m.value)) return true;
-            for (m.cases) |case| {
-                if (exprHasBareReturn(case.body)) return true;
-            }
-            return false;
-        },
-        .Binary => |bin| {
-            if (bin.left) |l| if (exprHasBareReturn(l)) return true;
-            if (bin.right) |r| if (exprHasBareReturn(r)) return true;
-            return false;
-        },
-        .Unary => |u| {
-            if (u.right) |r| if (exprHasBareReturn(r)) return true;
-            return false;
-        },
-        .Assignment => |a| {
-            if (a.value) |v| if (exprHasBareReturn(v)) return true;
-            return false;
-        },
-        .Array => |items| {
-            for (items) |item| {
-                if (exprHasBareReturn(item)) return true;
-            }
-            return false;
-        },
-        .FunctionCall => |c| {
-            if (exprHasBareReturn(c.callee)) return true;
-            for (c.arguments) |arg| {
-                if (exprHasBareReturn(arg.expr)) return true;
-            }
-            return false;
-        },
-        else => return false,
-    }
-}
+const TypeRef = ast.TypeRef;
 
 /// A declared parameter type as the signature table records it: primitives
 /// plus the container and marker types the call lowering passes through
@@ -135,54 +57,6 @@ fn sanitizeParamType(t: HIRType) HIRType {
         => t,
         else => .Int,
     };
-}
-
-/// Declared `returns A | B` with a bare `return` in the body is lowered as `nothing | A | B`.
-/// Handles both explicit `.Union` declared types and `.Custom` types that resolve to sets.
-fn effectiveReturnTypeForSignature(allocator: std.mem.Allocator, declared: ast.TypeInfo, body: []ast.Stmt, type_system: ?*TypeSystem) !ast.TypeInfo {
-    if (declared.base == .Custom and declared.custom_type != null) {
-        if (type_system) |ts| {
-            if (functionStmtsHaveBareReturn(body)) {
-                const ct = ts.isCustomType(declared.custom_type.?) orelse blk: {
-                    if (std.mem.lastIndexOfScalar(u8, declared.custom_type.?, '.')) |dot| {
-                        break :blk ts.isCustomType(declared.custom_type.?[dot + 1 ..]);
-                    }
-                    break :blk null;
-                };
-                if (ct != null and ct.?.kind == .Group) {
-                    const nothing_ptr = try allocator.create(ast.TypeInfo);
-                    nothing_ptr.* = .{ .base = .Nothing, .is_mutable = false };
-                    const new_types = try allocator.alloc(*ast.TypeInfo, 2);
-                    new_types[0] = nothing_ptr;
-                    const group_type = try allocator.create(ast.TypeInfo);
-                    group_type.* = .{ .base = .Custom, .custom_type = declared.custom_type.?, .is_mutable = false };
-                    new_types[1] = group_type;
-                    const new_ut = try allocator.create(ast.UnionType);
-                    new_ut.* = .{ .types = new_types, .current_type_index = 0 };
-                    return ast.TypeInfo{ .base = .Union, .union_type = new_ut, .is_mutable = declared.is_mutable };
-                }
-            }
-        }
-        return declared;
-    }
-    if (declared.base != .Union or declared.union_type == null) return declared;
-    if (!functionStmtsHaveBareReturn(body)) return declared;
-
-    const flattened = try union_handling.flattenUnionType(allocator, declared.union_type.?);
-    for (flattened.types) |m| {
-        if (m.base == .Nothing) {
-            return ast.TypeInfo{ .base = .Union, .union_type = flattened, .is_mutable = declared.is_mutable };
-        }
-    }
-
-    const nothing_ptr = try allocator.create(ast.TypeInfo);
-    nothing_ptr.* = .{ .base = .Nothing, .is_mutable = false };
-    const new_types = try allocator.alloc(*ast.TypeInfo, flattened.types.len + 1);
-    new_types[0] = nothing_ptr;
-    @memcpy(new_types[1..], flattened.types);
-    const new_ut = try allocator.create(ast.UnionType);
-    new_ut.* = .{ .types = new_types, .current_type_index = flattened.current_type_index };
-    return ast.TypeInfo{ .base = .Union, .union_type = new_ut, .is_mutable = declared.is_mutable };
 }
 
 pub const TETRA_FALSE: u8 = 0;
@@ -224,12 +98,23 @@ pub const HIRGenerator = struct {
     type_system: TypeSystem,
     struct_methods: std.StringHashMap(std.StringHashMap(StructMethodInfo)),
 
-    slot_manager: SlotManager,
+    /// The `^` parameters of the function being lowered, by their binding's
+    /// slot: the alias slot `BindAlias` bound each one to.
+    alias_params: std.AutoHashMap(Slot, u32),
+    /// The slot of the receiver `this` of the method being lowered.
+    this_slot: ?Slot = null,
+    /// The next alias slot `BindAlias` binds a `^` parameter or `this` to.
+    next_alias_slot: u32 = 0,
 
     function_signatures: SoxaTypes.FunctionSignatureMap,
     function_bodies: std.array_list.Managed(FunctionBody),
-    semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo) = null,
-    semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer = null,
+    /// Function-table index by link name.
+    function_indices: std.StringHashMap(u32),
+    /// The Zig functions the program calls, by wrapper link name.
+    zig_functions: std.StringHashMap(*const ast.ZigFnSig),
+    /// The analysis this program is lowered from: every expression's type and
+    /// every name's resolution.
+    semantic: *const SemanticAnalyzer,
     current_function: ?[]const u8,
     current_function_return_type: HIRType,
     is_global_init_phase: bool,
@@ -238,32 +123,13 @@ pub const HIRGenerator = struct {
 
     function_calls: std.array_list.Managed(FunctionCallSite),
 
-    module_namespaces: std.StringHashMap(ast.ModuleInfo),
-
-    /// The compilation's module graph and the entry record. Codegen identity for
-    /// module-owned symbols is keyed by the *defining* record (via its
-    /// `link_prefix`), never by a source-written alias, so two files that use
-    /// the same alias for different targets cannot share an internal key.
+    /// The compilation's module graph (mangling final) and the entry record.
+    /// Codegen identity for module-owned symbols is keyed by the *defining*
+    /// record, never by a source-written alias.
     graph: *module_graph.ModuleGraph,
     entry_module: module_graph.ModuleId,
-    /// The record whose body is currently being lowered (entry for the root
-    /// program and global init). Owner-scoped name resolution reads this
-    /// record's `bindings`.
+    /// The record whose body is currently being lowered.
     current_module: module_graph.ModuleId,
-
-    imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol) = null,
-    module_field_slots: std.HashMap(module_graph.SymbolKey, u32, module_graph.SymbolKeyContext, std.hash_map.default_max_load_percentage),
-    /// The defining record whose module globals are currently being emitted.
-    current_module_context: ?module_graph.ModuleId = null,
-
-    current_enum_type: ?[]const u8 = null,
-    current_assignment_target: ?[]const u8 = null,
-
-    // When an `as` cast is a declaration initializer, the declared variable's
-    // slot is pre-created so the cast can store the subject value into it before
-    // running the then/else branches (making the binding readable inside them).
-    cast_decl_var_index: ?u32 = null,
-    cast_decl_var_name: ?[]const u8 = null,
 
     loop_context_stack: std.array_list.Managed(LoopContext),
     current_function_scope_id: ?u32 = null,
@@ -271,13 +137,15 @@ pub const HIRGenerator = struct {
     deferred_stack: std.array_list.Managed(DeferredBlock),
     loop_deferred_boundaries: std.array_list.Managed(usize),
 
-    is_generating_nested_array: bool = false,
-
     next_scope_id: u32 = 0,
 
     // Serial number for unnamed temporary variables materialized during codegen
     // (e.g. a struct-method receiver that is not a plain variable).
     next_temp_id: u32 = 0,
+
+    /// The next slot `tempSlot` mints: above every storage id the analyzer
+    /// issued, so a generator temporary never shares a binding's storage.
+    next_temp_slot: Slot,
 
     pub const FunctionInfo = SoxaTypes.FunctionInfo;
 
@@ -288,12 +156,12 @@ pub const HIRGenerator = struct {
         function_name: []const u8,
         function_params: []ast.FunctionParam,
         return_type_info: ast.TypeInfo,
-        /// The record this body was defined in. Bare-callee resolution reads
-        /// this record's owner-scoped `bindings`; the entry record for the root
-        /// file.
+        /// The record this body was defined in.
         module_id: module_graph.ModuleId,
         /// The body's internal identity `(defining record, declared name)`.
         key: module_graph.SymbolKey,
+        /// The resolved parameter types, as analysis recorded them.
+        param_types: []const ast.TypeInfo,
     };
 
     pub const FunctionCallSite = struct {
@@ -350,8 +218,11 @@ pub const HIRGenerator = struct {
         field_types: []HIRType,
     };
 
-    pub fn init(io: std.Io, allocator: std.mem.Allocator, reporter: *Reporter, module_namespaces: std.StringHashMap(ast.ModuleInfo), imported_symbols: ?std.StringHashMap(import_parser.ImportedSymbol), semantic_function_return_types: ?*const std.AutoHashMap(ast.NodeId, *ast.TypeInfo), semantic_analyzer: ?*const @import("../../analysis/semantic/semantic.zig").SemanticAnalyzer, graph: *module_graph.ModuleGraph, entry_module: module_graph.ModuleId) HIRGenerator {
-        return HIRGenerator{
+    /// A generator for the analyzed program. The module graph's mangling is
+    /// final: every type gets its canonical key, every global site its link
+    /// name, and the analyzer's type and method tables their codegen view.
+    pub fn init(io: std.Io, allocator: std.mem.Allocator, reporter: *Reporter, semantic: *SemanticAnalyzer) !HIRGenerator {
+        var self = HIRGenerator{
             .io = io,
             .allocator = allocator,
             .instructions = std.array_list.Managed(HIRInstruction).init(allocator),
@@ -363,31 +234,130 @@ pub const HIRGenerator = struct {
             .symbol_table = SymbolTable.init(allocator),
             .constant_manager = ConstantManager.init(allocator),
             .label_generator = LabelGenerator.init(allocator),
-            .type_system = TypeSystem.init(allocator, reporter, semantic_analyzer),
+            .type_system = TypeSystem.init(allocator, reporter, semantic, &semantic.union_table),
             .struct_methods = std.StringHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
-            .slot_manager = SlotManager.init(allocator),
+            .alias_params = std.AutoHashMap(Slot, u32).init(allocator),
             .function_signatures = SoxaTypes.FunctionSignatureMap.init(allocator),
             .function_bodies = std.array_list.Managed(FunctionBody).init(allocator),
-            .semantic_function_return_types = semantic_function_return_types,
-            .semantic_analyzer = semantic_analyzer,
+            .function_indices = std.StringHashMap(u32).init(allocator),
+            .zig_functions = std.StringHashMap(*const ast.ZigFnSig).init(allocator),
+            .semantic = semantic,
             .current_function = null,
             .current_function_return_type = .Nothing,
             .is_global_init_phase = false,
             .function_calls = std.array_list.Managed(FunctionCallSite).init(allocator),
             .reflected_structs = std.StringHashMap(void).init(allocator),
-            .module_namespaces = module_namespaces,
-            .graph = graph,
-            .entry_module = entry_module,
-            .current_module = entry_module,
-            .imported_symbols = imported_symbols,
-            .module_field_slots = std.HashMap(module_graph.SymbolKey, u32, module_graph.SymbolKeyContext, std.hash_map.default_max_load_percentage).init(allocator),
-            .current_module_context = null,
-            .current_enum_type = null,
+            .graph = semantic.graph,
+            .entry_module = semantic.entry_module,
+            .current_module = semantic.entry_module,
             .stats = HIRStats.init(allocator),
             .loop_context_stack = std.array_list.Managed(LoopContext).init(allocator),
             .deferred_stack = std.array_list.Managed(DeferredBlock).init(allocator),
             .loop_deferred_boundaries = std.array_list.Managed(usize).init(allocator),
+            .next_temp_slot = semantic.memory.scope_manager.next_storage_id,
         };
+        try self.bindTypes();
+        try self.bindGlobalLinkNames();
+        return self;
+    }
+
+    /// Project the analyzer's type and method tables onto canonical keys —
+    /// the identity codegen and the emitter name types by.
+    fn bindTypes(self: *HIRGenerator) !void {
+        var custom_it = self.semantic.custom_types.iterator();
+        while (custom_it.next()) |entry| {
+            const key = self.typeKey(entry.key_ptr.*);
+            try self.type_system.custom_types.put(key, try self.codegenCustomType(entry.value_ptr.*));
+        }
+        var methods_it = self.semantic.struct_methods.iterator();
+        while (methods_it.next()) |entry| {
+            var table = std.StringHashMap(StructMethodInfo).init(self.allocator);
+            var it = entry.value_ptr.iterator();
+            while (it.next()) |method| try table.put(method.key_ptr.*, method.value_ptr.*);
+            try self.struct_methods.put(self.typeKey(entry.key_ptr.*), table);
+        }
+    }
+
+    /// The codegen view of an analyzed type: fields and variants with their
+    /// HIR types, named by canonical key.
+    fn codegenCustomType(self: *HIRGenerator, semantic_type: @import("../../types/types.zig").CustomTypeInfo) !TypeSystem.CustomTypeInfo {
+        var hir_type = TypeSystem.CustomTypeInfo{
+            .name = self.typeKey(semantic_type.ref),
+            .kind = switch (semantic_type.kind) {
+                .Struct => .Struct,
+                .Enum => .Enum,
+                .Group => .Group,
+            },
+            .enum_variants = null,
+            .struct_fields = null,
+            .group_members = null,
+        };
+        if (semantic_type.enum_variants) |variants| {
+            const converted = try self.allocator.alloc(TypeSystem.CustomTypeInfo.EnumVariant, variants.len);
+            for (variants, converted) |variant, *dest| dest.* = .{ .name = variant.name, .index = variant.index };
+            hir_type.enum_variants = converted;
+        }
+        if (semantic_type.struct_fields) |fields| {
+            const converted = try self.allocator.alloc(TypeSystem.CustomTypeInfo.StructField, fields.len);
+            for (fields, converted) |field, *dest| dest.* = .{
+                .name = field.name,
+                .field_type = self.convertTypeInfo(field.field_type_info.*),
+                .index = field.index,
+                .custom_type_name = self.typeKeyOf(field.field_type_info.*),
+            };
+            hir_type.struct_fields = converted;
+        }
+        if (semantic_type.group_members) |members| {
+            const converted = try self.allocator.alloc(TypeSystem.CustomTypeInfo.GroupMemberSource, members.len);
+            for (members, converted) |member, *dest| dest.* = .{
+                .qualifier = member.qualifier,
+                .key = self.typeKey(member.ref),
+            };
+            hir_type.group_members = converted;
+        }
+        return hir_type;
+    }
+
+    /// Give every declaration of and reference to a module-level global the
+    /// global's link name. Codegen's storage is keyed by a variable's name, so
+    /// after this two modules' same-named globals can never share a slot, and a
+    /// namespace member access (`ns.counter`) is a plain reference to the
+    /// global it resolved to.
+    fn bindGlobalLinkNames(self: *HIRGenerator) !void {
+        for (self.semantic.global_sites.values()) |site| {
+            const link = try self.graph.mangle(self.allocator, site.symbol.module, .global, &.{site.symbol.name});
+            switch (site.place) {
+                .name => |token| token.lexeme = link,
+                .member => |expr| {
+                    var tok = expr.data.FieldAccess.field;
+                    tok.lexeme = link;
+                    expr.data = .{ .Variable = tok };
+                },
+            }
+        }
+    }
+
+    /// The canonical codegen key of a named type. Every type that reaches
+    /// codegen was registered by analysis, so it has one.
+    pub fn typeKey(self: *const HIRGenerator, ref: TypeRef) []const u8 {
+        return self.type_system.refKey(ref).?;
+    }
+
+    /// The canonical key of the named type `type_info` refers to, if any.
+    pub fn typeKeyOf(self: *const HIRGenerator, type_info: ast.TypeInfo) ?[]const u8 {
+        const custom = type_info.custom_type orelse return null;
+        return self.typeKey(custom.resolved());
+    }
+
+    /// The codegen description of the named type `type_info` refers to.
+    pub fn customTypeOf(self: *HIRGenerator, type_info: ast.TypeInfo) ?TypeSystem.CustomTypeInfo {
+        const key = self.typeKeyOf(type_info) orelse return null;
+        return self.type_system.custom_types.get(key);
+    }
+
+    /// What analysis resolved `expr` to, if it names a module-level entity.
+    pub fn resolutionOf(self: *const HIRGenerator, expr: *const ast.Expr) ?Resolution {
+        return self.semantic.resolutionOf(expr);
     }
 
     pub fn deinit(self: *HIRGenerator) void {
@@ -399,10 +369,12 @@ pub const HIRGenerator = struct {
         var methods_it = self.struct_methods.valueIterator();
         while (methods_it.next()) |tbl| tbl.*.deinit();
         self.struct_methods.deinit();
-        self.slot_manager.deinit();
+        self.alias_params.deinit();
         self.function_signatures.deinit();
         self.function_bodies.deinit();
-        self.module_field_slots.deinit();
+        self.function_indices.deinit();
+        self.zig_functions.deinit();
+
         self.function_calls.deinit();
         self.loop_context_stack.deinit();
         for (self.deferred_stack.items) |*block| {
@@ -481,43 +453,55 @@ pub const HIRGenerator = struct {
         }
     }
 
-    pub fn generateProgram(self: *HIRGenerator, statements: []ast.Stmt) !HIRProgram {
+    pub fn generateProgram(self: *HIRGenerator) !HIRProgram {
+        const records = try self.programRecords();
 
-        // Pass 1: Collect function signatures (forward declarations)
-        try self.collectFunctionSignatures(statements);
+        // Pass 1: every function and method of the program, so any call can
+        // name any callee.
+        try self.collectFunctionSignatures(records);
 
-        // Pass 1.5: Process imported enum symbols and register them in type system
-        try self.processImportedEnumSymbols();
+        // Pass 2: module globals, before the entry program runs.
+        try self.generateGlobalInitialization(records);
 
-        // Pass 2: Initialize global variables at module level
-        try self.generateGlobalInitialization(statements);
+        // Pass 3: the entry program.
+        try self.generateMainProgram(self.graph.record(self.entry_module).statements());
 
-        // Pass 3: Generate main program (non-global statements)
-        try self.generateMainProgram(statements);
-
-        // Pass 4: Generate function bodies AFTER main program
+        // Pass 4: function bodies.
         try self.generateFunctionBodies();
 
-        // Pass 4: Build function table
         const function_table = try self.buildFunctionTable();
-
         const instructions_slice = try self.instructions.toOwnedSlice();
         return HIRProgram{
             .instructions = instructions_slice,
             .constant_pool = try self.constant_manager.toOwnedSlice(),
             .string_pool = try self.string_pool.toOwnedSlice(),
             .function_table = function_table,
-            .module_map = try self.buildModuleMap(),
             .allocator = self.allocator,
             .reflected_structs = try self.cloneReflectedStructs(),
             .force_struct_descriptors = self.force_struct_descriptors,
+            .zig_functions = try self.programZigFunctions(),
         };
     }
 
-    /// Copy the reflected-struct name set into an owned map for the returned
+    /// The inline-Zig callees the program reached, with their wrappers'
+    /// parameter types, for the emitter's declarations.
+    fn programZigFunctions(self: *HIRGenerator) ![]const HIRProgram.ZigFunction {
+        const functions = try self.allocator.alloc(HIRProgram.ZigFunction, self.zig_functions.count());
+        var it = self.zig_functions.iterator();
+        var i: usize = 0;
+        while (it.next()) |entry| : (i += 1) {
+            const sig = entry.value_ptr.*;
+            const param_types = try self.allocator.alloc(HIRType, sig.param_types.len);
+            for (sig.param_types, param_types) |param, *dest| dest.* = self.convertTypeInfo(param);
+            functions[i] = .{ .link_name = entry.key_ptr.*, .param_types = param_types, .return_type = self.convertTypeInfo(sig.return_type) };
+        }
+        return functions;
+    }
+
+    /// Copy the reflected-struct key set into an owned map for the returned
     /// `HIRProgram`. The generator (and its map) is deinited as soon as
     /// `generateProgram` returns, so the program cannot borrow it. The keys are
-    /// borrowed struct-table names, which outlive the program.
+    /// borrowed struct-table keys, which outlive the program.
     fn cloneReflectedStructs(self: *HIRGenerator) !std.StringHashMap(void) {
         var copy = std.StringHashMap(void).init(self.allocator);
         errdefer copy.deinit();
@@ -527,173 +511,125 @@ pub const HIRGenerator = struct {
         return copy;
     }
 
-    fn buildModuleMap(self: *HIRGenerator) !std.StringHashMap(HIRProgram.ModuleInfo) {
-        var module_map = std.StringHashMap(HIRProgram.ModuleInfo).init(self.allocator);
-        errdefer module_map.deinit();
-
-        var it = self.module_namespaces.iterator();
-        while (it.next()) |entry| {
-            const module_info = entry.value_ptr.*;
-            if (module_info.ast == null) continue;
-            try module_map.put(entry.key_ptr.*, .{
-                .name = entry.key_ptr.*,
-                .imports = &[_][]const u8{},
-                .exports = &[_][]const u8{},
-                .global_var_count = 0,
-            });
+    /// The Doxa records whose code is part of the program — every record
+    /// analysis checked — in stable-key order, so the emitted program never
+    /// depends on the order modules were discovered in.
+    fn programRecords(self: *HIRGenerator) ![]*module_graph.ModuleRecord {
+        var records = std.array_list.Managed(*module_graph.ModuleRecord).init(self.allocator);
+        for (self.graph.records.items) |record| {
+            if (record.kind != .doxa or record.status != .Analyzed) continue;
+            try records.append(record);
         }
-
-        return module_map;
+        std.sort.pdq(*module_graph.ModuleRecord, records.items, {}, struct {
+            fn lessThan(_: void, a: *module_graph.ModuleRecord, b: *module_graph.ModuleRecord) bool {
+                return std.mem.lessThan(u8, a.stable_module_key, b.stable_module_key);
+            }
+        }.lessThan);
+        return records.toOwnedSlice();
     }
 
-    /// Pass 1: Collect function signatures for forward declarations
-    fn collectFunctionSignatures(self: *HIRGenerator, statements: []ast.Stmt) !void {
-        for (statements) |stmt| {
-            switch (stmt.data) {
-                .FunctionDecl => |func| {
-                    const eff_rti = try effectiveReturnTypeForSignature(self.allocator, func.return_type_info, func.body, &self.type_system);
-                    var return_type = self.convertTypeInfo(eff_rti);
-
-                    if (self.semantic_function_return_types) |semantic_types| {
-                        if (semantic_types.get(stmt.base.id)) |semantic_return_type| {
-                            // Only use the semantic analyzer's inferred return type when the user did not
-                            // provide an explicit return type annotation.
-                            if (func.return_type_info.base == .Nothing) {
-                                return_type = self.convertTypeInfo(semantic_return_type.*);
-                            }
-                        }
-                    }
-
-                    const start_label = try self.label_generator.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{func.name.lexeme}));
-
-                    var param_is_alias = try self.allocator.alloc(bool, func.params.len);
-                    var param_is_readonly = try self.allocator.alloc(bool, func.params.len);
-                    var param_types = try self.allocator.alloc(HIRType, func.params.len);
-                    for (func.params, 0..) |param, i| {
-                        param_is_alias[i] = param.is_alias;
-                        param_is_readonly[i] = !ParamMutation.bodyMutatesVariable(func.body, param.name.lexeme);
-                        param_types[i] = sanitizeParamType(if (param.type_expr) |type_expr|
-                            self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*)
-                        else
-                            .Int);
-                    }
-
-                    const function_info = FunctionInfo{
-                        .name = func.name.lexeme,
-                        .arity = @intCast(func.params.len),
-                        .return_type = return_type,
-                        .start_label = start_label,
-                        .local_var_count = 0,
-                        .is_entry = func.is_entry,
-                        .param_is_alias = param_is_alias,
-                        .param_is_readonly = param_is_readonly,
-                        .param_types = param_types,
-                    };
-
-                    try self.function_signatures.put(
-                        module_graph.SymbolKey{ .module = self.entry_module, .name = func.name.lexeme },
-                        function_info,
-                    );
-
-                    try self.function_bodies.append(FunctionBody{
-                        .function_info = function_info,
-                        .statements = func.body,
-                        .start_instruction_index = 0,
-                        .function_name = func.name.lexeme,
-                        .function_params = func.params,
-                        .return_type_info = eff_rti,
-                        .module_id = self.entry_module,
-                        .key = .{ .module = self.entry_module, .name = func.name.lexeme },
-                    });
-                },
-                .Expression => |maybe_expr| {
-                    if (maybe_expr) |expr| {
-                        if (expr.data == .StructDecl) {
-                            try self.registerStructMethodSignatures(expr.data.StructDecl, self.entry_module);
-                        }
-                    }
-                },
-                else => {},
-            }
-        }
-
-        // Every parsed module record contributes its own function set. Iterating
-        // the graph (not the alias-keyed `module_namespaces`) emits a function
-        // once per defining record, and the internal key is the record's
-        // deterministic link prefix — never a source alias, so two files may use
-        // the same alias for different targets without collision.
-        for (self.graph.records.items) |record| {
-            if (record.id == self.entry_module) continue;
-            const module_info = record.module_info orelse continue;
-            // Inline-`zig` and `.zig`-file modules have no Doxa body: their
-            // functions are external wrapper symbols registered through
-            // `imported_symbols`.
-            if (module_info.is_inline_zig) continue;
-
-            if (module_info.ast) |module_ast| {
-                if (module_ast.data == .Block) {
-                    const mod_statements = module_ast.data.Block.statements;
-                    for (mod_statements) |mod_stmt| {
-                        switch (mod_stmt.data) {
-                            .FunctionDecl => |func| {
-                                const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ record.link_prefix, func.name.lexeme });
-                                const key = module_graph.SymbolKey{ .module = record.id, .name = func.name.lexeme };
-                                if (self.function_signatures.contains(key)) continue;
-                                const eff_rti = try effectiveReturnTypeForSignature(self.allocator, func.return_type_info, func.body, &self.type_system);
-                                const return_type = self.convertTypeInfo(eff_rti);
-                                const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified_name}));
-
-                                var param_is_alias_imported = try self.allocator.alloc(bool, func.params.len);
-                                var param_is_readonly_imported = try self.allocator.alloc(bool, func.params.len);
-                                var param_types_imported = try self.allocator.alloc(HIRType, func.params.len);
-                                for (func.params, 0..) |param, i| {
-                                    param_is_alias_imported[i] = param.is_alias;
-                                    param_is_readonly_imported[i] = !ParamMutation.bodyMutatesVariable(func.body, param.name.lexeme);
-                                    const pt: HIRType = sanitizeParamType(if (param.type_expr) |type_expr|
-                                        self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*)
-                                    else
-                                        .Int);
-                                    param_types_imported[i] = pt;
-                                }
-
-                                const function_info = FunctionInfo{
-                                    .name = qualified_name,
-                                    .arity = @intCast(func.params.len),
-                                    .return_type = return_type,
-                                    .start_label = start_label,
-                                    .local_var_count = 0,
-                                    .is_entry = false,
-                                    .param_is_alias = param_is_alias_imported,
-                                    .param_is_readonly = param_is_readonly_imported,
-                                    .param_types = param_types_imported,
-                                };
-
-                                try self.function_signatures.put(key, function_info);
-
-                                try self.function_bodies.append(FunctionBody{
-                                    .function_info = function_info,
-                                    .statements = func.body,
-                                    .start_instruction_index = 0,
-                                    .function_name = qualified_name,
-                                    .function_params = func.params,
-                                    .return_type_info = eff_rti,
-                                    .module_id = record.id,
-                                    .key = key,
-                                });
-                            },
-                            .Expression => |maybe_expr| {
-                                if (maybe_expr) |mod_expr| {
-                                    if (mod_expr.data == .StructDecl) {
-                                        try self.registerStructMethodSignatures(mod_expr.data.StructDecl, record.id);
-                                    }
-                                }
-                            },
-                            else => {},
-                        }
-                    }
+    fn collectFunctionSignatures(self: *HIRGenerator, records: []const *module_graph.ModuleRecord) !void {
+        for (records) |record| {
+            for (record.statements()) |*stmt| {
+                switch (stmt.data) {
+                    .FunctionDecl => try self.registerFunctionSignature(record.id, stmt),
+                    .Expression => |maybe_expr| if (maybe_expr) |expr| {
+                        if (expr.data == .StructDecl) try self.registerStructMethodSignatures(&expr.data.StructDecl, record.id);
+                    },
+                    else => {},
                 }
             }
         }
+    }
+
+    /// Register a top-level function under `(module, name)` with its link
+    /// name and resolved signature.
+    fn registerFunctionSignature(self: *HIRGenerator, module: module_graph.ModuleId, stmt: *ast.Stmt) !void {
+        const func = &stmt.data.FunctionDecl;
+        const key = module_graph.SymbolKey{ .module = module, .name = func.name.lexeme };
+        const link_name = try self.graph.mangle(self.allocator, module, .function, &.{func.name.lexeme});
+        const signature = self.declaredSignature(module, func.name.lexeme);
+
+        var return_type = self.convertTypeInfo(func.return_type_info);
+        // A function without an explicit `returns` takes the analyzer's
+        // inferred return type.
+        if (func.return_type_info.base == .Nothing) {
+            if (self.semantic.function_return_types.get(stmt.base.id)) |inferred| {
+                return_type = self.convertTypeInfo(inferred.*);
+            }
+        }
+
+        const param_is_alias = try self.allocator.alloc(bool, func.params.len);
+        const param_is_readonly = try self.allocator.alloc(bool, func.params.len);
+        const param_types = try self.allocator.alloc(HIRType, func.params.len);
+        for (func.params, 0..) |param, i| {
+            param_is_alias[i] = param.is_alias;
+            param_is_readonly[i] = !ParamMutation.bodyMutatesVariable(func.body, param.name.lexeme);
+            param_types[i] = sanitizeParamType(if (param.type_expr != null) self.convertTypeInfo(signature.params[i]) else .Int);
+        }
+
+        const function_info = FunctionInfo{
+            .name = link_name,
+            .arity = @intCast(func.params.len),
+            .return_type = return_type,
+            .start_label = try self.label_generator.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{link_name})),
+            .local_var_count = 0,
+            .is_entry = func.is_entry,
+            .param_is_alias = param_is_alias,
+            .param_is_readonly = param_is_readonly,
+            .param_types = param_types,
+        };
+        try self.addFunction(.{
+            .function_info = function_info,
+            .statements = func.body,
+            .start_instruction_index = 0,
+            .function_name = link_name,
+            .function_params = func.params,
+            .return_type_info = func.return_type_info,
+            .module_id = module,
+            .key = key,
+            .param_types = signature.params,
+        });
+    }
+
+    /// The analyzed signature of the top-level function `name` of `module`.
+    fn declaredSignature(self: *HIRGenerator, module: module_graph.ModuleId, name: []const u8) *const ast.FunctionType {
+        const variable = self.semantic.moduleScope(module).lookupLocalVariable(name).?;
+        const storage = self.semantic.memory.scope_manager.value_storage.get(variable.storage_id).?;
+        return storage.type_info.function_type.?;
+    }
+
+    fn addFunction(self: *HIRGenerator, body: FunctionBody) !void {
+        const index: u32 = @intCast(self.function_bodies.items.len);
+        try self.function_signatures.put(body.key, body.function_info);
+        try self.function_bodies.append(body);
+        try self.function_indices.put(body.function_info.name, index);
+    }
+
+    /// The callee for a Doxa function or method identified by `key`.
+    pub fn doxaCallee(self: *HIRGenerator, key: module_graph.SymbolKey) !ModuleCall.Callee {
+        const info = self.function_signatures.get(key) orelse return error.UnresolvedCallee;
+        const index = self.function_indices.get(info.name).?;
+        return .{
+            .link_name = info.name,
+            .kind = .DoxaFunction,
+            .index = index,
+            .params = self.function_bodies.items[index].param_types,
+        };
+    }
+
+    /// The callee for a function of an inline `zig` block or a `.zig` file:
+    /// the wrapper the inline-Zig compiler exports under the same link name.
+    pub fn zigCallee(self: *HIRGenerator, symbol: module_graph.SymbolRef) !ModuleCall.Callee {
+        const sig = self.graph.declOf(symbol).?.zig_function;
+        const link_name = try self.graph.mangle(self.allocator, symbol.module, .function, &.{symbol.name});
+        try self.zig_functions.put(link_name, sig);
+        return .{ .link_name = link_name, .kind = .ZigFunction, .index = null, .params = sig.param_types };
+    }
+
+    /// The callee for a struct method.
+    pub fn methodCallee(self: *HIRGenerator, method: Resolution.Method) !ModuleCall.Callee {
+        return self.doxaCallee(.{ .module = method.owner.module, .name = try methodKeyName(self.allocator, method.owner.name, method.name) });
     }
 
     /// Pass 3: Generate function bodies AFTER main program
@@ -717,6 +653,8 @@ pub const HIRGenerator = struct {
             self.current_function_scope_id = function_scope_id;
             try self.instructions.append(.{ .EnterScope = .{ .scope_id = function_scope_id, .var_count = 0 } });
 
+            self.alias_params.clearRetainingCapacity();
+            self.this_slot = null;
             const params = function_body.function_params;
 
             const is_method = function_body.function_info.arity > params.len;
@@ -738,54 +676,14 @@ pub const HIRGenerator = struct {
                         .Map, .Function => return error.InvalidAliasType,
                         else => {},
                     }
+                    // An alias of a struct or an enum lends a named type; its
+                    // type and custom-type key were tracked with the parameter.
                     if (declared_type_info) |info| {
-                        switch (info.base) {
-                            .Struct, .Enum => {
-                                if (info.custom_type == null) return error.InvalidAliasType;
-                            },
-                            else => {},
-                        }
+                        if ((info.base == .Struct or info.base == .Enum) and info.custom_type == null) return error.InvalidAliasType;
                     }
 
-                    if (param.type_expr) |type_expr_for_custom| {
-                        const type_info_for_custom = try ast.typeInfoFromExpr(self.allocator, type_expr_for_custom);
-                        if (type_info_for_custom.base == .Struct) {
-                            if (type_info_for_custom.custom_type) |struct_type_name_for_param| {
-                                try self.trackVariableCustomType(param.name.lexeme, struct_type_name_for_param);
-                                try self.trackVariableType(param.name.lexeme, HIRType{ .Struct = 0 });
-                            }
-                            if (type_info_for_custom.custom_type == null) return error.InvalidAliasType;
-                        } else if (type_info_for_custom.base == .Enum) {
-                            if (type_info_for_custom.custom_type) |enum_type_name_for_param| {
-                                try self.trackVariableCustomType(param.name.lexeme, enum_type_name_for_param);
-                                try self.trackVariableType(param.name.lexeme, HIRType{ .Enum = 0 });
-                            }
-                            if (type_info_for_custom.custom_type == null) return error.InvalidAliasType;
-                        } else if (type_info_for_custom.base == .Custom) {
-                            if (type_info_for_custom.custom_type) |custom_type_name_for_param| {
-                                if (self.isCustomType(custom_type_name_for_param)) |ct| {
-                                    switch (ct.kind) {
-                                        .Struct => {
-                                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
-                                            try self.trackVariableType(param.name.lexeme, HIRType{ .Struct = 0 });
-                                        },
-                                        .Enum => {
-                                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
-                                            try self.trackVariableType(param.name.lexeme, HIRType{ .Enum = 0 });
-                                        },
-                                        .Group => {
-                                            try self.trackVariableCustomType(param.name.lexeme, custom_type_name_for_param);
-                                            const gid_param = if (self.type_system.group_table) |gt| gt.getIdByName(custom_type_name_for_param) orelse 0 else 0;
-                                            try self.trackVariableType(param.name.lexeme, HIRType{ .Group = gid_param });
-                                        },
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    try self.symbol_table.trackAliasParameter(param.name.lexeme);
-                    const alias_slot = try self.slot_manager.allocateAliasSlot(param.name.lexeme, param_type);
+                    const alias_slot = self.allocAliasSlot();
+                    try self.alias_params.put(try self.paramSlot(param), alias_slot);
                     try self.instructions.append(.{
                         .BindAlias = .{
                             .alias_name = param.name.lexeme,
@@ -795,7 +693,7 @@ pub const HIRGenerator = struct {
                         },
                     });
                 } else {
-                    const var_idx = try self.symbol_table.createVariable(param.name.lexeme);
+                    _ = try self.symbol_table.createVariable(param.name.lexeme);
                     // A by-value heap parameter is deep-copied on entry so the
                     // callee cannot write through to the caller's object. When the
                     // body never writes through it, the copy is unobservable and
@@ -804,9 +702,9 @@ pub const HIRGenerator = struct {
                     // the signature metadata is built (`param_is_readonly`), not
                     // re-derived per binding here.
                     try self.instructions.append(.{ .StoreVar = .{
-                        .var_index = var_idx,
+                        .slot = try self.paramSlot(param),
                         .var_name = param.name.lexeme,
-                        .scope_kind = self.symbol_table.determineVariableScope(param.name.lexeme),
+                        .scope_kind = .Local,
                         .module_context = null,
                         .expected_type = param_type,
                         .heap_copy = if (function_body.function_info.param_is_readonly[alias_lookup]) .keep else .snapshot,
@@ -814,39 +712,23 @@ pub const HIRGenerator = struct {
                 }
             }
 
-            if (std.mem.indexOfScalar(u8, function_body.function_info.name, '.')) |dot_idx| {
-                const struct_name = function_body.function_info.name[0..dot_idx];
-                const method_name = function_body.function_info.name[dot_idx + 1 ..];
-
-                var is_instance_method = false;
-                if (self.struct_methods.get(struct_name)) |method_table| {
-                    if (method_table.get(method_name)) |mi| {
-                        is_instance_method = !mi.is_static;
-                    }
-                }
-                if (!is_instance_method) {
-                    const func_info = function_body.function_info;
-                    is_instance_method = func_info.arity > 0 and func_info.param_is_alias.len > 0 and func_info.param_is_alias[0];
-                }
-
-                if (is_instance_method) {
-                    try self.trackVariableType("this", HIRType{ .Struct = 0 });
-                    try self.symbol_table.trackAliasParameter("this");
-
-                    const struct_type_name = struct_name;
-                    try self.trackVariableCustomType("this", struct_type_name);
-
-                    const alias_slot = try self.slot_manager.allocateAliasSlot("this", HIRType{ .Struct = 0 });
-
-                    try self.instructions.append(.{
-                        .BindAlias = .{
-                            .alias_name = "this",
-                            .target_variable_name = "this",
-                            .alias_slot = alias_slot,
-                            .target_type = HIRType{ .Struct = 0 },
-                        },
-                    });
-                }
+            // An instance method binds its receiver as the alias `this`.
+            if (function_body.function_info.receiver) |struct_id| {
+                const receiver_type = HIRType{ .Struct = struct_id };
+                try self.trackVariableType("this", receiver_type);
+                if (self.semantic.struct_table.keyOf(struct_id)) |key| try self.trackVariableCustomType("this", key);
+                const alias_slot = self.allocAliasSlot();
+                const this_slot = self.tempSlot();
+                self.this_slot = this_slot;
+                try self.alias_params.put(this_slot, alias_slot);
+                try self.instructions.append(.{
+                    .BindAlias = .{
+                        .alias_name = "this",
+                        .target_variable_name = "this",
+                        .alias_slot = alias_slot,
+                        .target_type = receiver_type,
+                    },
+                });
             }
 
             const body_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}_body", .{function_body.function_info.name}));
@@ -938,8 +820,7 @@ pub const HIRGenerator = struct {
                     .function_index = entry_function_index,
                     .qualified_name = entry_function_name orelse "main",
                     .arg_count = 0,
-                    .call_kind = .LocalFunction,
-                    .target_module = null,
+                    .call_kind = .DoxaFunction,
                     .return_type = entry_func.return_type,
                 },
             };
@@ -953,107 +834,8 @@ pub const HIRGenerator = struct {
         try self.instructions.append(.Halt);
     }
 
-    /// Pass 1.5: Process imported enum/set symbols and register them in type system
-    fn processImportedEnumSymbols(self: *HIRGenerator) !void {
-        if (self.imported_symbols) |imported_symbols| {
-            var seen_enum_bindings = std.StringHashMap(void).init(self.allocator);
-            defer seen_enum_bindings.deinit();
-
-            var it = imported_symbols.iterator();
-            while (it.next()) |entry| {
-                const symbol = entry.value_ptr.*;
-                if (symbol.kind != .Enum and symbol.kind != .Group) continue;
-                if (symbol.enum_role == null or symbol.enum_role.? != .Type) continue;
-                const binding_name = symbol.name;
-                if (binding_name.len == 0) continue;
-                if (seen_enum_bindings.contains(binding_name)) continue;
-                try seen_enum_bindings.put(binding_name, {});
-
-                if (symbol.kind == .Group) {
-                    const var_idx = try self.getOrCreateVariable(binding_name);
-                    const gid_import = if (self.type_system.group_table) |gt| gt.getIdByName(binding_name) orelse 0 else 0;
-                    try self.trackVariableType(binding_name, HIRType{ .Group = gid_import });
-
-                    const group_type_value = HIRValue{ .string = binding_name };
-                    const const_idx = try self.addConstant(group_type_value);
-                    try self.instructions.append(.{ .Const = .{ .value = group_type_value, .constant_id = const_idx } });
-                    try self.instructions.append(.{ .StoreDecl = .{
-                        .var_index = var_idx,
-                        .var_name = binding_name,
-                        .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
-                        .module_context = null,
-                        .declared_type = HIRType{ .Group = gid_import },
-                        .is_const = true,
-                    } });
-                    continue;
-                }
-
-                var has_enum_type = false;
-                if (self.type_system.custom_types.get(binding_name)) |existing| {
-                    has_enum_type = (existing.kind == .Enum);
-                }
-
-                const variants = try self.collectEnumVariantsFromImportedSymbols(imported_symbols, binding_name);
-                if (!has_enum_type) {
-                    if (variants.len == 0) {
-                        self.reporter.reportCompileError(
-                            null,
-                            ErrorCode.INTERNAL_ERROR,
-                            "Imported enum '{s}' has no variant metadata",
-                            .{binding_name},
-                        );
-                        return ErrorList.InvalidEnumVariant;
-                    }
-                    try self.registerEnumType(binding_name, variants);
-                }
-
-                const var_idx = try self.getOrCreateVariable(binding_name);
-                try self.trackVariableType(binding_name, HIRType{ .Enum = 0 });
-
-                const enum_type_value = HIRValue{ .string = binding_name };
-                const const_idx = try self.addConstant(enum_type_value);
-                try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
-                try self.instructions.append(.{ .StoreDecl = .{
-                    .var_index = var_idx,
-                    .var_name = binding_name,
-                    .scope_kind = .GlobalLocal,
-                    .module_context = null,
-                    .declared_type = HIRType{ .Enum = 0 },
-                    .is_const = true,
-                } });
-            }
-        }
-    }
-
-    fn collectEnumVariantsFromImportedSymbols(self: *HIRGenerator, imported_symbols: std.StringHashMap(import_parser.ImportedSymbol), enum_name: []const u8) ![]const []const u8 {
-        var variants = std.array_list.Managed([]const u8).init(self.allocator);
-        defer variants.deinit();
-
-        var it = imported_symbols.iterator();
-        while (it.next()) |entry| {
-            const sym = entry.value_ptr.*;
-            if (sym.kind != .Enum) continue;
-            if (sym.enum_role == null or sym.enum_role.? != .Variant) continue;
-            if (sym.enum_type_name == null) continue;
-            if (!std.mem.eql(u8, sym.enum_type_name.?, enum_name)) continue;
-
-            var already_added = false;
-            for (variants.items) |existing| {
-                if (std.mem.eql(u8, existing, sym.name)) {
-                    already_added = true;
-                    break;
-                }
-            }
-            if (!already_added) {
-                try variants.append(sym.name);
-            }
-        }
-
-        return try variants.toOwnedSlice();
-    }
-
     /// Pass 2: Initialize global variables at module level (before main program execution)
-    fn generateGlobalInitialization(self: *HIRGenerator, statements: []ast.Stmt) !void {
+    fn generateGlobalInitialization(self: *HIRGenerator, records: []const *module_graph.ModuleRecord) !void {
         self.is_global_init_phase = true;
         defer self.is_global_init_phase = false;
 
@@ -1061,32 +843,16 @@ pub const HIRGenerator = struct {
         self.current_function = null;
         defer self.current_function = previous_function;
 
-        // Module globals are emitted per defining record, keyed by the record's
-        // deterministic link prefix rather than a source alias.
-        for (self.graph.records.items) |record| {
+        // Each imported record's globals, in stable-key order. The entry
+        // record's globals are initialized by the main program itself.
+        for (records) |record| {
             if (record.id == self.entry_module) continue;
-            const module_info = record.module_info orelse continue;
-            if (module_info.is_inline_zig) continue;
             self.current_module = record.id;
-            self.current_module_context = record.id;
-            defer self.current_module_context = null;
-            if (module_info.ast) |module_ast| {
-                if (module_ast.data == .Block) {
-                    const mod_statements = module_ast.data.Block.statements;
-                    for (mod_statements) |mod_stmt| {
-                        switch (mod_stmt.data) {
-                            .FunctionDecl => continue,
-                            .VarDecl => {
-                                try SoxaStatements.generateStatement(self, mod_stmt);
-                            },
-                            else => continue,
-                        }
-                    }
-                }
+            for (record.statements()) |stmt| {
+                if (stmt.data == .VarDecl) try SoxaStatements.generateStatement(self, stmt);
             }
         }
         self.current_module = self.entry_module;
-        _ = statements;
     }
 
     /// Pass 4: Build function table from collected signatures
@@ -1097,8 +863,8 @@ pub const HIRGenerator = struct {
             const function_info = function_body.function_info;
 
             try function_table.append(HIRProgram.HIRFunction{
-                .name = function_info.name,
                 .qualified_name = function_info.name,
+                .receiver = function_info.receiver,
                 .arity = function_info.arity,
                 .return_type = function_info.return_type,
                 .start_label = function_info.start_label,
@@ -1116,77 +882,23 @@ pub const HIRGenerator = struct {
         return try function_table.toOwnedSlice();
     }
 
-    pub fn getFunctionIndex(self: *HIRGenerator, function_name: []const u8) ?u32 {
-        for (self.function_bodies.items, 0..) |function_body, index| {
-            if (std.mem.eql(u8, function_body.function_info.name, function_name)) {
-                return @as(u32, @intCast(index));
-            }
-        }
-        return null;
-    }
-
-    /// Resolve `simple_name` to `<module-prefix>.simple_name` when compiling a
-    /// body nested under that module (e.g. inside `Lexer.lex`, callee
-    /// `makeAlpha` -> the defining record's `makeAlpha`). The current record is
-    /// tracked explicitly (`current_module`), so a struct method's bare
-    /// `Struct.method` name never misleads the lookup.
-    pub fn resolveQualifiedModuleLocalFunction(self: *HIRGenerator, simple_name: []const u8) ?[]const u8 {
-        if (self.current_module == self.entry_module) return null;
-        const record = self.graph.record(self.current_module);
-        return self.findModuleLocalFunction(record.link_prefix, simple_name);
-    }
-
-    fn findModuleLocalFunction(self: *HIRGenerator, module_prefix: []const u8, simple_name: []const u8) ?[]const u8 {
-        for (self.function_bodies.items) |fb| {
-            const name = fb.function_info.name;
-            if (!std.mem.startsWith(u8, name, module_prefix)) continue;
-            if (name.len != module_prefix.len + 1 + simple_name.len) continue;
-            if (name[module_prefix.len] != '.') continue;
-            if (!std.mem.eql(u8, name[module_prefix.len + 1 ..], simple_name)) continue;
-            return name;
-        }
-        return null;
-    }
-
-    pub fn isModuleFunction(self: *HIRGenerator, function_name: []const u8) bool {
-        if (self.imported_symbols) |imported_symbols| {
-            if (imported_symbols.get(function_name)) |imported_symbol| {
-                return imported_symbol.kind == .Function;
-            }
-        }
-        return false;
-    }
-
-    pub fn computeTargetModule(self: *HIRGenerator, qualified_name: []const u8, call_kind: CallKind) !?[]const u8 {
-        if (call_kind != .ModuleFunction) {
-            return null;
-        }
-        const dot_idx = std.mem.lastIndexOfScalar(u8, qualified_name, '.') orelse return null;
-        if (dot_idx == 0) return null;
-        return try self.allocator.dupe(u8, qualified_name[0..dot_idx]);
+    pub fn getFunctionIndex(self: *HIRGenerator, link_name: []const u8) ?u32 {
+        return self.function_indices.get(link_name);
     }
 
     pub fn convertTypeInfo(self: *HIRGenerator, type_info: ast.TypeInfo) HIRType {
         return self.type_system.convertTypeInfo(type_info);
     }
 
-    pub fn findFunctionBody(self: *HIRGenerator, function_name: []const u8) ?*FunctionBody {
-        for (self.function_bodies.items) |*function_body| {
-            if (std.mem.eql(u8, function_body.function_info.name, function_name)) {
-                return function_body;
-            }
-        }
-        return null;
+    pub fn findFunctionBody(self: *HIRGenerator, link_name: []const u8) ?*FunctionBody {
+        const index = self.function_indices.get(link_name) orelse return null;
+        return &self.function_bodies.items[index];
     }
 
-    /// The signature of a function by its emitted link name. The authoritative
-    /// store is keyed by `(ModuleId, declared name)`; this scan serves the call
-    /// sites that only carry the temporary link spelling.
+    /// The signature of a Doxa function by its link name.
     pub fn functionInfoByLink(self: *HIRGenerator, link_name: []const u8) ?FunctionInfo {
-        for (self.function_bodies.items) |body| {
-            if (std.mem.eql(u8, body.function_info.name, link_name)) return body.function_info;
-        }
-        return null;
+        const index = self.function_indices.get(link_name) orelse return null;
+        return self.function_bodies.items[index].function_info;
     }
 
     pub const TETRA_AND_LUT: [4][4]u8 = [4][4]u8{
@@ -1268,30 +980,24 @@ pub const HIRGenerator = struct {
             .This => try basic_handler.generateThis(),
             .Literal => |lit| try basic_handler.generateLiteral(lit, preserve_result, should_pop_after_use),
             .InterpolatedString => |template| try basic_handler.generateInterpolatedString(template, preserve_result, should_pop_after_use),
-            .Variable => |var_token| try basic_handler.generateVariable(var_token),
+            .Variable => |var_token| try self.loadName(&expr.base, var_token.lexeme),
             .Grouping => |grouping| try basic_handler.generateGrouping(grouping, preserve_result),
-            .EnumMember => |member| try basic_handler.generateEnumMember(member),
+            .EnumMember => try basic_handler.generateEnumMember(expr),
             .DefaultArgPlaceholder => try basic_handler.generateDefaultArgPlaceholder(),
 
             .Binary => |bin| try binary_handler.generateBinary(bin, should_pop_after_use),
             .Logical => |log| try binary_handler.generateLogical(log, should_pop_after_use),
             .Unary => |unary| try binary_handler.generateUnary(unary),
 
-            .If => |if_expr| try control_flow_handler.generateIf(if_expr, preserve_result, should_pop_after_use),
-            .Match => |match_expr| try control_flow_handler.generateMatch(match_expr, preserve_result),
+            .If => try control_flow_handler.generateIf(expr, preserve_result, should_pop_after_use),
+            .Match => try control_flow_handler.generateMatch(expr, preserve_result),
             .Loop => |loop| try control_flow_handler.generateLoop(loop, preserve_result),
             .Block => try control_flow_handler.generateBlock(expr.data, preserve_result),
             .ReturnExpr => try control_flow_handler.generateReturn(expr.data),
             .Unreachable => try control_flow_handler.generateUnreachable(expr),
-            .Cast => try control_flow_handler.generateCast(expr.data, preserve_result),
+            .Cast => try control_flow_handler.generateCast(expr, preserve_result),
 
-            .Array => |elements| {
-                if (self.is_generating_nested_array) {
-                    try collections_handler.generateArrayInternal(elements, preserve_result);
-                } else {
-                    try collections_handler.generateArray(elements, preserve_result);
-                }
-            },
+            .Array => try collections_handler.generateArray(expr, preserve_result),
             .Map => |map_expr| try collections_handler.generateMap(map_expr.entries, null),
             .MapLiteral => |map_literal| try collections_handler.generateMap(map_literal.entries, map_literal.else_value),
             .Index => try collections_handler.generateIndex(expr, preserve_result, should_pop_after_use),
@@ -1305,14 +1011,13 @@ pub const HIRGenerator = struct {
             .FunctionCall => try calls_handler.generateFunctionCall(expr.data, preserve_result, should_pop_after_use),
             .InternalCall => try calls_handler.generateInternalCall(expr, preserve_result),
 
-            .StructLiteral => try structs_handler.generateStructLiteral(expr.data),
+            .StructLiteral => try structs_handler.generateStructLiteral(expr),
             .FieldAccess => |field| try structs_handler.generateFieldAccess(field),
             .FieldAssignment => try structs_handler.generateFieldAssignment(expr.data),
-            .EnumDecl => try structs_handler.generateEnumDecl(expr.data),
-            .StructDecl => try structs_handler.generateStructDecl(expr.data),
+            .EnumDecl, .StructDecl, .GroupDecl => try structs_handler.generateTypeDecl(),
 
-            .Assignment => |assign| try assignments_handler.generateAssignment(assign, preserve_result),
-            .CompoundAssign => |compound| try assignments_handler.generateCompoundAssign(compound, preserve_result),
+            .Assignment => try assignments_handler.generateAssignment(expr, preserve_result),
+            .CompoundAssign => try assignments_handler.generateCompoundAssign(expr, preserve_result),
 
             .Print => unreachable, // @print is lowered to an InternalCall
             .Peek => |peek| try io_handler.generatePeek(peek, preserve_result),
@@ -1331,110 +1036,6 @@ pub const HIRGenerator = struct {
         return self.constant_manager.addConstant(value);
     }
 
-    pub fn getOrCreateVariable(self: *HIRGenerator, name: []const u8) !u32 {
-        return self.symbol_table.getOrCreateVariable(name);
-    }
-
-    pub fn trackModuleFieldSlot(self: *HIRGenerator, module_id: module_graph.ModuleId, field_name: []const u8, slot: u32) !void {
-        try self.module_field_slots.put(.{ .module = module_id, .name = field_name }, slot);
-    }
-
-    /// A resolved namespace: the target record and the deterministic prefix its
-    /// symbols are keyed/emitted under. For a physical `.doxa` record that is
-    /// the record's `link_prefix`; for an inline-`zig` synthetic record or a
-    /// `.zig`-file record it is the access name (the inline wrapper ABI name
-    /// until Phase 6).
-    pub const NamespaceRef = struct {
-        id: module_graph.ModuleId,
-        prefix: []const u8,
-    };
-
-    pub fn linkPrefixForRecord(self: *HIRGenerator, id: module_graph.ModuleId, access_name: []const u8) []const u8 {
-        const record = self.graph.record(id);
-        if (record.physical_key == null) return access_name;
-        if (record.module_info) |info| {
-            if (info.is_inline_zig) return access_name;
-        }
-        return record.link_prefix;
-    }
-
-    /// Resolve a bare name in the *current* record's owner-scoped bindings to a
-    /// namespace. Two files that both bind `util` resolve independently.
-    pub fn namespaceRefForName(self: *HIRGenerator, name: []const u8) ?NamespaceRef {
-        const record = self.graph.record(self.current_module);
-        if (record.bindings.get(name)) |bound| {
-            return switch (bound.binding) {
-                .namespace => |id| .{ .id = id, .prefix = self.linkPrefixForRecord(id, name) },
-                .symbol => null,
-            };
-        }
-        // MIGRATION (Phase 2 → deleted in Phase 3): a name with no owner-scoped
-        // binding but present in the flat alias map (e.g. a blessed module like
-        // `error`). Only a lookup shim; identity is still the record's link
-        // prefix, never the alias.
-        if (self.module_namespaces.get(name)) |info| {
-            if (info.record_id) |id| return .{ .id = id, .prefix = self.linkPrefixForRecord(id, name) };
-        }
-        return null;
-    }
-
-    /// Resolve a (possibly nested) expression as a module-namespace path
-    /// (`std`, `std.io`) through owner-scoped bindings. Qualified chains step
-    /// through each target record's public surface.
-    pub fn namespaceRefForExpr(self: *HIRGenerator, expr: *ast.Expr) ?NamespaceRef {
-        switch (expr.data) {
-            .Variable => |tok| return self.namespaceRefForName(tok.lexeme),
-            .FieldAccess => |fa| {
-                const parent = self.namespaceRefForExpr(fa.object) orelse return null;
-                const parent_record = self.graph.record(parent.id);
-                const bound = parent_record.public_bindings.get(fa.field.lexeme) orelse
-                    parent_record.bindings.get(fa.field.lexeme) orelse return null;
-                return switch (bound.binding) {
-                    .namespace => |id| .{ .id = id, .prefix = self.linkPrefixForRecord(id, fa.field.lexeme) },
-                    .symbol => null,
-                };
-            },
-            else => return null,
-        }
-    }
-
-    pub fn resolveModuleBindings(self: *HIRGenerator, module_name: []const u8) !struct { names: []const []const u8, slots: []const u32 } {
-        var names = std.array_list.Managed([]const u8).init(self.allocator);
-        var slots = std.array_list.Managed(u32).init(self.allocator);
-        errdefer names.deinit();
-        errdefer slots.deinit();
-
-        if (self.namespaceRefForName(module_name)) |ns| {
-            const record = self.graph.record(ns.id);
-            if (record.module_info) |module_info| {
-                if (module_info.ast) |module_ast| {
-                    if (module_ast.data == .Block) {
-                        for (module_ast.data.Block.statements) |stmt| {
-                            if (stmt.data == .VarDecl) {
-                                const decl = stmt.data.VarDecl;
-                                if (!decl.is_public) continue;
-
-                                if (self.module_field_slots.get(.{ .module = ns.id, .name = decl.name.lexeme })) |slot_idx| {
-                                    // The module struct field carries the bare
-                                    // declaration name; the slot key is
-                                    // `(defining module, field)` so two modules'
-                                    // same-named field never share a slot.
-                                    try names.append(decl.name.lexeme);
-                                    try slots.append(slot_idx);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        return .{
-            .names = try names.toOwnedSlice(),
-            .slots = try slots.toOwnedSlice(),
-        };
-    }
-
     pub fn generateLabel(self: *HIRGenerator, prefix: []const u8) ![]const u8 {
         return self.label_generator.generateLabel(prefix);
     }
@@ -1447,104 +1048,61 @@ pub const HIRGenerator = struct {
         return id;
     }
 
-    fn registerStructMethodSignatures(self: *HIRGenerator, s: ast.StructDecl, module_id: module_graph.ModuleId) !void {
-        for (s.methods) |method| {
-            const qualified = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ s.name.lexeme, method.name.lexeme });
-            var eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method.return_type_info, method.body, &self.type_system);
-            var return_type = self.convertTypeInfo(eff_method_rti);
-
-            if (self.struct_methods.get(s.name.lexeme)) |method_table| {
-                if (method_table.get(method.name.lexeme)) |method_info| {
-                    eff_method_rti = try effectiveReturnTypeForSignature(self.allocator, method_info.signature.return_type.*, method.body, &self.type_system);
-                    return_type = self.convertTypeInfo(eff_method_rti);
-                }
-            }
-
-            if (return_type == .Nothing) {
-                const inferred_type = self.inferMethodReturnType(method, s.name.lexeme);
-                if (inferred_type != .Nothing) {
-                    return_type = inferred_type;
-                }
-            }
-            const start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{qualified}));
+    /// Register each method of the struct `decl` declared in `module` under
+    /// `(module, "Struct.method")`, with its link name, analyzed signature, and —
+    /// for an instance method — its receiver.
+    fn registerStructMethodSignatures(self: *HIRGenerator, decl: *ast.StructDecl, module: module_graph.ModuleId) !void {
+        const ref = TypeRef{ .module = module, .name = decl.name.lexeme };
+        const methods = self.semantic.struct_methods.get(ref).?;
+        const struct_id = self.semantic.struct_table.idOf(ref).?;
+        for (decl.methods) |method| {
+            const info = methods.get(method.name.lexeme).?;
+            const key_name = try methodKeyName(self.allocator, decl.name.lexeme, method.name.lexeme);
+            const link_name = try self.graph.mangle(self.allocator, module, .method, &.{ decl.name.lexeme, method.name.lexeme });
 
             var arity: u32 = @intCast(method.params.len);
             if (!method.is_static) arity += 1;
 
-            var param_is_alias = try self.allocator.alloc(bool, arity);
-            var param_is_readonly = try self.allocator.alloc(bool, arity);
-            var param_types = try self.allocator.alloc(HIRType, arity);
+            const param_is_alias = try self.allocator.alloc(bool, arity);
+            const param_is_readonly = try self.allocator.alloc(bool, arity);
+            const param_types = try self.allocator.alloc(HIRType, arity);
             var param_idx: usize = 0;
             if (!method.is_static) {
-                param_is_alias[param_idx] = true;
-                param_is_readonly[param_idx] = false;
-                param_types[param_idx] = HIRType{ .Struct = 0 };
-                param_idx += 1;
+                param_is_alias[0] = true;
+                param_is_readonly[0] = false;
+                param_types[0] = HIRType{ .Struct = struct_id };
+                param_idx = 1;
             }
-            for (method.params) |param| {
+            for (method.params, 0..) |param, i| {
                 param_is_alias[param_idx] = param.is_alias;
                 param_is_readonly[param_idx] = !ParamMutation.bodyMutatesVariable(method.body, param.name.lexeme);
-                param_types[param_idx] = sanitizeParamType(if (param.type_expr) |type_expr|
-                    self.convertTypeInfo((try ast.typeInfoFromExpr(self.allocator, type_expr)).*)
-                else
-                    .Int);
+                param_types[param_idx] = sanitizeParamType(if (param.type_expr != null) self.convertTypeInfo(info.signature.params[i]) else .Int);
                 param_idx += 1;
             }
 
-            const function_info = FunctionInfo{
-                .name = qualified,
-                .arity = arity,
-                .return_type = return_type,
-                .start_label = start_label,
-                .local_var_count = 0,
-                .is_entry = false,
-                .param_is_alias = param_is_alias,
-                .param_is_readonly = param_is_readonly,
-                .param_types = param_types,
-            };
-
-            const key = module_graph.SymbolKey{ .module = module_id, .name = qualified };
-            if (!self.function_signatures.contains(key)) {
-                try self.function_signatures.put(key, function_info);
-                try self.function_bodies.append(FunctionBody{
-                    .function_info = function_info,
-                    .statements = method.body,
-                    .start_instruction_index = 0,
-                    .function_name = qualified,
-                    .function_params = method.params,
-                    .return_type_info = eff_method_rti,
-                    .module_id = module_id,
-                    .key = key,
-                });
-            }
+            try self.addFunction(.{
+                .function_info = .{
+                    .name = link_name,
+                    .receiver = if (method.is_static) null else struct_id,
+                    .arity = arity,
+                    .return_type = self.convertTypeInfo(info.signature.return_type.*),
+                    .start_label = try self.generateLabel(try std.fmt.allocPrint(self.allocator, "func_{s}", .{link_name})),
+                    .local_var_count = 0,
+                    .is_entry = false,
+                    .param_is_alias = param_is_alias,
+                    .param_is_readonly = param_is_readonly,
+                    .param_types = param_types,
+                },
+                .statements = method.body,
+                .start_instruction_index = 0,
+                .function_name = link_name,
+                .function_params = method.params,
+                .return_type_info = info.signature.return_type.*,
+                .module_id = module,
+                .key = .{ .module = module, .name = key_name },
+                .param_types = info.signature.params,
+            });
         }
-    }
-
-    fn extractSimpleComparison(self: *HIRGenerator, condition: *ast.Expr) !HIRValue {
-        _ = self;
-        switch (condition.data) {
-            .Binary => |binary| {
-                if (binary.right) |right| {
-                    switch (right.data) {
-                        .Literal => |lit| {
-                            return switch (lit) {
-                                .int => |i| HIRValue{ .int = i },
-                                .float => |f| HIRValue{ .float = f },
-                                .string => |s| HIRValue{ .string = s },
-                                else => HIRValue{ .int = 0 },
-                            };
-                        },
-                        .Variable => |var_token| {
-                            _ = var_token;
-                            return HIRValue{ .int = 0 };
-                        },
-                        else => {},
-                    }
-                }
-            },
-            else => {},
-        }
-        return HIRValue{ .int = 0 };
     }
 
     fn statementAlwaysReturns(self: *HIRGenerator, stmt: ast.Stmt) bool {
@@ -1597,309 +1155,31 @@ pub const HIRGenerator = struct {
         if (receiver.data == .Variable) {
             const var_token = receiver.data.Variable;
 
-            // An alias (`^`) parameter is not backed by a local slot; its storage
-            // pointer lives in the alias-slot table. Pushing its variable index
-            // would miss both slot maps and emit a null receiver, so dispatch on
-            // the alias slot exactly as `this` does for instance methods.
-            if (self.symbol_table.isAliasParameter(var_token.lexeme)) {
-                const alias_slot = self.slot_manager.getAliasSlot(var_token.lexeme) orelse
-                    return error.InvalidAliasArgument;
-                try self.instructions.append(.{
-                    .PushStorageId = .{
-                        .var_index = alias_slot,
-                        .var_name = var_token.lexeme,
-                        .scope_kind = .Local,
-                    },
-                });
-                return;
-            }
-
-            const var_idx = try self.getOrCreateVariable(var_token.lexeme);
-            const scope_kind = self.symbol_table.determineVariableScope(var_token.lexeme);
-            try self.instructions.append(.{
-                .PushStorageId = .{
-                    .var_index = var_idx,
-                    .var_name = var_token.lexeme,
-                    .scope_kind = scope_kind,
-                },
-            });
+            try self.pushStorageOfName(&receiver.base, var_token.lexeme);
             return;
         }
 
         const temp_id = self.next_temp_id;
         self.next_temp_id += 1;
         const temp_name = try std.fmt.allocPrint(self.allocator, "__recv_{d}", .{temp_id});
-        const temp_idx = try self.getOrCreateVariable(temp_name);
+        const temp_slot = self.tempSlot();
         try self.generateExpression(receiver, true, false);
         try self.instructions.append(.{
             .StoreVar = .{
-                .var_index = temp_idx,
+                .slot = temp_slot,
                 .var_name = temp_name,
                 .scope_kind = .Local,
                 .module_context = null,
-                .expected_type = HIRType{ .Struct = 0 },
+                .expected_type = try self.typeOf(receiver),
             },
         });
         try self.instructions.append(.{
             .PushStorageId = .{
-                .var_index = temp_idx,
+                .slot = temp_slot,
                 .var_name = temp_name,
                 .scope_kind = .Local,
             },
         });
-    }
-
-    pub fn generateInternalMethodCall(self: *HIRGenerator, method: Token, receiver: *ast.Expr, callee: *ast.Expr, args: []ast.CallArgument, should_pop_after_use: bool) (std.mem.Allocator.Error || ErrorList)!void {
-        const name = method.lexeme;
-
-        const receiver_type = self.inferTypeFromExpression(receiver);
-        if (receiver_type == .Struct) {
-            if (receiver.data == .Variable) {
-                const recv_var_name = receiver.data.Variable.lexeme;
-                const struct_name = blk: {
-                    if (self.symbol_table.getVariableCustomType(recv_var_name)) |ctype| break :blk ctype;
-                    // Stopgap only: guessing that a variable is named after its
-                    // type is wrong almost always, and when it is wrong the
-                    // method table lookup below misses and the call is dropped
-                    // (see the `!is_known_builtin` early return). Declarations
-                    // now track the concrete name, so this should be
-                    // unreachable; `plan/module-graph.md` Phase 4 removes the
-                    // bare-name fallbacks entirely.
-                    break :blk recv_var_name;
-                };
-
-                if (self.struct_methods.get(struct_name)) |method_table| {
-                    if (method_table.get(name)) |mi| {
-                        const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ struct_name, name });
-
-                        if (!mi.is_static) {
-                            try self.pushStructReceiver(receiver);
-                        }
-                        for (args) |arg| {
-                            try self.generateExpression(arg.expr, true, false);
-                        }
-
-                        const ret_type: HIRType = self.convertTypeInfo(mi.signature.return_type.*);
-
-                        const fn_index: u32 = blk: {
-                            if (self.getFunctionIndex(qualified_name)) |idx| {
-                                break :blk idx;
-                            } else {
-                                break :blk 0;
-                            }
-                        };
-
-                        var arg_count: u32 = @intCast(args.len);
-                        if (!mi.is_static) arg_count += 1;
-
-                        try self.instructions.append(.{
-                            .Call = .{
-                                .function_index = fn_index,
-                                .qualified_name = qualified_name,
-                                .arg_count = arg_count,
-                                .call_kind = .LocalFunction,
-                                .target_module = null,
-                                .return_type = ret_type,
-                            },
-                        });
-                        return;
-                    }
-                }
-            }
-
-            if (receiver.data == .This) {
-                const struct_name = blk: {
-                    if (self.current_function) |func_name| {
-                        if (std.mem.indexOfScalar(u8, func_name, '.')) |dot| {
-                            break :blk func_name[0..dot];
-                        }
-                    }
-                    break :blk "this";
-                };
-
-                const qualified_name = try std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ struct_name, name });
-                const fn_index = self.getFunctionIndex(qualified_name);
-                const has_function = fn_index != null;
-
-                var ret_type: HIRType = .Nothing;
-                var is_static = false;
-                if (self.struct_methods.get(struct_name)) |method_table| {
-                    if (method_table.get(name)) |mi| {
-                        ret_type = self.convertTypeInfo(mi.signature.return_type.*);
-                        is_static = mi.is_static;
-                    }
-                }
-
-                if (ret_type == .Nothing and has_function) {
-                    if (self.functionInfoByLink(qualified_name)) |func_info| {
-                        ret_type = func_info.return_type;
-                        is_static = func_info.arity == 0;
-                    }
-                }
-
-                if (has_function) {
-                    if (!is_static) {
-                        if (self.slot_manager.getAliasSlot("this")) |alias_slot| {
-                            try self.instructions.append(.{
-                                .PushStorageId = .{
-                                    .var_index = alias_slot,
-                                    .var_name = "this",
-                                    .scope_kind = .Local,
-                                },
-                            });
-                        } else {
-                            try self.generateExpression(receiver, true, false);
-                        }
-                    }
-                    for (args) |arg| {
-                        try self.generateExpression(arg.expr, true, false);
-                    }
-
-                    if (ret_type == .Nothing) {
-                        ret_type = self.inferCallReturnType(qualified_name, .LocalFunction) catch .Nothing;
-                    }
-
-                    var arg_count: u32 = @intCast(args.len);
-                    if (!is_static) arg_count += 1;
-
-                    try self.instructions.append(.{
-                        .Call = .{
-                            .function_index = fn_index,
-                            .qualified_name = qualified_name,
-                            .arg_count = arg_count,
-                            .call_kind = .LocalFunction,
-                            .target_module = null,
-                            .return_type = ret_type,
-                        },
-                    });
-                    return;
-                }
-            }
-        }
-
-        const is_known_builtin = std.mem.eql(u8, name, "substring") or
-            std.mem.eql(u8, name, "string") or
-            std.mem.eql(u8, name, "length") or
-            std.mem.eql(u8, name, "int") or
-            std.mem.eql(u8, name, "float") or
-            std.mem.eql(u8, name, "byte");
-        if (!is_known_builtin) {
-            // A struct receiver that matched no method table and is not a builtin
-            // operation is an unresolvable method call. It used to evaluate the
-            // receiver and return, which silently dropped the call: a
-            // value-returning method yielded the receiver and a void method did
-            // nothing at all. Report it instead. `hasErrors` guards the "exactly
-            // one diagnostic" rule — when the semantic layer already rejected
-            // this expression it has reported E1012 itself, and
-            // `plan/module-graph.md` requires one diagnostic per problem.
-            if (receiver_type == .Struct and !self.reporter.hasErrors()) {
-                const display_name = if (receiver.data == .Variable)
-                    (self.symbol_table.getVariableCustomType(receiver.data.Variable.lexeme) orelse "<struct>")
-                else
-                    "<struct>";
-                self.reporter.reportCompileError(
-                    callee.base.location(),
-                    ErrorCode.UNKNOWN_METHOD,
-                    "Unknown method '{s}' on struct '{s}'",
-                    .{ name, display_name },
-                );
-            }
-            try self.generateExpression(receiver, true, should_pop_after_use);
-            return;
-        }
-
-        if (std.mem.eql(u8, name, "substring")) {
-            if (args.len >= 2) {
-                try self.generateExpression(args[0].expr, true, false);
-                try self.generateExpression(args[1].expr, true, false);
-                try self.generateExpression(receiver, true, false);
-                try self.instructions.append(.{ .StringOp = .{ .op = .Substring } });
-                return;
-            }
-        } else if (std.mem.eql(u8, name, "string")) {
-            const value_type = self.inferTypeFromExpression(receiver);
-            try self.generateExpression(receiver, true, false);
-            try self.instructions.append(.{ .StringOp = .{ .op = .ToString, .value_type = value_type } });
-            return;
-        } else if (std.mem.eql(u8, name, "length")) {
-            try self.generateExpression(receiver, true, false);
-            var t = self.inferTypeFromExpression(receiver);
-            if (t == .Unknown and receiver.data == .Variable) {
-                const var_name = receiver.data.Variable.lexeme;
-                if (self.getTrackedVariableType(var_name)) |tracked| {
-                    t = tracked;
-                }
-            }
-            if (t == .Union and t.Union.members.len == 1 and t.Union.members[0].* == .Array) {
-                try self.instructions.append(.ArrayLen);
-            } else switch (t) {
-                .Array => try self.instructions.append(.ArrayLen),
-                else => try self.instructions.append(.{ .StringOp = .{ .op = .Length } }),
-            }
-            return;
-        } else if (std.mem.eql(u8, name, "int")) {
-            try self.generateExpression(receiver, true, false);
-            try self.instructions.append(.{ .StringOp = .{ .op = .ToInt } });
-            return;
-        } else if (std.mem.eql(u8, name, "float")) {
-            try self.generateExpression(receiver, true, false);
-            try self.instructions.append(.{ .StringOp = .{ .op = .ToFloat } });
-            return;
-        } else if (std.mem.eql(u8, name, "byte")) {
-            try self.generateExpression(receiver, true, false);
-            try self.instructions.append(.{ .StringOp = .{ .op = .ToByte } });
-            return;
-        }
-
-        try self.generateExpression(receiver, true, should_pop_after_use);
-
-        var arg_emitted_count: u32 = 0;
-        for (args, 0..) |arg, arg_index| {
-            if (arg.expr.data == .DefaultArgPlaceholder) {
-                if (self.resolveDefaultArgument(name, arg_index)) |default_expr| {
-                    try self.generateExpression(default_expr, true, false);
-                    arg_emitted_count += 1;
-                } else {
-                    const location = receiver.base.location();
-                    self.reporter.reportCompileError(location, ErrorCode.NO_DEFAULT_VALUE_FOR_PARAMETER, "No default value for parameter {} in function '{s}'", .{ arg_index, name });
-                }
-            } else {
-                try self.generateExpression(arg.expr, true, should_pop_after_use);
-                arg_emitted_count += 1;
-            }
-        }
-
-        const return_type = self.inferCallReturnType(name, .BuiltinFunction) catch .String;
-        try self.instructions.append(.{ .Call = .{
-            .function_index = null,
-            .qualified_name = name,
-            .arg_count = arg_emitted_count,
-            .call_kind = .BuiltinFunction,
-            .target_module = null,
-            .return_type = return_type,
-        } });
-
-        if (receiver.data == .Variable) {
-            const is_mutating = std.mem.eql(u8, name, "push") or
-                std.mem.eql(u8, name, "pop") or
-                std.mem.eql(u8, name, "insert") or
-                std.mem.eql(u8, name, "remove") or
-                std.mem.eql(u8, name, "clear");
-            if (is_mutating) {
-                try self.instructions.append(.Dup);
-                const target_var = receiver.data.Variable.lexeme;
-                const var_idx = try self.getOrCreateVariable(target_var);
-                const expected_type = self.getTrackedVariableType(target_var) orelse .Unknown;
-                try self.instructions.append(.{ .StoreVar = .{
-                    .var_index = var_idx,
-                    .var_name = target_var,
-                    .scope_kind = self.symbol_table.determineVariableScope(target_var),
-                    .module_context = null,
-                    .expected_type = expected_type,
-                    .heap_copy = .keep,
-                } });
-            }
-        }
     }
 
     pub fn tryGenerateTailCall(self: *HIRGenerator, expr: *ast.Expr) bool {
@@ -1915,8 +1195,7 @@ pub const HIRGenerator = struct {
     /// box-pointer representation.
     pub fn elementStructFieldTypes(self: *HIRGenerator, element_type: HIRType) ?[]HIRType {
         if (element_type != .Struct or element_type.Struct == 0) return null;
-        const stable = self.type_system.struct_table orelse return null;
-        const fields = stable.fields(element_type.Struct) orelse return null;
+        const fields = self.semantic.struct_table.fields(element_type.Struct) orelse return null;
         const out = self.allocator.alloc(HIRType, fields.len) catch return null;
         for (fields, 0..) |f, i| out[i] = f.hir_type;
         return out;
@@ -1926,8 +1205,7 @@ pub const HIRGenerator = struct {
     /// field/metadata resolution). Null when the element is not a struct.
     pub fn elementStructTypeName(self: *HIRGenerator, element_type: HIRType) ?[]const u8 {
         if (element_type != .Struct or element_type.Struct == 0) return null;
-        const stable = self.type_system.struct_table orelse return null;
-        return stable.getName(element_type.Struct);
+        return self.semantic.struct_table.keyOf(element_type.Struct);
     }
 
     /// B2: record that a value of this type reaches a reflection site
@@ -1942,12 +1220,8 @@ pub const HIRGenerator = struct {
                     self.force_struct_descriptors = true;
                     return;
                 }
-                const stable = self.type_system.struct_table orelse {
-                    self.force_struct_descriptors = true;
-                    return;
-                };
-                if (stable.getName(sid)) |name| {
-                    self.reflected_structs.put(name, {}) catch {};
+                if (self.semantic.struct_table.keyOf(sid)) |key| {
+                    self.reflected_structs.put(key, {}) catch {};
                 } else {
                     self.force_struct_descriptors = true;
                 }
@@ -1992,11 +1266,7 @@ pub const HIRGenerator = struct {
     }
 
     pub fn inferTypeFromExpression(self: *HIRGenerator, expr: *ast.Expr) HIRType {
-        return switch (expr.data) {
-            .Variable => self.type_system.inferTypeFromExpression(expr, &self.symbol_table),
-            .FunctionCall => ModuleCall.inferFunctionCallReturnType(self, expr),
-            else => self.type_system.inferTypeFromExpression(expr, &self.symbol_table),
-        };
+        return self.type_system.inferTypeFromExpression(expr, &self.symbol_table);
     }
 
     pub fn trackVariableType(self: *HIRGenerator, var_name: []const u8, var_type: HIRType) !void {
@@ -2013,10 +1283,6 @@ pub const HIRGenerator = struct {
 
     fn astTypeToLowerName(self: *HIRGenerator, base: ast.Type) []const u8 {
         return self.type_system.astTypeToLowerName(base);
-    }
-
-    pub fn collectUnionMemberNames(self: *HIRGenerator, ut: *ast.UnionType) ![][]const u8 {
-        return self.type_system.collectUnionMemberNames(ut);
     }
 
     pub fn collectUnionMemberNamesFromHIRType(self: *HIRGenerator, hir_type: HIRType) ![][]const u8 {
@@ -2043,21 +1309,15 @@ pub const HIRGenerator = struct {
             },
             .Map => "map",
             .Struct => |sid| blk: {
-                if (self.type_system.struct_table) |table| {
-                    if (table.getName(sid)) |name| break :blk name;
-                }
+                if (self.semantic.struct_table.displayName(sid)) |name| break :blk name;
                 break :blk try std.fmt.allocPrint(self.allocator, "(struct#{})", .{sid});
             },
             .Enum => |eid| blk: {
-                if (self.type_system.enum_table) |table| {
-                    if (table.getName(eid)) |name| break :blk name;
-                }
+                if (self.semantic.enum_table.displayName(eid)) |name| break :blk name;
                 break :blk try std.fmt.allocPrint(self.allocator, "(enum#{})", .{eid});
             },
             .Group => |gid| blk: {
-                if (self.type_system.group_table) |table| {
-                    if (table.getName(gid)) |name| break :blk name;
-                }
+                if (self.semantic.group_table.displayName(gid)) |name| break :blk name;
                 break :blk try std.fmt.allocPrint(self.allocator, "(group#{})", .{gid});
             },
             .Function => "function",
@@ -2077,10 +1337,6 @@ pub const HIRGenerator = struct {
             .Unknown => "unknown",
             .Poison => "poison",
         };
-    }
-
-    fn ensureAuxMapsInit(self: *HIRGenerator) void {
-        _ = self;
     }
 
     pub fn trackArrayElementType(self: *HIRGenerator, var_name: []const u8, elem_type: HIRType) !void {
@@ -2124,15 +1380,7 @@ pub const HIRGenerator = struct {
 
         try self.trackVariableType(param.name.lexeme, param_type);
         if (declared_type_info) |info| {
-            if (info.base == .Custom and info.custom_type != null) {
-                try self.trackVariableCustomType(param.name.lexeme, info.custom_type.?);
-            }
-        }
-        if (param.type_expr) |param_type_expr| {
-            switch (param_type_expr.data) {
-                .Custom => |custom_tok| try self.trackVariableCustomType(param.name.lexeme, custom_tok.lexeme),
-                else => {},
-            }
+            if (self.typeKeyOf(info.*)) |key| try self.trackVariableCustomType(param.name.lexeme, key);
         }
 
         if (param_type == .Array) {
@@ -2153,24 +1401,212 @@ pub const HIRGenerator = struct {
         return self.type_system.inferBinaryOpResultType(operator_type, left_expr, right_expr, &self.symbol_table);
     }
 
-    fn registerCustomType(self: *HIRGenerator, type_name: []const u8, kind: TypeSystem.CustomTypeInfo.CustomTypeKind) !void {
-        try self.type_system.registerCustomType(type_name, kind);
+    /// The type of `expr`, as the semantic analyzer inferred it.
+    ///
+    /// This is the one place lowering learns an expression's type
+    /// (plan/type-authority.md). The analyzer has visited every expression of
+    /// a program that reached this stage and recorded its type per node, with
+    /// narrowing already applied to that occurrence, so the generator lowers
+    /// the answer instead of deriving a second one from the expression's
+    /// shape. An expression the analyzer never typed is a compiler bug and
+    /// fails the compile here; there is no fallback type.
+    pub fn typeOf(self: *HIRGenerator, expr: *ast.Expr) ErrorList!HIRType {
+        if (self.semantic.getCachedExprType(expr)) |type_info| {
+            return self.type_system.convertTypeInfo(type_info.*);
+        }
+        const location = expr.base.location();
+        self.reporter.reportInternal(
+            "no analyzed type for the {s} expression at {s}:{d}:{d}. This is a compiler bug, not an error in the program",
+            .{ @tagName(std.meta.activeTag(expr.data)), location.file, location.range.start_line, location.range.start_col },
+            @src(),
+        );
+        return ErrorList.MissingExpressionType;
     }
 
-    pub fn registerEnumType(self: *HIRGenerator, enum_name: []const u8, variants: []const []const u8) !void {
-        try self.type_system.registerEnumType(enum_name, variants);
+    /// The type of the storage a store through `node` writes — a name, an
+    /// assignment or a variable declaration — as the analyzer resolved it,
+    /// beneath every narrowing view. A read of a name has `typeOf`; a store to
+    /// it produces this. There is no fallback type.
+    pub fn bindingTypeOf(self: *HIRGenerator, node: *const ast.Base) ErrorList!HIRType {
+        return self.type_system.convertTypeInfo((try self.storeTarget(node)).slot.*);
     }
 
-    pub fn registerGroupType(self: *HIRGenerator, group_name: []const u8, members: []const ast.GroupMember) !void {
-        try self.type_system.registerGroupType(group_name, members);
+    /// What the name a store through `node` writes reads at that store: the
+    /// narrowed member inside a view. A read-modify-write computes in it.
+    pub fn bindingReadTypeOf(self: *HIRGenerator, node: *const ast.Base) ErrorList!HIRType {
+        return self.type_system.convertTypeInfo((try self.storeTarget(node)).read.*);
     }
 
-    pub fn registerStructType(self: *HIRGenerator, struct_name: []const u8, fields: []const []const u8) !void {
-        try self.type_system.registerStructType(struct_name, fields);
+    /// The storage the name at `node` denotes: the binding beneath every view.
+    pub fn slotOf(self: *HIRGenerator, node: *const ast.Base) ErrorList!Slot {
+        return (try self.storeTarget(node)).storage;
     }
 
-    pub fn inferComparisonOperandType(self: *HIRGenerator, left_expr: *ast.Expr, right_expr: *ast.Expr) HIRType {
-        return self.type_system.inferComparisonOperandType(left_expr, right_expr, &self.symbol_table);
+    /// Where a variable lives and what emitted code calls it.
+    pub const Place = struct {
+        slot: Slot,
+        scope_kind: ScopeKind,
+        var_name: []const u8,
+    };
+
+    /// The place of a binding with storage `slot`, spelled `name`; `global`
+    /// says it is module-level. A module global is named by its link name.
+    /// Top-level code lowers every other binding as a global too, so there its
+    /// spelling is qualified by its slot to keep bindings that share a name
+    /// apart; inside a function it is a local of the frame.
+    pub fn placeOf(self: *HIRGenerator, slot: Slot, name: []const u8, global: bool) !Place {
+        if (global) return .{ .slot = slot, .scope_kind = .GlobalLocal, .var_name = name };
+        if (self.current_function != null) return .{ .slot = slot, .scope_kind = .Local, .var_name = name };
+        return .{ .slot = slot, .scope_kind = .GlobalLocal, .var_name = try std.fmt.allocPrint(self.allocator, "{s}.{d}", .{ name, slot }) };
+    }
+
+    /// The place of the variable the name at `node` denotes.
+    pub fn placeOfName(self: *HIRGenerator, node: *const ast.Base, name: []const u8) !Place {
+        const target = try self.storeTarget(node);
+        return self.placeOf(target.storage, name, target.global);
+    }
+
+    /// Push the value of the variable the name at `node` denotes.
+    pub fn loadName(self: *HIRGenerator, node: *const ast.Base, name: []const u8) !void {
+        const place = try self.placeOfName(node, name);
+        if (self.alias_params.get(place.slot)) |alias_slot| {
+            try self.instructions.append(.{ .LoadAlias = .{ .slot = place.slot, .var_name = name, .slot_index = alias_slot } });
+            return;
+        }
+        try self.instructions.append(.{ .LoadVar = .{
+            .slot = place.slot,
+            .var_name = place.var_name,
+            .scope_kind = place.scope_kind,
+            .module_context = null,
+        } });
+    }
+
+    /// Store the top of the stack, already of `slot_type`, into the variable
+    /// the name at `node` denotes.
+    pub fn storeName(self: *HIRGenerator, node: *const ast.Base, name: []const u8, slot_type: HIRType, heap_copy: SoxaTypes.HeapCopyKind) !void {
+        const place = try self.placeOfName(node, name);
+        if (self.alias_params.get(place.slot)) |alias_slot| {
+            try self.instructions.append(.{ .StoreAlias = .{
+                .var_name = name,
+                .slot_index = alias_slot,
+                .expected_type = slot_type,
+                .heap_copy = heap_copy,
+            } });
+            return;
+        }
+        try self.storePlace(place, slot_type, heap_copy);
+    }
+
+    /// Push the address of the variable the name at `node` denotes. An alias
+    /// (`^`) parameter is not backed by a local slot: its storage pointer is
+    /// re-passed from its alias slot.
+    pub fn pushStorageOfName(self: *HIRGenerator, node: *const ast.Base, name: []const u8) !void {
+        const place = try self.placeOfName(node, name);
+        try self.instructions.append(.{ .PushStorageId = .{
+            .slot = place.slot,
+            .var_name = place.var_name,
+            .scope_kind = place.scope_kind,
+            .alias_slot = self.alias_params.get(place.slot),
+        } });
+    }
+
+    /// Store the top of the stack, already of `slot_type`, into `place`.
+    pub fn storePlace(self: *HIRGenerator, place: Place, slot_type: HIRType, heap_copy: SoxaTypes.HeapCopyKind) !void {
+        try self.instructions.append(.{ .StoreVar = .{
+            .slot = place.slot,
+            .var_name = place.var_name,
+            .scope_kind = place.scope_kind,
+            .module_context = null,
+            .expected_type = slot_type,
+            .heap_copy = heap_copy,
+        } });
+    }
+
+    /// Store the top of the stack, already of `slot_type`, back into the
+    /// variable, alias parameter or `this` that `target` names.
+    pub fn storeTo(self: *HIRGenerator, target: *ast.Expr, slot_type: HIRType, heap_copy: SoxaTypes.HeapCopyKind) !void {
+        switch (target.data) {
+            .Variable => |token| try self.storeName(&target.base, token.lexeme, slot_type, heap_copy),
+            .This => {
+                const this_slot = self.this_slot orelse return ErrorList.InvalidAliasArgument;
+                try self.instructions.append(.{ .StoreAlias = .{
+                    .var_name = "this",
+                    .slot_index = self.alias_params.get(this_slot).?,
+                    .expected_type = slot_type,
+                    .heap_copy = heap_copy,
+                } });
+            },
+            else => unreachable, // a store back targets a name or `this`
+        }
+    }
+
+    fn allocAliasSlot(self: *HIRGenerator) u32 {
+        defer self.next_alias_slot += 1;
+        return self.next_alias_slot;
+    }
+
+    /// A slot for a value only the generator introduces (a receiver or alias
+    /// box temporary, a method's `this`).
+    pub fn tempSlot(self: *HIRGenerator) Slot {
+        defer self.next_temp_slot += 1;
+        return self.next_temp_slot;
+    }
+
+    /// The storage of a parameter's binding, which analysis recorded on it.
+    pub fn paramSlot(self: *HIRGenerator, param: ast.FunctionParam) ErrorList!Slot {
+        if (param.storage) |storage| return storage;
+        self.reporter.reportInternal(
+            "no analyzed binding for parameter '{s}' at {s}:{d}:{d}. This is a compiler bug, not an error in the program",
+            .{ param.name.lexeme, param.name.file, param.name.line, param.name.column },
+            @src(),
+        );
+        return ErrorList.MissingBindingType;
+    }
+
+    fn storeTarget(self: *HIRGenerator, node: *const ast.Base) ErrorList!StoreTarget {
+        if (self.semantic.getStoreTarget(node.id)) |target| return target;
+        const location = node.location();
+        self.reporter.reportInternal(
+            "no analyzed binding for the store at {s}:{d}:{d}. This is a compiler bug, not an error in the program",
+            .{ location.file, location.range.start_line, location.range.start_col },
+            @src(),
+        );
+        return ErrorList.MissingBindingType;
+    }
+
+    /// Bring the value on top of the stack, of type `value_type`, to
+    /// `target_type`: the type of the storage it is stored into, or of the
+    /// expression whose value it becomes. A member becoming a union or group is
+    /// boxed as that type, a box of another type is re-packed, and a box whose
+    /// member a check has proved is read as that member. A number the analyzer
+    /// admitted into another numeric type (an `int` literal for a `byte` or a
+    /// `float`) is converted to it. Every store goes through here, so a store
+    /// always receives a value of its slot's type (`verifyStore` checks it).
+    pub fn convertValue(self: *HIRGenerator, value_type: HIRType, target_type: HIRType) !void {
+        if (value_type.eql(target_type)) return;
+        if (target_type.isBoxed()) {
+            try self.instructions.append(.{ .Box = .{ .boxed_type = target_type } });
+        } else if (value_type.isBoxed()) {
+            try self.instructions.append(.{ .Unbox = .{ .member_type = target_type } });
+        } else if (isNumber(value_type) and isNumber(target_type)) {
+            try self.instructions.append(.{ .Convert = .{ .from_type = value_type, .to_type = target_type } });
+        }
+    }
+
+    fn isNumber(t: HIRType) bool {
+        return t == .Int or t == .Byte or t == .Float;
+    }
+
+    /// Convert the value on top of the stack — `target` after an in-place
+    /// change — to the type of the storage `target` names, and return that
+    /// type: a name's slot beneath any narrowing, or `target`'s own type for
+    /// the receiver `this`.
+    pub fn convertForStoreBack(self: *HIRGenerator, target: *ast.Expr) !HIRType {
+        const read_type = try self.typeOf(target);
+        if (target.data != .Variable) return read_type;
+        const slot_type = try self.bindingTypeOf(&target.base);
+        try self.convertValue(read_type, slot_type);
+        return slot_type;
     }
 
     fn inferParameterType(self: *HIRGenerator, param_name: []const u8, function_body: []ast.Stmt, function_name: []const u8) !HIRType {
@@ -2295,133 +1731,20 @@ pub const HIRGenerator = struct {
         return null;
     }
 
-    fn inferMethodReturnType(self: *HIRGenerator, method: *ast.StructMethod, struct_name: []const u8) HIRType {
-        for (method.body) |stmt| {
-            if (stmt.data == .Return) {
-                const return_stmt = stmt.data.Return;
-                if (return_stmt.value) |value| {
-                    return self.inferTypeFromExpressionWithStruct(value, struct_name);
-                }
-            }
-        }
-        return .Nothing;
-    }
-
-    fn inferTypeFromExpressionWithStruct(self: *HIRGenerator, expr: *ast.Expr, struct_name: []const u8) HIRType {
-        switch (expr.data) {
-            .FieldAccess => |field_access| {
-                if (field_access.object.data == .This) {
-                    if (self.type_system.custom_types.get(struct_name)) |struct_info| {
-                        if (struct_info.kind == .Struct) {
-                            if (struct_info.struct_fields) |fields| {
-                                for (fields) |field| {
-                                    if (std.mem.eql(u8, field.name, field_access.field.lexeme)) {
-                                        return field.field_type;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                return self.inferTypeFromExpression(expr);
-            },
-            .StructLiteral => |struct_literal| {
-                if (std.mem.eql(u8, struct_literal.name.lexeme, struct_name)) {
-                    return HIRType{ .Struct = 0 };
-                }
-                return self.inferTypeFromExpression(expr);
-            },
-            else => {
-                return self.inferTypeFromExpression(expr);
-            },
-        }
-    }
-
-    /// HIR view of a builtin's declared return type, taken from the single
-    /// `builtin_methods` registry.
-    fn builtinReturnType(return_type: ast.Type, return_element_type: ?ast.Type) HIRType {
-        return switch (return_type) {
-            .Int => .Int,
-            .Float => .Float,
-            .String => .String,
-            .Byte => .Byte,
-            .Tetra => .Tetra,
-            .Nothing => .Nothing,
-            .Array => .{ .Array = if (return_element_type) |element|
-                (if (element == .Byte) &builtin_byte_element else &builtin_unknown_element)
-            else
-                &builtin_unknown_element },
-            else => .Unknown,
+    /// What a resolved callee returns: its registered signature's type.
+    pub fn calleeReturnType(self: *HIRGenerator, callee: ModuleCall.Callee) HIRType {
+        return switch (callee.kind) {
+            .DoxaFunction => self.functionInfoByLink(callee.link_name).?.return_type,
+            .ZigFunction => self.convertTypeInfo(self.zig_functions.get(callee.link_name).?.return_type),
+            .BuiltinFunction => unreachable, // a builtin is no resolved callee
         };
-    }
-
-    /// Adapter installed on `TypeSystem` so nested call expressions resolve
-    /// their return type through the generator's owner-aware module resolution.
-    pub fn resolveCallReturnTypeThunk(ctx: *anyopaque, call_expr: *ast.Expr) HIRType {
-        const self: *HIRGenerator = @ptrCast(@alignCast(ctx));
-        return ModuleCall.inferFunctionCallReturnType(self, call_expr);
-    }
-
-    pub fn inferCallReturnType(self: *HIRGenerator, function_name: []const u8, call_kind: CallKind) !HIRType {
-        switch (call_kind) {
-            .LocalFunction => {
-                if (self.functionInfoByLink(function_name)) |func_info| {
-                    return func_info.return_type;
-                }
-                return .Nothing;
-            },
-            .BuiltinFunction => {
-                // `remove` is special: it signals an alias-tracking error.
-                if (std.mem.eql(u8, function_name, "remove")) {
-                    return error.InvalidAliasType;
-                }
-                // The built-in signatures have a single home: `builtin_methods`.
-                if (builtin_methods.getMethodInfoByName(function_name)) |info| {
-                    return builtinReturnType(info.return_type, info.return_element_type);
-                }
-                // Fall back: check if this is really a user-defined function
-                // that was misclassified as a builtin.
-                if (self.functionInfoByLink(function_name)) |func_info| {
-                    return func_info.return_type;
-                }
-                return .Unknown;
-            },
-            .ModuleFunction => {
-                if (self.functionInfoByLink(function_name)) |func_info| {
-                    return func_info.return_type;
-                }
-                if (self.imported_symbols) |imported_symbols| {
-                    if (imported_symbols.get(function_name)) |sym| {
-                        if (sym.kind == .Function) {
-                            if (sym.return_type_info) |ret| {
-                                return self.convertTypeInfo(ret);
-                            }
-                        }
-                    }
-                }
-                self.reporter.reportCompileError(
-                    null,
-                    ErrorCode.FUNCTION_NOT_FOUND,
-                    "Imported zig module function '{s}' not found. Ensure the zig block exports this function.",
-                    .{function_name},
-                );
-                return ErrorList.FunctionNotFound;
-            },
-        }
-    }
-
-    pub fn isCustomType(self: *HIRGenerator, name: []const u8) ?TypeSystem.CustomTypeInfo {
-        return self.type_system.isCustomType(name);
-    }
-
-    fn getCustomTypeHIRType(self: *HIRGenerator, name: []const u8) HIRType {
-        return self.type_system.getCustomTypeHIRType(name);
     }
 
     pub fn buildPeekPath(self: *HIRGenerator, expr: *const ast.Expr) !?[]const u8 {
         switch (expr.data) {
             .Variable => |var_token| {
-                return try self.allocator.dupe(u8, var_token.lexeme);
+                // A global carries its link name; a peek shows what was written.
+                return try self.allocator.dupe(u8, module_graph.displayName(var_token.lexeme));
             },
             .FieldAccess => |field| {
                 if (try self.buildPeekPath(field.object)) |base_path| {
@@ -2434,24 +1757,6 @@ pub const HIRGenerator = struct {
         }
     }
 
-    pub fn isModuleNamespace(self: *HIRGenerator, name: []const u8) bool {
-        if (self.namespaceRefForName(name) != null) return true;
-        // MIGRATION (Phase 3 removes this flat-alias fallback): a name reached
-        // through the compaction-era alias map or an import alias rather than an
-        // owner-scoped binding. It only gates member resolution, never identity.
-        if (self.module_namespaces.contains(name)) return true;
-        var it = self.module_namespaces.iterator();
-        while (it.next()) |entry| {
-            const mi = entry.value_ptr.*;
-            for (mi.imports) |imp| {
-                if (imp.namespace_alias) |alias| {
-                    if (std.mem.eql(u8, alias, name)) return true;
-                }
-            }
-        }
-        return false;
-    }
-
     pub fn computeNumericCommonType(self: *HIRGenerator, left_type: HIRType, right_type: HIRType, operator_type: TokenType) HIRType {
         return self.type_system.computeNumericCommonType(left_type, right_type, operator_type);
     }
@@ -2461,3 +1766,9 @@ pub const HIRGenerator = struct {
         return self.is_global_init_phase and self.current_function == null;
     }
 };
+
+/// The internal key name of a method: `Struct.method`. `.` cannot occur in an
+/// identifier, so a method key never meets a top-level function's.
+fn methodKeyName(allocator: std.mem.Allocator, struct_name: []const u8, method_name: []const u8) ![]const u8 {
+    return std.fmt.allocPrint(allocator, "{s}.{s}", .{ struct_name, method_name });
+}

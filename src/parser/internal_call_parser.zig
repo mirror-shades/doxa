@@ -1,6 +1,8 @@
 const std = @import("std");
 const ast = @import("../ast/ast.zig");
-const Precedence = @import("./precedence.zig").Precedence;
+const token = @import("../types/token.zig");
+const precedence = @import("./precedence.zig");
+const Precedence = precedence.Precedence;
 const expression_parser = @import("expression_parser.zig");
 
 const Errors = @import("../utils/errors.zig");
@@ -8,13 +10,47 @@ const ErrorList = Errors.ErrorList;
 
 const Parser = @import("parser_types.zig").Parser;
 
+/// `@name(value, args...)`: an intrinsic call. Its first argument is the value
+/// it acts on (the receiver); an intrinsic called with none receives `nothing`.
 pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?*ast.Expr {
     const method_tok = self.peek();
-
     self.advance();
+    const args = try parseArguments(self);
+
+    if (args.len == 0) {
+        const nothing = try self.allocator.create(ast.Expr);
+        nothing.* = .{
+            .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+            .data = .{ .Literal = .{ .nothing = {} } },
+        };
+        return try internalCall(self, method_tok, nothing, args);
+    }
+    defer self.allocator.free(args);
+    return try internalCall(self, method_tok, args[0], try self.allocator.dupe(*ast.Expr, args[1..]));
+}
+
+/// Whether `token_type` names an intrinsic that acts on a value, and so may
+/// be called postfix. `@std()` takes no value.
+pub fn isPostfixIntrinsic(token_type: token.TokenType) bool {
+    if (token_type == .STD) return false;
+    const prefix = precedence.getRule(token_type).prefix orelse return false;
+    return prefix == &Parser.internalCallExpr;
+}
+
+/// `value.@name(args...)`: the same call `@name(value, args...)` spells, with
+/// `value` as the receiver (docs/methods.md). The parser stands on the `@name`
+/// token.
+pub fn postfixInternalCall(self: *Parser, receiver: *ast.Expr) ErrorList!*ast.Expr {
+    const method_tok = self.peek();
+    self.advance();
+    return internalCall(self, method_tok, receiver, try parseArguments(self));
+}
+
+/// A parenthesized, comma-separated argument list, newlines allowed between
+/// arguments and around the parentheses' contents.
+fn parseArguments(self: *Parser) ErrorList![]*ast.Expr {
     if (self.peek().type != .LEFT_PAREN) return error.ExpectedLeftParen;
     self.advance();
-
     while (self.peek().type == .NEWLINE) self.advance();
 
     var args = std.array_list.Managed(*ast.Expr).init(self.allocator);
@@ -35,9 +71,7 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
             if (self.peek().type == .COMMA) {
                 self.advance();
                 while (self.peek().type == .NEWLINE) self.advance();
-                if (self.peek().type == .RIGHT_PAREN) {
-                    break;
-                }
+                if (self.peek().type == .RIGHT_PAREN) break;
                 continue;
             }
             break;
@@ -47,35 +81,18 @@ pub fn internalCallExpr(self: *Parser, _: ?*ast.Expr, _: Precedence) ErrorList!?
     while (self.peek().type == .NEWLINE) self.advance();
     if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
     self.advance();
-
-    var receiver_expr: *ast.Expr = undefined;
-    var call_args = std.array_list.Managed(*ast.Expr).init(self.allocator);
-    errdefer call_args.deinit();
-
-    if (args.items.len > 0) {
-        receiver_expr = args.items[0];
-        var i: usize = 1;
-        while (i < args.items.len) : (i += 1) {
-            try call_args.append(args.items[i]);
-        }
-    } else {
-        receiver_expr = try self.allocator.create(ast.Expr);
-        receiver_expr.* = .{
-            .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
-            .data = .{ .Literal = .{ .nothing = {} } },
-        };
-    }
-
-    const method_expr = try self.allocator.create(ast.Expr);
-    method_expr.* = .{
-        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
-        .data = .{ .InternalCall = .{
-            .receiver = receiver_expr,
-            .method = method_tok,
-            .arguments = try call_args.toOwnedSlice(),
-        } },
-    };
-
-    return method_expr;
+    return args.toOwnedSlice();
 }
 
+fn internalCall(self: *Parser, method_tok: token.Token, receiver: *ast.Expr, arguments: []*ast.Expr) ErrorList!*ast.Expr {
+    const call = try self.allocator.create(ast.Expr);
+    call.* = .{
+        .base = .{ .id = ast.generateNodeId(), .span = ast.SourceSpan.fromToken(method_tok) },
+        .data = .{ .InternalCall = .{
+            .receiver = receiver,
+            .method = method_tok,
+            .arguments = arguments,
+        } },
+    };
+    return call;
+}

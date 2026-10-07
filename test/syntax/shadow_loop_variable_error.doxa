@@ -1,0 +1,10 @@
+# A loop variable may not reuse the name of a global.
+var c is "outer"
+
+function findColon(s :: string) returns tetra {
+    each c at i in s {
+        if c == ":" then return true
+    }
+    return false
+}
+@print("{findColon("a:b")} {c}\n")

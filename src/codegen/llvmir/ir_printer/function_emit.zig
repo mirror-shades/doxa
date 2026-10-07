@@ -1,13 +1,11 @@
 const std = @import("std");
+const module_graph = @import("../../../module/graph.zig");
 const DoxaTag = @import("../../../runtime/doxa_rt.zig").DoxaTag;
-const GroupTable = @import("../../../common/group_table.zig").GroupTable;
-const EnumTable = @import("../../../common/enum_table.zig").EnumTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
     const HIR = Ctx.HIR;
     const PeekEmitState = Ctx.PeekEmitState;
-    const StackType = Ctx.StackType;
     const StackVal = Ctx.StackVal;
     const VariableInfo = Ctx.VariableInfo;
     const StackMergeState = Ctx.StackMergeState;
@@ -79,7 +77,7 @@ pub fn Methods(comptime Ctx: type) type {
             defer self.scopes_elided = false;
 
             // First pass: Collect all variables that need allocation
-            var variables_to_allocate = std.StringHashMap(VariableInfo).init(self.allocator);
+            var variables_to_allocate = std.AutoHashMap(HIR.Slot, VariableInfo).init(self.allocator);
             defer {
                 var it = variables_to_allocate.iterator();
                 while (it.next()) |entry| {
@@ -115,14 +113,13 @@ pub fn Methods(comptime Ctx: type) type {
                             self.hirTypeToStackType(sv.expected_type)
                         else
                             .I64;
-                        // A store carries the type of the *value*, so only a value
-                        // that is itself a group or union says anything about the
-                        // slot. The declaration below is what a box is keyed on.
+                        // A store carries its slot's type, so a group or union one
+                        // names the box the slot holds, as a declaration does.
                         const boxed_declared_type: ?HIR.HIRType = if (IRPrinter.isBoxedMemberType(sv.expected_type))
                             sv.expected_type
                         else
                             null;
-                        if (variables_to_allocate.getPtr(sv.var_name)) |existing| {
+                        if (variables_to_allocate.getPtr(sv.slot)) |existing| {
                             // Upgrade a placeholder i64 slot to a concrete, possibly
                             // wider type (e.g. a string bound first as a raw value and
                             // then narrowed). The alloca must be sized for the widest
@@ -132,9 +129,9 @@ pub fn Methods(comptime Ctx: type) type {
                             }
                             if (existing.boxed_declared_type == null) existing.boxed_declared_type = boxed_declared_type;
                         } else {
-                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sv.var_name});
+                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}.{d}", .{ sv.var_name, sv.slot });
                             const info = VariableInfo{ .ptr_name = ptr_name, .stack_type = declared_stack_type, .boxed_declared_type = boxed_declared_type, .array_type = null };
-                            try variables_to_allocate.put(sv.var_name, info);
+                            try variables_to_allocate.put(sv.slot, info);
                         }
                     },
                     .StoreDecl => |sd| {
@@ -161,7 +158,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 struct_field_names = self.struct_field_names_by_type.get(tn);
                             }
                         }
-                        if (variables_to_allocate.getPtr(sd.var_name)) |existing| {
+                        if (variables_to_allocate.getPtr(sd.slot)) |existing| {
                             // A declaration carries the authoritative type; upgrade a
                             // placeholder i64 slot so the alloca is sized for the real
                             // (possibly wider) value.
@@ -174,7 +171,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 if (existing.struct_type_name == null) existing.struct_type_name = struct_type_name;
                             }
                         } else {
-                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}", .{sd.var_name});
+                            const ptr_name = try std.fmt.allocPrint(self.allocator, "%var.{s}.{d}", .{ sd.var_name, sd.slot });
                             const info = VariableInfo{
                                 .ptr_name = ptr_name,
                                 .stack_type = declared_stack_type,
@@ -184,7 +181,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 .struct_field_names = struct_field_names,
                                 .struct_type_name = struct_type_name,
                             };
-                            try variables_to_allocate.put(sd.var_name, info);
+                            try variables_to_allocate.put(sd.slot, info);
                         }
                     },
                     else => {},
@@ -242,7 +239,7 @@ pub fn Methods(comptime Ctx: type) type {
             try outer_w.writeAll("entry:\n");
 
             // Initialize variables map
-            var variables = std.StringHashMap(VariableInfo).init(self.allocator);
+            var variables = std.AutoHashMap(HIR.Slot, VariableInfo).init(self.allocator);
             defer {
                 var it = variables.iterator();
                 while (it.next()) |entry| {
@@ -254,7 +251,7 @@ pub fn Methods(comptime Ctx: type) type {
             // Allocate all variables at function entry
             var it = variables_to_allocate.iterator();
             while (it.next()) |entry| {
-                const var_name = entry.key_ptr.*;
+                const slot = entry.key_ptr.*;
                 const var_info = entry.value_ptr.*;
                 const llvm_ty = self.stackTypeToLLVMType(var_info.stack_type);
                 const alloca_line = try std.fmt.allocPrint(self.allocator, "  {s} = alloca {s}\n", .{ var_info.ptr_name, llvm_ty });
@@ -262,7 +259,7 @@ pub fn Methods(comptime Ctx: type) type {
                 try outer_w.writeAll(alloca_line);
 
                 // Add to variables map for later use
-                try variables.put(var_name, var_info);
+                try variables.put(slot, var_info);
             }
 
             // Reusable stack slots for string operations (avoid alloca-in-loop stack overflow)
@@ -323,7 +320,10 @@ pub fn Methods(comptime Ctx: type) type {
 
             // Process function body instructions
             self.scope_depth = 0;
-            for (hir.instructions[start_idx..end_idx]) |inst| {
+            var jump_targets = try self.collectLiveJumpTargets(hir.instructions[start_idx..end_idx]);
+            defer jump_targets.deinit();
+            for (hir.instructions[start_idx..end_idx], start_idx..) |inst, inst_index| {
+                self.verifyEnter(module_graph.displayName(func.qualified_name), inst_index, inst);
                 const tag = std.meta.activeTag(inst);
                 const requires_new_block = switch (tag) {
                     .Label, .ExitScope => false,
@@ -351,6 +351,10 @@ pub fn Methods(comptime Ctx: type) type {
                     .Label => |lbl| {
                         // Only process function body labels, skip function start labels and invalid basic block names
                         const should_print = !std.mem.eql(u8, lbl.name, func.start_label) and !std.mem.startsWith(u8, lbl.name, "func_");
+                        // Not fallen into and not jumped to: the code under
+                        // this label is unreachable. Leaving the terminator
+                        // flag set skips it up to the next live label.
+                        if (should_print and last_instruction_was_terminator and !jump_targets.contains(lbl.name)) continue;
                         if (should_print and !last_instruction_was_terminator) {
                             const br_line = try std.fmt.allocPrint(self.allocator, "  br label %{s}\n", .{lbl.name});
                             defer self.allocator.free(br_line);
@@ -449,7 +453,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = true;
                     },
                     .JumpCond => |jc| {
-                        if (stack.items.len < 1) continue;
+                        try self.requireStack(&stack, 1);
                         const v = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         const bool_val = try self.ensureBool(w, v, &id);
@@ -484,108 +488,10 @@ pub fn Methods(comptime Ctx: type) type {
                         stack.items.len = 0;
                         last_instruction_was_terminator = true;
                     },
-                    .LoadModule => |lm| {
-                        const gname = lm.module_name;
-                        const fcount = lm.field_names.len;
-
-                        // Look up struct metadata (pre-populated by writeModule scan)
-                        const struct_fields = self.global_struct_field_types.get(gname);
-                        const struct_names = self.global_struct_field_names.get(gname);
-                        const struct_type_name = self.global_struct_type_names.get(gname);
-
-                        if (fcount == 0) {
-                            // Empty module struct — push a non-null sentinel pointer
-                            const sentinel = try self.nextTemp(&id);
-                            const line = try std.fmt.allocPrint(self.allocator, "  {s} = inttoptr i64 1 to ptr\n", .{sentinel});
-                            defer self.allocator.free(line);
-                            try w.writeAll(line);
-                            try stack.append(.{ .name = sentinel, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
-                            last_instruction_was_terminator = false;
-                            continue;
-                        }
-
-                        const struct_type_llvm = try self.buildI64StructType(fcount * 2);
-                        defer self.allocator.free(struct_type_llvm);
-
-                        // Allocate struct on heap (each string field is ptr + len)
-                        const struct_size = fcount * 2 * @sizeOf(i64);
-                        const size_reg = try self.nextTemp(&id);
-                        const size_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i64 0, {d}\n", .{ size_reg, struct_size });
-                        defer self.allocator.free(size_line);
-                        try w.writeAll(size_line);
-
-                        const malloc_reg = try self.nextTemp(&id);
-                        const malloc_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_scope_alloc(i64 {s}, i64 8)\n", .{ malloc_reg, size_reg });
-                        defer self.allocator.free(malloc_line);
-                        try w.writeAll(malloc_line);
-
-                        // Cast to struct pointer
-                        const struct_ptr = try self.nextTemp(&id);
-                        const cast_line = try std.fmt.allocPrint(self.allocator, "  {s} = bitcast ptr {s} to ptr\n", .{ struct_ptr, malloc_reg });
-                        defer self.allocator.free(cast_line);
-                        try w.writeAll(cast_line);
-
-                        // Populate each field from module globals (raw C-strings).
-                        var fi: usize = 0;
-                        while (fi < fcount) : (fi += 1) {
-                            const field_name = lm.field_names[fi];
-                            const field_gptr = try self.mangleGlobalName(field_name);
-                            defer self.allocator.free(field_gptr);
-
-                            // Determine the module global's type and load accordingly
-                            const field_st = self.global_types.get(field_name) orelse .PTR;
-                            const field_llty = self.stackTypeToLLVMType(field_st);
-
-                            const loaded_val = try self.nextTemp(&id);
-                            const load_line = try std.fmt.allocPrint(self.allocator, "  {s} = load {s}, ptr {s}\n", .{ loaded_val, field_llty, field_gptr });
-                            defer self.allocator.free(load_line);
-                            try w.writeAll(load_line);
-
-                            // Recover (ptr, len) from the C-string and store both words.
-                            const out_ptr_slot = try self.nextTemp(&id);
-                            const out_len_slot = try self.nextTemp(&id);
-                            const alloca_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = alloca ptr\n", .{out_ptr_slot});
-                            const alloca_len = try std.fmt.allocPrint(self.allocator, "  {s} = alloca i64\n", .{out_len_slot});
-                            defer self.allocator.free(alloca_ptr);
-                            defer self.allocator.free(alloca_len);
-                            try w.writeAll(alloca_ptr);
-                            try w.writeAll(alloca_len);
-                            const init_null = try std.fmt.allocPrint(self.allocator, "  store ptr null, ptr {s}\n", .{out_ptr_slot});
-                            const init_zero = try std.fmt.allocPrint(self.allocator, "  store i64 0, ptr {s}\n", .{out_len_slot});
-                            defer self.allocator.free(init_null);
-                            defer self.allocator.free(init_zero);
-                            try w.writeAll(init_null);
-                            try w.writeAll(init_zero);
-                            const from_cstr = try std.fmt.allocPrint(self.allocator, "  call void @doxa_str_from_cstr(ptr {s}, ptr {s}, ptr {s})\n", .{ loaded_val, out_ptr_slot, out_len_slot });
-                            defer self.allocator.free(from_cstr);
-                            try w.writeAll(from_cstr);
-                            const cloned_ptr = try self.nextTemp(&id);
-                            const cloned_len = try self.nextTemp(&id);
-                            const load_ptr = try std.fmt.allocPrint(self.allocator, "  {s} = load ptr, ptr {s}\n", .{ cloned_ptr, out_ptr_slot });
-                            const load_len = try std.fmt.allocPrint(self.allocator, "  {s} = load i64, ptr {s}\n", .{ cloned_len, out_len_slot });
-                            defer self.allocator.free(load_ptr);
-                            defer self.allocator.free(load_len);
-                            try w.writeAll(load_ptr);
-                            try w.writeAll(load_len);
-
-                            try self.storeStructStringField(w, struct_type_llvm, struct_ptr, fi * 2, cloned_ptr, cloned_len, &id);
-                        }
-
-                        // Store the module struct pointer to the global so subsequent
-                        // LoadModule instructions (in other functions) can reuse it.
-                        const module_gptr = try self.mangleGlobalName(gname);
-                        defer self.allocator.free(module_gptr);
-                        const store_module_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ struct_ptr, module_gptr });
-                        defer self.allocator.free(store_module_line);
-                        try w.writeAll(store_module_line);
-
-                        try stack.append(.{ .name = struct_ptr, .ty = .PTR, .region = .Root, .struct_field_types = struct_fields, .struct_field_names = struct_names, .struct_type_name = struct_type_name });
-                        last_instruction_was_terminator = false;
-                    },
                     .LoadVar => |lv| {
                         if (lv.scope_kind == .GlobalLocal or lv.scope_kind == .ModuleGlobal) {
-                            try self.handleLoadVarGlobal(w, &stack, &id, lv.var_name);
-                        } else if (variables.get(lv.var_name)) |entry| {
+                            try self.handleLoadVarGlobal(w, &stack, &id, lv.slot, lv.var_name);
+                        } else if (variables.get(lv.slot)) |entry| {
                             const result_name = try self.nextTemp(&id);
                             const ty_str = self.stackTypeToLLVMType(entry.stack_type);
                             const line = try std.fmt.allocPrint(
@@ -610,14 +516,14 @@ pub fn Methods(comptime Ctx: type) type {
                                 // rehome call (which reads the object's real
                                 // arena) instead of statically cloning an object
                                 // the runtime would keep.
-                                .region = switch (self.var_regions.get(lv.var_name) orelse .Unknown) {
+                                .region = switch (self.var_regions.get(lv.slot) orelse .Unknown) {
                                     .Deep => .Unknown,
                                     else => |r| r,
                                 },
                                 // Phase D: a variable's recorded range is a
                                 // must-join over its reaching stores, so a load
                                 // may present it as a fact.
-                                .int_range = self.varRange(lv.var_name),
+                                .int_range = self.varRange(lv.slot),
                                 .array_type = entry.array_type,
                                 .enum_type_name = entry.enum_type_name,
                                 .struct_field_types = entry.struct_field_types,
@@ -628,7 +534,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 .boxed_type = entry.boxed_declared_type,
                             };
                             if (entry.stack_type == .Value) {
-                                if (try self.loadNarrowedUnion(w, loaded, lv.var_name, &id)) |unwrapped| {
+                                if (try self.loadNarrowedUnion(w, loaded, lv.slot, &id)) |unwrapped| {
                                     try stack.append(unwrapped);
                                 } else {
                                     try stack.append(loaded);
@@ -651,9 +557,17 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .PushStorageId => |psid| {
-                        if (psid.scope_kind == .GlobalLocal or psid.scope_kind == .ModuleGlobal) {
+                        if (psid.alias_slot) |alias_slot| {
+                            const info = alias_slots.get(alias_slot).?;
+                            // Re-passing an existing alias: the storage owner is
+                            // one frame further up than it was for this alias.
+                            // Carry both the compile-time re-pass count and the
+                            // runtime owner depth so the callee can resolve the
+                            // true owner across the call boundary.
+                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .enum_type_name = info.enum_type_name, .struct_field_types = info.struct_field_types, .struct_field_names = info.struct_field_names, .struct_type_name = info.struct_type_name, .alias_extra = info.alias_extra + 1, .alias_owned = true, .alias_depth_value = info.depth_value });
+                        } else if (psid.scope_kind == .GlobalLocal or psid.scope_kind == .ModuleGlobal) {
                             try self.handlePushStorageIdGlobal(w, &stack, &id, psid.var_name);
-                        } else if (variables.get(psid.var_name)) |entry| {
+                        } else if (variables.get(psid.slot)) |entry| {
                             // A narrowed union variable's slot holds a boxed
                             // `%DoxaValue`, but the contract for a pushed storage
                             // id is the address of a slot holding the value a
@@ -661,7 +575,7 @@ pub fn Methods(comptime Ctx: type) type {
                             // The box's payload word is exactly that slot: pointing
                             // `this` at it unwraps the member for the call and
                             // writes any replaced receiver back into the box.
-                            if (self.narrowedMemberType(psid.var_name)) |member| {
+                            if (self.narrowedMemberType(psid.slot)) |member| {
                                 if (member == .Struct) {
                                     const payload_addr = try self.nextTemp(&id);
                                     const gep_line = try std.fmt.allocPrint(
@@ -717,13 +631,6 @@ pub fn Methods(comptime Ctx: type) type {
                             } else {
                                 try stack.append(.{ .name = entry.ptr_name, .ty = .PTR, .array_type = entry.array_type, .enum_type_name = entry.enum_type_name, .struct_field_types = entry.struct_field_types, .struct_field_names = entry.struct_field_names, .struct_type_name = entry.struct_type_name });
                             }
-                        } else if (alias_slots.get(psid.var_index)) |info| {
-                            // Re-passing an existing alias: the storage owner is
-                            // one frame further up than it was for this alias.
-                            // Carry both the compile-time re-pass count and the
-                            // runtime owner depth so the callee can resolve the
-                            // true owner across the call boundary.
-                            try stack.append(.{ .name = info.ptr_name, .ty = .PTR, .array_type = info.array_type, .enum_type_name = info.enum_type_name, .struct_field_types = info.struct_field_types, .struct_field_names = info.struct_field_names, .struct_type_name = info.struct_type_name, .alias_extra = info.alias_extra + 1, .alias_owned = true, .alias_depth_value = info.depth_value });
                         } else {
                             const fallback = try std.fmt.allocPrint(self.allocator, "%{d}", .{id});
                             id += 1;
@@ -783,7 +690,7 @@ pub fn Methods(comptime Ctx: type) type {
                                 // as the active member, the same way `LoadVar`
                                 // does, or in-place intrinsics see the raw box.
                                 if (stack_ty == .Value) {
-                                    if (try self.loadNarrowedUnion(w, loaded, la.var_name, &id)) |unwrapped| {
+                                    if (try self.loadNarrowedUnion(w, loaded, la.slot, &id)) |unwrapped| {
                                         loaded = unwrapped;
                                     }
                                 }
@@ -803,7 +710,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .StoreAlias => |sa| {
-                        if (stack.items.len < 1) continue;
+                        try self.requireStack(&stack, 1);
                         var value = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         if (alias_slots.get(sa.slot_index)) |info| {
@@ -841,7 +748,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .BindAlias => |ba| {
-                        if (stack.items.len < 1) continue;
+                        try self.requireStack(&stack, 1);
                         const ptr_val = stack.items[stack.items.len - 1];
                         stack.items.len -= 1;
                         var struct_fields: ?[]HIR.HIRType = ptr_val.struct_field_types;
@@ -863,18 +770,9 @@ pub fn Methods(comptime Ctx: type) type {
                                     struct_field_names = self.struct_field_names_by_type.get(tn);
                                 }
                             }
-                            // Legacy name-based fallbacks for receivers/`this`.
-                            if (struct_fields == null) {
-                                if (std.mem.eql(u8, ba.alias_name, "this")) {
-                                    if (std.mem.indexOfScalar(u8, func.qualified_name, '.')) |dot_idx| {
-                                        const struct_name = func.qualified_name[0..dot_idx];
-                                        if (self.global_struct_field_types.get(struct_name)) |fts| {
-                                            struct_fields = fts;
-                                        }
-                                    }
-                                } else if (self.global_struct_field_types.get(ba.alias_name)) |fts| {
-                                    struct_fields = fts;
-                                }
+                            // A method's `this` is its receiver struct.
+                            if (struct_fields == null and std.mem.eql(u8, ba.alias_name, "this")) {
+                                if (func.receiver) |receiver| struct_fields = self.struct_fields_by_id.get(receiver);
                             }
                         }
                         const array_hint: ?HIR.HIRType = switch (ba.target_type) {
@@ -915,7 +813,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .Swap => {
-                        self.handleSwap(&stack);
+                        try self.handleSwap(&stack);
                         last_instruction_was_terminator = false;
                     },
                     .StoreFieldName => {
@@ -943,7 +841,7 @@ pub fn Methods(comptime Ctx: type) type {
                         last_instruction_was_terminator = false;
                     },
                     .Pop => {
-                        self.handlePop(&stack);
+                        try self.handlePop(&stack);
                         last_instruction_was_terminator = false;
                     },
                     .StoreDecl => |sd| {
@@ -954,52 +852,12 @@ pub fn Methods(comptime Ctx: type) type {
                         if (store_decl_is_global) {
                             try self.handleStoreDeclGlobal(w, &stack, &id, sd);
                         } else {
-                            if (stack.items.len < 1) {
-                                if (sd.declared_type == .Array or sd.declared_type == .Map) {
-                                    const info_ptr = variables.getPtr(sd.var_name) orelse continue;
-                                    switch (sd.declared_type) {
-                                        .Array => |inner| {
-                                            const elem_type = inner.*;
-                                            const elem_size = self.arrayElementSize(elem_type);
-                                            const elem_tag = self.arrayElementTag(elem_type);
-                                            const reg = try self.nextTemp(&id);
-                                            const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_array_new(i64 {d}, i64 {d}, i64 0)\n", .{ reg, elem_size, elem_tag });
-                                            defer self.allocator.free(new_line);
-                                            try w.writeAll(new_line);
-                                            const store_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ reg, info_ptr.ptr_name });
-                                            defer self.allocator.free(store_line);
-                                            try w.writeAll(store_line);
-                                            info_ptr.stack_type = .PTR;
-                                            info_ptr.array_type = elem_type;
-                                        },
-                                        .Map => |kv| {
-                                            const key_tag = self.arrayElementTag(kv.key.*);
-                                            const val_tag = self.arrayElementTag(kv.value.*);
-                                            const reg = try self.nextTemp(&id);
-                                            const new_line = try std.fmt.allocPrint(self.allocator, "  {s} = call ptr @doxa_map_new(i64 0, i64 {d}, i64 {d})\n", .{ reg, key_tag, val_tag });
-                                            defer self.allocator.free(new_line);
-                                            try w.writeAll(new_line);
-                                            const store_line = try std.fmt.allocPrint(self.allocator, "  store ptr {s}, ptr {s}\n", .{ reg, info_ptr.ptr_name });
-                                            defer self.allocator.free(store_line);
-                                            try w.writeAll(store_line);
-                                            info_ptr.stack_type = .PTR;
-                                            info_ptr.array_type = kv.value.*;
-                                        },
-                                        else => {},
-                                    }
-                                    // The empty default was materialised in the arena
-                                    // current at this declaration (A1 region analysis).
-                                    try self.recordVarRegion(sd.var_name, self.currentRegionTag());
-                                }
-                                continue;
-                            }
+                            try self.requireStack(&stack, 1);
                             var value = stack.items[stack.items.len - 1];
                             stack.items.len -= 1;
+                            try self.verifyStore(value, sd.declared_type);
                             if (sd.declared_type == .Array and value.array_type == null) {
                                 value.array_type = sd.declared_type.Array.*;
-                            }
-                            if (IRPrinter.isBoxedMemberType(sd.declared_type)) {
-                                value = try self.buildDoxaValue(w, value, sd.declared_type, &id);
                             }
                             // A1: a mutable declaration re-homes (or plain-stores)
                             // into the function-body arena, so the payload outlives
@@ -1015,9 +873,9 @@ pub fn Methods(comptime Ctx: type) type {
                                 // is single-assignment, so that region is a definite
                                 // fact, not a may-class — record it exactly so later
                                 // loads can be decided statically (A2).
-                                try self.var_regions.put(sd.var_name, value.region);
+                                try self.var_regions.put(sd.slot, value.region);
                             } else {
-                                try self.recordVarRegion(sd.var_name, .Func);
+                                try self.recordVarRegion(sd.slot, .Func);
                             }
                             // Phase D: a declaration is single-assignment, so
                             // its initializer's range is installed outright. A
@@ -1025,7 +883,7 @@ pub fn Methods(comptime Ctx: type) type {
                             // too — there is no separate definition to merge
                             // with — and every later `StoreVar` hulls into it.
                             if (value.ty == .I64 or value.ty == .I8) {
-                                try self.recordVarRange(sd.var_name, value.int_range);
+                                try self.recordVarRange(sd.slot, value.int_range);
                             }
                             if (sd.declared_type == .Struct and value.ty == .PTR and value.struct_type_name == null) {
                                 value.struct_type_name = try self.hirTypeToTypeString(self.allocator, sd.declared_type);
@@ -1039,17 +897,13 @@ pub fn Methods(comptime Ctx: type) type {
                                 }
                             }
                             const declared_stack_type = self.hirTypeToStackType(sd.declared_type);
-                            const target_ty: StackType = if (sd.declared_type == .Unknown) value.ty else declared_stack_type;
-                            value = try self.coerceForStore(value, target_ty, &id, w);
-                            var info_ptr = variables.getPtr(sd.var_name);
+                            value = try self.coerceForStore(value, declared_stack_type, &id, w);
+                            var info_ptr = variables.getPtr(sd.slot);
                             if (info_ptr == null) {
                                 continue;
                             } else {
-                                if (sd.declared_type != .Unknown) {
-                                    const expected_stack_ty = self.hirTypeToStackType(sd.declared_type);
-                                    if (info_ptr.?.stack_type == .I64 and expected_stack_ty != .I64) {
-                                        info_ptr.?.stack_type = expected_stack_ty;
-                                    }
+                                if (info_ptr.?.stack_type == .I64 and declared_stack_type != .I64) {
+                                    info_ptr.?.stack_type = declared_stack_type;
                                 }
                                 if (info_ptr.?.array_type == null) info_ptr.?.array_type = value.array_type;
                                 if (info_ptr.?.enum_type_name == null) info_ptr.?.enum_type_name = value.enum_type_name;
@@ -1079,19 +933,18 @@ pub fn Methods(comptime Ctx: type) type {
                         if (sv.scope_kind == .GlobalLocal or sv.scope_kind == .ModuleGlobal) {
                             try self.handleStoreVarGlobal(w, &stack, &id, sv);
                         } else {
-                            if (stack.items.len < 1) continue;
+                            try self.requireStack(&stack, 1);
                             var value = stack.items[stack.items.len - 1];
                             stack.items.len -= 1;
-                            if (value.ty == .Nothing) continue;
+                            try self.verifyStore(value, sv.expected_type);
+                            // `nothing` is zero-sized: there is nothing to write.
+                            if (sv.expected_type == .Nothing) continue;
                             const expected_array_type: ?HIR.HIRType = switch (sv.expected_type) {
                                 .Array => |inner| inner.*,
                                 else => null,
                             };
                             if (value.array_type == null and expected_array_type != null) {
                                 value.array_type = expected_array_type.?;
-                            }
-                            if (IRPrinter.isBoxedMemberType(sv.expected_type)) {
-                                value = try self.buildDoxaValue(w, value, sv.expected_type, &id);
                             }
                             value = switch (sv.heap_copy) {
                                 .snapshot => try self.cloneHeapForSnapshot(w, &id, value, sv.expected_type),
@@ -1105,8 +958,8 @@ pub fn Methods(comptime Ctx: type) type {
                             // the same object the variable already holds; preserve a
                             // `Deep` classification (loop-arena payload) if one was
                             // recorded.
-                            if (sv.heap_copy != .keep or !self.var_regions.contains(sv.var_name)) {
-                                try self.recordVarRegion(sv.var_name, .Func);
+                            if (sv.heap_copy != .keep or !self.var_regions.contains(sv.slot)) {
+                                try self.recordVarRegion(sv.slot, .Func);
                             }
                             // Phase D: hull the stored value's range into the
                             // variable's, so the recorded fact covers every
@@ -1114,17 +967,15 @@ pub fn Methods(comptime Ctx: type) type {
                             // store-back carries the *post-mutation* value, so
                             // it widens the range just as a plain store does.
                             if (value.ty == .I64 or value.ty == .I8) {
-                                try self.recordVarRange(sv.var_name, value.int_range);
+                                try self.recordVarRange(sv.slot, value.int_range);
                             }
-                            var info_ptr = variables.getPtr(sv.var_name);
+                            var info_ptr = variables.getPtr(sv.slot);
                             if (info_ptr == null) {
                                 continue;
                             } else {
-                                if (sv.expected_type != .Unknown) {
-                                    const expected_stack_ty = self.hirTypeToStackType(sv.expected_type);
-                                    if (info_ptr.?.stack_type == .I64 and expected_stack_ty != .I64) {
-                                        info_ptr.?.stack_type = expected_stack_ty;
-                                    }
+                                const expected_stack_ty = self.hirTypeToStackType(sv.expected_type);
+                                if (info_ptr.?.stack_type == .I64 and expected_stack_ty != .I64) {
+                                    info_ptr.?.stack_type = expected_stack_ty;
                                 }
                                 if (info_ptr.?.array_type == null) info_ptr.?.array_type = value.array_type;
                                 if (info_ptr.?.array_type == null and expected_array_type != null) info_ptr.?.array_type = expected_array_type.?;
@@ -1140,17 +991,6 @@ pub fn Methods(comptime Ctx: type) type {
                             const target_ty = info_ptr.?.stack_type;
                             // `nothing` is zero-sized; skip the store (no data to write).
                             if (target_ty != .Nothing) {
-                                // A slot declared as a group or union always holds a
-                                // %DoxaValue, and only the declaration says which member
-                                // the value belongs to: the value carried here is the
-                                // member itself (a load inside a `NarrowVar` branch
-                                // unwraps the box), so a box keyed on its own type would
-                                // pack no index for the next `MemberCheck` to read.
-                                if (target_ty == .Value and value.ty != .Value) {
-                                    if (info_ptr.?.boxed_declared_type) |box_type| {
-                                        value = try self.buildDoxaValue(w, value, box_type, &id);
-                                    }
-                                }
                                 value = try self.coerceForStore(value, target_ty, &id, w);
                                 const target_llvm_ty = self.stackTypeToLLVMType(target_ty);
                                 const store_line = try std.fmt.allocPrint(self.allocator, "  store {s} {s}, ptr {s}\n", .{ target_llvm_ty, value.name, info_ptr.?.ptr_name });
@@ -1163,6 +1003,16 @@ pub fn Methods(comptime Ctx: type) type {
                     .Call => |c| {
                         const call_range = self.computeCallResultRange(c, &stack);
                         try self.handleCall(w, &stack, &id, c, hir);
+                        if (IRPrinter.callDiverges(c)) {
+                            // `@panic` and `@exit` never return, so the block
+                            // ends here exactly as it does after `Return`: no
+                            // value reaches the merge point of an enclosing
+                            // `as`/`if`, and the dead tail is skipped.
+                            try w.writeAll("  unreachable\n");
+                            stack.items.len = 0;
+                            last_instruction_was_terminator = true;
+                            continue;
+                        }
                         if (call_range) |r| {
                             if (stack.items.len > 0) {
                                 const top = &stack.items[stack.items.len - 1];
@@ -1203,16 +1053,20 @@ pub fn Methods(comptime Ctx: type) type {
                         try self.handleUnboxPayload(w, &stack, &id);
                         last_instruction_was_terminator = false;
                     },
-                    .UnionConstruct => |uc| {
-                        try self.handleUnionConstruct(w, &stack, &id, uc);
+                    .Box => |b| {
+                        try self.handleBox(w, &stack, &id, b);
+                        last_instruction_was_terminator = false;
+                    },
+                    .Unbox => |u| {
+                        try self.handleUnbox(w, &stack, &id, u);
                         last_instruction_was_terminator = false;
                     },
                     .NarrowVar => |nv| {
-                        try self.narrowVariable(nv.var_name, nv.narrowed_type);
+                        try self.narrowVariable(nv.slot, nv.narrowed_type);
                         last_instruction_was_terminator = false;
                     },
                     .RestoreVar => |rv| {
-                        self.restoreVariable(rv.var_name);
+                        self.restoreVariable(rv.slot);
                         last_instruction_was_terminator = false;
                     },
                     .LogicalOp => |lop| {
@@ -1221,7 +1075,7 @@ pub fn Methods(comptime Ctx: type) type {
                     },
                     .StructNew => |sn| try self.emitStructNew(w, &stack, &id, sn, peek_state),
                     .ArrayConcat => {
-                        try self.handleArrayConcat(w, &stack, &id);
+                        try self.emitArrayConcat(w, &stack, &id);
                         last_instruction_was_terminator = false;
                     },
                     .AssertFail => |af| {
@@ -1288,10 +1142,10 @@ pub fn Methods(comptime Ctx: type) type {
             return name;
         }
 
-        /// Push a narrowed member view for `var_name`. The narrowed type is a
+        /// Push a narrowed member view for `slot`. The narrowed type is a
         /// single-member union; loads of the variable unwrap to that member.
-        pub fn narrowVariable(self: *IRPrinter, var_name: []const u8, narrowed_type: HIR.HIRType) !void {
-            var entry = try self.narrowed_vars.getOrPut(var_name);
+        pub fn narrowVariable(self: *IRPrinter, slot: HIR.Slot, narrowed_type: HIR.HIRType) !void {
+            var entry = try self.narrowed_vars.getOrPut(slot);
             if (!entry.found_existing) {
                 entry.value_ptr.* = std.ArrayListUnmanaged(HIR.HIRType).empty;
             }
@@ -1308,20 +1162,20 @@ pub fn Methods(comptime Ctx: type) type {
             self.narrowed_vars.clearRetainingCapacity();
         }
 
-        /// Pop the narrowed member view for `var_name`, restoring any outer view.
-        pub fn restoreVariable(self: *IRPrinter, var_name: []const u8) void {
-            if (self.narrowed_vars.getPtr(var_name)) |stack| {
+        /// Pop the narrowed member view for `slot`, restoring any outer view.
+        pub fn restoreVariable(self: *IRPrinter, slot: HIR.Slot) void {
+            if (self.narrowed_vars.getPtr(slot)) |stack| {
                 if (stack.items.len > 0) {
                     stack.items.len -= 1;
-                    if (stack.items.len == 0) _ = self.narrowed_vars.remove(var_name);
+                    if (stack.items.len == 0) _ = self.narrowed_vars.remove(slot);
                 }
             }
         }
 
         /// The single member of the variable's active narrowed union view, or
         /// null when the variable is not narrowed to a single member.
-        pub fn narrowedMemberType(self: *IRPrinter, var_name: []const u8) ?HIR.HIRType {
-            const stack = self.narrowed_vars.get(var_name) orelse return null;
+        pub fn narrowedMemberType(self: *IRPrinter, slot: HIR.Slot) ?HIR.HIRType {
+            const stack = self.narrowed_vars.get(slot) orelse return null;
             if (stack.items.len == 0) return null;
             const view = stack.items[stack.items.len - 1];
             if (view != .Union) return null;
@@ -1337,10 +1191,10 @@ pub fn Methods(comptime Ctx: type) type {
             self: *IRPrinter,
             w: anytype,
             raw: StackVal,
-            var_name: []const u8,
+            slot: HIR.Slot,
             id: *usize,
         ) !?StackVal {
-            const member = self.narrowedMemberType(var_name) orelse return null;
+            const member = self.narrowedMemberType(slot) orelse return null;
             const unwrapped = try self.unwrapDoxaValueToType(w, raw, member, id);
             return unwrapped;
         }
@@ -1376,20 +1230,13 @@ pub fn Methods(comptime Ctx: type) type {
                 }
             }
 
-            if (self.group_table) |gt_opaque| {
-                if (self.enum_table) |et_opaque| {
-                    const gt: *const GroupTable = @ptrCast(@alignCast(gt_opaque));
-                    const et: *const EnumTable = @ptrCast(@alignCast(et_opaque));
-                    for (gt.entries.items) |group_entry| {
-                        const group_name = group_entry.qualified_name;
-                        for (group_entry.members) |member| {
-                            if (member.kind != .Enum) continue;
-                            _ = et.getName(member.id) orelse continue;
-                            const variants = et.variants(member.id) orelse continue;
-                            for (variants) |variant| {
-                                try registerVariant.add(self, group_name, variant.index, variant.name);
-                            }
-                        }
+            for (self.group_table.entries.items) |group_entry| {
+                const group_name = group_entry.key.?;
+                for (group_entry.members) |member| {
+                    if (member.kind != .Enum) continue;
+                    const variants = self.enum_table.variants(member.id) orelse continue;
+                    for (variants) |variant| {
+                        try registerVariant.add(self, group_name, variant.index, variant.name);
                     }
                 }
             }
@@ -1400,12 +1247,9 @@ pub fn Methods(comptime Ctx: type) type {
             // literal, so without this `@print` renders `<enum:N>`. Populating
             // the in-memory map costs nothing until `emitEnumPrint` interns the
             // names it actually needs.
-            if (self.enum_table) |et_opaque| {
-                const et: *const EnumTable = @ptrCast(@alignCast(et_opaque));
-                for (et.entries.items) |entry| {
-                    for (entry.variants) |variant| {
-                        try registerVariant.add(self, entry.qualified_name, variant.index, variant.name);
-                    }
+            for (self.enum_table.entries.items) |entry| {
+                for (entry.variants) |variant| {
+                    try registerVariant.add(self, entry.key.?, variant.index, variant.name);
                 }
             }
         }

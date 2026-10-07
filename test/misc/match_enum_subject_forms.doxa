@@ -1,0 +1,48 @@
+# Regression (B007): an enum `match` subject is typed by the analyzer, not by
+# the form of the expression. A field, an element, an `each` binding and a call
+# result must all select the same arm a local does. Each used to compare the
+# enum's index against the variant's *name* as a string, so no arm ran in a
+# statement match and a value match hit its exhaustiveness trap.
+enum K { A, B, C }
+struct S { public k :: K }
+
+function get() returns K { return K.B }
+
+function viaParam(k :: K) returns int {
+    return match k { .A then 1, .B then 10, .C then 100, }
+}
+
+public entry function main() {
+    const s is $S { k is K.C }
+    var ks is [K.A, K.C]
+
+    # control: a local and a parameter
+    const local is s.k
+    const viaLocal is match local { .A then 1, .B then 10, .C then 100, }
+    @print("local={viaLocal} param={viaParam(s.k)}\n")
+
+    # value matches
+    const viaField is match s.k { .A then 1, .B then 10, .C then 100, }
+    const viaIndex is match ks[1] { .A then 1, .B then 10, .C then 100, }
+    const viaCall is match get() { .A then 1, .B then 10, .C then 100, }
+    @print("field={viaField} index={viaIndex} call={viaCall}\n")
+
+    # statement matches
+    match s.k {
+        .A then @print("field A\n"),
+        .B then @print("field B\n"),
+        .C then @print("field C\n"),
+    }
+    match ks[0] {
+        .A then @print("index A\n"),
+        .B then @print("index B\n"),
+        .C then @print("index C\n"),
+    }
+    each k in ks {
+        match k {
+            .A then @print("each A\n"),
+            .B then @print("each B\n"),
+            .C then @print("each C\n"),
+        }
+    }
+}

@@ -7,7 +7,7 @@ public function read() returns string {
     std.json.end()
     const out is std.json.finish()
     out as string then {
-        const doc is std.json.parse(out)
+        const doc is std.json.Node.parse(out)
         match doc {
             std.json.Node then {
                 const node is doc.field("models")

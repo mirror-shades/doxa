@@ -1,0 +1,29 @@
+# Regression (B003): a fallback block that ends in `@exit` or `@panic` never
+# yields a value, so nothing from it may reach the narrowed binding. `@exit`
+# used to leave a `nothing` on the stack that was merged in and stored over the
+# narrowed value: an int binding read back as 0, and a string binding emitted
+# `store %DoxaString 0`.
+function intOrExit(v :: int | string) returns int {
+    const n is v as int else {
+        @exit(3)
+    }
+    return n
+}
+
+function stringOrExit(v :: int | string) returns string {
+    const s is v as string else {
+        @exit(4)
+    }
+    return s
+}
+
+function intOrPanic(v :: int | string) returns int {
+    const n is v as int else {
+        @panic("not an int")
+    }
+    return n
+}
+
+public entry function main() {
+    @print("{intOrExit(42)} {stringOrExit("kept")} {intOrPanic(7)}\n")
+}

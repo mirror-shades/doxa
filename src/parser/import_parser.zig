@@ -1,6 +1,7 @@
 const std = @import("std");
 const Parser = @import("./parser_types.zig").Parser;
 const ast = @import("../ast/ast.zig");
+const module_graph = @import("../module/graph.zig");
 const token = @import("../types/token.zig");
 const Reporting = @import("../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -8,22 +9,6 @@ const Location = Reporting.Location;
 const Errors = @import("../utils/errors.zig");
 const ErrorList = Errors.ErrorList;
 const ErrorCode = Errors.ErrorCode;
-
-pub const ImportedSymbol = struct {
-    pub const EnumRole = enum { Type, Variant };
-
-    kind: enum { Function, Enum, Struct, Variable, Type, Import, Group },
-    name: []const u8,
-    original_module: []const u8,
-    namespace_alias: ?[]const u8 = null,
-    param_count: ?u32 = null,
-    param_types: ?[]ast.TypeInfo = null,
-    param_aliases: ?[]bool = null,
-    return_type_info: ?ast.TypeInfo = null,
-    enum_role: ?EnumRole = null,
-    enum_type_name: ?[]const u8 = null,
-    used: bool = false,
-};
 
 /// Parse the module source that follows a `from` keyword: either a `"string"`
 /// path or the `@std()` intrinsic. Assumes the caller has consumed `from`.
@@ -59,7 +44,7 @@ fn parseModuleSource(self: *Parser) ErrorList![]const u8 {
     self.advance(); // (
     if (self.peek().type != .RIGHT_PAREN) return error.ExpectedRightParen;
     self.advance(); // )
-    return try resolveStdPath(self.io, self.allocator);
+    return module_graph.std_specifier;
 }
 
 pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
@@ -81,7 +66,6 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
         return error.ExpectedModuleName;
     }
     const namespace_token = self.peek();
-    const namespace = namespace_token.lexeme;
     self.advance();
 
     if (self.peek().type != .FROM) {
@@ -113,20 +97,19 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
         self.advance();
     }
 
-    try self.registerModuleAlias(self.current_file, namespace, module_path, is_public, ast.SourceSpan.fromToken(namespace_token));
+    const names = try self.allocator.alloc(token.Token, 1);
+    names[0] = namespace_token;
 
     return ast.Stmt{
         .base = .{
             .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(self.peek()),
+            .span = ast.SourceSpan.fromToken(namespace_token),
         },
         .data = .{
             .Import = .{
                 .import_type = .Module,
                 .module_path = module_path,
-                .namespace_alias = namespace,
-                .specific_symbols = null,
-                .specific_symbol = null,
+                .names = names,
                 .is_public = is_public,
             },
         },
@@ -136,10 +119,8 @@ pub fn parseModuleStmt(self: *Parser, is_public: bool) !ast.Stmt {
 pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
     self.advance();
 
-    var symbols = std.array_list.Managed([]const u8).init(self.allocator);
-    defer symbols.deinit();
-    var symbol_spans = std.array_list.Managed(ast.SourceSpan).init(self.allocator);
-    defer symbol_spans.deinit();
+    var names = std.array_list.Managed(token.Token).init(self.allocator);
+    errdefer names.deinit();
 
     if (self.peek().type != .IDENTIFIER) {
         const current_token = self.peek();
@@ -156,8 +137,7 @@ pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
         self.reporter.reportCompileError(location, ErrorCode.EXPECTED_IMPORT_SYMBOL, "expected symbol name after 'import' keyword", .{});
         return error.ExpectedImportSymbol;
     }
-    try symbols.append(self.peek().lexeme);
-    try symbol_spans.append(ast.SourceSpan.fromToken(self.peek()));
+    try names.append(self.peek());
     self.advance();
 
     while (self.peek().type == .COMMA) {
@@ -178,8 +158,7 @@ pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
             self.reporter.reportCompileError(location, ErrorCode.EXPECTED_IMPORT_SYMBOL, "expected symbol name after comma in import list", .{});
             return error.ExpectedImportSymbol;
         }
-        try symbols.append(self.peek().lexeme);
-        try symbol_spans.append(ast.SourceSpan.fromToken(self.peek()));
+        try names.append(self.peek());
         self.advance();
     }
 
@@ -212,39 +191,19 @@ pub fn parseImportStmt(self: *Parser, is_public: bool) !ast.Stmt {
         self.advance();
     }
 
-    const owned_symbols = try self.allocator.dupe([]const u8, symbols.items);
-
-    for (owned_symbols, 0..) |symbol, i| {
-        try self.recordSpecificImport(self.current_file, module_path, symbol, is_public, symbol_spans.items[i]);
-    }
-
+    const first = names.items[0];
     return ast.Stmt{
         .base = .{
             .id = ast.generateNodeId(),
-            .span = ast.SourceSpan.fromToken(self.peek()),
+            .span = ast.SourceSpan.fromToken(first),
         },
         .data = .{
             .Import = .{
                 .import_type = .Specific,
                 .module_path = module_path,
-                .namespace_alias = null,
-                .specific_symbols = owned_symbols,
-                .specific_symbol = if (owned_symbols.len == 1) owned_symbols[0] else null,
+                .names = try names.toOwnedSlice(),
                 .is_public = is_public,
             },
         },
     };
-}
-
-pub fn findImportedSymbol(self: *Parser, name: []const u8) ?ImportedSymbol {
-    if (self.imported_symbols) |symbols| {
-        return symbols.get(name);
-    }
-    return null;
-}
-
-fn resolveStdPath(io: std.Io, allocator: std.mem.Allocator) ![]const u8 {
-    const exe_dir = std.process.executableDirPathAlloc(io, allocator) catch return error.ModuleNotFound;
-    defer allocator.free(exe_dir);
-    return std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "std", "std.doxa" });
 }

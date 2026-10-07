@@ -1,0 +1,5 @@
+module a from "../misc/moddata/node_mod_a.doxa"
+module b from "../misc/moddata/node_mod_b.doxa"
+
+# `a.Node` and `b.Node` share a name, not an identity.
+const n :: b.Node is $a.Node { value is 1 }

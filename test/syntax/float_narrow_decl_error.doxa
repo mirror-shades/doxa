@@ -1,0 +1,6 @@
+# A float never narrows to int implicitly; that takes `@int`.
+public entry function main() {
+    var f is 2.5
+    var n :: int is f
+    @print("{n}\n")
+}

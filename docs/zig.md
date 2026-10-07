@@ -45,9 +45,13 @@ Arrays of scalars, strings, and enums cross in both directions at any depth; the
 `[]const` element slices a Zig function receives are borrowed for the call. A
 bare `[]const u8` is always a `string`, so byte arrays use the `DoxaByte`
 marker. A Doxa enum crosses as its `i64` variant discriminant, spelled
-`DoxaEnum_<name>` where `<name>` is the enum's bare name (so a module-qualified
-`std.error.Method` is spelled `DoxaEnum_Method`); the wrapper injects a matching
-`const DoxaEnum_<name> = i64;` so the Zig author compares against integers. See
+`DoxaEnum_<path>` where `<path>` names the enum through the bindings of the file
+declaring the `zig` block — `DoxaEnum_Color` for its own `enum Color`. A
+qualified path is spelled as a Zig quoted identifier: after `import error from
+@std()`, `std`'s `Method` enum is `@"DoxaEnum_error.Method"`. The wrapper
+declares every spelling it finds as `i64`, so the Zig author compares against
+integers. A `.zig` file has no Doxa bindings, so naming a `DoxaEnum_` there is a
+located error. See
 [Array parameters and returns](#array-parameters-and-returns) for the ownership
 rules.
 
@@ -55,21 +59,28 @@ rules.
 
 ## Inline Zig ABI
 
-Each module compiles to an object file exporting one symbol per signature,
-`<Module>.<fn>`, and the LLVM backend declares and calls those symbols directly
-(`declare i64 @Math.double(i64)` / `call … @Math.double(...)`). The wrapper
+Each module compiles to an object file exporting one symbol per signature, named
+by the function's mangled link name, and the LLVM backend declares and calls
+those symbols directly. A `zig` block is a module of its own, owned by the file
+that declares it, so two files may each declare `zig Math { pub fn double … }`:
+their functions are distinct symbols. The wrapper
 object is linked into the program next to the runtime — nothing is loaded or
 looked up at run time (no `dlopen`, no `GetProcAddress`), and `doxa run` and
 `doxa compile` build the same objects and issue the same calls.
 
 ### Generated wrapper
 
-For a Doxa-visible `fn f` in module `<Module>`, the generator emits:
+For a Doxa-visible `fn f`, the generator emits:
 
 ```zig
-pub fn __doxa_native__<Module>_f(a0: T0, …) callconv(.c) R { … }
-comptime { @export(&__doxa_native__<Module>_f, .{ .name = "<Module>.f" }); }
+pub fn __doxa_native__f(a0: T0, …) callconv(.c) R { … }
+comptime { @export(&__doxa_native__f, .{ .name = "<link name of f>" }); }
 ```
+
+A link name has the form `__doxa_m1_<tag>__f<len>$<name>`: `<tag>` is a hash of
+the declaring module's stable key, and every component is length-prefixed, so
+no two declarations in a program share one. Diagnostics, `peek`, and
+reflection show the declared name, never the link name.
 
 The body is a thin adapter from the ABI types below to the user's Zig
 signature: it re-slices string parameters and, for string returns, performs the

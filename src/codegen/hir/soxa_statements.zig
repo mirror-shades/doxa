@@ -11,28 +11,6 @@ const HIRMapEntry = @import("soxa_generator.zig").HIRMapEntry;
 const SoxaTypes = @import("soxa_types.zig");
 const ScopeKind = SoxaTypes.ScopeKind;
 
-fn isLiteralExpression(expr: *ast.Expr) bool {
-    return switch (expr.data) {
-        .Literal => true,
-        else => false,
-    };
-}
-
-const ArrayElementInfo = struct {
-    element_type: HIRType,
-    nested_element_type: ?HIRType,
-};
-
-fn resolveArrayElementInfo(self: *HIRGenerator, element_info: ?*const ast.TypeInfo) ArrayElementInfo {
-    if (element_info) |info| {
-        const element_type = self.convertTypeInfo(info.*);
-        const nested = SoxaTypes.arrayInnermostElementType(element_type);
-        return .{ .element_type = element_type, .nested_element_type = nested };
-    }
-
-    return .{ .element_type = .Unknown, .nested_element_type = null };
-}
-
 const NestedSizes = struct {
     sizes: [4]u32 = [_]u32{0} ** 4,
     depth: u3 = 0,
@@ -58,6 +36,33 @@ fn collectNestedSizes(array_type: ?*const ast.TypeInfo) NestedSizes {
         }
     }
     return result;
+}
+
+/// Push a declared array with no elements: zero-length when dynamic, its
+/// declared dimensions zero-filled when fixed.
+fn emitDeclaredArray(self: *HIRGenerator, stmt: ast.Stmt, declared: ast.TypeInfo, element_type: HIRType) !void {
+    const storage_kind = self.storageKindFromTypeInfo(declared);
+    const is_fixed = storage_kind == .fixed or storage_kind == .const_literal;
+    const size: u32 = if (is_fixed) (if (declared.array_size) |n| @intCast(n) else 0) else 0;
+    const nested = if (is_fixed) collectNestedSizes(declared.array_type) else NestedSizes{};
+    if (nested.truncated) {
+        self.reporter.reportCompileError(
+            stmt.base.location(),
+            ErrorCode.INVALID_ARRAY_TYPE,
+            "nested arrays are limited to 4 levels",
+            .{},
+        );
+    }
+    try self.instructions.append(.{ .ArrayNew = .{
+        .element_type = element_type,
+        .size = size,
+        .nested_element_type = SoxaTypes.arrayInnermostElementType(element_type),
+        .storage_kind = storage_kind,
+        .nested_sizes = nested.sizes,
+        .nested_depth = nested.depth,
+        .element_struct_field_types = self.elementStructFieldTypes(element_type),
+        .element_struct_type_name = self.elementStructTypeName(element_type),
+    } });
 }
 
 pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator.Error || ErrorList)!void {
@@ -140,63 +145,13 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
             }
         },
         .VarDecl => |decl| {
-            var var_type: HIRType = .Nothing;
-            var precreated_cast_idx: ?u32 = null;
-
-            var custom_type_name: ?[]const u8 = null;
-            if (decl.type_info.base != .Nothing) {
-                var_type = switch (decl.type_info.base) {
-                    .Int => .Int,
-                    .Float => .Float,
-                    .String => .String,
-                    .Tetra => .Tetra,
-                    .Byte => .Byte,
-                    .Array => self.convertTypeInfo(decl.type_info),
-                    .Union => blk: {
-                        if (decl.type_info.union_type) |_| {
-                            break :blk self.convertTypeInfo(decl.type_info);
-                        }
-                        break :blk .Unknown;
-                    },
-                    .Enum => blk: {
-                        custom_type_name = decl.type_info.custom_type;
-                        break :blk HIRType{ .Enum = 0 };
-                    },
-                    .Struct => blk: {
-                        custom_type_name = decl.type_info.custom_type;
-                        break :blk HIRType{ .Struct = 0 };
-                    },
-                    .Custom => blk: {
-                        if (decl.type_info.custom_type) |type_name| {
-                            if (self.type_system.custom_types.get(type_name)) |custom_type| {
-                                if (custom_type.kind == .Enum) {
-                                    custom_type_name = type_name;
-                                    break :blk HIRType{ .Enum = 0 };
-                                } else if (custom_type.kind == .Struct) {
-                                    try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                                    break :blk HIRType{ .Struct = 0 };
-                                } else if (custom_type.kind == .Group) {
-                                    custom_type_name = type_name;
-                                    try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                                    const gid = if (self.type_system.group_table) |gt| gt.getIdByName(type_name) orelse 0 else 0;
-                                    break :blk HIRType{ .Group = gid };
-                                }
-                            }
-                            try self.trackVariableCustomType(decl.name.lexeme, type_name);
-                            break :blk HIRType{ .Struct = 0 };
-                        }
-                        break :blk .Nothing;
-                    },
-                    else => .Nothing,
-                };
-            }
+            // The binding's type, as analysis declared it: its annotation
+            // (completed from the initializer where incomplete), or else its
+            // initializer's type. Dispatch and peeks read a named one by key.
+            const var_type = try self.bindingTypeOf(&stmt.base);
+            const binding_key = self.typeKeyOf(self.semantic.getStoreTarget(stmt.base.id).?.slot.*);
 
             if (decl.initializer) |init_expr| {
-                const old_enum_context = self.current_enum_type;
-                if (custom_type_name != null) {
-                    self.current_enum_type = custom_type_name;
-                }
-
                 const previous_override = self.array_storage_override;
                 defer self.array_storage_override = previous_override;
                 const previous_element_override = self.array_element_type_override;
@@ -204,445 +159,89 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
                 if (decl.type_info.base == .Array) {
                     self.array_storage_override = self.storageKindFromTypeInfo(decl.type_info);
-                    self.array_element_type_override = resolveArrayElementInfo(self, decl.type_info.array_type).element_type;
+                    self.array_element_type_override = var_type.Array.*;
                 } else {
                     self.array_storage_override = null;
                     self.array_element_type_override = null;
                 }
 
-                // If the initializer is an `as` cast, pre-create the variable slot
-                // and expose it so the cast can store the subject value into the
-                // binding before its then/else branches run, making the declared
-                // name readable (and narrowed) inside both branches.
-                if (init_expr.data == .Cast) {
-                    const idx = try self.symbol_table.createVariable(decl.name.lexeme);
-                    precreated_cast_idx = idx;
-                    self.cast_decl_var_index = idx;
-                    self.cast_decl_var_name = decl.name.lexeme;
-                }
-
                 try self.generateExpression(init_expr, true, true);
 
-                self.cast_decl_var_index = null;
-                self.cast_decl_var_name = null;
-
-                self.current_enum_type = old_enum_context;
-
-                if (init_expr.data == .Array and decl.type_info.base == .Array) {
-                    const elements_for_type_fix = init_expr.data.Array;
-                    if (elements_for_type_fix.len == 0) {
-                        const resolved = resolveArrayElementInfo(self, decl.type_info.array_type);
-                        if (resolved.element_type != .Unknown and resolved.element_type != .Nothing) {
-                            try self.instructions.append(.Pop);
-                            // A fixed-size array has an immutable length, so `is []`
-                            // zero-fills the declared dimensions rather than producing
-                            // a zero-length array (which downstream indexing would then
-                            // read out of bounds of).
-                            const storage_kind = self.storageKindFromTypeInfo(decl.type_info);
-                            const is_fixed = storage_kind == .fixed or storage_kind == .const_literal;
-                            const size: u32 = if (is_fixed)
-                                (if (decl.type_info.array_size) |s| @intCast(s) else 0)
-                            else
-                                0;
-                            const nested = if (is_fixed) collectNestedSizes(decl.type_info.array_type) else NestedSizes{};
-                            if (nested.truncated) {
-                                self.reporter.reportCompileError(
-                                    stmt.base.location(),
-                                    ErrorCode.INVALID_ARRAY_TYPE,
-                                    "nested arrays are limited to 4 levels",
-                                    .{},
-                                );
-                            }
-                            try self.instructions.append(.{ .ArrayNew = .{
-                                .element_type = resolved.element_type,
-                                .size = size,
-                                .nested_element_type = resolved.nested_element_type,
-                                .storage_kind = storage_kind,
-                                .nested_sizes = nested.sizes,
-                                .nested_depth = nested.depth,
-                                .element_struct_field_types = self.elementStructFieldTypes(resolved.element_type),
-                                .element_struct_type_name = self.elementStructTypeName(resolved.element_type),
-                            } });
-                            try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
-                            // Preserve the declared array type for typed empty literals (e.g. int[] is []).
-                            // Resetting to Nothing causes a later fallback inference from [] to degrade to nothing[].
-                            var_type = self.convertTypeInfo(decl.type_info);
-                        }
-                    } else {
-                        // Non-empty array: prefer the declared element type when the
-                        // declaration carries an explicit annotation; fall back to
-                        // inference from the literal otherwise.
-                        const resolved = resolveArrayElementInfo(self, decl.type_info.array_type);
-                        if (resolved.element_type != .Unknown and resolved.element_type != .Nothing) {
-                            try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
-                            var_type = self.convertTypeInfo(decl.type_info);
-                        } else {
-                            var_type = self.inferTypeFromExpression(init_expr);
-                        }
-                    }
-                }
-
-                if (var_type == .Nothing) {
-                    var_type = self.inferTypeFromExpression(init_expr);
-
-                    // If the variable is being assigned an array, track the element type
-                    if (var_type == .Array and init_expr.data == .Variable) {
-                        const source_var_name = init_expr.data.Variable.lexeme;
-                        if (self.symbol_table.getTrackedArrayElementType(source_var_name)) |elem_type| {
-                            try self.trackArrayElementType(decl.name.lexeme, elem_type);
-                        }
-                    }
-
-                    if (var_type == .Union) {
-                        const union_members = var_type.Union.members;
-                        const member_names = try self.allocator.alloc([]const u8, union_members.len);
-                        for (union_members, 0..) |member_type, i| {
-                            member_names[i] = switch (member_type.*) {
-                                .Byte => "byte",
-                                .Int => "int",
-                                .Float => "float",
-                                .String => "string",
-                                .Tetra => "tetra",
-                                .Nothing => "nothing",
-                                .Enum => |eid| blk: {
-                                    if (self.type_system.enum_table) |table| {
-                                        if (table.getName(eid)) |ename| break :blk ename;
-                                    }
-                                    break :blk "(enum)";
-                                },
-                                .Struct => |sid| blk: {
-                                    if (self.type_system.struct_table) |table| {
-                                        if (table.getName(sid)) |sname| break :blk sname;
-                                    }
-                                    break :blk "(struct)";
-                                },
-                                else => "unknown",
-                            };
-                        }
-
-                        const var_index = try self.getOrCreateVariable(decl.name.lexeme);
-                        try self.symbol_table.trackVariableUnionMembers(self.symbol_table.isLocalVariable(decl.name.lexeme), var_index, member_names);
-                    }
-
-                    if (var_type == .Group) {
-                        const var_index = try self.getOrCreateVariable(decl.name.lexeme);
-                        var group_name: ?[]const u8 = null;
-                        if (self.symbol_table.getVariableCustomType(decl.name.lexeme)) |custom_name| {
-                            group_name = custom_name;
-                        } else if (var_type.Group != 0) {
-                            if (self.type_system.group_table) |table| {
-                                group_name = table.getName(var_type.Group);
-                            }
-                        }
-                        if (group_name) |gn| {
-                            const member_names = try self.type_system.getGroupMemberNames(gn);
-                            if (member_names.len > 0) {
-                                try self.symbol_table.trackVariableUnionMembers(self.symbol_table.isLocalVariable(decl.name.lexeme), var_index, member_names);
-                            }
-                        }
-                    }
-
-                    if (var_type == .Struct and init_expr.data == .StructLiteral) {
-                        const struct_lit = init_expr.data.StructLiteral;
-                        try self.trackVariableCustomType(decl.name.lexeme, struct_lit.name.lexeme);
-                    }
-
-                    // If the initializer is an `as`/cast expression targeting a custom struct
-                    // type, keep the concrete type name so peeks print `Employee` instead of
-                    // generic `struct`.
-                    if (var_type == .Struct and init_expr.data == .Cast) {
-                        const cast_expr = init_expr.data.Cast;
-                        if (cast_expr.target_type.data == .Custom) {
-                            try self.trackVariableCustomType(decl.name.lexeme, cast_expr.target_type.data.Custom.lexeme);
-                        }
-                    }
-
-                    // Track the enum type for `x is E.Variant` initializers even
-                    // when there is no explicit annotation. Without the tracked
-                    // type, `match x { E.Variant then ... }` cannot resolve the
-                    // variant patterns and silently falls through to `else`.
-                    if (init_expr.data == .FieldAccess) {
-                        const fa = init_expr.data.FieldAccess;
-                        if (fa.object.data == .Variable) {
-                            const enum_type_name = fa.object.data.Variable.lexeme;
-                            if (self.isCustomType(enum_type_name)) |ct_enum| {
-                                if (ct_enum.kind == .Enum) {
-                                    try self.trackVariableCustomType(decl.name.lexeme, enum_type_name);
-                                    var_type = HIRType{ .Enum = 0 };
-                                }
-                            }
-                        }
-                    }
-
-                    // A variable initialized from a struct static method call
-                    // (e.g. `var b is Builder.executable(...)`) must record the
-                    // concrete struct type so instance-method dispatch and struct
-                    // peeks resolve. The type is taken from the static method's
-                    // declared return type; `New`/`new` constructors fall back to
-                    // the receiver type. Without this, only literally-named
-                    // `New`/`new` constructors were tracked and every other
-                    // factory method left the receiver untyped, causing method
-                    // calls to be misclassified as internal (returning `this`).
-                    if (init_expr.data == .FunctionCall) {
-                        const call = init_expr.data.FunctionCall;
-                        if (call.callee.data == .FieldAccess) {
-                            const callee_field = call.callee.data.FieldAccess;
-                            const recv_type_name: ?[]const u8 = switch (callee_field.object.data) {
-                                .Variable => |v| v.lexeme,
-                                .FieldAccess => |inner| inner.field.lexeme,
-                                else => null,
-                            };
-                            if (recv_type_name) |type_name| {
-                                if (self.isCustomType(type_name)) |ct_recv| {
-                                    if (ct_recv.kind == .Struct) {
-                                        var tracked: ?[]const u8 = null;
-                                        if (self.struct_methods.get(type_name)) |method_table| {
-                                            if (method_table.get(callee_field.field.lexeme)) |mi| {
-                                                if (mi.signature.return_type.custom_type) |rt_name| {
-                                                    if (self.isCustomType(rt_name)) |rct| {
-                                                        if (rct.kind == .Struct) tracked = rt_name;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        if (tracked == null and
-                                            (std.mem.eql(u8, callee_field.field.lexeme, "New") or std.mem.eql(u8, callee_field.field.lexeme, "new")))
-                                        {
-                                            tracked = type_name;
-                                        }
-                                        if (tracked) |tn| {
-                                            try self.trackVariableCustomType(decl.name.lexeme, tn);
-                                            var_type = HIRType{ .Struct = 0 };
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (init_expr.data == .Array) {
-                    const elements = init_expr.data.Array;
-                    if (elements.len > 0) {
-                        const elem_type: HIRType = switch (elements[0].data) {
-                            .Literal => |lit| self.inferTypeFromLiteral(lit),
-                            else => .Unknown,
-                        };
-                        if (elem_type != .Unknown) {
-                            try self.trackArrayElementType(decl.name.lexeme, elem_type);
-                        }
-                    }
-                }
-            } else {
-                if (decl.type_info.base == .Array) {
-                    const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
-                    const resolved = resolveArrayElementInfo(self, decl.type_info.array_type);
-                    const nested = collectNestedSizes(decl.type_info.array_type);
-
-                    if (nested.truncated) {
-                        self.reporter.reportCompileError(
-                            stmt.base.location(),
-                            ErrorCode.INVALID_ARRAY_TYPE,
-                            "nested arrays are limited to 4 levels",
-                            .{},
-                        );
-                    }
-
-                    try self.instructions.append(.{ .ArrayNew = .{
-                        .element_type = resolved.element_type,
-                        .size = size,
-                        .nested_element_type = resolved.nested_element_type,
-                        .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
-                        .nested_sizes = nested.sizes,
-                        .nested_depth = nested.depth,
-                        .element_struct_field_types = self.elementStructFieldTypes(resolved.element_type),
-                        .element_struct_type_name = self.elementStructTypeName(resolved.element_type),
-                    } });
-
-                    try self.trackArrayElementType(decl.name.lexeme, resolved.element_type);
+                const empty_literal = init_expr.data == .Array and init_expr.data.Array.len == 0;
+                if (empty_literal and decl.type_info.base == .Array) {
+                    // A fixed-size array has an immutable length, so `is []`
+                    // zero-fills the declared dimensions rather than producing
+                    // a zero-length array (which downstream indexing would then
+                    // read out of bounds of).
+                    try self.instructions.append(.Pop);
+                    try emitDeclaredArray(self, stmt, decl.type_info, var_type.Array.*);
                 } else {
-                    switch (var_type) {
-                        .Int => {
-                            const default_value = HIRValue{ .int = 0 };
-                            const const_idx = try self.addConstant(default_value);
-                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                        },
-                        .Float => {
-                            const default_value = HIRValue{ .float = 0.0 };
-                            const const_idx = try self.addConstant(default_value);
-                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                        },
-                        .String => {
-                            const default_value = HIRValue{ .string = "" };
-                            const const_idx = try self.addConstant(default_value);
-                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                        },
-                        .Tetra => {
-                            const default_value = HIRValue{ .tetra = 0 };
-                            const const_idx = try self.addConstant(default_value);
-                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                        },
-                        .Byte => {
-                            const default_value = HIRValue{ .byte = 0 };
-                            const const_idx = try self.addConstant(default_value);
-                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                        },
-                        .Array => {
-                            const size = if (decl.type_info.array_size) |s| @as(u32, @intCast(s)) else 0;
-                            var element_type: HIRType = .Unknown;
-                            var nested_element_type: ?HIRType = null;
-                            if (var_type == .Array) {
-                                element_type = var_type.Array.*;
-                                nested_element_type = SoxaTypes.arrayInnermostElementType(element_type);
-                            }
-
-                            const nested = collectNestedSizes(decl.type_info.array_type);
-
-                            if (nested.truncated) {
-                                self.reporter.reportCompileError(
-                                    stmt.base.location(),
-                                    ErrorCode.INVALID_ARRAY_TYPE,
-                                    "nested arrays are limited to 4 levels",
-                                    .{},
-                                );
-                            }
-
-                            try self.instructions.append(.{ .ArrayNew = .{
-                                .element_type = element_type,
-                                .size = size,
-                                .nested_element_type = nested_element_type,
-                                .storage_kind = self.storageKindFromTypeInfo(decl.type_info),
-                                .nested_sizes = nested.sizes,
-                                .nested_depth = nested.depth,
-                                .element_struct_field_types = self.elementStructFieldTypes(element_type),
-                                .element_struct_type_name = self.elementStructTypeName(element_type),
-                            } });
-
-                            try self.trackArrayElementType(decl.name.lexeme, element_type);
-                        },
-                        else => {
-                            // TODO(struct default): this arm absorbs every type
-                            // with no materialized default — `.Struct` included —
-                            // and pushes `nothing`. For a struct that value is
-                            // then stored as a struct reference and renders as
-                            // `zext {} 0 to i64`, which `zig cc` rejects, so
-                            // `var p :: Point` fails to compile with a clang
-                            // error instead of a Doxa diagnostic. What a struct
-                            // local should hold (null, a synthesized default, or
-                            // a rejection) is undecided: see
-                            // plan/uninitialized-declarations.md. Whatever it
-                            // becomes, this switch should be exhaustive so the
-                            // next type without a default fails to compile
-                            // rather than emit invalid IR.
-                            const default_value = HIRValue.nothing;
-                            const const_idx = try self.addConstant(default_value);
-                            try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
-                        },
-                    }
+                    try self.convertValue(try self.typeOf(init_expr), var_type);
                 }
+            } else if (var_type == .Array) {
+                try emitDeclaredArray(self, stmt, decl.type_info, var_type.Array.*);
+            } else {
+                const default_value: HIRValue = switch (var_type) {
+                    .Int => .{ .int = 0 },
+                    .Float => .{ .float = 0.0 },
+                    .String => .{ .string = "" },
+                    .Tetra => .{ .tetra = 0 },
+                    .Byte => .{ .byte = 0 },
+                    // TODO(struct default): this arm absorbs every type with
+                    // no materialized default — `.Struct` included — and
+                    // pushes `nothing`, which the store then rejects as
+                    // malformed HIR, so `var p :: Point` fails to compile
+                    // with an internal error instead of a Doxa diagnostic.
+                    // What a struct local should hold (null, a synthesized
+                    // default, or a rejection) is undecided: see
+                    // plan/uninitialized-declarations.md. Whatever it becomes,
+                    // this switch should be exhaustive so the next type
+                    // without a default fails to compile rather than emit
+                    // invalid IR.
+                    else => .nothing,
+                };
+                const const_idx = try self.addConstant(default_value);
+                try self.instructions.append(.{ .Const = .{ .value = default_value, .constant_id = const_idx } });
+                try self.convertValue(if (default_value == .nothing) .Nothing else var_type, var_type);
             }
 
-            if (decl.type_info.base == .Array) {
-                try self.trackArrayStorageKind(decl.name.lexeme, self.storageKindFromTypeInfo(decl.type_info));
-            } else switch (var_type) {
-                .Array => try self.trackArrayStorageKind(decl.name.lexeme, SoxaTypes.ArrayStorageKind.dynamic),
+            if (var_type == .Array) {
+                const storage_kind = if (decl.type_info.base == .Array)
+                    self.storageKindFromTypeInfo(decl.type_info)
+                else
+                    SoxaTypes.ArrayStorageKind.dynamic;
+                try self.trackArrayStorageKind(decl.name.lexeme, storage_kind);
+                try self.trackArrayElementType(decl.name.lexeme, var_type.Array.*);
+            }
+            try self.trackVariableType(decl.name.lexeme, var_type);
+            if (binding_key) |key| try self.trackVariableCustomType(decl.name.lexeme, key);
+
+            const var_idx = try self.symbol_table.createVariable(decl.name.lexeme);
+            const is_local = self.symbol_table.isLocalVariable(decl.name.lexeme);
+            switch (var_type) {
+                .Union => try self.symbol_table.trackVariableUnionMembers(is_local, var_idx, try self.collectUnionMemberNamesFromHIRType(var_type)),
+                .Group => {
+                    const member_names = try self.type_system.getGroupMemberNames(self.semantic.group_table.keyOf(var_type.Group).?);
+                    if (member_names.len > 0) try self.symbol_table.trackVariableUnionMembers(is_local, var_idx, member_names);
+                },
                 else => {},
             }
 
-            try self.trackVariableType(decl.name.lexeme, var_type);
-            if (var_type == .Array) {
-                try self.trackArrayElementType(decl.name.lexeme, var_type.Array.*);
-            }
-
-            if (custom_type_name) |custom_type| {
-                try self.trackVariableCustomType(decl.name.lexeme, custom_type);
-            } else if (decl.initializer) |init_expr| {
-                // An unannotated declaration whose initialiser already has a
-                // concrete custom type (`const copy is original`, `const p is
-                // registry.first()`) has no annotation to name the type from.
-                // Method resolution reads the *name*, so the variable looked
-                // nameless and a call on it evaluated its receiver and dropped
-                // the call with no diagnostic (the `is_known_builtin` early
-                // return in `generateInternalMethodCall`). Recovering it from the
-                // HIR type is not enough either: the constructor path records a
-                // placeholder `HIRType{ .Struct = 0 }` that no table lookup
-                // resolves. Ask the same resolver call sites use, so a
-                // declaration and a call on it always agree.
-                if (self.type_system.resolveFieldAccessType(init_expr, &self.symbol_table)) |res| {
-                    if (res.custom_type_name) |name| {
-                        if (self.isCustomType(name) != null) {
-                            try self.trackVariableCustomType(decl.name.lexeme, name);
-                        }
-                    }
-                }
-            }
-
-            const var_idx = precreated_cast_idx orelse try self.symbol_table.createVariable(decl.name.lexeme);
             const is_module_ctx = self.current_function == null and self.isModuleContext();
-            if (is_module_ctx and self.current_module_context != null) {
-                const module_id = self.current_module_context.?;
-                try self.trackModuleFieldSlot(module_id, decl.name.lexeme, var_idx);
-            }
-
-            if (decl.type_info.base == .Union) {
-                if (decl.type_info.union_type) |ut| {
-                    const list = try self.collectUnionMemberNames(ut);
-                    try self.symbol_table.trackVariableUnionMembers(self.symbol_table.isLocalVariable(decl.name.lexeme), var_idx, list);
-                }
-            }
-
             if (self.current_function == null) {
                 try self.instructions.append(.Dup);
             }
-
-            if (!decl.type_info.is_mutable) {
-                // Check if the initializer is a literal (compile-time constant)
-                var is_literal = if (decl.initializer) |init_expr| isLiteralExpression(init_expr) else false;
-                // Union types need the canonical value wrapper even for literals
-                if (var_type == .Union) {
-                    is_literal = false;
-                }
-
-                const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);
-
-                if (is_literal) {
-                    // For literal constants, use StoreDecl with is_const
-                    try self.instructions.append(.{ .StoreDecl = .{
-                        .var_index = var_idx,
-                        .var_name = decl.name.lexeme,
-                        .scope_kind = scope_kind,
-                        .module_context = null,
-                        .declared_type = var_type,
-                        .is_const = true,
-                    } });
-                } else {
-                    // For non-literal const declarations, use StoreDecl with is_const = true
-                    try self.instructions.append(.{ .StoreDecl = .{
-                        .var_index = var_idx,
-                        .var_name = decl.name.lexeme,
-                        .scope_kind = scope_kind,
-                        .module_context = null,
-                        .declared_type = var_type,
-                        .is_const = true,
-                    } });
-                }
-                if (self.current_function == null) {
-                    try self.instructions.append(.Pop);
-                }
-            } else {
-                const scope_kind = self.symbol_table.determineVariableScopeWithModuleContext(decl.name.lexeme, is_module_ctx);
-
-                try self.instructions.append(.{ .StoreDecl = .{
-                    .var_index = var_idx,
-                    .var_name = decl.name.lexeme,
-                    .scope_kind = scope_kind,
-                    .module_context = null,
-                    .declared_type = var_type,
-                    .is_const = !decl.type_info.is_mutable,
-                } });
-                if (self.current_function == null) {
-                    try self.instructions.append(.Pop);
-                }
+            const place = try self.placeOfName(&stmt.base, decl.name.lexeme);
+            try self.instructions.append(.{ .StoreDecl = .{
+                .slot = place.slot,
+                .var_name = place.var_name,
+                .scope_kind = if (is_module_ctx and place.scope_kind == .GlobalLocal) .ModuleGlobal else place.scope_kind,
+                .module_context = null,
+                .declared_type = var_type,
+                .is_const = !decl.type_info.is_mutable,
+            } });
+            if (self.current_function == null) {
+                try self.instructions.append(.Pop);
             }
         },
         .FunctionDecl => {},
@@ -662,49 +261,8 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
                 try self.instructions.append(.{ .ExitScope = .{ .scope_id = scope_id } });
             }
         },
-        .EnumDecl => |enum_decl| {
-            var variant_names = try self.allocator.alloc([]const u8, enum_decl.variants.len);
-            for (enum_decl.variants, 0..) |variant_token, i| {
-                variant_names[i] = variant_token.lexeme;
-            }
-            try self.registerEnumType(enum_decl.name.lexeme, variant_names);
-
-            const var_idx = try self.getOrCreateVariable(enum_decl.name.lexeme);
-            try self.trackVariableType(enum_decl.name.lexeme, HIRType{ .Enum = 0 });
-
-            const enum_type_value = HIRValue{ .string = enum_decl.name.lexeme };
-            const const_idx = try self.addConstant(enum_type_value);
-            try self.instructions.append(.{ .Const = .{ .value = enum_type_value, .constant_id = const_idx } });
-            try self.instructions.append(.{ .StoreDecl = .{
-                .var_index = var_idx,
-                .var_name = enum_decl.name.lexeme,
-                .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
-                .module_context = null,
-                .declared_type = HIRType{ .Enum = 0 },
-                .is_const = true,
-            } });
-        },
-        .GroupDecl => |group_decl| {
-            try self.registerGroupType(group_decl.name.lexeme, group_decl.members);
-
-            const var_idx = try self.getOrCreateVariable(group_decl.name.lexeme);
-            const gid = if (self.type_system.group_table) |gt| gt.getIdByName(group_decl.name.lexeme) orelse 0 else 0;
-            try self.trackVariableType(group_decl.name.lexeme, HIRType{ .Group = gid });
-
-            const group_type_value = HIRValue{ .string = group_decl.name.lexeme };
-            const const_idx = try self.addConstant(group_type_value);
-            try self.instructions.append(.{ .Const = .{ .value = group_type_value, .constant_id = const_idx } });
-            // The name binding is a string, not a group *value*: a group value
-            // would need a member index, which a bare group name has none of.
-            try self.instructions.append(.{ .StoreDecl = .{
-                .var_index = var_idx,
-                .var_name = group_decl.name.lexeme,
-                .scope_kind = if (self.current_function == null or self.is_global_init_phase) .ModuleGlobal else .Local,
-                .module_context = null,
-                .declared_type = HIRType{ .String = {} },
-                .is_const = true,
-            } });
-        },
+        // Type declarations are compile time only: analysis registered them.
+        .EnumDecl, .GroupDecl => {},
         .Assert => |assert_stmt| {
             try self.generateExpression(assert_stmt.condition, true, true);
 
@@ -772,13 +330,7 @@ pub fn generateStatement(self: *HIRGenerator, stmt: ast.Stmt) (std.mem.Allocator
 
             try self.instructions.append(map_instruction);
         },
-        else => {
-            self.reporter.reportCompileError(
-                stmt.base.location(),
-                ErrorCode.UNHANDLED_STATEMENT_TYPE,
-                "Unhandled statement type: {}",
-                .{stmt.data},
-            );
-        },
+        // Imports were bound by the module loader: compile time only.
+        .Import => {},
     }
 }

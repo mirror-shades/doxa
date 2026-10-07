@@ -1,0 +1,6 @@
+# `//=` is integer-only, like its binary form.
+public entry function main() {
+    var f is 7.5
+    f //= 2
+    @print("{f}\n")
+}

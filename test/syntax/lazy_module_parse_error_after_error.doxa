@@ -1,0 +1,17 @@
+module b from "../misc/moddata/broken_syntax.doxa"
+
+# An error reported before a module is loaded must not hide that module's
+# own syntax error: it is reported, located, in the module.
+function g() {
+    const y :: int is "s"
+    @print("{y}")
+}
+
+function h() {
+    b.broken()
+}
+
+entry function main() {
+    g()
+    h()
+}

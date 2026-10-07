@@ -1,0 +1,9 @@
+# A named int const is not a literal, so it does not widen to a float argument.
+function half(x :: float) returns float {
+    return x / 2
+}
+
+public entry function main() {
+    const whole is 60
+    @print("{half(whole)}\n")
+}

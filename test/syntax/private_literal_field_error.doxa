@@ -1,0 +1,6 @@
+# A struct with a private field is built only by the struct itself.
+struct Token {
+    secret :: string,
+}
+
+const token is $Token { secret is "abc" }

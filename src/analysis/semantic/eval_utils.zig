@@ -280,13 +280,10 @@ pub fn convertTypeToTokenType(base_type: ast.Type) TokenType {
     };
 }
 
-pub fn isEnumTypeRequiringInitializer(
-    type_info: *const TypeInfo,
-    custom_types: std.StringHashMap(Types.CustomTypeInfo),
-) bool {
+pub fn isEnumTypeRequiringInitializer(type_info: *const TypeInfo, analyzer: anytype) bool {
     if (type_info.base == .Enum) return true;
     if (type_info.base == .Custom and type_info.custom_type != null) {
-        if (custom_types.get(type_info.custom_type.?)) |custom_type| {
+        if (analyzer.custom_types.get(type_info.custom_type.?.resolved())) |custom_type| {
             return custom_type.kind == .Enum;
         }
     }

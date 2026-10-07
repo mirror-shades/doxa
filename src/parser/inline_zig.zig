@@ -155,6 +155,20 @@ const Tokenizer = struct {
                 return Token{ .kind = .symbol, .lexeme = s[start..self.i] };
             }
 
+            // Quoted identifier: `@"name"` is the identifier `name`, which
+            // lets a Doxa path be spelled (`@"DoxaEnum_error.Method"`).
+            if (ch == '@' and next_ch == '"') {
+                const start = self.i + 2;
+                self.i = start;
+                while (self.i < s.len and s[self.i] != '"') : (self.i += 1) {
+                    if (s[self.i] == '\\' or s[self.i] == '\n') return error.InlineZigNotValid;
+                }
+                if (self.i >= s.len) return error.InlineZigNotValid;
+                const name = s[start..self.i];
+                self.i += 1;
+                return Token{ .kind = .ident, .lexeme = name };
+            }
+
             // Identifier (including builtins like @import)
             if (ch == '@' or ch == '_' or std.ascii.isAlphabetic(ch)) {
                 const start = self.i;
@@ -197,6 +211,28 @@ fn makeArrayType(allocator: std.mem.Allocator, element: ast.TypeInfo) ErrorList!
     return .{ .base = .Array, .is_mutable = false, .array_type = element_ptr };
 }
 
+/// Build the Doxa type a `DoxaError_<path>!<payload>` signature lowers to:
+/// `<payload> | <enum>`, with the enum member unresolved (its `written` path is
+/// resolved in analysis through the declaring file's bindings, exactly as a
+/// `DoxaEnum_<path>` spelling is). `!void` gives the payload `nothing`, so the
+/// union is `nothing | <enum>`.
+fn makeErrorUnionType(allocator: std.mem.Allocator, enum_path: []const u8, payload: ast.TypeInfo) ErrorList!ast.TypeInfo {
+    const members = try allocator.alloc(*ast.TypeInfo, 2);
+    errdefer allocator.free(members);
+
+    members[0] = try allocator.create(ast.TypeInfo);
+    errdefer allocator.destroy(members[0]);
+    members[0].* = payload;
+
+    members[1] = try allocator.create(ast.TypeInfo);
+    errdefer allocator.destroy(members[1]);
+    members[1].* = .{ .base = .Enum, .is_mutable = false, .custom_type = .{ .written = enum_path } };
+
+    const union_type = try allocator.create(ast.UnionType);
+    union_type.* = .{ .types = members, .current_type_index = 0 };
+    return .{ .base = .Union, .union_type = union_type, .is_mutable = false };
+}
+
 /// Which side of an inline-Zig signature a type is being parsed for. Named so
 /// the slice parser and the top-level type parser share one enum type.
 const TypeWhich = enum { param, ret };
@@ -220,7 +256,7 @@ fn parseSliceAfterOpen(allocator: std.mem.Allocator, ts: *Tokenizer, which: Type
         if (std.mem.eql(u8, elem.lexeme, "f64")) return makeArrayType(allocator, .{ .base = .Float, .is_mutable = false });
         // `[]const DoxaEnum_<name>` is a Doxa `enum[]`; the discriminant is i64.
         if (std.mem.startsWith(u8, elem.lexeme, "DoxaEnum_")) {
-            return makeArrayType(allocator, .{ .base = .Enum, .is_mutable = false, .custom_type = elem.lexeme["DoxaEnum_".len..] });
+            return makeArrayType(allocator, .{ .base = .Enum, .is_mutable = false, .custom_type = .{ .written = elem.lexeme["DoxaEnum_".len..] } });
         }
     }
     if (elem.kind == .symbol and std.mem.eql(u8, elem.lexeme, "[")) {
@@ -254,7 +290,20 @@ fn parseAllowedType(allocator: std.mem.Allocator, ts: *Tokenizer, which: TypeWhi
         // `.Custom`) so the wrapper can tell it apart from a struct spelling,
         // which would otherwise be lowered as an `i64` discriminant.
         if (std.mem.startsWith(u8, tok.lexeme, "DoxaEnum_")) {
-            return .{ .base = .Enum, .is_mutable = false, .custom_type = tok.lexeme["DoxaEnum_".len..] };
+            return .{ .base = .Enum, .is_mutable = false, .custom_type = .{ .written = tok.lexeme["DoxaEnum_".len..] } };
+        }
+        // `DoxaError_<path>!<payload>` is a fallible return: the function yields
+        // either the payload or a variant of the named Doxa enum. It lowers to
+        // `<payload> | <enum>`, so a call site is typed exactly as if Doxa had
+        // written that union, and the generated wrapper synthesizes a Zig error
+        // set named after the enum so the body returns `error.<Variant>`. Only a
+        // return may be fallible.
+        if (std.mem.startsWith(u8, tok.lexeme, "DoxaError_")) {
+            if (which != .ret) return error.InvalidParamType;
+            const bang = (try ts.next()) orelse return error.InvalidReturnType;
+            if (!tokenIs(bang, .symbol, "!")) return error.InvalidReturnType;
+            const payload = try parseAllowedType(allocator, ts, .ret);
+            return try makeErrorUnionType(allocator, tok.lexeme["DoxaError_".len..], payload);
         }
     }
 
@@ -587,6 +636,25 @@ fn validateAndExtract(allocator: std.mem.Allocator, input: []const u8, lenient: 
     if (depth != 0 and !lenient) return error.InlineZigNotValid;
 
     return try out.toOwnedSlice();
+}
+
+/// Every `DoxaEnum_<path>` identifier `source` spells, plain or quoted, once
+/// each, in order of first appearance. The wrapper declares each as `i64`.
+pub fn doxaEnumSpellings(allocator: std.mem.Allocator, source: []const u8) ErrorList![]const []const u8 {
+    return spellingsWithPrefix(allocator, source, "DoxaEnum_");
+}
+
+fn spellingsWithPrefix(allocator: std.mem.Allocator, source: []const u8, prefix: []const u8) ErrorList![]const []const u8 {
+    var spellings = std.array_list.Managed([]const u8).init(allocator);
+    errdefer spellings.deinit();
+    var ts = Tokenizer.init(source);
+    while (try ts.next()) |tok| {
+        if (tok.kind != .ident or !std.mem.startsWith(u8, tok.lexeme, prefix)) continue;
+        for (spellings.items) |seen| {
+            if (std.mem.eql(u8, seen, tok.lexeme)) break;
+        } else try spellings.append(tok.lexeme);
+    }
+    return spellings.toOwnedSlice();
 }
 
 pub fn sanitizeAndExtract(allocator: std.mem.Allocator, input: []const u8, lenient: bool) ErrorList![]ast.ZigFnSig {

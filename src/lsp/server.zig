@@ -7,10 +7,11 @@ const MemoryImport = @import("../utils/memory.zig");
 const MemoryManager = MemoryImport.MemoryManager;
 const LexicalAnalyzer = @import("../analysis/lexical.zig").LexicalAnalyzer;
 const Parser = @import("../parser/parser_types.zig").Parser;
-const Resolver = @import("../resolver/resolver.zig").Resolver;
 const module_graph = @import("../module/graph.zig");
+const install = @import("../install.zig");
+const ModuleLoader = @import("../module/loader.zig").ModuleLoader;
 const SemanticAnalyzer = @import("../analysis/semantic/semantic.zig").SemanticAnalyzer;
-const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
+const StructMethodInfo = @import("../analysis/semantic/semantic.zig").StructMethodInfo;
 const Errors = @import("../utils/errors.zig");
 const InternalMethods = @import("internal_methods.zig");
 const stdlib = @import("../stdlib/catalog.zig");
@@ -116,17 +117,25 @@ const CaptureSink = struct {
     }
 };
 
-pub fn run(io: std.Io, allocator: std.mem.Allocator, options: RunOptions) !void {
+/// Serve the protocol over stdio until the client sends `exit` or closes the
+/// stream. Returns the exit status the protocol prescribes: 0 when the client
+/// sent `shutdown` first, 1 otherwise (an `exit` without `shutdown`, or a
+/// client that went away).
+pub fn run(io: std.Io, allocator: std.mem.Allocator, options: RunOptions) !u8 {
     var cache = source_cache.SourceCache.init(allocator);
     defer cache.deinit();
     var reporter = Reporter.init(io, allocator, options.reporter_options, &cache);
     defer reporter.deinit();
 
+    const std_dir = try install.stdDir(io, allocator);
+    defer allocator.free(std_dir);
+
     var sink = StdIoSink.init(io, options.trace_io);
-    var server = Server.init(allocator, &reporter, sink.asResponseSink(), options.trace_io);
+    var server = Server.init(allocator, &reporter, std_dir, sink.asResponseSink(), options.trace_io);
     defer server.deinit();
 
     try server.loop(io);
+    return if (server.shutdown_requested) 0 else 1;
 }
 
 pub fn runDebugHarness(io: std.Io, allocator: std.mem.Allocator, options: DebugHarnessOptions) !void {
@@ -145,7 +154,10 @@ pub fn runDebugHarness(io: std.Io, allocator: std.mem.Allocator, options: DebugH
     var sink = CaptureSink.init(allocator);
     defer sink.deinit();
 
-    var server = Server.init(allocator, &reporter, sink.asResponseSink(), false);
+    const std_dir = try install.stdDir(io, allocator);
+    defer allocator.free(std_dir);
+
+    var server = Server.init(allocator, &reporter, std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     const initialize_request = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{\"processId\":null,\"rootUri\":null,\"capabilities\":{}}}";
@@ -312,9 +324,10 @@ const SymbolIndex = struct {
         return null;
     }
 
-    fn addType(self: *SymbolIndex, cti: CustomTypeInfo, methods: ?std.StringHashMap(StructMethodInfo)) !void {
+    /// Index a type under the name the document binds it by.
+    fn addType(self: *SymbolIndex, bound_name: []const u8, cti: CustomTypeInfo, methods: ?std.StringHashMap(StructMethodInfo)) !void {
         const alloc = self.arena.allocator();
-        const name = try alloc.dupe(u8, cti.name);
+        const name = try alloc.dupe(u8, bound_name);
 
         var cached_fields = std.array_list.Managed(CachedField).init(alloc);
         if (cti.struct_fields) |fields| {
@@ -340,7 +353,7 @@ const SymbolIndex = struct {
             var method_it = methods_map.iterator();
             while (method_it.next()) |entry| {
                 const method_name = entry.value_ptr.name;
-                const qualified = try std.fmt.allocPrint(alloc, "{s}.{s}", .{ cti.name, method_name });
+                const qualified = try std.fmt.allocPrint(alloc, "{s}.{s}", .{ cti.ref.name, method_name });
                 var params: []CachedParam = &.{};
                 var return_type: []const u8 = "";
                 if (self.callables.get(qualified)) |callable| {
@@ -411,6 +424,9 @@ const CompletionEdit = struct {
 const Server = struct {
     allocator: std.mem.Allocator,
     reporter: *Reporter,
+    /// The standard library: the `std` root of every document's module graph,
+    /// and the directory the completion catalog is read from. Borrowed.
+    std_dir: []const u8,
     documents: std.StringHashMap(Document),
     symbol_index: SymbolIndex,
     stdlib_arena: std.heap.ArenaAllocator,
@@ -423,10 +439,11 @@ const Server = struct {
     sink: ResponseSink,
     trace_io: bool,
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, sink: ResponseSink, trace_io: bool) Server {
+    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, std_dir: []const u8, sink: ResponseSink, trace_io: bool) Server {
         return .{
             .allocator = allocator,
             .reporter = reporter,
+            .std_dir = std_dir,
             .documents = std.StringHashMap(Document).init(allocator),
             .symbol_index = SymbolIndex.init(allocator),
             .stdlib_arena = std.heap.ArenaAllocator.init(allocator),
@@ -448,34 +465,15 @@ const Server = struct {
         self.stdlib_arena.deinit();
     }
 
-    /// Loads `std/` once. Candidates mirror the runtime search in `main.zig`:
-    /// the installed `<exe_dir>/../lib/std`, then the dev tree
-    /// `<exe_dir>/../../std` (binary under `<repo>/doxa/bin`), then `./std`.
-    /// Failure is non-fatal — completion degrades to imported symbols.
+    /// Loads the standard-library catalog from `std_dir` once. Failure is
+    /// non-fatal: completion degrades to imported symbols.
     fn ensureStdlib(self: *Server, io: std.Io) void {
         if (self.stdlib != null) return;
 
-        const allocator = self.stdlib_arena.allocator();
-        var candidates = std.array_list.Managed([]const u8).init(allocator);
-        if (std.process.executableDirPathAlloc(io, allocator)) |exe_dir| {
-            if (std.fs.path.join(allocator, &.{ exe_dir, "..", "lib", "std" })) |p| {
-                candidates.append(p) catch {};
-            } else |_| {}
-            if (std.fs.path.join(allocator, &.{ exe_dir, "..", "..", "std" })) |p| {
-                candidates.append(p) catch {};
-            } else |_| {}
-        } else |_| {}
-        candidates.append("std") catch {};
-
-        for (candidates.items) |std_dir| {
-            if (stdlib.load(allocator, io, std_dir)) |loaded| {
-                self.stdlib = loaded;
-                return;
-            } else |_| {}
-        }
-
-        std.debug.print("doxa-lsp: standard library catalog not found; std completion disabled\n", .{});
-        self.stdlib = .{ .modules = &.{} };
+        self.stdlib = stdlib.load(self.stdlib_arena.allocator(), io, self.std_dir) catch blk: {
+            std.debug.print("doxa-lsp: standard library catalog not found at '{s}'; std completion disabled\n", .{self.std_dir});
+            break :blk .{ .modules = &.{} };
+        };
     }
 
     fn loop(self: *Server, io: std.Io) !void {
@@ -484,19 +482,9 @@ const Server = struct {
         const reader = &stdin_reader.interface;
 
         while (!self.should_exit) {
-            const payload = self.readMessage(io, reader) catch |err| switch (err) {
-                error.EndOfStream => {
-                    if (self.shutdown_requested) {
-                        return;
-                    } else {
-                        try io.sleep(.fromMilliseconds(1), .awake);
-                        continue;
-                    }
-                },
-                error.ReadFailed => {
-                    try io.sleep(.fromMilliseconds(1), .awake);
-                    continue;
-                },
+            const payload = self.readMessage(reader) catch |err| switch (err) {
+                // The client closed its end: there is nothing left to serve.
+                error.EndOfStream => return,
                 else => return err,
             };
 
@@ -505,7 +493,7 @@ const Server = struct {
         }
     }
 
-    fn readLineAlloc(self: *Server, io: std.Io, reader: anytype) ![]u8 {
+    fn readLineAlloc(self: *Server, reader: anytype) ![]u8 {
         var buffer: [4096]u8 = undefined;
         var len: usize = 0;
 
@@ -514,11 +502,7 @@ const Server = struct {
 
             const byte = std.Io.Reader.takeByte(@constCast(reader)) catch |err| switch (err) {
                 error.EndOfStream => break,
-                error.ReadFailed => {
-                    // Handle pipe communication issues - retry after brief delay
-                    try io.sleep(.fromMilliseconds(1), .awake);
-                    continue;
-                },
+                error.ReadFailed => return error.ReadFailed,
             };
 
             if (byte == '\n') break;
@@ -529,11 +513,11 @@ const Server = struct {
         return self.allocator.dupe(u8, buffer[0..len]);
     }
 
-    fn readMessage(self: *Server, io: std.Io, reader: anytype) ![]u8 {
+    fn readMessage(self: *Server, reader: anytype) ![]u8 {
         var content_length: ?usize = null;
 
         while (true) {
-            const line = try self.readLineAlloc(io, reader);
+            const line = try self.readLineAlloc(reader);
             defer self.allocator.free(line);
 
             if (line.len == 0) {
@@ -860,70 +844,81 @@ const Server = struct {
         var tokens = try lexer.lexTokens();
         defer tokens.deinit();
 
-        var graph_store = module_graph.ModuleGraph.init(io, self.allocator, &.{
-            .{ .tag = "pkg", .path = std.fs.path.dirname(doc.path) orelse "." },
-        }) catch |err| switch (err) {
+        var graph_store = module_graph.ModuleGraph.initForEntry(io, self.allocator, doc.path, self.std_dir, &.{}) catch |err| switch (err) {
             error.OutOfMemory => return error.OutOfMemory,
-            else => return error.ModuleRootUnknown,
+            else => {
+                self.reportUnresolvableRoot(io, doc, uri);
+                return error.ModuleRootUnknown;
+            },
         };
         defer graph_store.deinit();
 
-        var parser = Parser.init(io, memory_manager.getAnalysisAllocator(), tokens.items, doc.path, uri, self.reporter, &graph_store);
-        defer parser.deinit();
+        var parser = Parser.init(io, memory_manager.getAnalysisAllocator(), tokens.items, doc.path, uri, self.reporter);
         const statements = try parser.execute();
 
-        // Load every reachable module before analysis: specific imports
-        // (`import Board from "board.doxa"`) and namespace imports are only
-        // materialized into the graph by the resolver, and semantic analysis
-        // reads their types and methods from there.
-        var resolver = Resolver.init(&parser);
-        try resolver.resolve();
+        var loader = ModuleLoader.init(io, memory_manager.getAnalysisAllocator(), self.reporter, &graph_store);
+        const entry = try loader.registerEntry(doc.path, doc.text, statements);
 
-        var semantic = SemanticAnalyzer.init(memory_manager.getAnalysisAllocator(), self.reporter, &memory_manager, &parser);
+        var semantic = SemanticAnalyzer.init(memory_manager.getAnalysisAllocator(), self.reporter, &memory_manager, &loader, entry.id, parser.entry_point_name);
         defer semantic.deinit();
-        try semantic.analyze(statements);
+        try semantic.analyzeProgram();
 
-        self.populateSymbolIndex(&semantic, &parser, &memory_manager, statements);
+        self.populateSymbolIndex(&semantic, &memory_manager, statements);
     }
 
-    fn populateSymbolIndex(self: *Server, semantic: *SemanticAnalyzer, parser: *Parser, memory_manager: *MemoryManager, statements: []ast.Stmt) void {
+    /// A document's roots are its own directory and the standard library; one
+    /// that does not exist leaves nothing to analyze. Say which, at the top of
+    /// the document, so the client shows why it has no other diagnostics.
+    fn reportUnresolvableRoot(self: *Server, io: std.Io, doc: *Document, uri: []const u8) void {
+        const location = reporting.Location{
+            .file = doc.path,
+            .file_uri = uri,
+            .range = .{ .start_line = 1, .start_col = 1, .end_line = 1, .end_col = 1 },
+        };
+        const std_exists = if (module_graph.physicalPath(io, self.allocator, self.std_dir)) |real| blk: {
+            self.allocator.free(real);
+            break :blk true;
+        } else |_| false;
+        if (std_exists) {
+            self.reporter.reportCompileError(location, Errors.ErrorCode.MODULE_ROOT_UNKNOWN, "This document's directory could not be resolved as a module root", .{});
+        } else {
+            self.reporter.reportCompileError(location, Errors.ErrorCode.MODULE_ROOT_UNKNOWN, "The standard library was not found at '{s}'; the language server cannot resolve this document's modules", .{self.std_dir});
+        }
+    }
+
+    /// Index what the document can name: the types and namespaces its own
+    /// record binds, each namespace's public members, and its declarations.
+    fn populateSymbolIndex(self: *Server, semantic: *SemanticAnalyzer, memory_manager: *MemoryManager, statements: []ast.Stmt) void {
         self.symbol_index.clear();
 
         // AST signatures must land first: `addType` enriches each method with
         // the parameter list collected here.
         self.collectAstSignatures(statements);
 
-        var type_it = semantic.custom_types.iterator();
-        while (type_it.next()) |entry| {
-            const type_name = entry.key_ptr.*;
-            const cti = entry.value_ptr.*;
-            const methods = semantic.struct_methods.get(type_name);
-            self.symbol_index.addType(cti, methods) catch continue;
+        const entry = semantic.graph.record(semantic.entry_module);
+        var binding_it = entry.bindings.iterator();
+        while (binding_it.next()) |binding| {
+            const name = binding.key_ptr.*;
+            switch (binding.value_ptr.binding) {
+                .symbol => |symbol| {
+                    if (symbol.kind != .Type) continue;
+                    const ref = symbol.typeRef();
+                    const cti = semantic.custom_types.get(ref) orelse continue;
+                    self.symbol_index.addType(name, cti, semantic.struct_methods.get(ref)) catch continue;
+                },
+                .namespace => |id| {
+                    self.symbol_index.addModule(name) catch continue;
+                    const namespace = semantic.graph.record(id);
+                    var member_it = namespace.public_bindings.keyIterator();
+                    while (member_it.next()) |member| addModuleMember(&self.symbol_index, name, member.*) catch continue;
+                },
+            }
         }
 
-        if (semantic.current_scope) |_| {
-            populateSymbolIndexFromScope(&self.symbol_index, memory_manager) catch {};
-        }
-
-        var mod_it = parser.module_namespaces.iterator();
-        while (mod_it.next()) |entry| {
-            self.symbol_index.addModule(entry.key_ptr.*) catch continue;
-        }
+        populateSymbolIndexFromScope(&self.symbol_index, memory_manager) catch {};
 
         for (statements) |stmt| {
             populateSymbolEntry(&self.symbol_index, stmt) catch {};
-        }
-
-        if (parser.imported_symbols) |symbols| {
-            var sym_it = symbols.iterator();
-            while (sym_it.next()) |entry| {
-                const full_name = entry.key_ptr.*;
-                if (std.mem.indexOfScalar(u8, full_name, '.')) |dot_idx| {
-                    const module_name = full_name[0..dot_idx];
-                    const member_name = full_name[dot_idx + 1 ..];
-                    addModuleMember(&self.symbol_index, module_name, member_name) catch continue;
-                }
-            }
         }
     }
 
@@ -1013,9 +1008,10 @@ const Server = struct {
                     .end_character = entry.end_character,
                 });
             },
-            .Module => |mod| {
+            .Import => |import| {
+                if (import.import_type != .Module) return;
                 try index.symbols.append(.{
-                    .name = try alloc.dupe(u8, mod.name.lexeme),
+                    .name = try alloc.dupe(u8, import.names[0].lexeme),
                     .kind = 2,
                     .start_line = entry.start_line,
                     .start_character = entry.start_character,
@@ -1149,16 +1145,6 @@ fn computeCompletionContext(self: *Server, params: ?JsonValue) CompletionContext
         }
     }
     return CompletionContext{ .prefix = "", .kind = .None, .object_name = null };
-}
-
-fn extractUri(params: ?JsonValue) ?[]const u8 {
-    const params_value = params orelse return null;
-    if (params_value != .object) return null;
-    const doc_value = params_value.object.get("textDocument") orelse return null;
-    if (doc_value != .object) return null;
-    const uri_value = doc_value.object.get("uri") orelse return null;
-    if (uri_value != .string) return null;
-    return uri_value.string;
 }
 
 fn makeCompletionContext(
@@ -2554,7 +2540,7 @@ fn isIdentChar(c: u8) bool {
 
 fn packLspTypeString(type_info: *const ast.TypeInfo) []const u8 {
     if (type_info.custom_type) |ct| {
-        return ct;
+        return ct.displayName();
     }
     return @tagName(type_info.base);
 }
@@ -2597,7 +2583,7 @@ fn writeTypeExpr(writer: *std.Io.Writer, type_expr: ?*const ast.TypeExpr) !void 
     };
     switch (expr.data) {
         .Basic => |basic| try writer.writeAll(basicTypeLabel(basic)),
-        .Custom => |token| try writer.writeAll(token.lexeme),
+        .Custom => |custom| try writer.writeAll(custom.name.lexeme),
         .Array => |array| {
             try writeTypeExpr(writer, array.element_type);
             try writer.writeAll("[]");
@@ -2622,7 +2608,7 @@ fn renderTypeExpr(allocator: std.mem.Allocator, type_expr: ?*const ast.TypeExpr)
 }
 
 fn renderTypeInfo(allocator: std.mem.Allocator, type_info: ast.TypeInfo) ![]u8 {
-    if (type_info.custom_type) |ct| return allocator.dupe(u8, ct);
+    if (type_info.custom_type) |ct| return allocator.dupe(u8, ct.displayName());
     return allocator.dupe(u8, typeBaseLabel(type_info.base));
 }
 
@@ -2732,7 +2718,7 @@ fn populateSymbolIndexFromScope(index: *SymbolIndex, memory_manager: *MemoryMana
 }
 
 fn inlayTypeText(type_info: *const ast.TypeInfo) []const u8 {
-    if (type_info.custom_type) |ct| return ct;
+    if (type_info.custom_type) |ct| return ct.displayName();
     return typeBaseLabel(type_info.base);
 }
 
@@ -2829,6 +2815,9 @@ fn jsonStringifyAlloc(
 
     return try aw.toOwnedSlice();
 }
+
+/// The repository's standard library; tests run from the repository root.
+const test_std_dir = "std";
 
 test "completion context captures a dotted object path" {
     const ctx = computeCompletionAtOffset("std.http.ge", "std.http.ge".len);
@@ -2940,7 +2929,7 @@ test "signature help describes an intrinsic in progress" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     const text = "@insert(arr, ";
@@ -2961,7 +2950,7 @@ test "signature help resolves a stdlib call through the catalog" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -3001,7 +2990,7 @@ test "word completion offers in-scope symbols and collapses duplicates" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     const alloc = server.symbol_index.arena.allocator();
@@ -3057,12 +3046,28 @@ fn analyzeInto(server: *Server, src: []const u8) !void {
     try server.performAnalysis(std.testing.io, &doc, "file:///test.doxa");
 }
 
+test "a missing standard library is reported on the document" {
+    var reporter = Reporter.init(std.testing.io, std.testing.allocator, .{ .log_to_stderr = false }, null);
+    defer reporter.deinit();
+    var sink = CaptureSink.init(std.testing.allocator);
+    defer sink.deinit();
+    var server = Server.init(std.testing.allocator, &reporter, "no-such-std", sink.asResponseSink(), false);
+    defer server.deinit();
+
+    try std.testing.expectError(error.ModuleRootUnknown, analyzeInto(&server, USER_SOURCE));
+    try std.testing.expectEqual(@as(usize, 1), reporter.diagnostics.items.len);
+    const diagnostic = reporter.diagnostics.items[0];
+    try std.testing.expectEqualStrings("E7012", diagnostic.code.?);
+    try std.testing.expect(std.mem.indexOf(u8, diagnostic.message, "'no-such-std'") != null);
+    try std.testing.expectEqualStrings("file:///test.doxa", diagnostic.loc.?.file_uri.?);
+}
+
 test "AST collection captures user function and method signatures" {
     var reporter = Reporter.init(std.testing.io, std.testing.allocator, .{ .log_to_stderr = false }, null);
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     try analyzeInto(&server, USER_SOURCE);
@@ -3088,7 +3093,7 @@ test "word completion snippets user functions" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     try analyzeInto(&server, USER_SOURCE);
@@ -3108,7 +3113,7 @@ test "member completion offers user method signatures and snippets" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     try analyzeInto(&server, USER_SOURCE);
@@ -3129,7 +3134,7 @@ test "signature help covers user functions" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     try analyzeInto(&server, USER_SOURCE);
@@ -3161,7 +3166,7 @@ test "std catalog-typed values get member completion and signature help" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -3216,7 +3221,7 @@ test "hover payload stays valid JSON for intrinsics and user callables" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     try analyzeInto(&server, USER_SOURCE);
@@ -3270,7 +3275,7 @@ test "dot-field hover payload is valid JSON" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     const alloc = server.symbol_index.arena.allocator();
@@ -3303,7 +3308,7 @@ test "document symbol ranges are well-formed and selection is contained" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     try analyzeInto(&server, USER_SOURCE);
@@ -3352,7 +3357,7 @@ test "inlay hints describe inferred variable types only" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     try analyzeInto(&server, INLAY_SOURCE);
@@ -3373,7 +3378,7 @@ test "inlay hint payload is valid JSON and honors the requested range" {
     defer reporter.deinit();
     var sink = CaptureSink.init(std.testing.allocator);
     defer sink.deinit();
-    var server = Server.init(std.testing.allocator, &reporter, sink.asResponseSink(), false);
+    var server = Server.init(std.testing.allocator, &reporter, test_std_dir, sink.asResponseSink(), false);
     defer server.deinit();
 
     try analyzeInto(&server, INLAY_SOURCE);

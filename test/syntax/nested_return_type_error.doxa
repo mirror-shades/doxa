@@ -1,0 +1,12 @@
+# Every `return` is checked against the declared return type, including one
+# nested in a branch and the first one in the body.
+function sign(x :: int) returns int {
+    if x > 0 {
+        return "positive"
+    }
+    return 0
+}
+
+entry function main() {
+    @print("{sign(1)}\n")
+}

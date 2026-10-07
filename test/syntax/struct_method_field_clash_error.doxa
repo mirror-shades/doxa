@@ -1,0 +1,11 @@
+# A struct names each member once: a method may not share a field's name.
+struct Counter {
+    public count :: int,
+
+    public method count() returns int {
+        return this.count
+    }
+}
+
+const c is $Counter { count is 1 }
+@print("{c.count}\n")

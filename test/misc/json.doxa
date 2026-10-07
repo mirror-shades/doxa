@@ -226,7 +226,7 @@ function finishText() returns string | nothing {
 }
 
 function scalarsOk() returns tetra {
-    const result is std.json.parse(objectOf("\"n\":-3,\"f\":1.5,\"s\":\"hi\",\"b\":true,\"z\":null"))
+    const result is std.json.Node.parse(objectOf("\"n\":-3,\"f\":1.5,\"s\":\"hi\",\"b\":true,\"z\":null"))
     match result {
         std.json.Node then {
             if result.kind() == std.json.Kind.Object then return intEquals(fieldInt(result, "n"), -3) and floatEquals(fieldFloat(result, "f"), 1.5) and textEquals(fieldText(result, "s"), "hi") and booleanIs(fieldBoolean(result, "b"), true) and nodeKindIs(fieldNode(result, "z"), std.json.Kind.Null)
@@ -240,7 +240,7 @@ function scalarsOk() returns tetra {
 }
 
 function objectReadOk() returns tetra {
-    const result is std.json.parse(objectOf("\"u\":" + objectOf("\"id\":7,\"name\":\"ada\"")))
+    const result is std.json.Node.parse(objectOf("\"u\":" + objectOf("\"id\":7,\"name\":\"ada\"")))
     match result {
         std.json.Node then {
             if result.kind() != std.json.Kind.Object then return false
@@ -264,7 +264,7 @@ function objectReadOk() returns tetra {
 }
 
 function arrayIterateOk() returns tetra {
-    const result is std.json.parse(arrayOf("1,2,3"))
+    const result is std.json.Node.parse(arrayOf("1,2,3"))
     match result {
         std.json.Node then {
             if not intEquals(result.count(), 3) then return false
@@ -284,7 +284,7 @@ function arrayIterateOk() returns tetra {
 }
 
 function missesOk() returns tetra {
-    const result is std.json.parse(objectOf("\"s\":\"hi\",\"a\":" + arrayOf("1,2,3")))
+    const result is std.json.Node.parse(objectOf("\"s\":\"hi\",\"a\":" + arrayOf("1,2,3")))
     match result {
         std.json.Node then {
             if result.kind() != std.json.Kind.Object then return false
@@ -298,13 +298,13 @@ function missesOk() returns tetra {
 }
 
 function parseErrorOk() returns tetra {
-    return invalidData(std.json.parse("not json"))
+    return invalidData(std.json.Node.parse("not json"))
 }
 
 function staleNodesOk() returns tetra {
-    const first is std.json.parse(objectOf("\"a\":1"))
+    const first is std.json.Node.parse(objectOf("\"a\":1"))
     const stale is fieldNode(first, "a")
-    const second is std.json.parse(objectOf("\"b\":2"))
+    const second is std.json.Node.parse(objectOf("\"b\":2"))
     return isInvalid(stale) and intEquals(fieldInt(second, "b"), 2)
 }
 
@@ -340,7 +340,7 @@ function tetraRejectOk() returns tetra {
 }
 
 function infRejectOk() returns tetra {
-    const source is std.json.parse("1e400")
+    const source is std.json.Node.parse("1e400")
     match source {
         std.json.Node then {
             const infinity is source.floatValue() as float else { return false }
@@ -372,7 +372,7 @@ function roundTripOk() returns tetra {
     std.json.end()
     std.json.end()
     const text is finishText() as string else { return false }
-    const back is std.json.parse(text)
+    const back is std.json.Node.parse(text)
     match back {
         std.json.Node then {
             if back.kind() != std.json.Kind.Object then return false
@@ -401,7 +401,7 @@ function bulkArrayOk() returns tetra {
     }
     std.json.end()
     const text is finishText() as string else { return false }
-    const back is std.json.parse(text)
+    const back is std.json.Node.parse(text)
     match back {
         std.json.Node then {
             if back.kind() != std.json.Kind.Array then return false

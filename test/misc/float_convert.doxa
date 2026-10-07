@@ -1,0 +1,23 @@
+# Explicit float conversions: `@int` and `@byte` truncate toward zero,
+# `@float` widens ints and bytes and parses strings, and `@string` renders the
+# shortest text that reads back as the same float.
+
+public entry function main() {
+    var up is 2.9
+    var down is -2.9
+    @print("int_trunc={@int(up)} {@int(down)} {@int(-0.5)} {@int(0.99999)}\n")
+    @print("int_exact={@int(1.0e3)} {@int(9.0e15)} {@type(@int(up))}\n")
+    @print("byte_trunc={@byte(2.7)} {@byte(255.9)}\n")
+
+    var i is 7
+    var b :: byte is 0x10
+    @print("float_widen={@float(i)} {@float(b)} {@float(-3)} {@type(@float(i))}\n")
+    @print("float_rounds={@float(9007199254740993)}\n")
+
+    @print("float_parse={@float("3.25")} {@float("-0.5")} {@float("1e3")} {@float("42")}\n")
+    @print("float_parse_inf={@float("inf")} {@float("-inf")}\n")
+    @print("float_parse_nan_unequal={@float("nan") != @float("nan")}\n")
+
+    @print("string={@string(0.5)} {@string(2.0)} {@string(-1.25)} {@string(1.0e10)}\n")
+    @print("round_trip={@float(@string(0.1)) == 0.1} {@float(@string(1.0 / 3.0)) == 1.0 / 3.0}\n")
+}

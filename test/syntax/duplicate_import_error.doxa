@@ -1,0 +1,6 @@
+# An import binds the public symbol's own name into this file, so two imports
+# of `collide` bind it twice. Import one of them through a `module` alias.
+import collide from "../misc/moddata/collide_mod_a.doxa"
+import collide from "../misc/moddata/collide_mod_b.doxa"
+
+@print("{collide(1)}")

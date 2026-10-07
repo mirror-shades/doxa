@@ -2,8 +2,6 @@ const std = @import("std");
 const doxa_rt = @import("../../../runtime/doxa_rt.zig");
 const DoxaTag = doxa_rt.DoxaTag;
 const DoxaUnionMeta = doxa_rt.DoxaUnionMeta;
-const GroupTable = @import("../../../common/group_table.zig").GroupTable;
-const EnumTable = @import("../../../common/enum_table.zig").EnumTable;
 
 pub fn Methods(comptime Ctx: type) type {
     const IRPrinter = Ctx.IRPrinter;
@@ -98,6 +96,16 @@ pub fn Methods(comptime Ctx: type) type {
         try self.pushStringResult(w, stack, id, slots);
     }
 
+    /// An uninitialised `%DoxaValue` slot in the entry block, for a runtime
+    /// entry that writes a box through `ptr`. Hoisted for the reason
+    /// `boxDoxaValue` gives.
+    pub fn doxaValueSlot(self: *IRPrinter) ![]const u8 {
+        const slot_name = try std.fmt.allocPrint(self.allocator, "%doxa.value.box.{d}", .{self.synth_header_counter});
+        self.synth_header_counter += 1;
+        try self.entry_allocas.append(try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{slot_name}));
+        return slot_name;
+    }
+
     /// An addressable copy of a boxed `%DoxaValue`, for a runtime entry that
     /// takes `ptr`. The slot is hoisted to the entry block: this value can sit
     /// in a loop, and a per-iteration alloca would grow the shadow stack every
@@ -105,9 +113,7 @@ pub fn Methods(comptime Ctx: type) type {
     /// replayed in the entry block, and LLVM requires unnamed temps to be
     /// numbered in order.
     pub fn boxDoxaValue(self: *IRPrinter, w: anytype, val: StackVal) ![]const u8 {
-        const box_name = try std.fmt.allocPrint(self.allocator, "%doxa.value.box.{d}", .{self.synth_header_counter});
-        self.synth_header_counter += 1;
-        try self.entry_allocas.append(try std.fmt.allocPrint(self.allocator, "  {s} = alloca %DoxaValue\n", .{box_name}));
+        const box_name = try self.doxaValueSlot();
         const store_line = try std.fmt.allocPrint(self.allocator, "  store %DoxaValue {s}, ptr {s}\n", .{ val.name, box_name });
         defer self.allocator.free(store_line);
         try w.writeAll(store_line);
@@ -139,9 +145,7 @@ pub fn Methods(comptime Ctx: type) type {
             },
             else => return null,
         };
-        const et_opaque = self.enum_table orelse return null;
-        const et: *EnumTable = @ptrCast(@alignCast(et_opaque));
-        return et.getName(eid);
+        return self.enum_table.keyOf(eid);
     }
 
     pub fn createEnumTypeNameGlobal(self: *IRPrinter, type_name: []const u8, _: *usize) ![]const u8 {
@@ -371,6 +375,15 @@ pub fn Methods(comptime Ctx: type) type {
     ) !StackVal {
         if (value.ty != .Value) return value;
 
+        // Narrowed to a group (`string | Error` as `Error`): the value stays
+        // boxed, re-packed to name its member among the group's.
+        if (isBoxedMemberType(target)) {
+            const source = value.boxed_type orelse return self.hirFault("a box narrowed to a {s} does not say which box it is", .{@tagName(target)});
+            return if (source.eql(target)) value else try repackBox(self, w, value, source, target, id);
+        }
+        // `nothing` carries no payload.
+        if (target == .Nothing) return .{ .name = "undef", .ty = .Nothing };
+
         const payload = try self.nextTemp(id);
         const extract_line = try std.fmt.allocPrint(self.allocator, "  {s} = extractvalue %DoxaValue {s}, 2\n", .{ payload, value.name });
         defer self.allocator.free(extract_line);
@@ -379,11 +392,7 @@ pub fn Methods(comptime Ctx: type) type {
         return switch (target) {
             .Int => .{ .name = payload, .ty = .I64 },
             .Enum => blk: {
-                const enum_name: ?[]const u8 = if (self.enum_table) |et_opaque| blk_enum: {
-                    const et: *EnumTable = @ptrCast(@alignCast(et_opaque));
-                    break :blk_enum et.getName(target.Enum);
-                } else null;
-                break :blk StackVal{ .name = payload, .ty = .I64, .enum_type_name = enum_name };
+                break :blk StackVal{ .name = payload, .ty = .I64, .enum_type_name = self.enum_table.keyOf(target.Enum) };
             },
             .Float => blk: {
                 const as_f64 = try self.nextTemp(id);
@@ -459,98 +468,79 @@ pub fn Methods(comptime Ctx: type) type {
         };
     }
 
-    pub fn findUnionMemberIndex(self: *IRPrinter, union_type: HIR.HIRType, value: StackVal) u32 {
-        if (union_type != .Union) return 0;
-        const members = union_type.Union.members;
-
-        // Enums and ints both lower to .I64 on the stack, so the raw stack type
-        // cannot tell them apart. Use the enum metadata carried on the value as
-        // the authoritative discriminator, mirroring the VM which keys off the
-        // runtime value's tag. Without this, an enum returned through an
-        // `int | Enum` union would match the `int` member first and encode the
-        // wrong active member index.
-        if (value.ty == .I64) {
-            const is_enum_value = value.enum_type_name != null;
-            // Preferred match: enum-bearing members for enum values, plain ints
-            // otherwise.
-            // TODO: When a union carries multiple enum members, disambiguate by
-            // resolving each member's enum name and matching value.enum_type_name.
-            for (members, 0..) |m_ptr, idx| {
-                const m = m_ptr.*;
-                if (is_enum_value) {
-                    if (m == .Enum) return @intCast(idx);
-                    if (m == .Group and groupHasEnumMember(self.group_table, @intCast(m.Group))) return @intCast(idx);
-                } else if (m == .Int) {
-                    return @intCast(idx);
-                }
-            }
-            // Fallback: accept any other I64-compatible member when the preferred
-            // kind is absent (e.g. an enum flowing into an int-only union).
-            for (members, 0..) |m_ptr, idx| {
-                const m = m_ptr.*;
-                if (m == .Int or m == .Enum) return @intCast(idx);
-                if (m == .Group and groupHasEnumMember(self.group_table, @intCast(m.Group))) return @intCast(idx);
-            }
-            return 0;
-        }
-
-        for (members, 0..) |m_ptr, idx| {
-            const m = m_ptr.*;
-            switch (value.ty) {
-                .F64 => if (m == .Float) return @intCast(idx),
-                .I8 => if (m == .Byte) return @intCast(idx),
-                .I2, .I1 => if (m == .Tetra) return @intCast(idx),
-                .PTR => {
-                    if (value.array_type != null and m == .Array) return @intCast(idx);
-                    if (value.struct_field_types != null and m == .Struct) return @intCast(idx);
-                    if (value.struct_type_name != null and m == .Struct) return @intCast(idx);
-                    if (m == .Map) return @intCast(idx);
-                    if (m == .Function) return @intCast(idx);
-                },
-                .STRING => if (m == .String) return @intCast(idx),
-                .Nothing => if (m == .Nothing) return @intCast(idx),
-                .I64, .Value => {},
-            }
-        }
-        return 0;
+    /// The member type a box of type `boxed` names by `index`: a union's member,
+    /// or a group's flattened member. A union never has a group member
+    /// (`UnionTable` flattens it), so every member is a concrete type.
+    pub fn boxMember(self: *IRPrinter, boxed: HIR.HIRType, index: usize) ?HIR.HIRType {
+        return switch (boxed) {
+            .Union => |u| if (index < u.members.len) u.members[index].* else null,
+            .Group => |gid| blk: {
+                const members = self.group_table.members(gid) orelse break :blk null;
+                if (index >= members.len) break :blk null;
+                const member = members[index];
+                break :blk switch (member.kind) {
+                    .Enum => HIR.HIRType{ .Enum = member.id },
+                    .Struct => HIR.HIRType{ .Struct = member.id },
+                    .Group => HIR.HIRType{ .Group = member.id },
+                };
+            },
+            else => null,
+        };
     }
 
-    fn asGroupTable(group_table: ?*anyopaque) ?*GroupTable {
-        const gt_opaque = group_table orelse return null;
-        return @constCast(@ptrCast(@alignCast(gt_opaque)));
-    }
-
-    fn groupHasEnumMember(group_table: ?*anyopaque, group_id: HIR.GroupId) bool {
-        const gt = asGroupTable(group_table) orelse return false;
-        const entry = gt.getEntryById(group_id) orelse return false;
-        for (entry.members) |member| {
-            if (member.kind == .Enum) return true;
-        }
-        return false;
-    }
-
-    /// Index of `value`'s source type within group `group_id`'s flattened member
-    /// list. A group value's identity is the member type it came from (`Color`,
-    /// `FileError`, ...), which is exactly the name the stack value carries, so
-    /// the name is the whole discriminator (docs/groups.md §6).
-    fn findGroupMemberIndex(group_table: ?*anyopaque, group_id: HIR.GroupId, value: StackVal) u32 {
-        const member_type_name = value.enum_type_name orelse value.struct_type_name orelse return 0;
-        const gt = asGroupTable(group_table) orelse return 0;
-        const members = gt.members(group_id) orelse return 0;
-        for (members, 0..) |member, idx| {
-            if (std.mem.eql(u8, member.qualifier, member_type_name)) return @intCast(idx);
-        }
-        return 0;
-    }
-
-    /// Active member index for a boxed tagged-union value: unions pick the arm
-    /// by stack shape, groups pick the member type by name.
-    pub fn findMemberIndex(self: *IRPrinter, target: HIR.HIRType, value: StackVal) u32 {
-        return switch (target) {
-            .Union => self.findUnionMemberIndex(target, value),
-            .Group => findGroupMemberIndex(self.group_table, target.Group, value),
+    /// How many members a box of type `boxed` can name.
+    pub fn boxMemberCount(self: *IRPrinter, boxed: HIR.HIRType) usize {
+        return switch (boxed) {
+            .Union => |u| u.members.len,
+            .Group => |gid| if (self.group_table.members(gid)) |members| members.len else 0,
             else => 0,
         };
+    }
+
+    /// The canonical key of a named member type, which a stack value carries
+    /// as its `enum_type_name` or `struct_type_name`.
+    fn namedMemberKey(self: *IRPrinter, member: HIR.HIRType) ?[]const u8 {
+        return switch (member) {
+            .Enum => |id| self.enum_table.keyOf(id),
+            .Struct => |id| self.struct_table.keyOf(id),
+            else => null,
+        };
+    }
+
+    /// Active member index for an unboxed `value` placed into a box of type
+    /// `boxed`. A named value (an enum word, a struct pointer) is the member
+    /// whose type it carries; any other value is the member of its
+    /// representation.
+    pub fn findMemberIndex(self: *IRPrinter, boxed: HIR.HIRType, value: StackVal) u32 {
+        const count = self.boxMemberCount(boxed);
+        const named_key: ?[]const u8 = switch (value.ty) {
+            .I64 => value.enum_type_name,
+            .PTR => value.struct_type_name,
+            else => null,
+        };
+        if (named_key) |key| {
+            for (0..count) |idx| {
+                const member_key = namedMemberKey(self, self.boxMember(boxed, idx).?) orelse continue;
+                if (std.mem.eql(u8, member_key, key)) return @intCast(idx);
+            }
+        }
+        for (0..count) |idx| {
+            const member = self.boxMember(boxed, idx).?;
+            const fits = switch (value.ty) {
+                // An unnamed word is an int; an enum flowing into a union
+                // without its own enum member keeps the first word member.
+                .I64 => member == .Int or (named_key != null and member == .Enum),
+                .F64 => member == .Float,
+                .I8 => member == .Byte,
+                .I2, .I1 => member == .Tetra,
+                .PTR => if (value.array_type != null) member == .Array else member == .Struct or member == .Map or member == .Function,
+                .STRING => member == .String,
+                .Nothing => member == .Nothing,
+                .Value => false,
+            };
+            if (fits) return @intCast(idx);
+        }
+        return 0;
     }
 
     /// Whether `t` stores as a boxed `%DoxaValue`: unions and groups are the
@@ -568,73 +558,46 @@ pub fn Methods(comptime Ctx: type) type {
         };
     }
 
-    /// Whether two HIR types name the same boxed member. Groups, unions,
-    /// enums and structs are distinguished by id; primitives never box.
-    fn sameBoxedMember(a: HIR.HIRType, b: HIR.HIRType) bool {
-        return switch (a) {
-            .Struct => |id| b == .Struct and b.Struct == id,
-            .Enum => |id| b == .Enum and b.Enum == id,
-            .Group => |id| b == .Group and b.Group == id,
-            .Union => |u| b == .Union and b.Union.id == u.id,
-            else => false,
-        };
-    }
-
-    /// Member index of a boxed `source` type inside `target`. A union picks
-    /// the member that is the source; a group picks the member declared with
-    /// the same kind and id (`docs/groups.md` §6). `null` when the source has
-    /// no seat, in which case the box is left alone.
-    fn findBoxedMemberIndex(self: *IRPrinter, target: HIR.HIRType, source: HIR.HIRType) ?u32 {
-        switch (target) {
-            .Union => |u| {
-                for (u.members, 0..) |m_ptr, idx| {
-                    if (sameBoxedMember(m_ptr.*, source)) return @intCast(idx);
-                }
-                return null;
-            },
-            .Group => |gid| {
-                const member_kind: GroupTable.MemberKind = switch (source) {
-                    .Enum => .Enum,
-                    .Struct => .Struct,
-                    .Group => .Group,
-                    else => return null,
-                };
-                const member_id: u32 = switch (source) {
-                    .Enum => |id| id,
-                    .Struct => |id| id,
-                    .Group => |id| id,
-                    else => return null,
-                };
-                const gt = asGroupTable(self.group_table) orelse return null;
-                const members = gt.members(gid) orelse return null;
-                for (members, 0..) |member, idx| {
-                    if (member.kind == member_kind and member.id == member_id) return @intCast(idx);
-                }
-                return null;
-            },
-            else => return null,
-        }
-    }
-
-    /// Re-pack a boxed value's `reserved` field for `target`'s member `idx`.
-    /// Only the reserved word changes; the tag and payload describe the same
-    /// member and are carried over untouched.
-    fn retagBoxedValue(self: *IRPrinter, w: anytype, value: StackVal, target: HIR.HIRType, idx: u32, id: *usize) !StackVal {
-        const type_id = boxedTypeId(target) orelse return value;
+    /// Re-pack a box for another box type: `int | string` stored into
+    /// `int | float | string`, an `Error` returned through `string | Error`,
+    /// or a `string | Error` narrowed to `Error`. The box names its member by
+    /// index into the source's members; that index is rewritten to the
+    /// target's index for the same member type. A source member the target
+    /// does not hold is one a type test has already excluded.
+    fn repackBox(self: *IRPrinter, w: anytype, value: StackVal, source: HIR.HIRType, target: HIR.HIRType, id: *usize) !StackVal {
+        const type_id = boxedTypeId(target).?;
         const uid = type_id & (DoxaUnionMeta.union_id_mask >> DoxaUnionMeta.union_id_shift);
-        const reserved_const: u32 = DoxaUnionMeta.is_union_bit | (uid << DoxaUnionMeta.union_id_shift) | (idx & DoxaUnionMeta.member_index_mask);
+        const header: u32 = DoxaUnionMeta.is_union_bit | (uid << DoxaUnionMeta.union_id_shift);
 
-        const reserved_reg = try self.nextTemp(id);
-        const reserved_line = try std.fmt.allocPrint(self.allocator, "  {s} = add i32 0, {d}\n", .{ reserved_reg, reserved_const });
-        defer self.allocator.free(reserved_line);
-        try w.writeAll(reserved_line);
+        const reserved = try self.nextTemp(id);
+        try w.print("  {s} = extractvalue %DoxaValue {s}, 1\n", .{ reserved, value.name });
+        const member = try self.nextTemp(id);
+        try w.print("  {s} = and i32 {s}, {d}\n", .{ member, reserved, DoxaUnionMeta.member_index_mask });
 
-        const retagged = try self.nextTemp(id);
-        const line = try std.fmt.allocPrint(self.allocator, "  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n", .{ retagged, value.name, reserved_reg });
-        defer self.allocator.free(line);
-        try w.writeAll(line);
+        var acc: ?[]const u8 = null;
+        for (0..self.boxMemberCount(source)) |source_idx| {
+            const source_member = self.boxMember(source, source_idx).?;
+            const target_idx = for (0..self.boxMemberCount(target)) |idx| {
+                if (source_member.eql(self.boxMember(target, idx).?)) break idx;
+            } else continue;
+            const repacked = header | (@as(u32, @intCast(target_idx)) & DoxaUnionMeta.member_index_mask);
+            if (acc) |previous| {
+                const is_member = try self.nextTemp(id);
+                const next = try self.nextTemp(id);
+                try w.print("  {s} = icmp eq i32 {s}, {d}\n", .{ is_member, member, source_idx });
+                try w.print("  {s} = select i1 {s}, i32 {d}, i32 {s}\n", .{ next, is_member, repacked, previous });
+                acc = next;
+            } else {
+                const next = try self.nextTemp(id);
+                try w.print("  {s} = add i32 0, {d}\n", .{ next, repacked });
+                acc = next;
+            }
+        }
+        const repacked_reserved = acc orelse return self.hirFault("a {s} box is re-packed as a {s} that holds none of its members", .{ @tagName(source), @tagName(target) });
 
-        return StackVal{ .name = retagged, .ty = .Value, .boxed_type = target };
+        const repacked_value = try self.nextTemp(id);
+        try w.print("  {s} = insertvalue %DoxaValue {s}, i32 {s}, 1\n", .{ repacked_value, value.name, repacked_reserved });
+        return StackVal{ .name = repacked_value, .ty = .Value, .boxed_type = target };
     }
 
     pub fn buildDoxaValue(
@@ -651,16 +614,7 @@ pub fn Methods(comptime Ctx: type) type {
         if (value.ty == .Value) {
             if (target_union) |ut| {
                 if (value.boxed_type) |src| {
-                    const same_box = switch (ut) {
-                        .Union => src == .Union and src.Union.id == ut.Union.id,
-                        .Group => src == .Group and src.Group == ut.Group,
-                        else => false,
-                    };
-                    if (!same_box) {
-                        if (findBoxedMemberIndex(self, ut, src)) |idx| {
-                            return try retagBoxedValue(self, w, value, ut, idx, id);
-                        }
-                    }
+                    if (isBoxedMemberType(ut) and !src.eql(ut)) return try repackBox(self, w, value, src, ut, id);
                 }
             }
             return value;
@@ -813,6 +767,9 @@ pub fn Methods(comptime Ctx: type) type {
             .String => 16,
             .Tetra => 1,
             .Nothing => 0,
+            // A union or group element is its whole box, so it keeps the
+            // member it holds (`%DoxaValue`, runtime tag 9).
+            .Union, .Group => 24,
             else => 8,
         };
     }
@@ -828,6 +785,7 @@ pub fn Methods(comptime Ctx: type) type {
             .Array => 6,
             .Struct => 7,
             .Enum => 8,
+            .Union, .Group => 9,
             else => 255,
         };
     }
@@ -864,18 +822,6 @@ pub fn Methods(comptime Ctx: type) type {
 
         const full = try std.fmt.allocPrint(self.allocator, "[{d} x {s}]", .{ size, result });
         return full;
-    }
-
-    pub fn fixedArrayRemainingLLVMType(
-        self: *IRPrinter,
-        base_llvm_type: []const u8,
-    ) ![]const u8 {
-        const open = std.mem.indexOfScalar(u8, base_llvm_type, '[') orelse return base_llvm_type;
-        const close = std.mem.indexOfScalarPos(u8, base_llvm_type, open + 1, 'x') orelse return base_llvm_type;
-        const inner = base_llvm_type[close + 1 ..];
-        const trimmed = std.mem.trim(u8, inner, " ");
-        const end = std.mem.indexOfScalar(u8, trimmed, ']') orelse return trimmed;
-        return try self.allocator.dupe(u8, trimmed[0..end]);
     }
 
     pub fn fixedArrayLevelLLVMType(

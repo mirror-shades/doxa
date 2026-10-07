@@ -1,13 +1,12 @@
 const std = @import("std");
 const ast = @import("../../ast/ast.zig");
 const TypeInfo = ast.TypeInfo;
+const TypeRef = ast.TypeRef;
 const Memory = @import("../../utils/memory.zig");
 const MemoryManager = Memory.MemoryManager;
 const Scope = Memory.Scope;
 const ScopeManager = Memory.ScopeManager;
 const Variable = Memory.Variable;
-const Parser = @import("../../parser/parser_types.zig").Parser;
-const import_parser = @import("../../parser/import_parser.zig");
 
 const Reporting = @import("../../utils/reporting.zig");
 const Reporter = Reporting.Reporter;
@@ -20,6 +19,7 @@ const ErrorCode = Errors.ErrorCode;
 const StructTable = @import("../../common/struct_table.zig").StructTable;
 const EnumTable = @import("../../common/enum_table.zig").EnumTable;
 const GroupTable = @import("../../common/group_table.zig").GroupTable;
+const UnionTable = @import("../../common/union_table.zig").UnionTable;
 const StructId = @import("../../codegen/hir/soxa_types.zig").StructId;
 
 const Types = @import("../../types/types.zig");
@@ -27,25 +27,43 @@ const CustomTypeInfo = Types.CustomTypeInfo;
 const TokenLiteral = Types.TokenLiteral;
 const StructField = Types.StructField;
 
-const HIRTypeSystem = @import("../../codegen/hir/type_system.zig");
 const HIRType = @import("../../codegen/hir/soxa_types.zig").HIRType;
 
 const TokenImport = @import("../../types/token.zig");
 const TokenType = TokenImport.TokenType;
 const Token = TokenImport.Token;
 
-const Environment = Types.Environment;
 
 const helpers = @import("./helpers.zig");
-const scope_management = @import("./scope_management.zig");
+const names = @import("./names.zig");
 const getLocationFromBase = helpers.getLocationFromBase;
 const eval = @import("eval_utils.zig");
 const union_handling = @import("union_handling.zig");
 const infer_type = @import("./infer_type.zig");
-const ModuleGraph = @import("../../module/graph.zig").ModuleGraph;
-const ModuleRecord = @import("../../module/graph.zig").ModuleRecord;
 
-pub const StructMethodInfo = SemanticAnalyzer.StructMethodInfo;
+const graph_mod = @import("../../module/graph.zig");
+const ModuleGraph = graph_mod.ModuleGraph;
+const ModuleRecord = graph_mod.ModuleRecord;
+const ModuleId = graph_mod.ModuleId;
+const ModuleLoader = @import("../../module/loader.zig").ModuleLoader;
+const resolution = @import("resolution.zig");
+const Resolution = resolution.Resolution;
+
+/// A struct method's analyzer-level description. A private method is
+/// module-private, like a private field.
+pub const StructMethodInfo = struct {
+    name: []const u8,
+    is_public: bool,
+    is_static: bool,
+    /// The method's full signature. Carrying the parameter list (not just the
+    /// return type) is what lets a method call run the same argument
+    /// validation a plain function call gets; without it a wrong arity or a
+    /// wrong argument type on `x.method(...)` reaches codegen unchecked and
+    /// mis-compiles instead of being diagnosed.
+    signature: *ast.FunctionType,
+};
+
+const UsedBindings = std.HashMap(graph_mod.SymbolKey, void, graph_mod.SymbolKeyContext, std.hash_map.default_max_load_percentage);
 
 //======================================================================
 
@@ -61,6 +79,40 @@ fn isEmptyArrayLiteral(expr: *const ast.Expr) bool {
     };
 }
 
+/// Semantic analysis of a whole program, one module record at a time.
+///
+/// Each record is analyzed in its own module scope (no parent: a record sees
+/// its own declarations and its bindings, never another file's locals) and
+/// moves through two stages the module graph drives:
+///
+/// - **Types** (`ensureTypes`): the record's declarations enter its module
+///   scope — types registered by `TypeRef`, functions with their resolved
+///   signatures, globals with their types. Another record's Types stage may
+///   run in the middle of this one; a re-entry (a declaration cycle) reads the
+///   placeholders registered so far.
+/// - **Analysis** (`ensureAnalyzed`): the record's bodies are checked. Body
+///   analysis may register another record's types but never analyzes another
+///   record's bodies, so body-level cycles terminate by construction.
+///
+/// `analyzeProgram` analyzes the entry record and then every record a
+/// reference materialized, until no new record joins the program.
+/// A store through a name. `type_cache` holds what an expression reads; a
+/// store also needs what it writes, which differs inside a narrowing view.
+pub const StoreTarget = struct {
+    /// The storage's type, beneath every narrowing view: what a store writes.
+    slot: *ast.TypeInfo,
+    /// What a read of the name sees at the store: the active view's type, or
+    /// the slot's.
+    read: *ast.TypeInfo,
+    /// The storage's identity: the storage id of the binding beneath every
+    /// view. Codegen keys a variable's slot by it, so two bindings that share
+    /// a name never share storage.
+    storage: u32,
+    /// The storage is module-level: a global, not a local of the enclosing
+    /// function.
+    global: bool,
+};
+
 pub const SemanticAnalyzer = struct {
     in_loop_scope: bool = false,
     allocator: std.mem.Allocator,
@@ -69,40 +121,61 @@ pub const SemanticAnalyzer = struct {
     fatal_error: bool,
     current_scope: ?*Scope,
     type_cache: std.AutoHashMap(NodeId, *ast.TypeInfo),
-    custom_types: std.StringHashMap(CustomTypeInfo),
-    type_aliases: std.StringHashMap([]const u8),
-    struct_methods: std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)),
-    /// Scopes created to validate imported modules. They hang off the root scope
-    /// so a module body can still resolve analyzer-level state, which means
-    /// `reportUnused`'s recursion would otherwise reach them and warn about every
-    /// private helper a library legitimately keeps. Unused reporting is a
-    /// statement about the unit being compiled, so these subtrees are skipped.
-    module_scopes: std.AutoHashMap(*Scope, void),
-    /// The graph record whose bodies are currently being analyzed. Field
-    /// visibility is module-scoped: a private field is reachable from `this`,
-    /// from any method of the owning struct, and from any code in the module
-    /// that declares it — and from nowhere else. Resolving that needs to know
-    /// both which module is being checked and which module declares the struct,
-    /// neither of which the old `this`-only test could see.
-    current_module: ?*ModuleRecord = null,
-    /// Declaring module for each registered struct, keyed by struct name. A
-    /// missing entry means the owner is unknown, which is never treated as
-    /// proof of cross-module access — see `canAccessPrivateField`.
-    struct_owner_module: std.StringHashMap(*ModuleRecord),
+    /// What a store through a name writes and what the name reads there, per
+    /// `Variable` expression, assignment and variable declaration.
+    store_targets: std.AutoHashMap(NodeId, StoreTarget),
+    custom_types: graph_mod.TypeRefHashMap(CustomTypeInfo),
+    struct_methods: graph_mod.TypeRefHashMap(std.StringHashMap(StructMethodInfo)),
+
+    loader: *ModuleLoader,
+    graph: *ModuleGraph,
+    entry_module: ModuleId,
+    /// The entry function's name, which is never reported unused.
+    entry_point_name: ?[]const u8,
+    /// The record whose declarations or bodies are being analyzed. Name
+    /// resolution reads its bindings, and module-private access is decided
+    /// against it.
+    current_module: ModuleId,
+    module_scopes: std.AutoHashMap(ModuleId, *Scope),
+    /// What every name-bearing expression outside the local scope denotes.
+    resolutions: resolution.ResolutionMap,
+    /// Every declaration of and reference to a module-level global.
+    global_sites: resolution.GlobalSites,
+    /// Bindings referenced at least once, per record; the rest of the entry
+    /// record's imports are reported unused.
+    used_bindings: UsedBindings,
+    /// Set while a record's bodies are analyzed: analysis never recurses into
+    /// another record's bodies.
+    analyzing: bool = false,
+
     function_return_types: std.AutoHashMap(NodeId, *ast.TypeInfo),
-    current_function_returns: std.array_list.Managed(*ast.TypeInfo),
+    /// Every `.Variant` shorthand inferred since the last analysis stage
+    /// ended. A shorthand names no enum itself; its context types it
+    /// (`helpers.contextualizeEnumMember`), and one left untyped is an error.
+    bare_variants: std.ArrayListUnmanaged(*const ast.Expr) = .empty,
+    /// The function whose body is being validated. Every `return` in it is
+    /// checked against its declared return type where the return is analyzed.
+    returning: ?Returning = null,
     current_initializing_var: ?[]const u8 = null,
     block_value_expected: bool = false,
-    current_struct_type: ?[]const u8 = null,
-    parser: ?*const Parser = null,
+    /// The struct whose method body is being checked (`this`).
+    /// The struct whose method or function body is being checked: its private
+    /// members are reachable here, through `this`.
+    enclosing: ?Enclosing = null,
     struct_table: StructTable,
     enum_table: EnumTable,
     group_table: GroupTable,
-    // Union type registry: assigns a stable id per canonical ast.UnionType
-    union_ids: std.AutoHashMap(*ast.UnionType, u32),
-    next_union_id: u32,
+    /// Every union type of the compilation; codegen extends it.
+    union_table: UnionTable,
 
-    pub fn init(allocator: std.mem.Allocator, reporter: *Reporter, memory: *MemoryManager, parser: ?*const Parser) SemanticAnalyzer {
+    pub fn init(
+        allocator: std.mem.Allocator,
+        reporter: *Reporter,
+        memory: *MemoryManager,
+        loader: *ModuleLoader,
+        entry_module: ModuleId,
+        entry_point_name: ?[]const u8,
+    ) SemanticAnalyzer {
         return .{
             .allocator = allocator,
             .reporter = reporter,
@@ -110,71 +183,43 @@ pub const SemanticAnalyzer = struct {
             .fatal_error = false,
             .current_scope = null,
             .type_cache = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
-            .custom_types = std.StringHashMap(CustomTypeInfo).init(allocator),
-            .type_aliases = std.StringHashMap([]const u8).init(allocator),
-            .struct_methods = std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)).init(allocator),
-            .module_scopes = std.AutoHashMap(*Scope, void).init(allocator),
-            .struct_owner_module = std.StringHashMap(*ModuleRecord).init(allocator),
+            .store_targets = std.AutoHashMap(NodeId, StoreTarget).init(allocator),
+            .custom_types = graph_mod.TypeRefHashMap(CustomTypeInfo).init(allocator),
+            .struct_methods = graph_mod.TypeRefHashMap(std.StringHashMap(StructMethodInfo)).init(allocator),
+            .loader = loader,
+            .graph = loader.graph,
+            .entry_module = entry_module,
+            .entry_point_name = entry_point_name,
+            .current_module = entry_module,
+            .module_scopes = std.AutoHashMap(ModuleId, *Scope).init(allocator),
+            .resolutions = resolution.ResolutionMap.init(allocator),
+            .global_sites = .empty,
+            .used_bindings = UsedBindings.init(allocator),
             .function_return_types = std.AutoHashMap(NodeId, *ast.TypeInfo).init(allocator),
-            .current_function_returns = std.array_list.Managed(*ast.TypeInfo).init(allocator),
-            .current_struct_type = null,
-            .parser = parser,
             .struct_table = StructTable.init(allocator),
             .enum_table = EnumTable.init(allocator),
             .group_table = GroupTable.init(allocator),
-            .union_ids = std.AutoHashMap(*ast.UnionType, u32).init(allocator),
-            .next_union_id = 1,
+            .union_table = UnionTable.init(allocator),
         };
     }
 
     pub fn deinit(self: *SemanticAnalyzer) void {
         self.type_cache.deinit();
+        self.store_targets.deinit();
+        self.bare_variants.deinit(self.allocator);
         self.custom_types.deinit();
-        var alias_it = self.type_aliases.iterator();
-        while (alias_it.next()) |entry| {
-            const alias_key = entry.key_ptr.*;
-            const alias_target = entry.value_ptr.*;
-            self.allocator.free(@constCast(alias_key));
-            self.allocator.free(@constCast(alias_target));
-        }
-        self.type_aliases.deinit();
         var methods_it = self.struct_methods.valueIterator();
         while (methods_it.next()) |tbl| tbl.*.deinit();
         self.struct_methods.deinit();
         self.module_scopes.deinit();
-        self.struct_owner_module.deinit();
+        self.resolutions.deinit();
+        self.global_sites.deinit(self.allocator);
+        self.used_bindings.deinit();
         self.function_return_types.deinit();
-        self.current_function_returns.deinit();
         self.struct_table.deinit();
         self.enum_table.deinit();
         self.group_table.deinit();
-        self.union_ids.deinit();
-    }
-
-    /// Which of a struct's methods reach the analyzer-level method table. An
-    /// imported struct exposes only its public methods; a struct declared in the
-    /// unit being compiled keeps its private ones too, because scope visibility
-    /// already governs who may call them.
-    pub const MethodVisibility = enum { public_only, all };
-
-    pub const StructMethodInfo = struct {
-        name: []const u8,
-        is_public: bool,
-        is_static: bool,
-        /// The method's full signature. Carrying the parameter list (not just the
-        /// return type) is what lets a method call run the same argument
-        /// validation a plain function call gets; without it a wrong arity or a
-        /// wrong argument type on `x.method(...)` reaches codegen unchecked and
-        /// mis-compiles instead of being diagnosed.
-        signature: *ast.FunctionType,
-    };
-
-    pub fn getCustomTypes(self: *const SemanticAnalyzer) *const std.StringHashMap(CustomTypeInfo) {
-        return &self.custom_types;
-    }
-
-    pub fn getStructMethods(self: *const SemanticAnalyzer) *const std.StringHashMap(std.StringHashMap(@This().StructMethodInfo)) {
-        return &self.struct_methods;
+        self.union_table.deinit();
     }
 
     pub fn getStructTable(self: *const SemanticAnalyzer) *const StructTable {
@@ -189,6 +234,11 @@ pub const SemanticAnalyzer = struct {
         return &self.group_table;
     }
 
+    /// The tables a union orders its named members by.
+    pub fn unionNames(self: *const SemanticAnalyzer) UnionTable.Names {
+        return .{ .structs = &self.struct_table, .enums = &self.enum_table, .groups = &self.group_table };
+    }
+
     /// The type the analyzer inferred for `expr`, if it has visited it.
     /// Codegen reads `@`-call types from here rather than re-deriving them, so
     /// `inferBuiltinCall` stays the single authority for builtin typing.
@@ -196,367 +246,381 @@ pub const SemanticAnalyzer = struct {
         return self.type_cache.get(expr.base.id);
     }
 
-    pub fn getStructId(self: *SemanticAnalyzer, name: []const u8) ?StructId {
-        return self.struct_table.getIdByName(name);
+    /// The store target `node` names, if it is a name, an assignment or a
+    /// declaration the analyzer resolved.
+    pub fn getStoreTarget(self: *const SemanticAnalyzer, node: NodeId) ?StoreTarget {
+        return self.store_targets.get(node);
     }
 
-    pub fn getFunctionReturnTypes(self: *const SemanticAnalyzer) *const std.AutoHashMap(NodeId, *ast.TypeInfo) {
-        return &self.function_return_types;
+    /// What `expr` was resolved to, if it names a module-level entity.
+    pub fn resolutionOf(self: *const SemanticAnalyzer, expr: *const ast.Expr) ?Resolution {
+        return self.resolutions.get(expr.base.id);
     }
 
-    fn isEnumTypeRequiringInitializer(self: *const SemanticAnalyzer, type_info: *const ast.TypeInfo) bool {
-        return eval.isEnumTypeRequiringInitializer(type_info, self.custom_types);
+    /// The registered description of `ref`, registering the defining record's
+    /// types first.
+    pub fn customType(self: *SemanticAnalyzer, ref: TypeRef) ErrorList!?CustomTypeInfo {
+        try self.ensureTypes(ref.module);
+        return self.custom_types.get(ref);
     }
 
-    fn registerTypeAlias(self: *SemanticAnalyzer, alias_name: []const u8, target_type: []const u8) !void {
-        if (self.type_aliases.contains(alias_name)) return;
-        const alias_copy = try self.allocator.dupe(u8, alias_name);
-        errdefer self.allocator.free(alias_copy);
-        const target_copy = try self.allocator.dupe(u8, target_type);
-        errdefer self.allocator.free(target_copy);
-        try self.type_aliases.put(alias_copy, target_copy);
+    /// The method table of the struct `ref`, registering the defining record's
+    /// types first.
+    pub fn methodsOf(self: *SemanticAnalyzer, ref: TypeRef) ErrorList!?std.StringHashMap(StructMethodInfo) {
+        try self.ensureTypes(ref.module);
+        return self.struct_methods.get(ref);
     }
 
-    /// Maximum depth for resolving chained type aliases before assuming a cycle.
-    const MAX_TYPE_ALIAS_DEPTH: usize = 32;
+    fn isEnumTypeRequiringInitializer(self: *SemanticAnalyzer, type_info: *const ast.TypeInfo) bool {
+        return eval.isEnumTypeRequiringInitializer(type_info, self);
+    }
 
-    pub fn resolveTypeAlias(self: *const SemanticAnalyzer, type_name: []const u8) []const u8 {
-        var current = type_name;
-        var guard: usize = 0;
-        while (self.type_aliases.get(current)) |target| {
-            current = target;
-            guard += 1;
-            if (guard > MAX_TYPE_ALIAS_DEPTH) break;
+    // ── The per-record driver ───────────────────────────────────────────────
+
+    /// Analyze the program: the entry record, then every record a reference
+    /// materialized (its declarations were collected), until none is left. A
+    /// record that is only interned — named by a `module` alias nothing reads
+    /// through — is not part of the program.
+    pub fn analyzeProgram(self: *SemanticAnalyzer) ErrorList!void {
+        const entry_scope = try self.ensureModuleScope(self.entry_module);
+        self.memory.scope_manager.root_scope = entry_scope;
+
+        try self.ensureAnalyzed(self.entry_module);
+        var progressed = true;
+        while (progressed) {
+            progressed = false;
+            var i: usize = 0;
+            while (i < self.graph.records.items.len) : (i += 1) {
+                const record = self.graph.records.items[i];
+                if (!record.status.atLeast(.DeclarationsCollected)) continue;
+                if (record.status.atLeast(.Analyzed)) continue;
+                try self.ensureAnalyzed(record.id);
+                progressed = true;
+            }
         }
-        return current;
+        if (self.fatal_error) return error.SemanticError;
+
+        try self.reportUnused(entry_scope);
+        self.reportUnusedImports();
     }
 
-    /// If `expr` is a pure module-namespace path (`std` or `std.io`), return its
-    /// canonical namespace name; otherwise null. Resolves lazily but performs no
-    /// type inference, so it has no side effects on later analysis.
-    fn moduleNamespacePathOf(self: *SemanticAnalyzer, expr: *ast.Expr) ?[]const u8 {
-        const parser_const = self.parser orelse return null;
-        const parser: *Parser = @constCast(parser_const);
-        switch (expr.data) {
-            .Variable => |v| {
-                _ = parser.ensureModuleNamespace(v.lexeme) catch return null;
-                if (parser.module_namespaces.contains(v.lexeme)) return v.lexeme;
-                return null;
+    /// Fix the program's link identities: every record's mangling tag and
+    /// every type's canonical key. Lowering calls this once, before it reads
+    /// either; no record may join the graph afterwards. Analysis alone (the
+    /// language server) never fixes them, so it may keep loading records.
+    pub fn finalizeLinkIdentities(self: *SemanticAnalyzer) !void {
+        try self.graph.finalizeMangling();
+        try self.struct_table.assignKeys(self.graph);
+        try self.enum_table.assignKeys(self.graph);
+        try self.group_table.assignKeys(self.graph);
+        try helpers.lowerStructFieldTypes(self);
+    }
+
+    /// Register `id`'s declarations in its module scope (collecting its
+    /// declarations first). A record whose registration is active yields the
+    /// placeholders registered so far.
+    pub fn ensureTypes(self: *SemanticAnalyzer, id: ModuleId) ErrorList!void {
+        const record = try self.loader.ensureDeclarations(self.graph.record(id));
+        switch (self.graph.runStage(record, .Types, self.reporter, self, typesStage)) {
+            .ready, .in_progress => {},
+            .failed => {
+                self.fatal_error = true;
+                return error.SemanticError;
             },
-            .FieldAccess => |fa| {
-                const parent = self.moduleNamespacePathOf(fa.object) orelse return null;
-                _ = parser.ensureNestedModuleNamespace(parent, fa.field.lexeme) catch return null;
-                const qualified = std.fmt.allocPrint(self.allocator, "{s}.{s}", .{ parent, fa.field.lexeme }) catch return null;
-                if (parser.module_namespaces.contains(qualified)) return qualified;
-                self.allocator.free(qualified);
-                return null;
-            },
-            else => return null,
         }
     }
 
-    /// True when every token before the last is a module segment, so a match
-    /// path names a type through its module (`std.json.Node`) rather than a
-    /// variant of a group member (`error.IO.InvalidData`). Resolves lazily and
-    /// silently, exactly like `moduleNamespacePathOf`.
-    fn pathIsModuleQualified(self: *SemanticAnalyzer, tokens: []const ast.Token) bool {
-        if (tokens.len < 2) return false;
-        const parser_const = self.parser orelse return false;
-        const parser: *Parser = @constCast(parser_const);
-
-        _ = parser.ensureModuleNamespace(tokens[0].lexeme) catch return false;
-        if (!parser.module_namespaces.contains(tokens[0].lexeme)) return false;
-
-        var namespace = std.array_list.Managed(u8).init(self.allocator);
-        defer namespace.deinit();
-        namespace.appendSlice(tokens[0].lexeme) catch return false;
-        for (tokens[1 .. tokens.len - 1]) |tok| {
-            _ = parser.ensureNestedModuleNamespace(namespace.items, tok.lexeme) catch return false;
-            namespace.append('.') catch return false;
-            namespace.appendSlice(tok.lexeme) catch return false;
+    /// Check `id`'s bodies. Only the program driver calls this: body analysis
+    /// never reaches another record's bodies.
+    fn ensureAnalyzed(self: *SemanticAnalyzer, id: ModuleId) ErrorList!void {
+        std.debug.assert(!self.analyzing);
+        try self.ensureTypes(id);
+        switch (self.graph.runStage(self.graph.record(id), .Analysis, self.reporter, self, analysisStage)) {
+            .ready => {},
+            .in_progress => unreachable,
+            .failed => {
+                self.fatal_error = true;
+                return error.SemanticError;
+            },
         }
-        return parser.module_namespaces.contains(namespace.items);
+    }
+
+    fn typesStage(ctx: *anyopaque, record: *ModuleRecord) anyerror!void {
+        const self: *SemanticAnalyzer = @ptrCast(@alignCast(ctx));
+        const saved = try self.enterModule(record.id);
+        defer self.leaveModule(saved);
+        return switch (record.kind) {
+            .doxa => self.collectDeclarations(record.statements(), self.moduleScope(record.id)),
+            .inline_zig, .zig_file => self.registerZigFunctions(record),
+        };
+    }
+
+    fn analysisStage(ctx: *anyopaque, record: *ModuleRecord) anyerror!void {
+        const self: *SemanticAnalyzer = @ptrCast(@alignCast(ctx));
+        if (record.kind != .doxa) return;
+        const saved = try self.enterModule(record.id);
+        defer self.leaveModule(saved);
+        self.analyzing = true;
+        defer self.analyzing = false;
+        const result = self.validateStatements(record.statements());
+        self.reportUntypedVariants();
+        return result;
+    }
+
+    /// A `.Variant` shorthand is typed only by an explicit context: a
+    /// parameter, an annotated variable, an assignment, a return, or the other
+    /// side of a comparison. Nothing is searched; one its context left untyped
+    /// is an error where it is written.
+    fn reportUntypedVariants(self: *SemanticAnalyzer) void {
+        defer self.bare_variants.clearRetainingCapacity();
+        for (self.bare_variants.items) |expr| {
+            if (!helpers.isUntypedVariant(self.type_cache.get(expr.base.id).?)) continue;
+            const variant = expr.data.EnumMember;
+            self.reporter.reportCompileError(
+                ast.SourceSpan.fromToken(variant).location,
+                ErrorCode.UNKNOWN_TYPE,
+                "'.{s}' needs its enum from context; annotate the target or write it through its enum (`Enum.{s}`)",
+                .{ variant.lexeme, variant.lexeme },
+            );
+            self.fatal_error = true;
+        }
+    }
+
+    /// Record a place that names a global, once per place.
+    pub fn recordGlobalSite(self: *SemanticAnalyzer, site: resolution.GlobalSite) ErrorList!void {
+        try self.global_sites.put(self.allocator, site.address(), site);
+    }
+
+    /// The analyzer state that belongs to one record's analysis. Another
+    /// record's Types stage can run in the middle of a body, so entering a
+    /// record saves this and leaving restores it.
+    pub const Enclosing = struct {
+        ref: TypeRef,
+        /// A method has a receiver; a struct's function does not.
+        has_this: bool,
+    };
+
+    /// A function body under validation: its name, and what it declares it
+    /// returns (`nothing` without `returns`).
+    pub const Returning = struct {
+        function: Token,
+        type: ast.TypeInfo,
+    };
+
+    const Context = struct {
+        module: ModuleId,
+        scope: ?*Scope,
+        enclosing: ?Enclosing,
+        returning: ?Returning,
+        initializing_var: ?[]const u8,
+        block_value_expected: bool,
+        in_loop_scope: bool,
+        analyzing: bool,
+    };
+
+    fn enterModule(self: *SemanticAnalyzer, id: ModuleId) ErrorList!Context {
+        const saved = Context{
+            .module = self.current_module,
+            .scope = self.current_scope,
+            .enclosing = self.enclosing,
+            .returning = self.returning,
+            .initializing_var = self.current_initializing_var,
+            .block_value_expected = self.block_value_expected,
+            .in_loop_scope = self.in_loop_scope,
+            .analyzing = self.analyzing,
+        };
+        self.current_module = id;
+        self.current_scope = try self.ensureModuleScope(id);
+        self.enclosing = null;
+        self.returning = null;
+        self.current_initializing_var = null;
+        self.block_value_expected = false;
+        self.in_loop_scope = false;
+        self.analyzing = false;
+        return saved;
+    }
+
+    fn leaveModule(self: *SemanticAnalyzer, saved: Context) void {
+        self.current_module = saved.module;
+        self.current_scope = saved.scope;
+        self.enclosing = saved.enclosing;
+        self.returning = saved.returning;
+        self.current_initializing_var = saved.initializing_var;
+        self.block_value_expected = saved.block_value_expected;
+        self.in_loop_scope = saved.in_loop_scope;
+        self.analyzing = saved.analyzing;
+    }
+
+    /// The module scope of `id`: the root of everything declared in that file.
+    /// It has no parent — a record never sees another file's names except
+    /// through its bindings.
+    pub fn moduleScope(self: *const SemanticAnalyzer, id: ModuleId) *Scope {
+        return self.module_scopes.get(id).?;
+    }
+
+    fn ensureModuleScope(self: *SemanticAnalyzer, id: ModuleId) ErrorList!*Scope {
+        if (self.module_scopes.get(id)) |scope| return scope;
+        const scope = try self.memory.scope_manager.createScope(null, self.memory);
+        try self.module_scopes.put(id, scope);
+        return scope;
+    }
+
+    /// The Types stage of an inline `zig` block or a `.zig` file: resolve each
+    /// signature's Doxa types and bind each function in the record's module
+    /// scope, so `Z.fn` and an imported Zig function resolve like any other
+    /// module function. A block resolves `DoxaEnum_X` through its owner's
+    /// bindings; a `.zig` file has no Doxa bindings to resolve through.
+    fn registerZigFunctions(self: *SemanticAnalyzer, record: *ModuleRecord) ErrorList!void {
+        const unit = &record.zig.?;
+        const scope = self.moduleScope(record.id);
+        // Fallible returns resolve to `nothing | <enum>`; the wrapper needs the
+        // enum's variants to synthesize the Zig error set the body returns
+        // against. Their `path` spelling is captured before resolution replaces
+        // `custom_type.written` with the resolved ref.
+        var error_sets = std.array_list.Managed(graph_mod.ZigErrorSet).init(self.allocator);
+        defer error_sets.deinit();
+        for (unit.sigs) |*sig| {
+            const error_path: ?[]const u8 = blk: {
+                if (sig.return_type.base != .Union) break :blk null;
+                for (sig.return_type.union_type.?.types) |member| {
+                    if (member.base != .Enum) continue;
+                    if (member.custom_type) |custom| switch (custom) {
+                        .written => |written| break :blk written,
+                        .ref => {},
+                    };
+                }
+                break :blk null;
+            };
+
+            for (sig.param_types) |*param| try self.resolveZigType(record, param);
+            try self.resolveZigType(record, &sig.return_type);
+
+            if (error_path) |path| {
+                const resolved = try self.zigErrorSetVariants(sig.return_type);
+                var already = false;
+                for (error_sets.items) |seen| {
+                    if (std.mem.eql(u8, seen.path, path)) already = true;
+                }
+                if (!already) try error_sets.append(.{ .path = path, .ref = resolved.ref, .variants = resolved.variants });
+            }
+
+            const return_type = try ast.TypeInfo.createDefault(self.allocator);
+            return_type.* = sig.return_type;
+            const function_type = try self.allocator.create(ast.FunctionType);
+            function_type.* = .{ .params = sig.param_types, .return_type = return_type };
+            const type_info = try ast.TypeInfo.createDefault(self.allocator);
+            type_info.* = .{ .base = .Function, .function_type = function_type, .is_mutable = false };
+            const variable = try scope.createValueBinding(sig.name, TokenLiteral{ .nothing = {} }, .FUNCTION, type_info, true);
+            variable.used = true;
+        }
+        if (error_sets.items.len > 0) unit.error_sets = try error_sets.toOwnedSlice();
+    }
+
+    /// The resolved identity and variant names of the enum member of a fallible
+    /// return, in declaration order — the order a Zig error set's names must
+    /// follow for the generated `name -> discriminant` switch to agree with
+    /// Doxa.
+    fn zigErrorSetVariants(self: *SemanticAnalyzer, return_type: ast.TypeInfo) ErrorList!struct {
+        ref: ast.TypeRef,
+        variants: []const []const u8,
+    } {
+        const enum_member = for (return_type.union_type.?.types) |member| {
+            if (member.base == .Enum) break member;
+        } else return error.UndefinedType;
+
+        const ref = switch (enum_member.custom_type orelse return error.UndefinedType) {
+            .ref => |r| r,
+            .written => return error.UndefinedType,
+        };
+        const id = self.enum_table.idOf(ref) orelse return error.UndefinedType;
+        const variants = self.enum_table.variants(id) orelse return error.UndefinedType;
+
+        const variant_names = try self.allocator.alloc([]const u8, variants.len);
+        for (variants, 0..) |variant, i| variant_names[i] = variant.name;
+        return .{ .ref = ref, .variants = variant_names };
+    }
+
+    fn resolveZigType(self: *SemanticAnalyzer, record: *ModuleRecord, type_info: *ast.TypeInfo) ErrorList!void {
+        const owner = record.owner orelse {
+            if (hasWrittenType(type_info)) {
+                self.reporter.reportCompileError(
+                    record.zig.?.location,
+                    ErrorCode.UNKNOWN_TYPE,
+                    "Zig module '{s}' names a Doxa type; a `.zig` file has no Doxa bindings, so `DoxaEnum_<Name>` is only available in an inline `zig` block",
+                    .{self.graph.moduleName(record.id)},
+                );
+                self.fatal_error = true;
+                return error.UndefinedType;
+            }
+            return;
+        };
+        try names.resolveTypeInfo(self, type_info, owner, record.zig.?.location);
+    }
+
+    fn hasWrittenType(type_info: *const ast.TypeInfo) bool {
+        if (type_info.custom_type) |custom| if (custom == .written) return true;
+        if (type_info.array_type) |element| return hasWrittenType(element);
+        return false;
     }
 
     /// A module namespace (`std`, `std.io`) is a compile-time construct, not a
     /// value, so it cannot be bound to a variable. Detect `const x is std.io`
     /// and report a clear error steering the user toward `import`. Returns true
     /// when a namespace binding was detected and reported.
-    fn reportNamespaceBinding(self: *SemanticAnalyzer, decl: anytype, base: ast.Base) bool {
+    fn reportNamespaceBinding(self: *SemanticAnalyzer, decl: anytype, base: ast.Base) ErrorList!bool {
         const init_expr = decl.initializer orelse return false;
-        const namespace = self.moduleNamespacePathOf(init_expr) orelse return false;
+        const namespace = (try names.namespaceOf(self, init_expr)) orelse return false;
 
         self.reporter.reportCompileError(
             getLocationFromBase(base),
             ErrorCode.MODULE_NAMESPACE_NOT_A_VALUE,
             "Cannot bind module namespace '{s}' to a variable; use 'import {s} from ...' instead",
-            .{ namespace, decl.name.lexeme },
+            .{ self.graph.moduleName(namespace), decl.name.lexeme },
         );
         self.fatal_error = true;
         return true;
     }
 
-    // Helper function to convert SemanticAnalyzer.CustomTypeInfo to TypeSystem.CustomTypeInfo.
-    // Struct field HIR types go through the centralized AST→HIR lowering so that
-    // custom/array/union fields resolve to concrete struct/enum IDs instead of
-    // collapsing to Struct(0)/Unknown. Callers must run this after all
-    // declarations (enums, structs, groups) are registered; see main.zig.
-    pub fn convertCustomTypeInfo(self: *SemanticAnalyzer, semantic_type: CustomTypeInfo, allocator: std.mem.Allocator) !HIRTypeSystem.TypeSystem.CustomTypeInfo {
-        var hir_type = HIRTypeSystem.TypeSystem.CustomTypeInfo{
-            .name = semantic_type.name,
-            .kind = switch (semantic_type.kind) {
-                .Struct => .Struct,
-                .Enum => .Enum,
-                .Group => .Group,
-            },
-            .enum_variants = null,
-            .struct_fields = null,
-            .group_members = null,
-        };
-
-        // Convert enum variants if present
-        if (semantic_type.enum_variants) |variants| {
-            const converted_variants = try allocator.alloc(HIRTypeSystem.TypeSystem.CustomTypeInfo.EnumVariant, variants.len);
-            for (variants, 0..) |variant, i| {
-                converted_variants[i] = .{
-                    .name = variant.name,
-                    .index = variant.index,
-                };
-            }
-            hir_type.enum_variants = converted_variants;
+    /// Build the analyzer-level method table for the struct `ref` declared by
+    /// `sd`. Every method is registered; a private one is module-private and
+    /// rejected at a call site outside its module.
+    fn registerStructMethods(self: *SemanticAnalyzer, sd: *ast.StructDecl, ref: TypeRef) ErrorList!void {
+        var method_table = std.StringHashMap(StructMethodInfo).init(self.allocator);
+        for (sd.methods) |m| {
+            try names.resolveTypeInfo(self, &m.return_type_info, self.current_module, ast.SourceSpan.fromToken(sd.name).location);
+            const return_type = try ast.TypeInfo.createDefault(self.allocator);
+            return_type.* = if (m.return_type_info.base != .Nothing)
+                m.return_type_info
+            else
+                .{ .base = .Nothing, .is_mutable = false };
+            try method_table.put(m.name.lexeme, .{
+                .name = m.name.lexeme,
+                .is_public = m.is_public,
+                .is_static = m.is_static,
+                .signature = try self.methodSignature(m, return_type),
+            });
         }
-
-        // Convert struct fields if present
-        if (semantic_type.struct_fields) |fields| {
-            const converted_fields = try allocator.alloc(HIRTypeSystem.TypeSystem.CustomTypeInfo.StructField, fields.len);
-            for (fields, 0..) |field, i| {
-                const mapped_hir_type = try helpers.lowerAstTypeToHIR(self, field.field_type_info);
-                converted_fields[i] = .{
-                    .name = field.name,
-                    .field_type = mapped_hir_type,
-                    .index = field.index,
-                    .custom_type_name = field.custom_type_name,
-                };
-            }
-            hir_type.struct_fields = converted_fields;
-        }
-
-        if (semantic_type.group_members) |members| {
-            const converted_members = try allocator.alloc(HIRTypeSystem.TypeSystem.CustomTypeInfo.GroupMemberSource, members.len);
-            for (members, 0..) |member, i| {
-                converted_members[i] = .{
-                    .qualifier = member.qualifier,
-                    .source_name = member.source_name,
-                };
-            }
-            hir_type.group_members = converted_members;
-        }
-
-        return hir_type;
+        try self.struct_methods.put(ref, method_table);
     }
 
-    /// Recompute every struct field's HIR type now that all declarations are
-    /// registered. `registerStructType` lowers field types eagerly, before
-    /// referenced structs/enums from other modules are known, which leaves
-    /// Struct(0)/Unknown/Enum(0) placeholders. This pass runs after semantic
-    /// analysis completes and resolves the same field types against the fully
-    /// populated tables via the centralized AST→HIR lowering.
-    pub fn recomputeStructFieldHIRTypes(self: *SemanticAnalyzer) !void {
-        for (self.struct_table.entries.items) |*entry| {
-            for (entry.fields) |*field| {
-                field.hir_type = try helpers.lowerAstTypeToHIR(self, field.type_info);
-                if (helpers.structIdFromTypeInfo(self, field.type_info)) |nested_id| {
-                    field.nested_struct_id = nested_id;
-                } else {
-                    field.nested_struct_id = null;
-                }
-            }
+    /// The method's callable signature: its resolved parameter types and alias
+    /// flags, joined to its return type. An unannotated parameter resolves to
+    /// `Nothing`, which `validateFunctionCallArguments` reads as "accepts
+    /// anything" — the same treatment an unannotated function parameter gets.
+    fn methodSignature(self: *SemanticAnalyzer, m: *ast.StructMethod, return_type: *ast.TypeInfo) ErrorList!*ast.FunctionType {
+        const params = try self.allocator.alloc(ast.TypeInfo, m.params.len);
+        const aliases = try self.allocator.alloc(bool, m.params.len);
+        for (m.params, 0..) |param, i| {
+            aliases[i] = param.is_alias;
+            params[i] = if (param.type_expr) |type_expr| (try self.typeExprToTypeInfo(type_expr)).* else ast.TypeInfo{ .base = .Nothing };
         }
-    }
-
-        /// Register every enum, group, and struct declared in any parsed module, plus
-    /// each public struct's methods.
-    ///
-    /// This has to happen before *any* body is validated, not just before HIR
-    /// lowering. A module body that returns an error group (`io.println` returning
-    /// `error.StdError`) is only checkable once `error.doxa`'s `StdError` group is
-    /// in the group table; validating bodies first makes the group unrecognised and
-    /// the check rejects a perfectly legal signature.
-    pub fn registerMissingTypesFromImportedModules(self: *SemanticAnalyzer) ErrorList!void {
-        const parser_const = self.parser orelse return;
-        const parser: *Parser = @constCast(parser_const);
-        const Registration = struct {
-            fn enumDecl(analyzer: *SemanticAnalyzer, parser_inner: *Parser, ed: anytype) !void {
-                const variants = try parser_inner.allocator.alloc([]const u8, ed.variants.len);
-                for (ed.variants, variants) |v, *name| name.* = v.lexeme;
-                try helpers.registerEnumType(analyzer, ed.name.lexeme, variants);
-            }
-            fn groupDecl(analyzer: *SemanticAnalyzer, gd: anytype) !void {
-                try helpers.registerGroupType(analyzer, gd.name.lexeme, gd.members);
-            }
-            fn structDecl(analyzer: *SemanticAnalyzer, sd: anytype) !void {
-                const field_types = try analyzer.allocator.alloc(ast.StructFieldType, sd.fields.len);
-                for (sd.fields, 0..) |field, i| {
-                    field_types[i] = ast.StructFieldType{
-                        .name = field.name.lexeme,
-                        .type_info = try analyzer.typeExprToTypeInfo(field.type_expr),
-                        .is_public = field.is_public,
-                    };
-                }
-                try helpers.registerStructType(analyzer, sd.name.lexeme, field_types);
-            }
-        };
-
-        // Ensure all lazy module namespaces are loaded so their enum/group/struct
-        // declarations are available as parsed records. (Reachability loading is
-        // done by the resolver; this is the safety net for any namespace registered
-        // after it, e.g. while lowering.)
-        var ns_it = parser.module_namespaces.iterator();
-        while (ns_it.next()) |entry| {
-            if (entry.value_ptr.ast == null) {
-                _ = parser.ensureModuleNamespace(entry.key_ptr.*) catch continue;
-            }
-        }
-
-        // Walk every parsed record. The graph is authoritative; there is no
-        // path-keyed cache, so nothing can be missed by a key mismatch.
-        for (parser.graph.records.items) |record| {
-            const module_info = record.module_info orelse continue;
-            const module_ast = module_info.ast orelse continue;
-            if (module_ast.data != .Block) continue;
-            for (module_ast.data.Block.statements) |stmt| {
-                switch (stmt.data) {
-                    .EnumDecl => |ed| try Registration.enumDecl(self, parser, ed),
-                    .GroupDecl => |gd| try Registration.groupDecl(self, gd),
-                    .Expression => |maybe_expr| {
-                        if (maybe_expr) |expr| {
-                            if (expr.data == .EnumDecl) {
-                                try Registration.enumDecl(self, parser, expr.data.EnumDecl);
-                            } else if (expr.data == .GroupDecl) {
-                                try Registration.groupDecl(self, expr.data.GroupDecl);
-} else if (expr.data == .StructDecl) {
-                            try Registration.structDecl(self, expr.data.StructDecl);
-                            // Remember which module declares it, so a private
-                            // field of this struct stays reachable from the
-                            // module's own functions.
-                            try self.struct_owner_module.put(self.allocator.dupe(u8, expr.data.StructDecl.name.lexeme) catch return error.OutOfMemory, record);
-                                // Register the struct's methods too. Semantic inference
-                                // does this on first use, but a struct referenced only
-                                // from an imported module body never goes through it, so
-                                // its method calls would silently degrade to no-ops.
-                                try self.ensureImportedStructRegistered(expr.data.StructDecl.name.lexeme);
-                            }
-                        }
-                    },
-                    else => {},
-                }
-            }
-        }
-    }
-
-    pub fn analyze(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {
-        const root_scope = try self.memory.scope_manager.createScope(null, self.memory);
-        self.memory.scope_manager.root_scope = root_scope;
-        self.current_scope = root_scope;
-
-        // Process imported symbols to register their methods
-        try self.processImportedSymbols();
-
-        try self.collectDeclarations(statements, root_scope);
-
-        if (self.fatal_error) {
-            return error.SemanticError;
-        }
-
-        self.type_cache.clearRetainingCapacity();
-
-        try self.validateStatements(statements);
-
-        try self.validateImportedModuleBodies(statements);
-
-        try self.reportUnused(root_scope);
-        try self.reportUnusedImports();
-    }
-
-    /// Walk every imported module's top-level statements through declaration
-    /// collection and body validation.
-    ///
-    /// Without this a module's function and method bodies are never checked at
-    /// all: `analyze` sees only the entry unit's statements, and the imported
-    /// passes (`processImportedSymbols`, `registerImportedStruct`, ...) read
-    /// module ASTs purely to register declarations. A type error inside an
-    /// imported function therefore reached codegen unchecked, which is how a
-    /// wrong-arity method call or a bad field reference could compile clean and
-    /// then fault at runtime.
-    ///
-    /// Each module is validated in its own scope parented to the root, so a
-    /// module body resolves the module's own declarations plus everything the
-    /// analyzer's tables know, and never the entry unit's locals. Unused-value
-    /// reporting deliberately stays root-only: a library's private helpers are
-    /// not the importing program's business.
-    fn validateImportedModuleBodies(self: *SemanticAnalyzer, entry_statements: []ast.Stmt) ErrorList!void {
-        const parser = self.parser orelse return;
-        const graph: *const ModuleGraph = parser.graph;
-        const entry_record = parser.owner_record;
-
-        // Every module's enums, groups, and structs must be in the analyzer's
-        // tables before any body is checked: a signature that returns an error
-        // group is only recognizable once the declaring module's group exists.
-        try self.registerMissingTypesFromImportedModules();
-
-        for (graph.records.items) |record| {
-            if (entry_record) |owner| {
-                if (record.id == owner.id) continue;
-            }
-            // Inline-Zig records carry no Doxa body to check.
-            if (record.module_info) |mi| {
-                if (mi.is_inline_zig) continue;
-            }
-            const module_expr = record.ast orelse continue;
-            if (module_expr.data != .Block) continue;
-
-            const module_statements = module_expr.data.Block.statements;
-
-            // A module whose body is literally the entry unit's statement list is
-            // the same code path; validating it twice would double every
-            // diagnostic.
-            if (module_statements.ptr == entry_statements.ptr) continue;
-
-            const module_scope = try self.memory.scope_manager.createScope(self.memory.scope_manager.root_scope, self.memory);
-            try self.module_scopes.put(module_scope, {});
-            self.current_scope = module_scope;
-            self.current_module = record;
-
-            try self.collectDeclarations(module_statements, module_scope);
-            if (self.fatal_error) return error.SemanticError;
-
-            try self.validateStatements(module_statements);
-            if (self.fatal_error) return error.SemanticError;
-
-            self.current_scope = self.memory.scope_manager.root_scope;
-            self.current_module = entry_record;
-        }
-    }
-
-    /// True when code in `self.current_module` may read a private field of the
-    /// struct named `owner_name`.
-    ///
-    /// Private means module-private, so access is legal from the declaring
-    /// module and illegal from any other. A struct whose declaring module was
-    /// never recorded is treated as accessible: the check only fires on positive
-    /// evidence of a cross-module access, so a missing owner can never
-    /// manufacture a false rejection.
-    pub fn canAccessPrivateField(self: *const SemanticAnalyzer, owner_name: []const u8) bool {
-        const owner = self.struct_owner_module.get(owner_name) orelse return true;
-        const current = self.current_module orelse return true;
-        return owner.id == current.id;
+        const signature = try self.allocator.create(ast.FunctionType);
+        signature.* = .{ .params = params, .return_type = return_type, .param_aliases = aliases };
+        return signature;
     }
 
     fn reportUnused(self: *SemanticAnalyzer, scope: *Scope) ErrorList!void {
         if (scope.is_deinited) return;
-        // Imported-module subtrees are validated but not reported on: an unused
-        // private helper in a library is not the importing program's business.
-        if (self.module_scopes.contains(scope)) return;
 
         var it = scope.variables.valueIterator();
         while (it.next()) |variable_ptr| {
@@ -565,7 +629,7 @@ pub const SemanticAnalyzer = struct {
             if (variable.is_alias) continue;
 
             if (variable.type == .FUNCTION) {
-                if (self.parser != null and self.parser.?.entry_point_name != null and std.mem.eql(u8, variable.name, self.parser.?.entry_point_name.?)) continue;
+                if (self.entry_point_name) |entry| if (std.mem.eql(u8, variable.name, entry)) continue;
                 self.reporter.reportWarning(variable.decl_location, ErrorCode.UNUSED_FUNCTION, "unused function '{s}'", .{variable.name});
             } else if (variable.is_param) {
                 self.reporter.reportWarning(variable.decl_location, ErrorCode.UNUSED_PARAMETER, "unused parameter '{s}'", .{variable.name});
@@ -579,648 +643,152 @@ pub const SemanticAnalyzer = struct {
         }
     }
 
-    fn reportUnusedImports(self: *SemanticAnalyzer) ErrorList!void {
-        if (self.parser) |p| {
-            if (p.imported_symbols) |symbols| {
-                var it = symbols.iterator();
-                while (it.next()) |entry| {
-                    const sym = entry.value_ptr.*;
-                    if (!sym.used) {
-                        // Module sub-symbols and zig-block functions use dotted keys
-                        // (e.g. "std.println", "io.hello"). Skip those so only bare
-                        // direct-import names produce a warning.
-                        const i = std.mem.indexOf(u8, entry.key_ptr.*, ".");
-                        if (i) |_| continue;
-                        // TODO: thread the import-site location through `ImportedSymbol`
-                        // so this warning renders with a source snippet. It currently
-                        // carries no token, unlike scope variables.
-                        self.reporter.reportWarning(null, ErrorCode.UNUSED_IMPORT, "unused import '{s}'", .{sym.name});
-                    }
-                }
+    /// An `import` in the entry file whose name is never referenced. Unused
+    /// reporting is a statement about the unit being compiled, so a library's
+    /// imports are not reported.
+    fn reportUnusedImports(self: *SemanticAnalyzer) void {
+        for (self.graph.record(self.entry_module).statements()) |stmt| {
+            if (stmt.data != .Import) continue;
+            const import_info = stmt.data.Import;
+            if (import_info.import_type != .Specific) continue;
+            for (import_info.names) |name| {
+                if (self.used_bindings.contains(.{ .module = self.entry_module, .name = name.lexeme })) continue;
+                self.reporter.reportWarning(ast.SourceSpan.fromToken(name).location, ErrorCode.UNUSED_IMPORT, "unused import '{s}'", .{name.lexeme});
             }
         }
     }
 
-    fn processImportedSymbols(self: *SemanticAnalyzer) ErrorList!void {
-        // Imported names resolve through the owning record's `bindings` /
-        // `public_bindings`, not the compilation scope tree. This pass only
-        // registers the analyzer-level type and method tables an imported type
-        // needs; it creates no scope bindings, so there is no isolated import
-        // scope to contain them.
-        // Register types and methods from parser-imported symbols so cross-module dot-methods work
-        if (self.parser) |p| {
-            // Safely access parser's imported symbols map
-            if (p.imported_symbols) |symbols| {
-                // Pass 1 registers functions, structs, and enums — every type a
-                // group can name as a member. `registerGroupType` resolves its
-                // members eagerly, but `imported_symbols` is a hash map with
-                // unspecified iteration order, so flattening a group in this
-                // same pass can race its member enums/structs and emit a
-                // spurious "Group member ... is not a declared type" whose
-                // presence depends on how many modules happened to be loaded.
-                // Groups are flattened in pass 2 instead.
-                var it = symbols.iterator();
-                while (it.next()) |entry| {
-                    const sym = entry.value_ptr.*;
-                    if (sym.kind == .Group) continue;
-                    switch (sym.kind) {
-                        // Imported functions carry no analyzer-level table entry;
-                        // their signature is resolved on demand from the defining
-                        // record by `lookupVariable`/`handleModuleFieldAccess`.
-                        .Function => {},
-                        .Struct => {
-                            // Locate the declaring module through the graph.
-                            var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
-                            if (p.lookupModuleInfo(sym.original_module)) |mi| {
-                                mod_info = mi;
-                            } else {
-                                continue;
-                            }
-                            if (mod_info) |mi| {
-                                // Process the module's AST to find the struct
-                                if (mi.ast) |module_ast| {
-                                    // The module AST is a block expression containing statements
-                                    if (module_ast.data == .Block) {
-                                        for (module_ast.data.Block.statements) |stmt| {
-                                            switch (stmt.data) {
-                                                .Expression => |expr_opt| {
-                                                    if (expr_opt) |expr| {
-                                                        if (expr.data == .StructDecl) {
-                                                            const sd = expr.data.StructDecl;
-                                                            if (std.mem.eql(u8, sd.name.lexeme, sym.name)) {
-                                                                // Found the struct, register its type and methods
-                                                                const field_types = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
-                                                                for (sd.fields, 0..) |field, i| {
-                                                                    field_types[i] = ast.StructFieldType{
-                                                                        .name = field.name.lexeme,
-                                                                        .type_info = try self.typeExprToTypeInfo(field.type_expr),
-                                                                        .is_public = field.is_public,
-                                                                    };
-                                                                }
-                                                                try helpers.registerStructType(self, sd.name.lexeme, field_types);
-                                                                try self.registerStructMethods(sd, .public_only);
-                                                            }
-                                                        }
-                                                    }
-                                                },
-                                                .EnumDecl => |ed| {
-                                                    if (std.mem.eql(u8, ed.name.lexeme, sym.name)) {
-                                                        const variants = try self.allocator.alloc([]const u8, ed.variants.len);
-                                                        for (ed.variants, variants) |v, *name| name.* = v.lexeme;
-                                                        try helpers.registerEnumType(self, ed.name.lexeme, variants);
-                                                    }
-                                                },
-                                                else => {},
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        .Enum => {
-                            // Handle enum imports - need to find the enum declaration and register it
-                            var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
-                            if (p.lookupModuleInfo(sym.original_module)) |mi| {
-                                mod_info = mi;
-                            } else {
-                                continue;
-                            }
-                            if (mod_info) |mi| {
-                                // Process the module's AST to find the enum
-                                if (mi.ast) |module_ast| {
-                                    if (module_ast.data == .Block) {
-                                        for (module_ast.data.Block.statements) |stmt| {
-                                            switch (stmt.data) {
-                                                .EnumDecl => |ed| {
-                                                    if (std.mem.eql(u8, ed.name.lexeme, sym.name)) {
-                                                        const variants = try self.allocator.alloc([]const u8, ed.variants.len);
-                                                        for (ed.variants, variants) |v, *name| name.* = v.lexeme;
-                                                        try helpers.registerEnumType(self, ed.name.lexeme, variants);
-                                                    }
-                                                },
-                                                .Expression => |expr_opt| {
-                                                    if (expr_opt) |expr| {
-                                                        if (expr.data == .EnumDecl) {
-                                                            const ed = expr.data.EnumDecl;
-                                                            if (std.mem.eql(u8, ed.name.lexeme, sym.name)) {
-                                                                // Found the enum, register its variants
-                                                                const variants = try self.allocator.alloc([]const u8, ed.variants.len);
-                                                                for (ed.variants, variants) |v, *name| name.* = v.lexeme;
-                                                                try helpers.registerEnumType(self, ed.name.lexeme, variants);
-                                                            }
-                                                        }
-                                                    }
-                                                },
-                                                else => {},
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        },
-                        else => {},
-                    }
-                }
-
-                // Pass 2: flatten groups now that every member type in pass 1
-                // has been registered.
-                var group_it = symbols.iterator();
-                while (group_it.next()) |entry| {
-                    const sym = entry.value_ptr.*;
-                    if (sym.kind != .Group) continue;
-
-                    var mod_info: ?@import("../../ast/ast.zig").ModuleInfo = null;
-                    if (p.lookupModuleInfo(sym.original_module)) |mi| {
-                        mod_info = mi;
-                    } else {
-                        continue;
-                    }
-                    if (mod_info) |mi| {
-                        if (mi.ast) |module_ast| {
-                            if (module_ast.data == .Block) {
-                                for (module_ast.data.Block.statements) |stmt| {
-                                    switch (stmt.data) {
-                                        .GroupDecl => |gd| {
-                                            if (std.mem.eql(u8, gd.name.lexeme, sym.name)) {
-                                                try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
-                                            }
-                                        },
-                                        else => {},
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Eagerly register public structs from every imported module namespace so
-            // that module-qualified access (e.g. `rl.RGBA`) resolves its type and that
-            // static/instance methods (e.g. `rl.RGBA.new(...)`) can be dispatched. The
-            // imported-symbols pass above only covers direct symbol imports; namespace
-            // imports reach their structs through `module_namespaces`, the authoritative
-            // map whose ASTs are guaranteed populated (the HIR generator relies on it too).
-            var ns_it = p.module_namespaces.iterator();
-            while (ns_it.next()) |entry| {
-                const module_info = entry.value_ptr.*;
-                const module_ast = module_info.ast orelse continue;
-                if (module_ast.data != .Block) continue;
-                for (module_ast.data.Block.statements) |mod_stmt| {
-                    if (mod_stmt.data != .Expression) continue;
-                    const mod_expr = mod_stmt.data.Expression orelse continue;
-                    if (mod_expr.data != .StructDecl) continue;
-                    const sd = mod_expr.data.StructDecl;
-                    if (!sd.is_public) continue;
-                    try self.registerImportedStruct(sd);
-                }
-            }
-
-            // Enums and groups have no equivalent of the struct pass's fallback.
-            // Scan `module_namespaces`, the authoritative propagated map, so
-            // every imported module's public enums register. Enums are
-            // registered before groups so every group member exists when the
-            // group is flattened.
-            var enum_ns_it = p.module_namespaces.iterator();
-            while (enum_ns_it.next()) |entry| {
-                const module_info = entry.value_ptr.*;
-                const module_ast = module_info.ast orelse continue;
-                if (module_ast.data != .Block) continue;
-                for (module_ast.data.Block.statements) |mod_stmt| {
-                    switch (mod_stmt.data) {
-                        .EnumDecl => |ed| {
-                            if (ed.is_public) _ = try self.ensureEnumRegistered(ed);
-                        },
-                        .Expression => |maybe_expr| {
-                            const mod_expr = maybe_expr orelse continue;
-                            if (mod_expr.data == .EnumDecl) {
-                                const ed = mod_expr.data.EnumDecl;
-                                if (ed.is_public) _ = try self.ensureEnumRegistered(ed);
-                            }
-                        },
-                        else => {},
-                    }
-                }
-            }
-            var group_ns_it = p.module_namespaces.iterator();
-            while (group_ns_it.next()) |entry| {
-                const module_info = entry.value_ptr.*;
-                const module_ast = module_info.ast orelse continue;
-                if (module_ast.data != .Block) continue;
-                for (module_ast.data.Block.statements) |mod_stmt| {
-                    switch (mod_stmt.data) {
-                        .GroupDecl => |gd| {
-                            if (gd.is_public) try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
-                        },
-                        .Expression => |maybe_expr| {
-                            const mod_expr = maybe_expr orelse continue;
-                            if (mod_expr.data == .GroupDecl) {
-                                const gd = mod_expr.data.GroupDecl;
-                                if (gd.is_public) try helpers.registerGroupType(self, gd.name.lexeme, gd.members);
-                            }
-                        },
-                        else => {},
-                    }
-                }
-            }
-        }
-    }
-
-    /// Register an imported public struct's type and public methods (static and
-    /// instance) under its bare name, idempotently. No scope binding is created:
-    /// imported structs are reached through module-qualified access, not bare names.
-    fn registerImportedStruct(self: *SemanticAnalyzer, sd: ast.StructDecl) ErrorList!void {
-        const field_types = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
-        for (sd.fields, 0..) |field, i| {
-            field_types[i] = ast.StructFieldType{
-                .name = field.name.lexeme,
-                .type_info = try self.typeExprToTypeInfo(field.type_expr),
-                .is_public = field.is_public,
-            };
-        }
-        try helpers.registerStructType(self, sd.name.lexeme, field_types);
-        try self.registerStructMethods(sd, .public_only);
-    }
-
-    /// Build the analyzer-level method table for `sd` and merge it into
-    /// `struct_methods`, replacing any entry of the same name. Every registration
-    /// site funnels through here so a method's recorded signature cannot drift
-    /// between the passes that discover it.
-    fn registerStructMethods(self: *SemanticAnalyzer, sd: ast.StructDecl, mode: MethodVisibility) ErrorList!void {
-        var method_table = std.StringHashMap(@This().StructMethodInfo).init(self.allocator);
-        for (sd.methods) |m| {
-            if (mode == .public_only and !m.is_public) continue;
-            const return_type = try ast.TypeInfo.createDefault(self.allocator);
-            return_type.* = if (m.return_type_info.base != .Nothing)
-                try self.resolveTypeInfo(m.return_type_info)
-            else
-                .{ .base = .Nothing, .is_mutable = false };
-            _ = try method_table.put(m.name.lexeme, .{
-                .name = m.name.lexeme,
-                .is_public = m.is_public,
-                .is_static = m.is_static,
-                .signature = try self.methodSignature(m, return_type),
-            });
-        }
-        if (self.struct_methods.getPtr(sd.name.lexeme)) |existing| {
-            var it = method_table.iterator();
-            while (it.next()) |entry| {
-                try existing.put(entry.key_ptr.*, entry.value_ptr.*);
-            }
-            method_table.deinit();
-        } else {
-            try self.struct_methods.put(sd.name.lexeme, method_table);
-        }
-    }
-
-    /// The method's callable signature: its parameter types and alias flags,
-    /// joined to the return type the method table already resolved. An
-    /// unannotated parameter resolves to `Nothing`, which
-    /// `validateFunctionCallArguments` reads as "accepts anything" — the same
-    /// treatment an unannotated function parameter gets.
-    fn methodSignature(self: *SemanticAnalyzer, m: *ast.StructMethod, return_type: *ast.TypeInfo) ErrorList!*ast.FunctionType {
-        const params = try self.allocator.alloc(ast.TypeInfo, m.params.len);
-        const aliases = try self.allocator.alloc(bool, m.params.len);
-        for (m.params, 0..) |param, i| {
-            aliases[i] = param.is_alias;
-            params[i] = if (param.type_expr) |type_expr| blk: {
-                const resolved = try self.typeExprToTypeInfo(type_expr);
-                defer self.allocator.destroy(resolved);
-                break :blk resolved.*;
-            } else ast.TypeInfo{ .base = .Nothing };
-        }
-        const signature = try self.allocator.create(ast.FunctionType);
-        signature.* = .{ .params = params, .return_type = return_type, .param_aliases = aliases };
-        return signature;
-    }
-
-    /// Lazy module namespaces may be loaded after the initial imported-struct
-    /// registration pass. Resolve their public struct methods on first use so
-    /// module-returned values (for example `std.http.get()`'s `Response`) have
-    /// the same method surface as eagerly imported structs.
-    pub fn ensureImportedStructRegistered(self: *SemanticAnalyzer, name: []const u8) ErrorList!void {
-        if (self.struct_methods.contains(name)) return;
-        const parser = self.parser orelse return;
-        var module_it = parser.module_namespaces.iterator();
-        while (module_it.next()) |entry| {
-            const module_ast = entry.value_ptr.ast orelse continue;
-            if (module_ast.data != .Block) continue;
-            for (module_ast.data.Block.statements) |stmt| {
-                if (stmt.data != .Expression) continue;
-                const expr = stmt.data.Expression orelse continue;
-                if (expr.data != .StructDecl) continue;
-                const sd = expr.data.StructDecl;
-                if (!sd.is_public or !std.mem.eql(u8, sd.name.lexeme, name)) continue;
-                try self.registerImportedStruct(sd);
-                return;
-            }
-        }
-    }
-
-    /// A type annotation can name a module that was never loaded — a re-export
-    /// hub's submodule referenced only from a type position
-    /// (`std.http.ServerRequest`). Such a module is normally materialized only
-    /// on a value access, so without this the annotated declaration is checked
-    /// against a struct whose methods and fields were never registered.
-    fn materializeTypeExprModules(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) void {
-        switch (type_expr.data) {
-            .Custom => |custom| _ = self.materializeQualifiedTypeName(custom.lexeme),
-            .Array => |array| self.materializeTypeExprModules(array.element_type),
-            .Union => |types| for (types) |t| self.materializeTypeExprModules(t),
-            .Map => |map| {
-                if (map.key_type) |k| self.materializeTypeExprModules(k);
-                self.materializeTypeExprModules(map.value_type);
-            },
-            .Struct => |fields| for (fields) |f| self.materializeTypeExprModules(f.type_expr),
-            .Basic, .Enum => {},
-        }
-    }
-
-    /// Materialize the module named by a possibly-qualified type reference and
-    /// register the public type it names, returning the bare type name. A bare
-    /// name is returned unchanged.
-    pub fn materializeQualifiedTypeName(self: *SemanticAnalyzer, qualified: []const u8) []const u8 {
-        const dot = std.mem.lastIndexOfScalar(u8, qualified, '.') orelse return qualified;
-        self.materializeNamespacePath(qualified[0..dot]);
-        self.registerNamedType(qualified[dot + 1 ..]);
-        return qualified[dot + 1 ..];
-    }
-
-    /// Ensure each dotted segment of a module path is loaded (`std.http` loads
-    /// `std`, then `std.http`).
-    fn materializeNamespacePath(self: *SemanticAnalyzer, path: []const u8) void {
-        const parser_const = self.parser orelse return;
-        const parser: *Parser = @constCast(parser_const);
-
-        var idx: usize = 0;
-        while (idx < path.len) {
-            const dot = std.mem.indexOfScalarPos(u8, path, idx, '.') orelse path.len;
-            const segment = path[idx..dot];
-            if (idx == 0) {
-                _ = parser.ensureModuleNamespace(segment) catch {};
-            } else {
-                _ = parser.ensureNestedModuleNamespace(path[0 .. idx - 1], segment) catch {};
-            }
-            idx = dot + 1;
-        }
-    }
-
-    /// Register the public struct/enum/group named `bare` from whatever module
-    /// is now loaded, so its methods and fields are available. Every loaded
-    /// module's public enums are registered first: a group can only be
-    /// flattened once each of its member enums exists in `custom_types`.
-    fn registerNamedType(self: *SemanticAnalyzer, bare: []const u8) void {
-        self.ensureImportedStructRegistered(bare) catch {};
-
-        const parser = self.parser orelse return;
-        var it = parser.module_namespaces.iterator();
-        while (it.next()) |entry| {
-            const module_ast = entry.value_ptr.ast orelse continue;
-            if (module_ast.data != .Block) continue;
-            for (module_ast.data.Block.statements) |stmt| {
-                switch (stmt.data) {
-                    .EnumDecl => |ed| {
-                        if (ed.is_public) _ = self.ensureEnumRegistered(ed) catch {};
-                    },
-                    .Expression => |maybe_expr| {
-                        const e = maybe_expr orelse continue;
-                        if (e.data == .EnumDecl) {
-                            const ed = e.data.EnumDecl;
-                            if (ed.is_public) _ = self.ensureEnumRegistered(ed) catch {};
-                        }
-                    },
-                    else => {},
-                }
-            }
-        }
-
-        var group_it = parser.module_namespaces.iterator();
-        while (group_it.next()) |entry| {
-            const module_ast = entry.value_ptr.ast orelse continue;
-            if (module_ast.data != .Block) continue;
-            for (module_ast.data.Block.statements) |stmt| {
-                switch (stmt.data) {
-                    .GroupDecl => |gd| {
-                        if (gd.is_public and std.mem.eql(u8, gd.name.lexeme, bare)) {
-                            helpers.registerGroupType(self, gd.name.lexeme, gd.members) catch {};
-                        }
-                    },
-                    .Expression => |maybe_expr| {
-                        const e = maybe_expr orelse continue;
-                        if (e.data == .GroupDecl) {
-                            const gd = e.data.GroupDecl;
-                            if (gd.is_public and std.mem.eql(u8, gd.name.lexeme, bare)) {
-                                helpers.registerGroupType(self, gd.name.lexeme, gd.members) catch {};
-                            }
-                        }
-                    },
-                    else => {},
-                }
-            }
-        }
-    }
-
+    /// Register the declarations of `statements` in `scope`.
+    ///
+    /// At a record's top level (its module scope) this is the record's Types
+    /// stage: types are registered by `TypeRef` first, so every signature and
+    /// initializer can name them; then functions with their resolved
+    /// signatures, so calls see them before their bodies are checked; then
+    /// globals in order. A nested block registers its locals the same way. A
+    /// type is declared only at file scope: elsewhere it would have no binding,
+    /// and two blocks declaring the same name would share one identity.
     fn collectDeclarations(self: *SemanticAnalyzer, statements: []ast.Stmt, scope: *Scope) ErrorList!void {
-        // Pre-pass A: pre-register local custom type declarations in custom_types so parameter
-        // type annotations referring to these types (including alias params) can be validated.
-        for (statements) |stmt| {
-            switch (stmt.data) {
-                .Expression => {
-                    if (stmt.data.Expression) |expr| {
-                        switch (expr.data) {
-                            .StructDecl => {
-                                const struct_decl = expr.data.StructDecl;
+        const at_file_scope = scope == self.moduleScope(self.current_module);
 
-                                // Lower field types from AST and register as a custom type
-                                const struct_fields = try self.allocator.alloc(ast.StructFieldType, struct_decl.fields.len);
-                                for (struct_decl.fields, struct_fields) |field, *sf| {
-                                    self.materializeTypeExprModules(field.type_expr);
-                                    const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
-                                    sf.* = .{ .name = field.name.lexeme, .type_info = field_type_info, .is_public = field.is_public };
-                                }
-                                // Register only in custom_types (avoid scope insertion here to prevent duplicates)
-                                try helpers.registerStructType(self, struct_decl.name.lexeme, struct_fields);
-                            },
-                            .EnumDecl => {
-                                const enum_decl = expr.data.EnumDecl;
-                                const variants = try self.allocator.alloc([]const u8, enum_decl.variants.len);
-                                for (enum_decl.variants, variants) |variant, *name| {
-                                    name.* = variant.lexeme;
-                                }
-                                try helpers.registerEnumType(self, enum_decl.name.lexeme, variants);
-                            },
-                            .GroupDecl => {
-                                const group_decl = expr.data.GroupDecl;
-                                try helpers.registerGroupType(self, group_decl.name.lexeme, group_decl.members);
-                            },
-                            else => {},
-                        }
-                    }
+        // Types: structs and enums first, then groups, which flatten their
+        // member types.
+        for (statements) |*stmt| {
+            switch (stmt.data) {
+                .Expression => |maybe_expr| if (maybe_expr) |expr| switch (expr.data) {
+                    .StructDecl => |*decl| try self.declareStruct(decl, scope, at_file_scope, stmt.base),
+                    .EnumDecl => |*decl| try self.declareEnum(decl, scope, at_file_scope, stmt.base),
+                    else => {},
                 },
-                .EnumDecl => |enum_decl| {
-                    const variants = try self.allocator.alloc([]const u8, enum_decl.variants.len);
-                    for (enum_decl.variants, variants) |variant, *name| {
-                        name.* = variant.lexeme;
-                    }
-                    try helpers.registerEnumType(self, enum_decl.name.lexeme, variants);
-                },
-                .GroupDecl => |group_decl| {
-                    try helpers.registerGroupType(self, group_decl.name.lexeme, group_decl.members);
-                },
+                .EnumDecl => |*decl| try self.declareEnum(decl, scope, at_file_scope, stmt.base),
                 else => {},
             }
         }
+        for (statements) |*stmt| {
+            const decl = switch (stmt.data) {
+                .GroupDecl => |*decl| decl,
+                .Expression => |maybe_expr| blk: {
+                    const expr = maybe_expr orelse continue;
+                    if (expr.data != .GroupDecl) continue;
+                    break :blk &expr.data.GroupDecl;
+                },
+                else => continue,
+            };
+            if (!at_file_scope) {
+                try self.reportNestedTypeDeclaration(decl.name, stmt.base);
+                continue;
+            }
+            try helpers.registerGroupType(self, .{ .module = self.current_module, .name = decl.name.lexeme }, decl.members);
+        }
 
-        // First pass: pre-register all function declarations so calls can see them
-        for (statements) |stmt| {
-            switch (stmt.data) {
-                .FunctionDecl => |func| {
-                    // Build parameter types and track aliases FIRST
-                    var param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
-                    var param_aliases = try self.allocator.alloc(bool, func.params.len);
-                    for (func.params, 0..) |param, i| {
-                        param_aliases[i] = param.is_alias;
-                        if (param.type_expr) |type_expr| {
-                            self.materializeTypeExprModules(type_expr);
-                            const param_type_ptr = try ast.typeInfoFromExpr(self.allocator, type_expr);
-                            defer self.allocator.destroy(param_type_ptr);
+        // Functions, with resolved signatures, before any body or initializer
+        // can call them.
+        for (statements) |*stmt| {
+            if (stmt.data != .FunctionDecl) continue;
+            const func = &stmt.data.FunctionDecl;
+            const location = getLocationFromBase(stmt.base);
 
-                            // For explicit parameter types, use the declared type directly
-                            // Don't call resolveTypeInfo which might trigger type inference
-                            param_types[i] = param_type_ptr.*;
-
-                            // Semantic validation for alias parameter types (caught early)
-                            if (param.is_alias) {
-                                const base = param_types[i].base;
-                                const loc = getLocationFromBase(stmt.base);
-                                const is_disallowed = switch (base) {
-                                    .Map, .Function, .Struct, .Enum => true,
-                                    // Arrays are allowed as they're perfect candidates for aliasing (avoid copying)
-                                    // Unions are allowed so alias parameters can accept type-narrowed values via match
-                                    else => false,
-                                };
-                                if (is_disallowed) {
-                                    self.reporter.reportCompileError(
-                                        loc,
-                                        ErrorCode.INVALID_ALIAS_PARAMETER,
-                                        "Alias parameter '{s}' cannot have type {s}; use a named custom type (e.g., Person) or a primitive",
-                                        .{ param.name.lexeme, @tagName(base) },
-                                    );
-                                    self.fatal_error = true;
-                                } else if (base == .Custom) {
-                                    if (param_types[i].custom_type) |ct_name| {
-                                        if (!self.custom_types.contains(ct_name)) {
-                                            self.reporter.reportCompileError(
-                                                loc,
-                                                ErrorCode.UNKNOWN_TYPE,
-                                                "Unknown alias type '{s}' for parameter '{s}'",
-                                                .{ ct_name, param.name.lexeme },
-                                            );
-                                            self.fatal_error = true;
-                                        }
-                                    } else {
-                                        self.reporter.reportCompileError(
-                                            loc,
-                                            ErrorCode.INVALID_ALIAS_PARAMETER,
-                                            "Alias parameter '{s}' must use a concrete type name",
-                                            .{param.name.lexeme},
-                                        );
-                                        self.fatal_error = true;
-                                    }
-                                }
-                            }
-                        } else {
-                            // No explicit type provided
-                            param_types[i] = .{ .base = .Nothing };
-                            if (param.is_alias) {
-                                const loc = getLocationFromBase(stmt.base);
-                                self.reporter.reportCompileError(
-                                    loc,
-                                    ErrorCode.ALIAS_PARAMETER_REQUIRED,
-                                    "Alias parameter '{s}' requires an explicit type annotation",
-                                    .{param.name.lexeme},
-                                );
-                                self.fatal_error = true;
-                            }
-                        }
-                    }
-
-                    // Create function type with placeholder return type
-                    const func_type = try self.allocator.create(ast.FunctionType);
-                    func_type.* = .{
-                        .params = param_types,
-                        .return_type = try ast.TypeInfo.createDefault(self.allocator),
-                        .param_aliases = param_aliases,
-                    };
-                    func_type.return_type.* = func.return_type_info; // Use declared type if available
-
-                    // Add function to current scope BEFORE inferring return type (for recursive calls).
-                    // Local-only lookup: a binding of the same name in an ancestor
-                    // scope is a different declaration that this one shadows, not
-                    // a duplicate. The ancestor-walking lookup would let an
-                    // enclosing scope suppress this registration, and the
-                    // function's own body would then resolve the name to the
-                    // outer binding instead.
-                    if (scope.lookupLocalVariable(func.name.lexeme) == null) {
-                        const func_type_info = try ast.TypeInfo.createDefault(self.allocator);
-                        func_type_info.* = .{ .base = .Function, .function_type = func_type };
-
-                        var env = Environment.init(
-                            self.allocator,
-                            null,
-                            false,
-                            self.memory,
+            const param_types = try self.allocator.alloc(ast.TypeInfo, func.params.len);
+            const param_aliases = try self.allocator.alloc(bool, func.params.len);
+            for (func.params, 0..) |param, i| {
+                param_aliases[i] = param.is_alias;
+                if (param.type_expr) |type_expr| {
+                    param_types[i] = (try self.typeExprToTypeInfo(type_expr)).*;
+                    if (param.is_alias) try self.checkAliasParameterType(param, param_types[i], location);
+                } else {
+                    param_types[i] = .{ .base = .Nothing };
+                    if (param.is_alias) {
+                        self.reporter.reportCompileError(
+                            location,
+                            ErrorCode.ALIAS_PARAMETER_REQUIRED,
+                            "Alias parameter '{s}' requires an explicit type annotation",
+                            .{param.name.lexeme},
                         );
-                        if (scope.createValueBinding(
-                            func.name.lexeme,
-                            TokenLiteral{ .function = .{ .params = func.params, .body = func.body, .closure = &env, .defining_module = null } },
-                            .FUNCTION,
-                            func_type_info,
-                            true,
-                        )) |func_var| {
-                            func_var.recordDeclLocation(func.name);
-                        } else |err| {
-                            if (err != error.DuplicateVariableName) {
-                                // Duplicates in the pre-pass are reported later, once.
-                                return err;
-                            }
-                        }
+                        self.fatal_error = true;
                     }
-                },
-                else => {},
+                }
+            }
+            try names.resolveTypeInfo(self, &func.return_type_info, self.current_module, location);
+
+            const func_type = try self.allocator.create(ast.FunctionType);
+            func_type.* = .{
+                .params = param_types,
+                .return_type = try ast.TypeInfo.createDefault(self.allocator),
+                .param_aliases = param_aliases,
+            };
+            func_type.return_type.* = func.return_type_info;
+
+            // Local-only lookup: a binding of the same name in an ancestor
+            // scope is a shadowing error, not this scope's duplicate.
+            if (scope.lookupLocalVariable(func.name.lexeme) != null) continue;
+            self.checkFreshName(scope, func.name);
+            const func_type_info = try ast.TypeInfo.createDefault(self.allocator);
+            func_type_info.* = .{ .base = .Function, .function_type = func_type };
+            // A function binding carries its type; its value is its
+            // declaration, which codegen reads from the AST.
+            if (scope.createValueBinding(
+                func.name.lexeme,
+                TokenLiteral{ .nothing = {} },
+                .FUNCTION,
+                func_type_info,
+                true,
+            )) |func_var| {
+                func_var.recordDeclLocation(func.name);
+            } else |err| {
+                // Duplicates in a nested scope are reported where the scope is
+                // validated; at file scope the loader already rejected them.
+                if (err != error.DuplicateVariableName) return err;
             }
         }
 
-        for (statements, 0..) |stmt, i| {
+        for (statements, 0..) |*stmt, i| {
             switch (stmt.data) {
                 .VarDecl => |decl| {
                     // A module namespace is not a value and cannot be bound to a variable.
-                    if (self.reportNamespaceBinding(decl, stmt.base)) continue;
+                    if (try self.reportNamespaceBinding(decl, stmt.base)) continue;
+                    const location = getLocationFromBase(stmt.base);
 
-                    // Create TypeInfo
+                    // An initializer is a value position, exactly as when the
+                    // declaration is validated: its type is cached here.
+                    const prev_bve = self.block_value_expected;
+                    self.block_value_expected = decl.initializer != null;
+                    defer self.block_value_expected = prev_bve;
+
                     const type_info = try ast.TypeInfo.createDefault(self.allocator);
                     errdefer self.allocator.destroy(type_info);
 
-                    // Check if we have an explicit type annotation
                     if (decl.type_info.base != .Nothing) {
-                        // If parser provided an incomplete array type (no element), prefer inferring from initializer if present
-                        if (decl.type_info.base == .Array and decl.type_info.array_type == null) {
-                            if (decl.initializer) |init_expr| {
-                                const inferred = try infer_type.inferTypeFromExpr(self, init_expr);
-                                type_info.* = inferred.*;
-                            } else {
-                                // Use explicit type, but resolve custom types
-                                type_info.* = try self.resolveTypeInfo(decl.type_info);
-                                if (decl.type_expr) |type_expr| {
-                                    try self.resolveArraySizes(type_info, type_expr);
-                                    if (type_info.base == .Array) {
-                                        statements[i].data.VarDecl.type_info.array_size = type_info.array_size;
-                                        statements[i].data.VarDecl.type_info.array_storage = type_info.array_storage;
-                                    }
-                                }
-                            }
+                        // The annotation is resolved where it lives, so codegen
+                        // reads the declared type's identity off the AST.
+                        try names.resolveTypeInfo(self, &statements[i].data.VarDecl.type_info, self.current_module, location);
+                        if (decl.type_expr) |type_expr| try names.resolveTypeExpr(self, type_expr, self.current_module);
+                        const declared = statements[i].data.VarDecl.type_info;
+
+                        // An incomplete array annotation (no element type) is
+                        // completed from the initializer when there is one.
+                        if (declared.base == .Array and declared.array_type == null and decl.initializer != null) {
+                            type_info.* = (try infer_type.inferTypeFromExpr(self, decl.initializer.?)).*;
                         } else {
-                            // Use explicit type, but resolve custom types
-                            type_info.* = try self.resolveTypeInfo(decl.type_info);
+                            type_info.* = declared;
                             if (decl.type_expr) |type_expr| {
                                 try self.resolveArraySizes(type_info, type_expr);
                                 if (type_info.base == .Array) {
@@ -1232,15 +800,12 @@ pub const SemanticAnalyzer = struct {
                         // Preserve mutability from the variable declaration (var vs const)
                         type_info.is_mutable = decl.type_info.is_mutable;
                     } else if (decl.initializer) |init_expr| {
-                        // Infer from initializer
                         const inferred = try infer_type.inferTypeFromExpr(self, init_expr);
                         // Deep copy the inferred type to avoid dangling internal pointers
                         type_info.* = try self.deepCopyTypeInfo(inferred.*);
                         // Preserve the mutability from the variable declaration, not from the initializer
                         type_info.is_mutable = decl.type_info.is_mutable;
                     } else {
-                        // No type annotation and no initializer - this is invalid
-                        const location = getLocationFromBase(stmt.base);
                         self.reporter.reportCompileError(
                             location,
                             ErrorCode.VARIABLE_DECLARATION_MISSING_ANNOTATION,
@@ -1254,7 +819,7 @@ pub const SemanticAnalyzer = struct {
                     if (decl.initializer) |init_expr| {
                         if (isEmptyArrayLiteral(init_expr) and type_info.base == .Array and type_info.array_type == null) {
                             self.reporter.reportCompileError(
-                                getLocationFromBase(stmt.base),
+                                location,
                                 ErrorCode.CANNOT_INFER_ARRAY_ELEMENT_TYPE,
                                 "cannot infer element type of empty array literal; add an element type annotation (e.g. `int[]`)",
                                 .{},
@@ -1265,7 +830,6 @@ pub const SemanticAnalyzer = struct {
                         self.tryTagConstLiteralArray(type_info, init_expr);
                     }
 
-                    // Convert TypeInfo to TokenType
                     const token_type = eval.convertTypeToTokenType(type_info.base);
 
                     // Get the actual value from initializer or use default for uninitialized variables
@@ -1274,38 +838,17 @@ pub const SemanticAnalyzer = struct {
                         value = try self.evaluateExpression(init_expr);
                     } else {
                         if (self.isEnumTypeRequiringInitializer(type_info)) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(stmt.base),
-                                ErrorCode.ENUM_REQUIRES_INITIALIZER,
-                                "Enum variables must be initialized",
-                                .{},
-                            );
+                            self.reporter.reportCompileError(location, ErrorCode.ENUM_REQUIRES_INITIALIZER, "Enum variables must be initialized", .{});
                             self.fatal_error = true;
                             continue;
                         }
-
-                        // Only use defaults for uninitialized variables
-                        value = switch (type_info.base) {
-                            .Int => TokenLiteral{ .int = 0 },
-                            .Float => TokenLiteral{ .float = 0.0 },
-                            .String => TokenLiteral{ .string = "" },
-                            .Tetra => TokenLiteral{ .tetra = .false },
-                            .Byte => TokenLiteral{ .byte = 0 },
-                            .Array => TokenLiteral{ .array = &.{} },
-                            .Union => if (type_info.union_type) |ut| union_handling.getUnionDefaultValue(ut) else TokenLiteral{ .nothing = {} },
-                            else => TokenLiteral{ .nothing = {} },
-                        };
+                        value = defaultValue(type_info);
                     }
 
                     // Convert value to match the declared type
                     value = eval.convertValueToTypeInfo(self.allocator, value, type_info) catch |err| switch (err) {
                         error.byteOverflow, error.byteUnderflow => {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(stmt.base),
-                                ErrorCode.BYTE_VALUE_OUT_OF_RANGE,
-                                "byte value out of range (must be 0-255)",
-                                .{},
-                            );
+                            self.reporter.reportCompileError(location, ErrorCode.BYTE_VALUE_OUT_OF_RANGE, "byte value out of range (must be 0-255)", .{});
                             self.fatal_error = true;
                             continue;
                         },
@@ -1314,16 +857,12 @@ pub const SemanticAnalyzer = struct {
 
                     // ENFORCE: nothing types must be const (unless they have an initializer)
                     if (type_info.base == .Nothing and type_info.is_mutable and decl.initializer == null) {
-                        self.reporter.reportCompileError(
-                            getLocationFromBase(stmt.base),
-                            ErrorCode.NOTHING_TYPE_MUST_BE_CONST,
-                            "Nothing type variables must be declared as 'const'",
-                            .{},
-                        );
+                        self.reporter.reportCompileError(location, ErrorCode.NOTHING_TYPE_MUST_BE_CONST, "Nothing type variables must be declared as 'const'", .{});
                         self.fatal_error = true;
                         continue;
                     }
 
+                    self.checkFreshName(scope, decl.name);
                     const binding = if (decl.type_expr == null)
                         scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
                     else
@@ -1331,175 +870,187 @@ pub const SemanticAnalyzer = struct {
                     if (binding) |declared| {
                         declared.recordDeclLocation(decl.name);
                     } else |err| {
-                        if (err == error.DuplicateVariableName) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(stmt.base),
-                                ErrorCode.DUPLICATE_VARIABLE,
-                                "Duplicate variable name '{s}' in current scope",
-                                .{decl.name.lexeme},
-                            );
-                            self.fatal_error = true;
-                            continue;
-                        } else {
-                            return err;
-                        }
+                        if (err != error.DuplicateVariableName) return err;
+                        self.reporter.reportCompileError(location, ErrorCode.DUPLICATE_VARIABLE, "Duplicate variable name '{s}' in current scope", .{decl.name.lexeme});
+                        self.fatal_error = true;
+                        continue;
+                    }
+                    if (at_file_scope) {
+                        try self.recordGlobalSite(.{
+                            .symbol = .{
+                                .module = self.current_module,
+                                .name = decl.name.lexeme,
+                                .kind = if (decl.type_info.is_mutable) .Variable else .Constant,
+                            },
+                            .place = .{ .name = &statements[i].data.VarDecl.name },
+                        });
                     }
                 },
-                .Block => |block_stmts| {
-                    const block_scope = try self.memory.scope_manager.createScope(scope, self.memory);
-                    try self.collectDeclarations(block_stmts, block_scope);
-                    block_scope.deinit();
-                },
-                .FunctionDecl => {
-                    // Already registered in pre-pass. Validation will occur later.
-                },
-                .EnumDecl => |enum_decl| {
-                    // Register the enum type in the current scope
-                    const enum_type_info = try ast.TypeInfo.createDefault(self.allocator);
-                    enum_type_info.* = .{ .base = .Custom, .custom_type = enum_decl.name.lexeme, .is_mutable = false };
-
-                    // Create a placeholder value for the enum type
-                    const enum_value = TokenLiteral{ .string = enum_decl.name.lexeme };
-
-                    _ = scope.createValueBinding(
-                        enum_decl.name.lexeme,
-                        enum_value,
-                        .ENUM,
-                        enum_type_info,
-                        true, // Enum types are constants
-                    ) catch |err| {
-                        if (err == error.DuplicateVariableName) {
-                            self.reporter.reportCompileError(
-                                getLocationFromBase(stmt.base),
-                                ErrorCode.DUPLICATE_VARIABLE,
-                                "Duplicate enum name '{s}' in current scope",
-                                .{enum_decl.name.lexeme},
-                            );
-                            self.fatal_error = true;
-                            continue;
-                        } else {
-                            return err;
-                        }
-                    };
-
-                    // NEW: Register enum type for HIR generation
-                    const variants = enum_decl.variants;
-                    const variant_names = try self.allocator.alloc([]const u8, variants.len);
-                    for (variants, variant_names) |variant, *name| {
-                        name.* = variant.lexeme;
-                    }
-                    try helpers.registerEnumType(self, enum_decl.name.lexeme, variant_names);
-                },
-
                 .Expression => |maybe_expr| {
-                    if (maybe_expr) |expr| {
-                        // Ensure expression statements are semantically analyzed so that
-                        // compiler methods like @push are lowered (e.g., InternalCall -> ArrayPush)
-                        // even when their values are not used.
-                        _ = try infer_type.inferTypeFromExpr(self, expr);
-
-                        // Handle struct declarations that are expressions
-                        if (expr.data == .StructDecl) {
-                            const struct_decl = expr.data.StructDecl;
-
-                            // Convert struct fields to TypeInfo format
-                            const struct_fields = try self.allocator.alloc(ast.StructFieldType, struct_decl.fields.len);
-                            for (struct_decl.fields, struct_fields) |field, *struct_field| {
-                                self.materializeTypeExprModules(field.type_expr);
-                                const field_type_info = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
-                                struct_field.* = .{
-                                    .name = field.name.lexeme,
-                                    .type_info = field_type_info,
-                                    .is_public = field.is_public,
-                                };
-                            }
-
-                            // Register the struct type in the current scope
-                            const struct_type_info = try ast.TypeInfo.createDefault(self.allocator);
-                            struct_type_info.* = .{ .base = .Custom, .custom_type = struct_decl.name.lexeme, .struct_fields = struct_fields, .is_mutable = false };
-
-                            // Create a placeholder value for the struct type
-                            const struct_value = TokenLiteral{ .string = struct_decl.name.lexeme };
-
-                            _ = scope.createValueBinding(
-                                struct_decl.name.lexeme,
-                                struct_value,
-                                .STRUCT,
-                                struct_type_info,
-                                true, // Struct types are constants
-                            ) catch |err| {
-                                if (err == error.DuplicateVariableName) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(stmt.base),
-                                        ErrorCode.DUPLICATE_VARIABLE,
-                                        "Duplicate struct name '{s}' in current scope",
-                                        .{struct_decl.name.lexeme},
-                                    );
-                                    self.fatal_error = true;
-                                    continue;
-                                } else {
-                                    return err;
-                                }
-                            };
-
-                            // NEW: Register struct type for HIR generation
-                            try helpers.registerStructType(self, struct_decl.name.lexeme, struct_fields);
-
-                            // Register struct methods (static and instance). A locally
-                            // declared struct keeps its private methods too — scope
-                            // visibility already governs who may call them.
-                            try self.registerStructMethods(struct_decl, .all);
-                        }
+                    const expr = maybe_expr orelse continue;
+                    // Type declarations were registered above. Every other
+                    // expression statement is analyzed now so that compiler
+                    // methods like @push are lowered (e.g. InternalCall ->
+                    // ArrayPush) even when their values are not used.
+                    switch (expr.data) {
+                        .StructDecl, .EnumDecl, .GroupDecl => {},
+                        else => _ = try infer_type.inferTypeFromExpr(self, expr),
                     }
                 },
-                .Import => |import_info| {
-                    // NEW: Validate import
-                    try self.validateImport(import_info, .{ .location = getLocationFromBase(stmt.base) });
-                },
-                .ZigDecl, .Module, .Path => {},
-                .GroupDecl, .MapLiteral => {},
-                .Return, .Continue, .Break, .Assert, .Cast, .Defer, .Lift => {},
+                .FunctionDecl, .EnumDecl, .GroupDecl, .Import, .ZigDecl, .MapLiteral => {},
+                .Return, .Continue, .Break, .Assert, .Defer, .Lift => {},
             }
         }
 
-        // Third pass: infer return types now that all declarations in this scope have been registered
+        // Return types: a function returns what it declares (`nothing` without
+        // `returns`). Its body is checked against that when it is analyzed, in
+        // its real scope; collection never walks a body.
         for (statements) |stmt| {
-            switch (stmt.data) {
-                .FunctionDecl => |func| {
-                    const func_var = scope.lookupVariable(func.name.lexeme) orelse continue;
-                    const storage = self.memory.scope_manager.value_storage.get(func_var.storage_id) orelse continue;
-                    const func_type_info = storage.type_info;
-                    if (func_type_info.base != .Function or func_type_info.function_type == null) continue;
-
-                    const func_type = func_type_info.function_type.?;
-                    if (func.return_type_info.base == .Nothing) {
-                        // No return inference: functions without an explicit `returns` keep Nothing.
-                        func_type.return_type.* = .{ .base = .Nothing, .is_mutable = false };
-                    } else {
-                        const inferred = try self.inferFunctionReturnType(func);
-                        try self.validateReturnTypeCompatibility(&func.return_type_info, inferred, null, .{ .location = getLocationFromBase(stmt.base) });
-                        func_type.return_type.* = func.return_type_info;
-                    }
-                    try self.function_return_types.put(stmt.base.id, func_type.return_type);
-                },
-                else => {},
-            }
+            const func = switch (stmt.data) {
+                .FunctionDecl => |func| func,
+                else => continue,
+            };
+            const func_var = scope.lookupLocalVariable(func.name.lexeme) orelse continue;
+            const storage = self.memory.scope_manager.value_storage.get(func_var.storage_id) orelse continue;
+            const func_type = storage.type_info.function_type orelse continue;
+            func_type.return_type.* = if (func.return_type_info.base == .Nothing)
+                .{ .base = .Nothing, .is_mutable = false }
+            else
+                func.return_type_info;
+            try self.function_return_types.put(stmt.base.id, func_type.return_type);
         }
 
         for (statements) |*stmt| {
-            if (stmt.data == .VarDecl) {
-                if (stmt.data.VarDecl.type_expr) |_| {
-                    if (stmt.data.VarDecl.type_info.base == .Array and stmt.data.VarDecl.type_info.array_size == null) {
-                        if (scope.lookupVariable(stmt.data.VarDecl.name.lexeme)) |variable| {
-                            if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
-                                stmt.data.VarDecl.type_info.array_size = storage.type_info.array_size;
-                                stmt.data.VarDecl.type_info.array_storage = storage.type_info.array_storage;
-                            }
-                        }
-                    }
-                }
-            }
+            if (stmt.data != .VarDecl) continue;
+            if (stmt.data.VarDecl.type_expr == null) continue;
+            if (stmt.data.VarDecl.type_info.base != .Array or stmt.data.VarDecl.type_info.array_size != null) continue;
+            const variable = scope.lookupLocalVariable(stmt.data.VarDecl.name.lexeme) orelse continue;
+            const storage = self.memory.scope_manager.value_storage.get(variable.storage_id) orelse continue;
+            stmt.data.VarDecl.type_info.array_size = storage.type_info.array_size;
+            stmt.data.VarDecl.type_info.array_storage = storage.type_info.array_storage;
         }
+    }
+
+    /// The value a declaration without an initializer starts with.
+    fn defaultValue(type_info: *const ast.TypeInfo) TokenLiteral {
+        return switch (type_info.base) {
+            .Int => .{ .int = 0 },
+            .Float => .{ .float = 0.0 },
+            .String => .{ .string = "" },
+            .Tetra => .{ .tetra = .false },
+            .Byte => .{ .byte = 0 },
+            .Array => .{ .array = &.{} },
+            .Union => if (type_info.union_type) |ut| union_handling.getUnionDefaultValue(ut) else .{ .nothing = {} },
+            else => .{ .nothing = {} },
+        };
+    }
+
+    /// An alias parameter must name a concrete type a caller can lend: maps,
+    /// functions, and anonymous structs or enums cannot be aliased.
+    fn checkAliasParameterType(self: *SemanticAnalyzer, param: ast.FunctionParam, param_type: ast.TypeInfo, location: Location) ErrorList!void {
+        const disallowed = switch (param_type.base) {
+            .Map, .Function, .Struct, .Enum => true,
+            // Arrays are allowed as they're perfect candidates for aliasing (avoid copying)
+            // Unions are allowed so alias parameters can accept type-narrowed values via match
+            else => false,
+        };
+        if (disallowed) {
+            self.reporter.reportCompileError(
+                location,
+                ErrorCode.INVALID_ALIAS_PARAMETER,
+                "Alias parameter '{s}' cannot have type {s}; use a named custom type (e.g., Person) or a primitive",
+                .{ param.name.lexeme, @tagName(param_type.base) },
+            );
+            self.fatal_error = true;
+        } else if (param_type.base == .Custom and param_type.custom_type == null) {
+            self.reporter.reportCompileError(
+                location,
+                ErrorCode.INVALID_ALIAS_PARAMETER,
+                "Alias parameter '{s}' must use a concrete type name",
+                .{param.name.lexeme},
+            );
+            self.fatal_error = true;
+        }
+    }
+
+    /// Register a struct declared at file scope: its fields resolved, its type
+    /// bound in the module scope (a struct name is a value in a literal or a
+    /// static call), and its methods.
+    fn declareStruct(self: *SemanticAnalyzer, decl: *ast.StructDecl, scope: *Scope, at_file_scope: bool, base: ast.Base) ErrorList!void {
+        if (!at_file_scope) return self.reportNestedTypeDeclaration(decl.name, base);
+        const ref = TypeRef{ .module = self.current_module, .name = decl.name.lexeme };
+
+        const fields = try self.allocator.alloc(ast.StructFieldType, decl.fields.len);
+        for (decl.fields, fields) |field, *struct_field| {
+            struct_field.* = .{
+                .name = field.name.lexeme,
+                .type_info = try self.typeExprToTypeInfo(field.type_expr),
+                .is_public = field.is_public,
+            };
+        }
+        try helpers.registerStructType(self, ref, fields);
+
+        const type_info = try ast.TypeInfo.createDefault(self.allocator);
+        type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref }, .struct_fields = fields, .is_mutable = false };
+        try self.bindTypeName(scope, decl.name, .STRUCT, type_info, base);
+        try self.checkStructMemberNames(decl);
+        try self.registerStructMethods(decl, ref);
+    }
+
+    /// A struct names each member once: no two fields, no two methods or
+    /// functions, and no method or function sharing a field's name.
+    fn checkStructMemberNames(self: *SemanticAnalyzer, decl: *ast.StructDecl) ErrorList!void {
+        var seen = std.StringHashMap(void).init(self.allocator);
+        defer seen.deinit();
+        for (decl.fields) |field| try self.claimStructMember(&seen, decl.name, field.name);
+        for (decl.methods) |method| try self.claimStructMember(&seen, decl.name, method.name);
+    }
+
+    fn claimStructMember(self: *SemanticAnalyzer, seen: *std.StringHashMap(void), struct_name: Token, member: Token) ErrorList!void {
+        if ((try seen.getOrPut(member.lexeme)).found_existing) {
+            self.reporter.reportCompileError(
+                ast.SourceSpan.fromToken(member).location,
+                ErrorCode.DUPLICATE_VARIABLE,
+                "struct '{s}' already has a member named '{s}'",
+                .{ struct_name.lexeme, member.lexeme },
+            );
+            self.fatal_error = true;
+        }
+    }
+
+    /// Register an enum declared at file scope and bind its name, so
+    /// `Color.Red` resolves its qualifier.
+    fn declareEnum(self: *SemanticAnalyzer, decl: *ast.EnumDecl, scope: *Scope, at_file_scope: bool, base: ast.Base) ErrorList!void {
+        if (!at_file_scope) return self.reportNestedTypeDeclaration(decl.name, base);
+        const ref = TypeRef{ .module = self.current_module, .name = decl.name.lexeme };
+
+        const variant_names = try self.allocator.alloc([]const u8, decl.variants.len);
+        for (decl.variants, variant_names) |variant, *name| name.* = variant.lexeme;
+        try helpers.registerEnumType(self, ref, variant_names);
+
+        const type_info = try ast.TypeInfo.createDefault(self.allocator);
+        type_info.* = .{ .base = .Custom, .custom_type = .{ .ref = ref }, .is_mutable = false };
+        try self.bindTypeName(scope, decl.name, .ENUM, type_info, base);
+    }
+
+    fn bindTypeName(self: *SemanticAnalyzer, scope: *Scope, name: Token, kind: TokenType, type_info: *ast.TypeInfo, base: ast.Base) ErrorList!void {
+        const variable = scope.createValueBinding(name.lexeme, TokenLiteral{ .string = name.lexeme }, kind, type_info, true) catch |err| {
+            if (err != error.DuplicateVariableName) return err;
+            self.reporter.reportCompileError(getLocationFromBase(base), ErrorCode.DUPLICATE_VARIABLE, "Duplicate type name '{s}' in current scope", .{name.lexeme});
+            self.fatal_error = true;
+            return;
+        };
+        variable.recordDeclLocation(name);
+    }
+
+    fn reportNestedTypeDeclaration(self: *SemanticAnalyzer, name: Token, base: ast.Base) ErrorList!void {
+        self.reporter.reportCompileError(
+            getLocationFromBase(base),
+            ErrorCode.NESTED_TYPE_DECLARATION,
+            "Type '{s}' must be declared at file scope",
+            .{name.lexeme},
+        );
+        self.fatal_error = true;
     }
 
     pub fn validateStatements(self: *SemanticAnalyzer, statements: []ast.Stmt) ErrorList!void {
@@ -1522,221 +1073,170 @@ pub const SemanticAnalyzer = struct {
                     if (statements[i].data.VarDecl.type_expr) |te| {
                         self.tryResolveArraySizes(&statements[i].data.VarDecl.type_info, te);
                     }
-                    const decl = statements[i].data.VarDecl;
                     // A module namespace is not a value and cannot be bound to a variable.
-                    if (self.reportNamespaceBinding(decl, stmt.base)) continue;
+                    if (try self.reportNamespaceBinding(statements[i].data.VarDecl, stmt.base)) continue;
+                    const location = getLocationFromBase(stmt.base);
+                    // The annotation is resolved where it lives, so codegen
+                    // reads the declared type's identity off the AST.
+                    if (statements[i].data.VarDecl.type_info.base != .Nothing) {
+                        try names.resolveTypeInfo(self, &statements[i].data.VarDecl.type_info, self.current_module, location);
+                        if (statements[i].data.VarDecl.type_expr) |type_expr| try names.resolveTypeExpr(self, type_expr, self.current_module);
+                    }
+                    const decl = statements[i].data.VarDecl;
                     const prev_bve = self.block_value_expected;
                     self.block_value_expected = decl.initializer != null;
                     defer self.block_value_expected = prev_bve;
 
-                    if (self.current_scope) |scope| {
-                        // Check if this variable is already declared in this scope
-                        // (e.g. by collectDeclarations). Only consider the current
-                        // scope so a local declaration may shadow an outer one.
-                        if (scope.lookupLocalVariable(decl.name.lexeme) == null) {
-                            // This is a local variable in a function body that wasn't added during collection
-                            // Create TypeInfo for the variable
-                            const type_info = try ast.TypeInfo.createDefault(self.allocator);
-                            errdefer self.allocator.destroy(type_info);
+                    const scope = self.current_scope.?;
+                    // A declaration collectDeclarations already bound (a global)
+                    // is only type-checked here. Only the current scope is
+                    // consulted, so a local declaration may shadow an outer one.
+                    if (scope.lookupLocalVariable(decl.name.lexeme) == null) {
+                        const type_info = try ast.TypeInfo.createDefault(self.allocator);
+                        errdefer self.allocator.destroy(type_info);
 
-                            // Check if we have an explicit type annotation
-                            if (decl.type_info.base != .Nothing) {
-                                // If parser provided an incomplete array type (no element), prefer inferring from initializer if present
-                                if (decl.type_info.base == .Array and decl.type_info.array_type == null) {
-                                    if (decl.initializer) |init_expr| {
-                                        const inferred = try infer_type.inferTypeFromExpr(self, init_expr);
-                                        type_info.* = inferred.*;
-                                    } else {
-                                        // Use explicit type, but resolve custom types
-                                        type_info.* = try self.resolveTypeInfo(decl.type_info);
-                                    }
-                                } else {
-                                    // Use explicit type, but resolve custom types
-                                    type_info.* = try self.resolveTypeInfo(decl.type_info);
-                                }
-                                // Preserve mutability from the variable declaration (var vs const)
-                                type_info.is_mutable = decl.type_info.is_mutable;
-                            } else if (decl.initializer) |init_expr| {
-                                // Infer from initializer
-                                const inferred = try infer_type.inferTypeFromExpr(self, init_expr);
-                                type_info.* = inferred.*;
-                                // Preserve the mutability from the variable declaration, not from the initializer
-                                type_info.is_mutable = decl.type_info.is_mutable;
+                        if (decl.type_info.base != .Nothing) {
+                            // An incomplete array annotation (no element type) is
+                            // completed from the initializer when there is one.
+                            if (decl.type_info.base == .Array and decl.type_info.array_type == null and decl.initializer != null) {
+                                type_info.* = (try infer_type.inferTypeFromExpr(self, decl.initializer.?)).*;
                             } else {
-                                // No type annotation and no initializer - this is invalid
+                                type_info.* = decl.type_info;
+                            }
+                            // Preserve mutability from the variable declaration (var vs const)
+                            type_info.is_mutable = decl.type_info.is_mutable;
+                        } else if (decl.initializer) |init_expr| {
+                            type_info.* = (try infer_type.inferTypeFromExpr(self, init_expr)).*;
+                            // Preserve the mutability from the variable declaration, not from the initializer
+                            type_info.is_mutable = decl.type_info.is_mutable;
+                        } else {
+                            self.reporter.reportCompileError(
+                                location,
+                                ErrorCode.VARIABLE_DECLARATION_MISSING_ANNOTATION,
+                                "Variable declaration requires either type annotation (::) or initializer",
+                                .{},
+                            );
+                            self.fatal_error = true;
+                            continue;
+                        }
+
+                        const token_type = eval.convertTypeToTokenType(type_info.base);
+
+                        if (decl.initializer) |init_expr| {
+                            if (isEmptyArrayLiteral(init_expr) and type_info.base == .Array and type_info.array_type == null) {
                                 self.reporter.reportCompileError(
-                                    getLocationFromBase(stmt.base),
-                                    ErrorCode.VARIABLE_DECLARATION_MISSING_ANNOTATION,
-                                    "Variable declaration requires either type annotation (::) or initializer",
+                                    location,
+                                    ErrorCode.CANNOT_INFER_ARRAY_ELEMENT_TYPE,
+                                    "cannot infer element type of empty array literal; add an element type annotation (e.g. `int[]`)",
                                     .{},
                                 );
-self.fatal_error = true;
+                                self.fatal_error = true;
                                 continue;
                             }
+                        }
 
-                            const token_type = eval.convertTypeToTokenType(type_info.base);
-
-                            if (decl.initializer) |init_expr| {
-                                if (isEmptyArrayLiteral(init_expr) and type_info.base == .Array and type_info.array_type == null) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(stmt.base),
-                                        ErrorCode.CANNOT_INFER_ARRAY_ELEMENT_TYPE,
-                                        "cannot infer element type of empty array literal; add an element type annotation (e.g. `int[]`)",
-                                        .{},
-                                    );
-                                    self.fatal_error = true;
-                                    continue;
-                                }
+                        var value: TokenLiteral = undefined;
+                        if (decl.initializer) |init_expr| {
+                            self.current_initializing_var = decl.name.lexeme;
+                            defer self.current_initializing_var = null;
+                            value = try self.evaluateExpression(init_expr);
+                        } else {
+                            if (self.isEnumTypeRequiringInitializer(type_info)) {
+                                self.reporter.reportCompileError(location, ErrorCode.ENUM_REQUIRES_INITIALIZER, "Enum variables must be initialized", .{});
+                                self.fatal_error = true;
+                                continue;
                             }
+                            value = defaultValue(type_info);
+                        }
 
-                            var value: TokenLiteral = undefined;
+                        // Convert value to match the declared type
+                        value = eval.convertValueToTypeInfo(self.allocator, value, type_info) catch |err| switch (err) {
+                            error.byteOverflow, error.byteUnderflow => {
+                                self.reporter.reportCompileError(location, ErrorCode.BYTE_VALUE_OUT_OF_RANGE, "byte value out of range (must be 0-255)", .{});
+                                self.fatal_error = true;
+                                continue;
+                            },
+                            else => return err,
+                        };
 
-                            if (decl.initializer) |init_expr| {
-                                self.current_initializing_var = decl.name.lexeme;
-                                defer {
-                                    self.current_initializing_var = null;
-                                }
-
-                                value = try self.evaluateExpression(init_expr);
-                            } else {
-                                if (self.isEnumTypeRequiringInitializer(type_info)) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(stmt.base),
-                                        ErrorCode.ENUM_REQUIRES_INITIALIZER,
-                                        "Enum variables must be initialized",
-                                        .{},
-                                    );
-                                    self.fatal_error = true;
-                                    continue;
-                                }
-
-                                // Only use defaults for uninitialized variables
-                                value = switch (type_info.base) {
-                                    .Int => TokenLiteral{ .int = 0 },
-                                    .Float => TokenLiteral{ .float = 0.0 },
-                                    .String => TokenLiteral{ .string = "" },
-                                    .Tetra => TokenLiteral{ .tetra = .false },
-                                    .Byte => TokenLiteral{ .byte = 0 },
-                                    .Array => TokenLiteral{ .array = &.{} },
-                                    .Union => if (type_info.union_type) |ut|
-                                        union_handling.getUnionDefaultValue(ut)
-                                    else
-                                        TokenLiteral{ .nothing = {} },
-                                    else => TokenLiteral{ .nothing = {} },
-                                };
-                            }
-
-                            // Convert value to match the declared type
-                            value = eval.convertValueToTypeInfo(self.allocator, value, type_info) catch |err| switch (err) {
-                                error.byteOverflow, error.byteUnderflow => {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(stmt.base),
-                                        ErrorCode.BYTE_VALUE_OUT_OF_RANGE,
-                                        "byte value out of range (must be 0-255)",
-                                        .{},
-                                    );
-                                    self.fatal_error = true;
-                                    continue;
-                                },
-                                else => return err,
-                            };
-
-                            const binding = if (decl.type_expr == null)
-                                scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
-                            else
-                                scope.createValueBinding(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable);
-                            if (binding) |declared| {
-                                declared.recordDeclLocation(decl.name);
-                            } else |err| {
-                                if (err == error.DuplicateVariableName) {
-                                    self.reporter.reportCompileError(
-                                        getLocationFromBase(stmt.base),
-                                        ErrorCode.DUPLICATE_VARIABLE,
-                                        "Duplicate variable name '{s}' in current scope",
-                                        .{decl.name.lexeme},
-                                    );
-                                    self.fatal_error = true;
-                                    continue;
-                                } else {
-                                    return err;
-                                }
-                            }
+                        self.checkFreshName(scope, decl.name);
+                        const binding = if (decl.type_expr == null)
+                            scope.createValueBindingAt(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable, decl.name)
+                        else
+                            scope.createValueBinding(decl.name.lexeme, value, token_type, type_info, !type_info.is_mutable);
+                        if (binding) |declared| {
+                            declared.recordDeclLocation(decl.name);
+                        } else |err| {
+                            if (err != error.DuplicateVariableName) return err;
+                            self.reporter.reportCompileError(location, ErrorCode.DUPLICATE_VARIABLE, "Duplicate variable name '{s}' in current scope", .{decl.name.lexeme});
+                            self.fatal_error = true;
+                            continue;
                         }
                     }
+                    // The declaration stores its binding's type, which an
+                    // incomplete array annotation completes from the initializer.
+                    const decl_binding = scope.lookupLocalVariable(decl.name.lexeme);
+                    try names.recordStoreTarget(self, stmt.base.id, decl_binding, decl_binding, scope == self.moduleScope(self.current_module));
 
                     // Type checking
                     if (decl.initializer) |init_expr| {
                         const init_type = try infer_type.inferTypeFromExpr(self, init_expr);
                         if (decl.type_info.base != .Nothing) {
-                            // Check initializer matches declared type
-                            // Resolve the declared type first, then create a mutable copy for unifyTypes
-                            const resolved_type = try self.resolveTypeInfo(decl.type_info);
-                            var decl_type_copy = resolved_type;
-                            try helpers.unifyTypesExpr(self, &decl_type_copy, init_type, init_expr, .{ .location = getLocationFromBase(stmt.base) });
+                            var declared = decl.type_info;
+                            try helpers.unifyTypesExpr(self, &declared, init_type, init_expr, .{ .location = location });
                         }
                     }
-                },
-                .Block => |block_stmts| {
-                    const prev_scope = self.current_scope;
-                    const block_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
-                    self.current_scope = block_scope;
-                    defer {
-                        self.current_scope = prev_scope;
-                        block_scope.deinit();
-                    }
-                    try self.validateStatements(block_stmts);
                 },
                 .Expression => |expr| {
                     if (expr) |expression| {
-                        _ = try infer_type.inferTypeFromExpr(self, expression);
-                        if (expression.data == .Unreachable) {
-                            prev_was_terminator = true;
-                        }
-                        // Struct method bodies are not statements in this scope, so
-                        // they are validated here, once, with the struct type bound as
-                        // the receiver context. Without this, unresolved names inside a
-                        // method body (e.g. a typo'd receiver) never error and codegen
-                        // silently emits a null-based access.
-                        if (expression.data == .StructDecl) {
-                            const struct_decl = expression.data.StructDecl;
-                            for (struct_decl.methods) |method| {
-                                const method_struct_type: ?[]const u8 = if (method.is_static) null else struct_decl.name.lexeme;
-                                try self.validateFunctionBodyWithStruct(
-                                    method,
-                                    .{ .location = getLocationFromBase(expression.base) },
-                                    method.return_type_info,
-                                    method_struct_type,
-                                );
-                            }
+                        switch (expression.data) {
+                            // A type is declared at file scope; its methods are
+                            // checked here, once, with the struct bound as the
+                            // receiver context. Without this, unresolved names
+                            // inside a method body never error and codegen
+                            // silently emits a null-based access.
+                            .StructDecl => |*struct_decl| {
+                                if (self.current_scope != self.moduleScope(self.current_module)) {
+                                    try self.reportNestedTypeDeclaration(struct_decl.name, stmt.base);
+                                    continue;
+                                }
+                                const ref = TypeRef{ .module = self.current_module, .name = struct_decl.name.lexeme };
+                                for (struct_decl.methods) |method| {
+                                    try self.validateFunctionBodyWithStruct(
+                                        method,
+                                        .{ .location = getLocationFromBase(expression.base) },
+                                        method.return_type_info,
+                                        .{ .ref = ref, .has_this = !method.is_static },
+                                    );
+                                }
+                            },
+                            .EnumDecl => |decl| if (self.current_scope != self.moduleScope(self.current_module)) {
+                                try self.reportNestedTypeDeclaration(decl.name, stmt.base);
+                            },
+                            .GroupDecl => |decl| if (self.current_scope != self.moduleScope(self.current_module)) {
+                                try self.reportNestedTypeDeclaration(decl.name, stmt.base);
+                            },
+                            else => {
+                                _ = try infer_type.inferTypeFromExpr(self, expression);
+                                if (expression.data == .Unreachable) prev_was_terminator = true;
+                            },
                         }
                     }
                 },
                 .Return => |return_stmt| {
                     if (return_stmt.value) |value| {
-                        // Validate return value type
-                        _ = try infer_type.inferTypeFromExpr(self, value);
+                        _ = try self.checkReturnValue(value, getLocationFromBase(stmt.base));
+                    } else {
+                        self.checkBareReturn(getLocationFromBase(stmt.base));
                     }
                     prev_was_terminator = true;
                 },
                 .FunctionDecl => |func| {
-                    var method_struct_type: ?[]const u8 = null;
-                    var methods_it = self.struct_methods.iterator();
-                    while (methods_it.next()) |entry| {
-                        if (entry.value_ptr.get(func.name.lexeme)) |_| {
-                            method_struct_type = entry.key_ptr.*;
-                            break;
-                        }
-                    }
-
-                    if (method_struct_type) |struct_name| {
-                        _ = struct_name;
-                    }
-                    // Removed the warning for functions that aren't methods - they're just regular functions
-
+                    const location = ast.SourceSpan{ .location = getLocationFromBase(stmt.base) };
                     if (self.function_return_types.get(stmt.base.id)) |return_type| {
-                        try self.validateFunctionBodyWithStruct(func, .{ .location = getLocationFromBase(stmt.base) }, return_type.*, method_struct_type);
+                        try self.validateFunctionBodyWithStruct(func, location, return_type.*, null);
                     } else {
-                        try self.validateFunctionBodyWithStruct(func, .{ .location = getLocationFromBase(stmt.base) }, func.return_type_info, method_struct_type);
+                        try self.validateFunctionBodyWithStruct(func, location, func.return_type_info, null);
                     }
                 },
                 .MapLiteral => |map_entries| {
@@ -1749,7 +1249,23 @@ self.fatal_error = true;
                 .Break, .Continue, .Lift => {
                     prev_was_terminator = true;
                 },
-                .ZigDecl, .EnumDecl, .GroupDecl, .Module, .Path, .Import, .Assert, .Cast, .Defer => {},
+                // A deferred expression runs at scope exit like any other
+                // statement, so it is type-checked like one. Lowering reads its
+                // operand types from this pass (plan/type-authority.md).
+                .Defer => |deferred| {
+                    _ = try infer_type.inferTypeFromExpr(self, deferred);
+                },
+                .EnumDecl => |decl| if (self.current_scope != self.moduleScope(self.current_module)) {
+                    try self.reportNestedTypeDeclaration(decl.name, stmt.base);
+                },
+                .GroupDecl => |decl| if (self.current_scope != self.moduleScope(self.current_module)) {
+                    try self.reportNestedTypeDeclaration(decl.name, stmt.base);
+                },
+                .Assert => |assertion| {
+                    _ = try infer_type.inferTypeFromExpr(self, assertion.condition);
+                    if (assertion.message) |message| _ = try infer_type.inferTypeFromExpr(self, message);
+                },
+                .ZigDecl, .Import => {},
             }
         }
     }
@@ -1839,9 +1355,65 @@ self.fatal_error = true;
         return copied;
     }
 
-    // Narrow the matched variable type within a single match case, then infer the body type.
-    pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase, matched_var_name: ?[]const u8, group_name: ?[]const u8) ErrorList!*ast.TypeInfo {
-        // Create a per-case scope so narrowing does not leak out of the case
+    /// Resolve, in place, what every pattern of `case` denotes, so the arm's
+    /// narrowing here and its lowering in codegen read one answer. `group` is
+    /// the subject's group and `subject_enum` its enum, when it is one.
+    pub fn resolveMatchPatterns(self: *SemanticAnalyzer, case: *ast.MatchCase, group: ?TypeRef, subject_enum: ?TypeRef) ErrorList!void {
+        const resolved = try self.allocator.alloc(ast.MatchCase.Resolved, case.patterns.len);
+        for (case.patterns, resolved) |pattern, *slot| {
+            slot.* = if (pattern.type != .IDENTIFIER or std.mem.eql(u8, pattern.lexeme, "else"))
+                .token
+            else if (subject_enum) |enum_ref|
+                .{ .variant = enum_ref }
+            else if (group) |group_ref|
+                if (try self.groupMemberType(group_ref, pattern.lexeme)) |ref| .{ .type = ref } else .token
+            else if (try names.resolveTypeName(self, pattern.lexeme, self.current_module)) |ref|
+                .{ .type = ref }
+            else
+                .token;
+        }
+        for (case.path_patterns) |path| {
+            if (path.tokens.len == 0) continue;
+            resolved[path.pattern] = try self.resolvePathPattern(path, group);
+            if (path.field_names.len > 0) try self.checkDestructure(path, resolved[path.pattern]);
+        }
+        case.resolved = resolved;
+    }
+
+    /// A destructuring path must name a struct declaring every field it binds.
+    fn checkDestructure(self: *SemanticAnalyzer, path: ast.MatchCase.PathPattern, resolved: ast.MatchCase.Resolved) ErrorList!void {
+        const location = ast.SourceSpan.fromToken(path.tokens[path.tokens.len - 1]).location;
+        const struct_id = switch (resolved) {
+            .type => |ref| blk: {
+                try self.ensureTypes(ref.module);
+                break :blk self.struct_table.idOf(ref);
+            },
+            .token, .variant => null,
+        } orelse {
+            self.reporter.reportCompileError(location, ErrorCode.UNKNOWN_TYPE, "Unknown struct type '{s}'", .{try self.joinTokens(path.tokens)});
+            self.fatal_error = true;
+            return;
+        };
+        const fields = self.struct_table.fields(struct_id) orelse &.{};
+        for (path.field_names) |field_token| {
+            for (fields) |field| {
+                if (std.mem.eql(u8, field.name, field_token.lexeme)) break;
+            } else {
+                self.reporter.reportCompileError(
+                    ast.SourceSpan.fromToken(field_token).location,
+                    ErrorCode.FIELD_NOT_FOUND,
+                    "Struct '{s}' has no field '{s}'",
+                    .{ resolved.type.name, field_token.lexeme },
+                );
+                self.fatal_error = true;
+            }
+        }
+    }
+
+    /// Narrow the matched variable within one match arm, then infer the arm's
+    /// body. The arm's patterns were resolved by `resolveMatchPatterns`.
+    pub fn inferMatchCaseTypeWithNarrow(self: *SemanticAnalyzer, case: ast.MatchCase, matched_var_name: ?[]const u8) ErrorList!*ast.TypeInfo {
+        // A per-case scope keeps narrowing from leaking out of the arm.
         const case_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
         defer case_scope.deinit();
 
@@ -1857,110 +1429,40 @@ self.fatal_error = true;
             // the other pass never narrowed to.
             const narrows = case.patterns.len == 1;
 
-            // Check path patterns first (group-qualified patterns)
             if (case.path_patterns.len > 0) {
                 const path = case.path_patterns[0];
                 if (path.tokens.len >= 1) {
-                    const split = path.split(group_name orelse "");
-                    var member_token = split.member;
-                    // A path can name a module-qualified type (`std.json.Node`)
-                    // rather than a group variant. `split` is written for group paths,
-                    // so it would hand back the qualifier; when the last token is a
-                    // registered type the path names that type directly.
-                    const last_token = path.tokens[path.tokens.len - 1];
-                    if (self.pathIsModuleQualified(path.tokens)) member_token = last_token;
-
+                    const member: ?TypeRef = switch (case.resolved[path.pattern]) {
+                        .type => |ref| ref,
+                        .token, .variant => null,
+                    };
                     if (narrows) {
-                        const narrow_info = try ast.TypeInfo.createDefault(self.allocator);
-                        // The member a path names is decided exactly the way codegen
-                        // splits it: through the group qualifier when the path is
-                        // written through it (`Group.Member.Variant`), otherwise the
-                        // token ahead of the variant (`Member.Variant`).
-                        narrow_info.* = .{
-                            .base = .Custom,
-                            .custom_type = member_token.lexeme,
-                            .is_mutable = false,
-                        };
-                        const token_type: TokenType = eval.convertTypeToTokenType(narrow_info.base);
-                        _ = try case_scope.createValueBinding(
-                            name,
-                            TokenLiteral{ .nothing = {} },
-                            token_type,
-                            narrow_info,
-                            false,
-                        );
+                        if (member) |ref| (try bindNarrowed(case_scope, name, .{ .base = .Custom, .custom_type = .{ .ref = ref }, .is_mutable = false }, self.allocator)).is_view = true;
                     }
 
-                    // Struct destructuring: bind each field name as a local variable.
-                    // These are the arm's own names, not the subject, so they bind
-                    // whether or not the arm narrows.
+                    // Struct destructuring binds each field name as a local.
+                    // These are the arm's own names, not the subject, so they
+                    // bind whether or not the arm narrows.
                     if (path.field_names.len > 0) {
-                        const resolved_name = self.resolveTypeAlias(member_token.lexeme);
-                        if (self.struct_table.getIdByName(resolved_name)) |sid| {
-                            if (self.struct_table.fields(sid)) |fields| {
-                                for (path.field_names) |field_token| {
-                                    for (fields) |fld| {
-                                        if (std.mem.eql(u8, fld.name, field_token.lexeme)) {
-                                            const field_info = try ast.TypeInfo.createDefault(self.allocator);
-                                            field_info.* = fld.type_info.*;
-                                            _ = try case_scope.createValueBinding(
-                                                field_token.lexeme,
-                                                TokenLiteral{ .nothing = {} },
-                                                eval.convertTypeToTokenType(field_info.base),
-                                                field_info,
-                                                false,
-                                            );
-                                            break;
-                                        }
-                                    }
-                                }
+                        if (member) |ref| if (self.struct_table.idOf(ref)) |sid| {
+                            const fields = self.struct_table.fields(sid) orelse &.{};
+                            const storages = try self.allocator.alloc(u32, path.field_names.len);
+                            for (path.field_names, storages) |field_token, *storage| {
+                                // An undeclared field is `checkDestructure`'s
+                                // error, which stops the compile before codegen.
+                                const field = for (fields) |f| {
+                                    if (std.mem.eql(u8, f.name, field_token.lexeme)) break f;
+                                } else continue;
+                                self.checkFreshName(case_scope, field_token);
+                                storage.* = (try bindNarrowed(case_scope, field_token.lexeme, field.type_info.*, self.allocator)).storage_id;
                             }
-                        }
+                            case.path_patterns[0].field_storages = storages;
+                        };
                     }
                 }
             } else if (narrows) {
-                const narrow_info = try ast.TypeInfo.createDefault(self.allocator);
-                const first_pattern = case.patterns[0];
-
-                // A pattern we cannot map to a type leaves the subject as it is:
-                // binding it to `nothing` would make every use of the variable in the
-                // arm a type error.
-                var skip_narrowing = false;
-
-                // Check for array suffix in pattern lexeme (e.g., "int[]", "string[][]")
-                const i = std.mem.indexOf(u8, first_pattern.lexeme, "[]");
-                if (i) |_| {
-                    narrow_info.* = .{ .base = .Array, .is_mutable = false };
-                } else {
-                    narrow_info.* = switch (first_pattern.type) {
-                        .INT_TYPE, .INT => .{ .base = .Int, .is_mutable = false },
-                        .FLOAT_TYPE, .FLOAT => .{ .base = .Float, .is_mutable = false },
-                        .STRING_TYPE, .STRING => .{ .base = .String, .is_mutable = false },
-                        .BYTE_TYPE, .BYTE => .{ .base = .Byte, .is_mutable = false },
-                        .TETRA_TYPE, .TETRA => .{ .base = .Tetra, .is_mutable = false },
-                        .NOTHING_TYPE, .NOTHING => .{ .base = .Nothing, .is_mutable = false },
-                        .DOT => .{ .base = .Enum, .is_mutable = false }, // enum member pattern implies enum
-                        else => blk: {
-                            if (first_pattern.type == .IDENTIFIER and !std.mem.eql(u8, first_pattern.lexeme, "else")) {
-                                break :blk .{ .base = .Custom, .custom_type = first_pattern.lexeme, .is_mutable = false };
-                            }
-                            skip_narrowing = true;
-                            break :blk .{ .base = .Nothing, .is_mutable = false };
-                        },
-                    };
-                }
-
-                if (!skip_narrowing) {
-                    const token_type: TokenType = eval.convertTypeToTokenType(narrow_info.base);
-
-                    // Shadow the variable in this case scope with the narrowed type
-                    _ = try case_scope.createValueBinding(
-                        name,
-                        TokenLiteral{ .nothing = {} },
-                        token_type,
-                        narrow_info,
-                        false,
-                    );
+                if (patternType(case.patterns[0], case.resolved[0])) |narrowed| {
+                    (try bindNarrowed(case_scope, name, narrowed, self.allocator)).is_view = true;
                 }
             }
         }
@@ -1970,46 +1472,91 @@ self.fatal_error = true;
         return case_body_type;
     }
 
-    fn resolveTypeInfo(self: *SemanticAnalyzer, type_info: ast.TypeInfo) !ast.TypeInfo {
-        // If this is a custom type, check if it refers to a declared struct or enum type
-        if (type_info.base == .Custom) {
-            if (type_info.custom_type) |custom_type_name| {
-                if (helpers.lookupVariable(self, custom_type_name)) |variable| {
-                    const id = self.memory.scope_manager.value_storage.get(variable.storage_id);
-                    if (id) |_| {
-                        // If the custom type refers to a struct or enum declaration, keep it as Custom
-                        // This is the correct behavior - variables of struct/enum types should be Custom
-                        return type_info;
-                    }
-                }
+    /// One name, one meaning: a declaration inside a function, a block or a
+    /// pattern may not reuse a name already visible where it appears — an
+    /// enclosing local or parameter, or a top-level name of the file (its
+    /// declarations, imports and aliases). A sibling scope's binding is not
+    /// visible, so it does not conflict. A duplicate within one scope is
+    /// `DUPLICATE_VARIABLE`'s, and top-level names are checked against each
+    /// other by the loader. The declaration still binds, so its uses resolve.
+    pub fn checkFreshName(self: *SemanticAnalyzer, scope: *Scope, name: Token) void {
+        if (scope == self.moduleScope(self.current_module)) return;
+        const visible = if (scope.parent) |parent| parent.lookupVariable(name.lexeme) != null else false;
+        if (!visible and !self.graph.record(self.current_module).bindings.contains(name.lexeme)) return;
+        self.reporter.reportCompileError(
+            ast.SourceSpan.fromToken(name).location,
+            ErrorCode.SHADOWED_NAME,
+            "'{s}' is already declared where this declaration is visible; a name has one meaning wherever it can be seen",
+            .{name.lexeme},
+        );
+        self.fatal_error = true;
+    }
 
-                // Check if it's a registered custom type
-                const tn = self.custom_types.get(custom_type_name);
-                if (tn) |_| {
-                    return type_info;
-                }
-            }
+    fn bindNarrowed(scope: *Scope, name: []const u8, narrowed: ast.TypeInfo, allocator: std.mem.Allocator) ErrorList!*Variable {
+        const type_info = try ast.TypeInfo.createDefault(allocator);
+        type_info.* = narrowed;
+        return scope.createValueBinding(name, TokenLiteral{ .nothing = {} }, eval.convertTypeToTokenType(type_info.base), type_info, false);
+    }
+
+    /// What a match path denotes. Against a group subject the path names a
+    /// member, split exactly the way codegen splits it: through the group
+    /// qualifier when written through it (`Group.Member.Variant`), otherwise
+    /// the token ahead of the variant. Otherwise the path spells a type
+    /// outright — bare or module-qualified (`std.json.Node`) — or an enum
+    /// variant (`ns.Color.Red`), whose enum is everything ahead of the variant.
+    fn resolvePathPattern(self: *SemanticAnalyzer, path: ast.MatchCase.PathPattern, group: ?TypeRef) ErrorList!ast.MatchCase.Resolved {
+        if (group) |group_ref| {
+            const split = path.split(group_ref.name);
+            if (try self.groupMemberType(group_ref, split.member.lexeme)) |ref| return .{ .type = ref };
         }
+        if (try names.resolveTypeName(self, try self.joinTokens(path.tokens), self.current_module)) |ref| return .{ .type = ref };
+        if (path.field_names.len > 0 or path.tokens.len < 2) return .token;
+        const prefix = try self.joinTokens(path.tokens[0 .. path.tokens.len - 1]);
+        const ref = (try names.resolveTypeName(self, prefix, self.current_module)) orelse return .token;
+        const custom = (try self.customType(ref)) orelse return .token;
+        return if (custom.kind == .Enum) .{ .variant = ref } else .token;
+    }
 
-        // Handle union types - return as-is since flattenUnionType was removed,
-        // but mark any custom member types (enums/structs) as used so that a
-        // type referenced solely through a union annotation (e.g. `int | E`)
-        // does not trigger a spurious unused-variable warning.
-        if (type_info.base == .Union) {
-            if (type_info.union_type) |ut| {
-                for (ut.types) |member| {
-                    if (member.base == .Custom) {
-                        if (member.custom_type) |member_name| {
-                            _ = helpers.lookupVariable(self, member_name);
-                        }
-                    }
-                }
-            }
-            return type_info;
+    /// The member of `group` written with `qualifier`.
+    pub fn groupMemberType(self: *SemanticAnalyzer, group: TypeRef, qualifier: []const u8) ErrorList!?TypeRef {
+        try self.ensureTypes(group.module);
+        const id = self.group_table.idOf(group) orelse return null;
+        for (self.group_table.members(id) orelse &.{}) |member| {
+            if (std.mem.eql(u8, member.qualifier, qualifier)) return member.ref;
         }
+        return null;
+    }
 
-        // Return the original type info if no resolution needed
-        return type_info;
+    fn joinTokens(self: *SemanticAnalyzer, tokens: []const ast.Token) ErrorList![]const u8 {
+        var out = std.array_list.Managed(u8).init(self.allocator);
+        for (tokens, 0..) |tok, i| {
+            if (i > 0) try out.append('.');
+            try out.appendSlice(tok.lexeme);
+        }
+        return out.toOwnedSlice();
+    }
+
+    /// The type a bare match pattern narrows to, or null when the pattern
+    /// cannot be mapped to a type: binding the subject to `nothing` would make
+    /// every use of it in the arm a type error. `resolved` is what analysis
+    /// resolved the pattern to.
+    fn patternType(pattern: Token, resolved: ast.MatchCase.Resolved) ?ast.TypeInfo {
+        if (std.mem.indexOf(u8, pattern.lexeme, "[]") != null) return .{ .base = .Array, .is_mutable = false };
+        return switch (pattern.type) {
+            .INT_TYPE, .INT => .{ .base = .Int, .is_mutable = false },
+            .FLOAT_TYPE, .FLOAT => .{ .base = .Float, .is_mutable = false },
+            .STRING_TYPE, .STRING => .{ .base = .String, .is_mutable = false },
+            .BYTE_TYPE, .BYTE => .{ .base = .Byte, .is_mutable = false },
+            .TETRA_TYPE, .TETRA => .{ .base = .Tetra, .is_mutable = false },
+            .NOTHING_TYPE, .NOTHING => .{ .base = .Nothing, .is_mutable = false },
+            .DOT => .{ .base = .Enum, .is_mutable = false }, // an enum member pattern implies an enum
+            .IDENTIFIER => switch (resolved) {
+                .type => |ref| .{ .base = .Custom, .custom_type = .{ .ref = ref }, .is_mutable = false },
+                .variant => |ref| .{ .base = .Custom, .custom_type = .{ .ref = ref }, .is_mutable = false },
+                .token => null,
+            },
+            else => null,
+        };
     }
 
     /// Best-effort resolution of fixed-array sizes from their declared size
@@ -2164,253 +1711,12 @@ self.fatal_error = true;
 
     // Instead of setting fatal_error = true immediately, collect errors
     // and continue analysis where possible
-    pub fn reportTypeError(self: *SemanticAnalyzer, span: ast.SourceSpan, comptime fmt: []const u8, args: anytype) void {
-        self.reporter.reportCompileError(span.location, fmt, args);
-        // Only set fatal_error for critical errors that prevent further analysis
-    }
-
-    /// Resolve an enum member name to its parent enum type name
-    pub fn resolveEnumMemberToParentEnum(self: *SemanticAnalyzer, member_name: []const u8) ErrorList!?[]const u8 {
-        // Iterate through all registered custom types to find which enum contains this variant
-        // We do two passes: first for non-internal enums (user-defined), then for internal enums (compiler-provided)
-        var iterator = self.custom_types.iterator();
-
-        // First pass: look for non-internal enums (user-defined types take precedence)
-        while (iterator.next()) |entry| {
-            const custom_type = entry.value_ptr.*;
-            if (custom_type.kind != .Enum) continue;
-            const variants = custom_type.enum_variants orelse continue;
-            var matches = false;
-            for (variants) |variant| {
-                if (std.mem.eql(u8, variant.name, member_name)) {
-                    matches = true;
-                    break;
-                }
-            }
-            if (matches) {
-                return custom_type.name; // Return immediately when we find a non-internal match
-            }
-        }
-
-        // Second pass: look for internal enums (only if no non-internal enum was found)
-        iterator = self.custom_types.iterator();
-        while (iterator.next()) |entry| {
-            const custom_type = entry.value_ptr.*;
-            if (custom_type.kind != .Enum) continue;
-            const variants = custom_type.enum_variants orelse continue;
-            var matches = false;
-            for (variants) |variant| {
-                if (std.mem.eql(u8, variant.name, member_name)) {
-                    matches = true;
-                    break;
-                }
-            }
-            if (matches) {
-                return custom_type.name; // Return first internal match found
-            }
-        }
-
-        return try self.tryRegisterEnumForVariant(member_name);
-    }
-
-    fn tryRegisterEnumForVariant(self: *SemanticAnalyzer, member_name: []const u8) ErrorList!?[]const u8 {
-        const parser = self.parser orelse return null;
-
-        if (parser.current_module) |module_info| {
-            if (try self.findEnumVariantInModuleInfo(&module_info, member_name)) |enum_name| {
-                return enum_name;
-            }
-        }
-
-        if (try self.findEnumVariantInModuleMap(@constCast(&parser.module_namespaces), member_name)) |enum_name| {
-            return enum_name;
-        }
-
-        return null;
-    }
-
-    fn findEnumVariantInModuleMap(
-        self: *SemanticAnalyzer,
-        module_map: *std.StringHashMap(ast.ModuleInfo),
-        member_name: []const u8,
-    ) ErrorList!?[]const u8 {
-        var it = module_map.iterator();
-        while (it.next()) |entry| {
-            if (try self.findEnumVariantInModuleInfo(entry.value_ptr, member_name)) |enum_name| {
-                return enum_name;
-            }
-        }
-        return null;
-    }
-
-    fn findEnumVariantInModuleInfo(
-        self: *SemanticAnalyzer,
-        module_info: *const ast.ModuleInfo,
-        member_name: []const u8,
-    ) ErrorList!?[]const u8 {
-        const module_ast = module_info.ast orelse return null;
-        return try self.findEnumVariantInBlock(module_ast, member_name);
-    }
-
-    fn findEnumVariantInBlock(
-        self: *SemanticAnalyzer,
-        block_expr: *ast.Expr,
-        member_name: []const u8,
-    ) ErrorList!?[]const u8 {
-        if (block_expr.data != .Block) return null;
-        return try self.findEnumVariantInStatements(block_expr.data.Block.statements, member_name);
-    }
-
-    fn findEnumVariantInStatements(
-        self: *SemanticAnalyzer,
-        statements: []const ast.Stmt,
-        member_name: []const u8,
-    ) ErrorList!?[]const u8 {
-        for (statements) |stmt| {
-            if (try self.findEnumVariantInStmt(stmt, member_name)) |enum_name| {
-                return enum_name;
-            }
-        }
-        return null;
-    }
-
-    fn findEnumVariantInStmt(self: *SemanticAnalyzer, stmt: ast.Stmt, member_name: []const u8) ErrorList!?[]const u8 {
-        switch (stmt.data) {
-            .EnumDecl => |enum_decl| {
-                if (self.enumDeclContainsVariant(enum_decl, member_name)) {
-                    return try self.ensureEnumRegistered(enum_decl);
-                }
-            },
-            .Expression => |maybe_expr| {
-                if (maybe_expr) |expr| {
-                    switch (expr.data) {
-                        .EnumDecl => |enum_decl| {
-                            if (self.enumDeclContainsVariant(enum_decl, member_name)) {
-                                return try self.ensureEnumRegistered(enum_decl);
-                            }
-                        },
-                        .Block => |block_expr| {
-                            if (try self.findEnumVariantInStatements(block_expr.statements, member_name)) |enum_name| {
-                                return enum_name;
-                            }
-                        },
-                        else => {},
-                    }
-                }
-            },
-            .Block => |block_stmts| {
-                if (try self.findEnumVariantInStatements(block_stmts, member_name)) |enum_name| {
-                    return enum_name;
-                }
-            },
-            else => {},
-        }
-
-        return null;
-    }
-
-    fn enumDeclContainsVariant(self: *SemanticAnalyzer, enum_decl: anytype, member_name: []const u8) bool {
-        _ = self;
-        for (enum_decl.variants) |variant| {
-            if (std.mem.eql(u8, variant.lexeme, member_name)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    fn ensureEnumRegistered(self: *SemanticAnalyzer, enum_decl: anytype) ErrorList![]const u8 {
-        if (!self.custom_types.contains(enum_decl.name.lexeme)) {
-            const variant_names = try self.allocator.alloc([]const u8, enum_decl.variants.len);
-            for (enum_decl.variants, 0..) |variant, i| {
-                variant_names[i] = variant.lexeme;
-            }
-            try helpers.registerEnumType(self, enum_decl.name.lexeme, variant_names);
-        }
-
-        if (self.custom_types.get(enum_decl.name.lexeme)) |entry| {
-            return entry.name;
-        }
-
-        return enum_decl.name.lexeme;
-    }
-
-    pub fn typeExprToTypeInfo(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) !*ast.TypeInfo {
-        const type_info = try ast.TypeInfo.createDefault(self.allocator);
-        errdefer self.allocator.destroy(type_info);
-
-        switch (type_expr.data) {
-            .Basic => |basic| {
-                type_info.* = .{ .base = switch (basic) {
-                    .Integer => .Int,
-                    .Byte => .Byte,
-                    .Float => .Float,
-                    .String => .String,
-                    .Tetra => .Tetra,
-                    .Nothing => .Nothing,
-                } };
-            },
-            .Custom => |custom| {
-                const canonical_name = ast.bareTypeName(self.resolveTypeAlias(custom.lexeme));
-                type_info.* = .{ .base = .Custom, .custom_type = canonical_name };
-                // A type-position reference to a bare imported type (`x :: Board`)
-                // is a use; without this an import referenced only in an
-                // annotation warns as unused.
-                if (self.parser) |parser_const| {
-                    const parser: *Parser = @constCast(parser_const);
-                    if (parser.imported_symbols) |*syms| {
-                        if (syms.getPtr(custom.lexeme)) |sym| sym.used = true;
-                    }
-                }
-            },
-            .Array => |array| {
-                const element_type = try self.typeExprToTypeInfo(array.element_type);
-                type_info.* = .{ .base = .Array, .array_type = element_type };
-            },
-            .Struct => |fields| {
-                var struct_fields = try self.allocator.alloc(ast.StructFieldType, fields.len);
-                for (fields, 0..) |field, i| {
-                    const field_type = try self.typeExprToTypeInfo(field.type_expr);
-                    struct_fields[i] = .{
-                        .name = field.name.lexeme,
-                        .type_info = field_type,
-                    };
-                }
-                type_info.* = .{ .base = .Struct, .struct_fields = struct_fields };
-            },
-            .Map => |map| {
-                const key_type_info = if (map.key_type) |key_type|
-                    try self.typeExprToTypeInfo(key_type)
-                else
-                    null;
-
-                const value_type_info = try self.typeExprToTypeInfo(map.value_type);
-
-                type_info.* = .{
-                    .base = .Map,
-                    .map_key_type = key_type_info,
-                    .map_value_type = value_type_info,
-                    .is_mutable = map.is_mutable,
-                };
-            },
-            .Enum => {
-                type_info.* = .{ .base = .Nothing };
-            },
-            .Union => |union_types| {
-                var union_type_infos = try self.allocator.alloc(*ast.TypeInfo, union_types.len);
-                for (union_types, 0..) |union_type_expr, i| {
-                    union_type_infos[i] = try self.typeExprToTypeInfo(union_type_expr);
-                }
-                const union_type = try self.allocator.create(ast.UnionType);
-                union_type.* = .{
-                    .types = union_type_infos,
-                    .current_type_index = 0,
-                };
-                type_info.* = .{ .base = .Union, .union_type = union_type };
-            },
-        }
-
-        return type_info;
+    /// The type an annotation names, resolved against the current record. The
+    /// identity is also recorded on the annotation itself, so every later
+    /// reader of the syntax sees the resolved type.
+    pub fn typeExprToTypeInfo(self: *SemanticAnalyzer, type_expr: *ast.TypeExpr) ErrorList!*ast.TypeInfo {
+        try names.resolveTypeExpr(self, type_expr, self.current_module);
+        return ast.typeInfoFromExpr(self.allocator, type_expr);
     }
 
     // Add this new function to evaluate expressions and get their values
@@ -2450,14 +1756,13 @@ self.fatal_error = true;
                     }
                 }
 
-                // Original variable lookup logic
-                if (helpers.lookupVariable(self, var_token.lexeme)) |variable| {
+                if (try names.resolveVariableExpr(self, expr)) |variable| {
                     if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                         return storage.value;
                     }
                 }
 
-                if (scope_management.suggestVariableName(self.current_scope, self.parser, var_token.lexeme)) |suggested| {
+                if (names.suggestName(self, var_token.lexeme)) |suggested| {
                     self.reporter.reportCompileError(
                         getLocationFromBase(expr.base),
                         ErrorCode.UNDEFINED_VARIABLE,
@@ -2616,7 +1921,7 @@ self.fatal_error = true;
                     .LENGTH => {
                         if (icall.receiver.data == .Variable) {
                             const var_name = icall.receiver.data.Variable.lexeme;
-                            if (helpers.lookupVariable(self, var_name)) |variable| {
+                            if (try names.lookupVariable(self, var_name)) |variable| {
                                 if (self.memory.scope_manager.value_storage.get(variable.storage_id)) |storage| {
                                     if (storage.type_info.array_size) |size| {
                                         return TokenLiteral{ .int = @intCast(size) };
@@ -2659,66 +1964,25 @@ self.fatal_error = true;
         }
     }
 
-    fn handleTypeOf(self: *SemanticAnalyzer, expr: *ast.Expr) !TokenLiteral {
-        const type_info = try infer_type.inferTypeFromExpr(self, expr);
-        defer self.allocator.destroy(type_info);
-
-        const type_string = switch (type_info.base) {
-            .Int => "int",
-            .Float => "float",
-            .Byte => "byte",
-            .String => "string",
-            .Tetra => "tetra",
-            .Array => "array",
-            .Function => "function",
-            .Struct => "struct",
-            .Map => "map",
-            .Enum => "enum",
-            .Union => "union",
-            .Custom => "custom",
-            .Nothing => "nothing",
-            else => blk: {
-                // Fallback: try evaluating the expression and derive type from its runtime value
-                const val = try self.evaluateExpression(expr);
-                break :blk switch (val) {
-                    .int => "int",
-                    .float => "float",
-                    .byte => "byte",
-                    .string => "string",
-                    .tetra => "tetra",
-                    .nothing => "nothing",
-                    else => "unknown",
-                };
-            },
-        };
-
-        return TokenLiteral{ .string = type_string };
-    }
-
-    fn validateFunctionBody(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo) !void {
-        try self.validateFunctionBodyWithStruct(func, func_span, expected_return_type, null);
-    }
-
-    fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo, struct_type: ?[]const u8) !void {
+    fn validateFunctionBodyWithStruct(self: *SemanticAnalyzer, func: anytype, func_span: ast.SourceSpan, expected_return_type: ast.TypeInfo, enclosing: ?Enclosing) !void {
         // Create function scope with parameters
         const func_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
 
-        // Resolving the declared return type marks any custom member types
-        // (e.g. an enum appearing only in a `int | E` union return) as used so
-        // they don't trigger a spurious unused-variable warning.
-        _ = try self.resolveTypeInfo(expected_return_type);
-
         // Add parameters to function scope
-        for (func.params) |param| {
-            const param_type_info = if (param.type_expr) |type_expr| blk: {
-                self.materializeTypeExprModules(type_expr);
-                break :blk try ast.typeInfoFromExpr(self.allocator, type_expr);
-            } else try ast.TypeInfo.createDefault(self.allocator);
+        for (func.params) |*param| {
+            const param_type_info = if (param.type_expr) |type_expr|
+                try self.typeExprToTypeInfo(type_expr)
+            else
+                try ast.TypeInfo.createDefault(self.allocator);
 
-            if (param.type_expr == null) {
-                param_type_info.* = .{ .base = .Nothing }; // Default to nothing if no type specified
+            // A default stands in for an argument the caller left out, so it
+            // is typed against the parameter as an argument is.
+            if (param.default_value) |default_value| {
+                const default_type = try infer_type.inferTypeFromExpr(self, default_value);
+                try helpers.unifyTypesExpr(self, param_type_info, default_type, default_value, .{ .location = getLocationFromBase(default_value.base) });
             }
 
+            self.checkFreshName(func_scope, param.name);
             const param_var = func_scope.createValueBinding(
                 param.name.lexeme,
                 TokenLiteral{ .nothing = {} }, // Parameters get their values at call time
@@ -2741,702 +2005,77 @@ self.fatal_error = true;
             };
             param_var.is_param = true;
             param_var.recordDeclLocation(param.name);
+            param.storage = param_var.storage_id;
         }
 
         // Temporarily set current scope to function scope
         const prev_scope = self.current_scope;
-        const prev_struct_type = self.current_struct_type;
+        const prev_enclosing = self.enclosing;
+        const prev_returning = self.returning;
         self.current_scope = func_scope;
-        self.current_struct_type = struct_type;
+        self.enclosing = enclosing;
+        self.returning = .{ .function = func.name, .type = expected_return_type };
+        defer self.returning = prev_returning;
 
-        // Validate function body statements
+        // Every `return` is checked against `expected_return_type` as the body
+        // is validated; what is left is whether every path reaches one.
         try self.validateStatements(func.body);
-
-        // NEW: Return path analysis with enhanced union subtyping
-        _ = try self.validateReturnPaths(func.body, expected_return_type, func_span);
+        try self.validateReturnPaths(func.body, expected_return_type, func_span);
 
         // Restore previous scope and struct type
         self.current_scope = prev_scope;
-        self.current_struct_type = prev_struct_type;
+        self.enclosing = prev_enclosing;
     }
 
-    fn validateReturnPaths(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) !bool {
-        // Step 1: Start with return type = Nothing
-        var actual_return_type: ?*ast.TypeInfo = null;
-        var has_explicit_return = false;
+    /// Report a function that declares a return type but has no path to a
+    /// `return`. Return values are checked where each `return` is analyzed
+    /// (`checkReturnValue`), not here.
+    fn validateReturnPaths(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!void {
+        if (expected_return_type.base == .Nothing) return;
+        if (try self.checkStatementsHaveReturns(body)) return;
+        self.reporter.reportCompileError(
+            func_span.location,
+            ErrorCode.MISSING_RETURN_VALUE,
+            "Function expects return value of type {s}; add an explicit return",
+            .{@tagName(expected_return_type.base)},
+        );
+        self.fatal_error = true;
+    }
 
-        // Step 2: Look for return statements in the main body
-        for (body) |stmt| {
-            switch (stmt.data) {
-                .Return => |return_stmt| {
-                    has_explicit_return = true;
-
-                    if (return_stmt.value) |value| {
-                        const return_type = try infer_type.inferTypeFromExpr(self, value);
-
-                        if (actual_return_type == null) {
-                            // First return statement - use its type
-                            actual_return_type = return_type;
-                        } else {
-                            // Multiple return statements - check if types are compatible
-                            // TODO: validate against expected type (multi-return compat check)
-                            try self.validateReturnTypeCompatibility(&expected_return_type, return_type, value, .{ .location = getLocationFromBase(stmt.base) });
-                        }
-                    } else {
-                        // Return without value - should be Nothing type
-                        const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
-                        nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
-
-                        if (actual_return_type == null) {
-                            actual_return_type = nothing_type;
-                        }
-                    }
-                },
-                .Expression => |expr| {
-                    if (expr) |expression| {
-                        // Special handling for Loop expressions
-                        if (expression.data == .Loop) {
-                            // Check if this is an 'each' loop (desugared from ForEach)
-                            // Each loops always execute their body, so we should check for returns
-                            if (try self.checkExpressionHasReturns(expression)) {
-                                has_explicit_return = true;
-                            }
-
-                            // For each loops, we should continue processing subsequent statements
-                            // because each loops always execute their body, so the code after is reachable
-                            continue;
-                        }
-
-                        // Check for return statements inside expressions (like if statements)
-                        if (try self.checkExpressionHasReturns(expression)) {
-                            has_explicit_return = true;
-                        }
-                    }
-                },
-                .Block => |block_stmts| {
-                    // Recursively check blocks for return statements
-                    const block_has_return = try self.validateReturnPaths(block_stmts, expected_return_type, func_span);
-                    if (block_has_return) {
-                        has_explicit_return = true;
-                    }
-                },
-                else => {},
-            }
-        }
-
-        // Step 6: Compare to expected type
-        if (expected_return_type.base != .Nothing and !has_explicit_return) {
+    /// Infer a returned value and check it against the enclosing function's
+    /// declared return type. A function without `returns` returns `nothing`,
+    /// so a value returned from it is an error.
+    pub fn checkReturnValue(self: *SemanticAnalyzer, value: *ast.Expr, location: Location) ErrorList!*ast.TypeInfo {
+        const value_type = try infer_type.inferTypeFromExpr(self, value);
+        const returning = self.returning orelse return value_type;
+        if (returning.type.base == .Nothing) {
             self.reporter.reportCompileError(
-                func_span.location,
-                ErrorCode.MISSING_RETURN_VALUE,
-                "Function expects return value of type {s}; add an explicit return",
-                .{@tagName(expected_return_type.base)},
+                location,
+                ErrorCode.TYPE_MISMATCH,
+                "'{s}' declares no `returns`, so it cannot return a value",
+                .{returning.function.lexeme},
             );
             self.fatal_error = true;
+            return value_type;
         }
-
-        return has_explicit_return;
+        try self.validateReturnTypeCompatibility(&returning.type, value_type, value, .{ .location = location });
+        return value_type;
     }
 
-    fn validateIfExpressionReturns(self: *SemanticAnalyzer, if_expr: *ast.Expr, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!bool {
-        const if_data = if_expr.data.If;
-
-        // Check then branch
-        const then_returns = if (if_data.then_branch) |then_branch|
-            try self.validateExpressionReturns(then_branch, expected_return_type, func_span)
-        else
-            false;
-
-        // Check else branch
-        const else_returns = if (if_data.else_branch) |else_branch|
-            try self.validateExpressionReturns(else_branch, expected_return_type, func_span)
-        else
-            false;
-
-        // Both branches must return for the if to guarantee a return
-        return then_returns and else_returns;
-    }
-
-    // Determine whether a sequence of statements guarantees a return on all control-flow paths
-    fn guaranteesReturnInStatements(self: *SemanticAnalyzer, body: []ast.Stmt, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!bool {
-        // Fast path: if the last statement is an explicit return or an
-        // expression that guarantees return, we can immediately accept.
-        if (body.len > 0) {
-            const last_stmt = body[body.len - 1];
-            switch (last_stmt.data) {
-                .Return => return true,
-                .Expression => |maybe_expr| {
-                    if (maybe_expr) |expr| {
-                        if (try self.validateExpressionReturns(expr, expected_return_type, func_span)) return true;
-                    }
-                },
-                .Block => |block_stmts| {
-                    if (try self.guaranteesReturnInStatements(block_stmts, expected_return_type, func_span)) return true;
-                },
-                else => {},
-            }
-        }
-
-        for (body, 0..) |stmt, idx| {
-            switch (stmt.data) {
-                .Return => {
-                    // Unconditional return guarantees a return; subsequent statements are unreachable
-                    return true;
-                },
-                .Block => |block_stmts| {
-                    if (try self.guaranteesReturnInStatements(block_stmts, expected_return_type, func_span)) return true;
-                },
-                .Expression => |maybe_expr| {
-                    if (maybe_expr) |expr| {
-                        // If this expression guarantees return (e.g., an if with both branches returning),
-                        // treat it as guaranteeing a return from this point forward
-                        if (try self.validateExpressionReturns(expr, expected_return_type, func_span)) return true;
-
-                        // Special case: if it's an if-expression without an else and this is the last
-                        // statement, fallthrough is possible => no guarantee; continue loop otherwise.
-                        if (expr.data == .If and idx == body.len - 1) {
-                            // No else or not both branches returning implies no guarantee
-                            // The earlier validateIfExpressionReturns would have caught the positive case
-                        }
-                    }
-                },
-                else => {},
-            }
-        }
-
-        return false;
-    }
-
-    fn isLoopScope(self: *SemanticAnalyzer) bool {
-        return self.in_loop_scope;
-    }
-
-    fn validateExpressionReturns(self: *SemanticAnalyzer, expr: *ast.Expr, expected_return_type: ast.TypeInfo, func_span: ast.SourceSpan) ErrorList!bool {
-        switch (expr.data) {
-            .ReturnExpr => |return_expr| {
-                if (return_expr.value) |value| {
-                    const return_type = try infer_type.inferTypeFromExpr(self, value);
-                    try self.validateReturnTypeCompatibility(&expected_return_type, return_type, value, .{ .location = getLocationFromBase(expr.base) });
-                    return true;
-                } else {
-                    return expected_return_type.base == .Nothing;
-                }
-            },
-            .Unreachable => {
-                // Explicitly terminates the current control-flow path
-                return true;
-            },
-            .If => {
-                return self.validateIfExpressionReturns(expr, expected_return_type, func_span);
-            },
-            .Match => |match_expr| {
-                // Every arm must return for a `match` to guarantee one, matching
-                // how `if` requires both of its branches.
-                if (match_expr.cases.len == 0) return false;
-                for (match_expr.cases) |case| {
-                    if (!try self.validateExpressionReturns(case.body, expected_return_type, func_span)) return false;
-                }
-                return true;
-            },
-            .Cast => |cast| {
-                // `x as T then .. else ..` narrows and branches: both sides must
-                // return for the cast to guarantee one. A bare `as` with no
-                // branches is a plain conversion and returns nothing.
-                if (cast.then_branch == null and cast.else_branch == null) return false;
-                if (cast.then_branch) |then_branch| {
-                    if (!try self.validateExpressionReturns(then_branch, expected_return_type, func_span)) return false;
-                }
-                if (cast.else_branch) |else_branch| {
-                    return self.validateExpressionReturns(else_branch, expected_return_type, func_span);
-                }
-                return cast.then_branch != null;
-            },
-            .Block => |block| {
-                // Check statements in the block for return statements
-                const block_returns = try self.validateReturnPaths(block.statements, expected_return_type, func_span);
-
-                // Also check the final value expression if present
-                if (block.value) |value| {
-                    const value_returns = try self.validateExpressionReturns(value, expected_return_type, func_span);
-                    return block_returns or value_returns;
-                } else {
-                    return block_returns;
-                }
-            },
-            .Loop => |loop| {
-                // For loops, check if the body contains return statements
-                // Note: loops don't guarantee termination, so they don't guarantee a return
-                // But we should still analyze the body for return statements
-                if (loop.body.data == .Block) {
-                    return try self.validateReturnPaths(loop.body.data.Block.statements, expected_return_type, func_span);
-                } else {
-                    return try self.validateExpressionReturns(loop.body, expected_return_type, func_span);
-                }
-            },
-            else => {
-                // Other expressions don't return values in the control flow sense
-                return false;
-            },
-        }
-    }
-
-    fn validateImport(self: *SemanticAnalyzer, import_info: ast.ImportInfo, import_span: ast.SourceSpan) !void {
-        // Check if module file exists
-        const module_exists = self.checkModuleExists(import_info.module_path);
-        if (!module_exists) {
-            self.reporter.reportCompileError(
-                import_span.location,
-                ErrorCode.MODULE_NOT_FOUND,
-                "Module file not found: '{s}'",
-                .{import_info.module_path},
-            );
-            self.fatal_error = true;
-            return;
-        }
-
-        // Check for circular imports
-        if (self.isCircularImport(import_info.module_path)) {
-            self.reporter.reportCompileError(
-                import_span.location,
-                ErrorCode.CIRCULAR_IMPORT,
-                "Circular import detected: '{s}'",
-                .{import_info.module_path},
-            );
-            self.fatal_error = true;
-            return;
-        }
-
-        // If specific symbol is requested, validate it exists
-        if (import_info.specific_symbol) |symbol_name| {
-            const symbol_exists = self.checkSymbolExists(import_info.module_path, symbol_name);
-            if (!symbol_exists) {
-                self.reporter.reportCompileError(
-                    import_span.location,
-                    ErrorCode.SYMBOL_NOT_FOUND_IN_IMPORT_MODULE,
-                    "Symbol '{s}' not found in module '{s}'",
-                    .{ symbol_name, import_info.module_path },
-                );
-                self.fatal_error = true;
-                return;
-            }
-        }
-
-        // Import registration: load the module AST and register public structs/enums and struct methods
-        // so that method resolution works across modules (dot-methods like obj.method()).
-        if (self.parser) |pconst| {
-            const ParserType = @TypeOf(pconst.*);
-            const p: *ParserType = @constCast(pconst);
-
-            // Resolve through the graph: identity comes from the record, not a
-            // spelling-keyed cache.
-            var mod_info: ?ast.ModuleInfo = null;
-            {
-                // Import here to avoid a cyclic import at file top-level
-                const module_resolver = @import("../../parser/module_resolver.zig");
-                mod_info = module_resolver.resolveModule(p, import_info.module_path) catch null;
-            }
-
-            if (mod_info) |mi| {
-                if (mi.ast) |module_ast| {
-                    if (module_ast.data == .Block) {
-                        const statements = module_ast.data.Block.statements;
-
-                        // Helper to decide if a symbol should be imported based on specificity
-                        const wantsSymbol = struct {
-                            fn check(name: []const u8, info: ast.ImportInfo) bool {
-                                if (info.import_type == .Module) return true;
-                                if (info.specific_symbols) |syms| {
-                                    for (syms) |s| if (std.mem.eql(u8, s, name)) return true;
-                                    return false;
-                                }
-                                if (info.specific_symbol) |s| return std.mem.eql(u8, s, name);
-                                return false;
-                            }
-                        };
-
-                        for (statements) |stmt| {
-                            switch (stmt.data) {
-                                .Expression => |expr_opt| {
-                                    if (expr_opt) |expr| if (expr.data == .StructDecl) {
-                                        const sd = expr.data.StructDecl;
-                                        if (!sd.is_public) continue;
-                                        if (!wantsSymbol.check(sd.name.lexeme, import_info)) continue;
-
-                                        // Convert fields to TypeInfo and register struct
-                                        const field_types = try self.allocator.alloc(ast.StructFieldType, sd.fields.len);
-                                        for (sd.fields, field_types) |field, *ft| {
-                                            self.materializeTypeExprModules(field.type_expr);
-                                            const ti = try ast.typeInfoFromExpr(self.allocator, field.type_expr);
-                                            ft.* = .{ .name = field.name.lexeme, .type_info = ti };
-                                        }
-                                        try helpers.registerStructType(self, sd.name.lexeme, field_types);
-
-                                        // Register methods (static and instance); only the public
-                                        // ones cross the module boundary.
-                                        try self.registerStructMethods(sd, .public_only);
-                                    };
-                                },
-                                .EnumDecl => |ed| {
-                                    if (!ed.is_public) break;
-                                    if (!wantsSymbol.check(ed.name.lexeme, import_info)) break;
-                                    const variants = try self.allocator.alloc([]const u8, ed.variants.len);
-                                    for (ed.variants, variants) |v, *name| name.* = v.lexeme;
-                                    try helpers.registerEnumType(self, ed.name.lexeme, variants);
-                                },
-                                else => {},
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    fn checkModuleExists(self: *SemanticAnalyzer, module_path: []const u8) bool {
-        if (self.parser) |pconst| {
-            const ParserType = @TypeOf(pconst.*);
-            const p: *ParserType = @constCast(pconst);
-            const module_resolver = @import("../../parser/module_resolver.zig");
-
-            // Try direct file loading via resolver helpers without erroring
-            const data = module_resolver.loadModuleSourceWithPath(p, module_path) catch return false;
-            // Basic sanity: resolved_path must not be empty
-            return data.resolved_path.len > 0 and data.source.len > 0;
-        }
-        return false;
-    }
-
-    fn isCircularImport(self: *SemanticAnalyzer, module_path: []const u8) bool {
-        if (self.parser) |pconst| {
-            const ParserType = @TypeOf(pconst.*);
-            const p: *ParserType = @constCast(pconst);
-
-            // A module is circular iff it is re-entered while its resolution is
-            // active; the graph owns that state, surfaced here as the parser's
-            // live import stack. After resolution completes the stack is empty.
-            for (p.import_stack.items) |entry| {
-                if (std.mem.eql(u8, entry.module_path, module_path)) return true;
-            }
-        }
-        return false;
-    }
-
-    fn checkSymbolExists(self: *SemanticAnalyzer, module_path: []const u8, symbol: []const u8) bool {
-        if (self.parser) |pconst| {
-            const ParserType = @TypeOf(pconst.*);
-            const p: *ParserType = @constCast(pconst);
-            const module_resolver = @import("../../parser/module_resolver.zig");
-
-            // Resolve through the graph: identity comes from the record.
-            const mod_info: ?ast.ModuleInfo = module_resolver.resolveModule(p, module_path) catch null;
-            if (mod_info == null) return false;
-
-            const info = mod_info.?;
-            if (info.symbols) |map| {
-                if (map.get(symbol)) |sym| {
-                    return sym.is_public;
-                }
-            }
-        }
-        return false;
-    }
-
-    fn inferFunctionReturnType(self: *SemanticAnalyzer, func: anytype) ErrorList!*ast.TypeInfo {
-        var return_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
-        defer return_types.deinit();
-
-        // Create function scope with parameters for return type inference
-        const func_scope = try self.memory.scope_manager.createScope(self.current_scope, self.memory);
-        defer func_scope.deinit();
-
-        // Add parameters to function scope
-        for (func.params) |param| {
-            const param_type_info = if (param.type_expr) |type_expr|
-                try ast.typeInfoFromExpr(self.allocator, type_expr)
-            else
-                try ast.TypeInfo.createDefault(self.allocator);
-
-            if (param.type_expr == null) {
-                param_type_info.* = .{ .base = .Nothing }; // Default to nothing if no type specified
-            }
-
-            _ = func_scope.createValueBinding(
-                param.name.lexeme,
-                TokenLiteral{ .nothing = {} }, // Parameters get their values at call time
-                eval.convertTypeToTokenType(param_type_info.base),
-                param_type_info,
-                false, // Parameters are mutable
-            ) catch |err| {
-                if (err == error.DuplicateVariableName) {
-                    // This shouldn't happen during inference, but handle gracefully
-                    continue;
-                } else {
-                    return err;
-                }
-            };
-        }
-
-        // Temporarily set current scope to function scope for return type inference
-        const prev_scope = self.current_scope;
-        self.current_scope = func_scope;
-
-        // Process function body to add local variables to scope
-        try self.collectDeclarations(func.body, func_scope);
-
-        // NEW APPROACH: Start with Nothing, find terminating returns, collect all returns
-        var terminating_return_type: ?*ast.TypeInfo = null;
-        var all_return_types = std.array_list.Managed(*ast.TypeInfo).init(self.allocator);
-        defer all_return_types.deinit();
-
-        // First pass: Find terminating return statements (outside conditionals)
-        try self.findTerminatingReturns(func.body, &terminating_return_type, &all_return_types, true);
-
-        // Second pass: Collect all other return types
-        try self.collectReturnTypes(func.body, &all_return_types);
-
-        // Restore previous scope
-        self.current_scope = prev_scope;
-
-        var inferred_return_type: *ast.TypeInfo = undefined;
-        if (terminating_return_type) |term_type| {
-            // Use the terminating return type as the base
-            if (all_return_types.items.len <= 1) {
-                inferred_return_type = term_type;
-            } else {
-                // Create union with terminating type and all other types
-                try all_return_types.append(term_type);
-                inferred_return_type = try helpers.createUnionType(self, all_return_types.items);
-            }
-        } else if (all_return_types.items.len == 0) {
-            // No return statements - function returns Nothing
-            const type_info = try ast.TypeInfo.createDefault(self.allocator);
-            type_info.* = .{ .base = .Nothing, .is_mutable = false };
-            inferred_return_type = type_info;
-        } else if (all_return_types.items.len == 1) {
-            // Single return type - return it directly
-            inferred_return_type = all_return_types.items[0];
-        } else {
-            // Multiple return types - create a union
-            inferred_return_type = try helpers.createUnionType(self, all_return_types.items);
-        }
-
-        return inferred_return_type;
-    }
-
-    fn findTerminatingReturns(
-        self: *SemanticAnalyzer,
-        statements: []ast.Stmt,
-        terminating_return_type: *?*ast.TypeInfo,
-        all_return_types: *std.array_list.Managed(*ast.TypeInfo),
-        allow_implicit_return: bool,
-    ) ErrorList!void {
-        for (statements, 0..) |stmt, idx| {
-            const is_last_stmt = idx + 1 == statements.len;
-            switch (stmt.data) {
-                .Return => |return_stmt| {
-                    if (return_stmt.value) |value| {
-                        const return_type = try infer_type.inferTypeFromExpr(self, value);
-                        if (terminating_return_type.* == null) {
-                            terminating_return_type.* = return_type;
-                        }
-                        try all_return_types.append(return_type);
-                    } else {
-                        // Return without value - add Nothing type
-                        const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
-                        nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
-                        if (terminating_return_type.* == null) {
-                            terminating_return_type.* = nothing_type;
-                        }
-                        try all_return_types.append(nothing_type);
-                    }
-                    // Found a terminating return - stop processing
-                    return;
-                },
-                .Block => |block_stmts| {
-                    try self.findTerminatingReturns(block_stmts, terminating_return_type, all_return_types, false);
-                    // If we found a terminating return in the block, stop processing
-                    if (terminating_return_type.* != null) {
-                        return;
-                    }
-                },
-                .Expression => |expr| {
-                    if (expr) |expression| {
-                        // Check if this is an if expression that might have terminating returns
-                        if (expression.data == .If) {
-                            const if_expr = expression.data.If;
-                            if (if_expr.then_branch) |then_branch| {
-                                if (then_branch.data == .Block) {
-                                    try self.findTerminatingReturns(then_branch.data.Block.statements, terminating_return_type, all_return_types, false);
-                                }
-                            }
-                            if (if_expr.else_branch) |else_branch| {
-                                if (else_branch.data == .Block) {
-                                    try self.findTerminatingReturns(else_branch.data.Block.statements, terminating_return_type, all_return_types, false);
-                                }
-                            }
-                            // If we found a terminating return in either branch, stop processing
-                            if (terminating_return_type.* != null) {
-                                return;
-                            }
-                        } else if (expression.data == .Loop) {
-                            // Handle each loops - check if they contain terminating returns
-                            const loop_expr = expression.data.Loop;
-                            if (loop_expr.body.data == .Block) {
-                                try self.findTerminatingReturns(loop_expr.body.data.Block.statements, terminating_return_type, all_return_types, false);
-                            } else {
-                                // Single expression loop body
-                                const loop_stmt = ast.Stmt{ .data = .{ .Expression = loop_expr.body }, .base = loop_expr.body.base };
-                                var stmts = [_]ast.Stmt{loop_stmt};
-                                try self.findTerminatingReturns(&stmts, terminating_return_type, all_return_types, false);
-                            }
-                            // For each loops, we should continue processing subsequent statements
-                            // because each loops always execute their body, so the code after is reachable
-                            // Don't return here - continue to process remaining statements
-                            // The function should continue to find the actual terminating return
-                        } else if (expression.data == .ReturnExpr) {
-                            const return_expr = expression.data.ReturnExpr;
-                            if (return_expr.value) |value| {
-                                const return_type = try infer_type.inferTypeFromExpr(self, value);
-                                if (terminating_return_type.* == null) {
-                                    terminating_return_type.* = return_type;
-                                }
-                                try all_return_types.append(return_type);
-                            } else {
-                                const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
-                                nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
-                                if (terminating_return_type.* == null) {
-                                    terminating_return_type.* = nothing_type;
-                                }
-                                try all_return_types.append(nothing_type);
-                            }
-                            return;
-                        } else if (expression.data == .Unreachable) {
-                            // Hitting unreachable stops execution without contributing a return type
-                            return;
-                        } else if (allow_implicit_return and is_last_stmt) {
-                            // Only treat the final expression in a function body as a potential implicit return.
-                            const return_type = try infer_type.inferTypeFromExpr(self, expression);
-                            if (terminating_return_type.* == null) {
-                                terminating_return_type.* = return_type;
-                            }
-                            try all_return_types.append(return_type);
-                            return;
-                        }
-                    }
-                },
-                else => {
-                    // Other statements don't terminate execution
-                },
-            }
-        }
-    }
-
-    fn collectReturnTypes(self: *SemanticAnalyzer, statements: []ast.Stmt, return_types: *std.array_list.Managed(*ast.TypeInfo)) ErrorList!void {
-        for (statements) |stmt| {
-            switch (stmt.data) {
-                .Return => |return_stmt| {
-                    if (return_stmt.value) |value| {
-                        const return_type = try infer_type.inferTypeFromExpr(self, value);
-                        try return_types.append(return_type);
-                    } else {
-                        // Return without value - add Nothing type
-                        const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
-                        nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
-                        try return_types.append(nothing_type);
-                    }
-                },
-                .Block => |block_stmts| {
-                    try self.collectReturnTypes(block_stmts, return_types);
-                },
-                .Expression => |expr| {
-                    if (expr) |expression| {
-                        // Only collect return types from explicit return expressions
-                        if (expression.data == .ReturnExpr) {
-                            const return_expr = expression.data.ReturnExpr;
-                            if (return_expr.value) |value| {
-                                const return_type = try infer_type.inferTypeFromExpr(self, value);
-                                try return_types.append(return_type);
-                            } else {
-                                // Return without value - add Nothing type
-                                const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
-                                nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
-                                try return_types.append(nothing_type);
-                            }
-                        } else {
-                            // For other expressions (like if expressions), collect their return types
-                            // This handles cases where the function body is just an expression
-                            try self.collectReturnTypesFromExpr(expression, return_types);
-                        }
-                    }
-                },
-                else => {},
-            }
-        }
-    }
-
-    fn collectReturnTypesFromIf(self: *SemanticAnalyzer, if_expr: *ast.Expr, return_types: *std.array_list.Managed(*ast.TypeInfo)) ErrorList!void {
-        const if_data = if_expr.data.If;
-
-        // Check then branch
-        if (if_data.then_branch) |then_branch| {
-            try self.collectReturnTypesFromExpr(then_branch, return_types);
-        }
-
-        // Check else branch
-        if (if_data.else_branch) |else_branch| {
-            try self.collectReturnTypesFromExpr(else_branch, return_types);
-        }
-    }
-
-    fn collectReturnTypesFromExpr(self: *SemanticAnalyzer, expr: *ast.Expr, return_types: *std.array_list.Managed(*ast.TypeInfo)) ErrorList!void {
-        switch (expr.data) {
-            .ReturnExpr => |return_expr| {
-                if (return_expr.value) |value| {
-                    const return_type = try infer_type.inferTypeFromExpr(self, value);
-                    try return_types.append(return_type);
-                } else {
-                    const nothing_type = try ast.TypeInfo.createDefault(self.allocator);
-                    nothing_type.* = .{ .base = .Nothing, .is_mutable = false };
-                    try return_types.append(nothing_type);
-                }
-            },
-            .If => {
-                try self.collectReturnTypesFromIf(expr, return_types);
-            },
-            // No ForEach expression variant; 'each' is desugared to a Loop statement
-            .Block => |block| {
-                // Check statements in the block for return statements
-                try self.collectReturnTypes(block.statements, return_types);
-
-                // Also check the final value expression if present
-                if (block.value) |value| {
-                    try self.collectReturnTypesFromExpr(value, return_types);
-                }
-            },
-            .Loop => |loop| {
-                // For loops, collect return types from the body
-                if (loop.body.data == .Block) {
-                    try self.collectReturnTypes(loop.body.data.Block.statements, return_types);
-                } else {
-                    try self.collectReturnTypesFromExpr(loop.body, return_types);
-                }
-            },
-            else => {
-                // Other expressions don't return values in the control flow sense
-            },
-        }
-    }
-
-    fn checkLoopHasBreaks(self: *SemanticAnalyzer, loop_expr: *ast.Expr) ErrorList!bool {
-        const loop_data = loop_expr.data.Loop;
-
-        // Check if the loop body contains break statements
-        if (loop_data.body.data == .Block) {
-            return self.checkStatementsHaveBreaks(loop_data.body.data.Block.statements);
-        } else {
-            // For non-block bodies, check if the expression itself contains breaks
-            return self.checkExpressionHasBreaks(loop_data.body);
-        }
+    /// A bare `return` returns `nothing`, so the function has to declare a
+    /// return type that admits it: none at all, or a union with a `nothing`
+    /// member. A function returns what it declares; nothing widens it.
+    pub fn checkBareReturn(self: *SemanticAnalyzer, location: Location) void {
+        const returning = self.returning orelse return;
+        const declared = returning.type;
+        if (admitsNothing(&declared)) return;
+        self.reporter.reportCompileError(
+            location,
+            ErrorCode.TYPE_MISMATCH,
+            "'{s}' returns {s}, so a bare `return` has no value to give; declare `returns nothing | {s}` to return nothing",
+            .{ returning.function.lexeme, helpers.typeLabel(&declared), helpers.typeLabel(&declared) },
+        );
+        self.fatal_error = true;
     }
 
     fn checkStatementsHaveBreaks(self: *SemanticAnalyzer, statements: []const ast.Stmt) ErrorList!bool {
@@ -3537,9 +2176,6 @@ fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList
         for (statements) |stmt| {
             switch (stmt.data) {
                 .Return => return true,
-                .Block => |block_stmts| {
-                    if (try self.checkStatementsHaveReturns(block_stmts)) return true;
-                },
                 .Expression => |expr| {
                     if (expr) |expression| {
                         if (try self.checkExpressionHasReturns(expression)) return true;
@@ -3551,10 +2187,56 @@ fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList
         return false;
     }
 
+    /// Whether a value of `t` may be `nothing`: `nothing` itself, or a union
+    /// with a `nothing` member.
+    fn admitsNothing(t: *const ast.TypeInfo) bool {
+        return t.base == .Nothing or (t.base == .Union and unionHasNothing(t));
+    }
+
+    fn unionHasNothing(t: *const ast.TypeInfo) bool {
+        const union_type = t.union_type orelse return false;
+        for (union_type.types) |member| if (member.base == .Nothing) return true;
+        return false;
+    }
+
+    /// Whether `expected` accepts `actual` as the same named type: an enum
+    /// value matches a named enum, and either matches a group that contains it.
+    /// This is what widens `nothing | error.IO` (an inline-Zig fallible return)
+    /// into `nothing | error.StdError`, where the group's members are the enums.
+    fn namedMemberAccepts(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *const ast.TypeInfo) bool {
+        const expected_ref = switch (expected.custom_type orelse return false) {
+            .ref => |r| r,
+            .written => return false,
+        };
+        if (self.custom_types.get(expected_ref)) |custom| {
+            if (custom.kind == .Enum and actual.base == .Enum) return true;
+        }
+        const actual_ref = switch (actual.custom_type orelse return false) {
+            .ref => |r| r,
+            .written => return false,
+        };
+        const group_id = self.group_table.idOf(expected_ref) orelse return false;
+        const group_members = self.group_table.members(group_id) orelse return false;
+        for (group_members) |member| {
+            if (member.ref.eql(actual_ref)) return true;
+        }
+        return false;
+    }
+
     fn validateReturnTypeCompatibility(self: *SemanticAnalyzer, expected: *const ast.TypeInfo, actual: *ast.TypeInfo, actual_expr: ?*ast.Expr, span: ast.SourceSpan) !void {
-        // Treat Nothing as a bottom type that is compatible with any expected return type
-        if (actual.base == .Nothing) {
-            return;
+        // `nothing` is returned only where the declared type admits it.
+        if (actual.base == .Nothing or (actual.base == .Union and unionHasNothing(actual))) {
+            if (!admitsNothing(expected)) {
+                self.reporter.reportCompileError(
+                    span.location,
+                    ErrorCode.TYPE_MISMATCH,
+                    "this return can be `nothing`, which {s} does not admit; declare `returns nothing | {s}`",
+                    .{ helpers.typeLabel(expected), helpers.typeLabel(expected) },
+                );
+                self.fatal_error = true;
+                return;
+            }
+            if (actual.base == .Nothing) return;
         }
         // Handle union types for return type checking
         if (expected.base == .Union) {
@@ -3565,7 +2247,7 @@ fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList
                     if (actual.union_type) |actual_union| {
                         // Check that every member of the actual union is compatible with the expected union
                         for (actual_union.types) |actual_member| {
-                            // Skip Nothing members; Nothing is compatible with any expected union
+                            // `nothing` was checked against the declared type above.
                             if (actual_member.base == .Nothing) continue;
                             var found_match = false;
                             for (union_type.types) |expected_member| {
@@ -3575,14 +2257,18 @@ fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList
                                 }
                                 // Allow enum literal (Enum) to match a Custom enum member in the expected union
                                 if (expected_member.base == .Custom and actual_member.base == .Enum) {
-                                    if (expected_member.custom_type) |custom_name| {
-                                        if (self.custom_types.get(custom_name)) |ct| {
+                                    if (expected_member.custom_type) |custom| {
+                                        if (self.custom_types.get(custom.resolved())) |ct| {
                                             if (ct.kind == .Enum) {
                                                 found_match = true;
                                                 break;
                                             }
                                         }
                                     }
+                                }
+                                if (self.namedMemberAccepts(expected_member, actual_member)) {
+                                    found_match = true;
+                                    break;
                                 }
                             }
                             if (!found_match) {
@@ -3609,14 +2295,18 @@ fn checkExpressionHasReturns(self: *SemanticAnalyzer, expr: *ast.Expr) ErrorList
                         }
                         // Allow enum literal (Enum) to match a Custom enum member in the expected union
                         if (member_type.base == .Custom and actual.base == .Enum) {
-                            if (member_type.custom_type) |custom_name| {
-                                if (self.custom_types.get(custom_name)) |ct| {
+                            if (member_type.custom_type) |custom| {
+                                if (self.custom_types.get(custom.resolved())) |ct| {
                                     if (ct.kind == .Enum) {
                                         found_match = true;
                                         break;
                                     }
                                 }
                             }
+                        }
+                        if (self.namedMemberAccepts(member_type, actual)) {
+                            found_match = true;
+                            break;
                         }
                     }
 

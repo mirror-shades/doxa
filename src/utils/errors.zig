@@ -38,6 +38,8 @@ pub const ErrorList = error{
     NullAssignmentValue,
     ExpectedStructType,
     UnknownVariableType,
+    MissingExpressionType,
+    MissingBindingType,
     UnknownCustomType,
     InvalidExpressionType,
     ImportMustHaveFrom,
@@ -264,6 +266,8 @@ pub const ErrorList = error{
     ModuleLoadError,
     ModuleRootUnknown,
     DuplicateStableKey,
+    ImportedNameNotFound,
+    InvalidZigModule,
 
     // modules
     SharingViolation,
@@ -362,6 +366,8 @@ pub const ErrorCode = struct {
     pub const BYTE_VALUE_OUT_OF_RANGE = "E1031";
     pub const INTEGER_VALUE_OUT_OF_RANGE = "E1032";
     pub const NON_EXHAUSTIVE_MATCH = "E1033";
+    pub const INEXACT_FLOAT_LITERAL = "E1034";
+    pub const SHADOWED_NAME = "E1035";
 
     // 2xxx - Syntax & Parsing
     pub const SYNTAX_ERROR = "E2001";
@@ -399,6 +405,8 @@ pub const ErrorCode = struct {
     pub const NOT_TRUTHY = "E2026";
     pub const EXPECTED_OPEN_BRACE = "E2027";
     pub const INVALID_PLACEHOLDER_EXPRESSION = "E2028";
+    pub const NESTED_TYPE_DECLARATION = "E2029";
+    pub const INVALID_THIS = "E2030";
 
     // 3xxx - Memory & Ownership
     pub const MEMORY_ERROR = "E3001";

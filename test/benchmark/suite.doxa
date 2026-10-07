@@ -30,7 +30,7 @@ struct Result {
     public kernel_time_c :: int,
     public is_match :: tetra,
     
-    function new(test :: string, runs :: int, user_time_d :: int, user_time_c :: int, kernel_time_d :: int, kernel_time_c :: int, is_match :: tetra) returns Result {
+    public function new(test :: string, runs :: int, user_time_d :: int, user_time_c :: int, kernel_time_d :: int, kernel_time_c :: int, is_match :: tetra) returns Result {
         return $Result {
             test is test,
             runs is runs,

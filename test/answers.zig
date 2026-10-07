@@ -110,6 +110,31 @@ pub const expected_match_struct_results = [_]print_result{
     .{ .value = "other=second" },
 };
 
+pub const expected_match_enum_subject_forms_results = [_]print_result{
+    .{ .value = "local=100 param=100" },
+    .{ .value = "field=100 index=100 call=10" },
+    .{ .value = "field C" },
+    .{ .value = "index A" },
+    .{ .value = "each A" },
+    .{ .value = "each C" },
+};
+
+pub const expected_match_union_nothing_arm_results = [_]print_result{
+    .{ .value = "int nothing" },
+    .{ .value = "user 42" },
+    .{ .value = "no user" },
+};
+
+pub const expected_as_fallback_diverges_results = [_]print_result{
+    .{ .value = "42 kept 7" },
+};
+
+pub const expected_group_equals_member_results = [_]print_result{
+    .{ .value = "true false false true" },
+    .{ .value = "true false true" },
+    .{ .value = "branch taken" },
+};
+
 pub const expected_match_union_struct_results = [_]print_result{
     .{ .value = "a.txt" },
     .{ .value = "type-test" },
@@ -222,6 +247,126 @@ pub const expected_fixed_struct_array_params_results = [_]print_result{
     .{ .value = "222 333 111" },
 };
 
+pub const expected_float_compare_results = [_]print_result{
+    .{ .value = "int_eq_float=true" },
+    .{ .value = "float_eq_int=true" },
+    .{ .value = "int_lt_float=true" },
+    .{ .value = "float_gt_int=true" },
+    .{ .value = "int_ne_float=false" },
+    .{ .value = "byte_lt_float=true" },
+    .{ .value = "byte_eq_float=true" },
+    .{ .value = "le_equal=true" },
+    .{ .value = "ge_equal=true" },
+    .{ .value = "lt_one_ulp=true" },
+    .{ .value = "rounding_eq=false" },
+    .{ .value = "rounding_ne=true" },
+    .{ .value = "zeros_eq=true" },
+    .{ .value = "zeros_ne=false" },
+    .{ .value = "zeros_lt=false" },
+    .{ .value = "inf_gt_max=true" },
+    .{ .value = "ninf_lt_min=true" },
+    .{ .value = "inf_eq_inf=true" },
+    .{ .value = "inf_ne_ninf=true" },
+    .{ .value = "inf_ge_inf=true" },
+    .{ .value = "nan_eq_nan=false" },
+    .{ .value = "nan_ne_nan=true" },
+    .{ .value = "nan_ne_num=true" },
+    .{ .value = "num_ne_nan=true" },
+    .{ .value = "nan_ne_inf=true" },
+    .{ .value = "nan_lt=false" },
+    .{ .value = "nan_gt=false" },
+    .{ .value = "nan_le=false" },
+    .{ .value = "nan_ge=false" },
+    .{ .value = "nan_self_unequal=true" },
+    .{ .value = "num_self_unequal=false" },
+    .{ .value = "nan_branch_ne=true" },
+    .{ .value = "nan_branch_eq=false" },
+    .{ .value = "folded_eq=false" },
+    .{ .value = "folded_ne=true" },
+};
+
+pub const expected_float_promotion_results = [_]print_result{
+    .{ .value = "int_plus_float=5.5 float" },
+    .{ .value = "float_times_int=7.5 float" },
+    .{ .value = "byte_plus_float=18.5 float" },
+    .{ .value = "float_minus_byte=-13.5" },
+    .{ .value = "int_pow_float=9.0 float" },
+    .{ .value = "float_pow_neg_int=0.5" },
+    .{ .value = "int_pow_half=2.0" },
+    .{ .value = "int_div_int=1.5 float" },
+    .{ .value = "exact_int_div=2.0 float" },
+    .{ .value = "byte_div_byte=4.0 float" },
+    .{ .value = "neg_int_div=-3.5" },
+    .{ .value = "int_div_float=0.25" },
+    .{ .value = "big_plus_zero=9007199254740992.0" },
+    .{ .value = "compound=42.25" },
+    .{ .value = "literal_decl=60.0 float" },
+    .{ .value = "literal_arg=7.0" },
+    .{ .value = "literal_return=3.0" },
+    .{ .value = "literal_field=1.0 2.5" },
+    .{ .value = "explicit_widen=3.0" },
+    .{ .value = "exact_large=9007199254740992.0 -9007199254740992.0 true" },
+    .{ .value = "all_int=[1.0, 2.0, 3.0]" },
+    .{ .value = "float_first=[1.5, 2.0, 3.0]" },
+    .{ .value = "float_middle=[1.0, 2.5, 3.0]" },
+    .{ .value = "float_last=[1.0, 2.0, 3.5]" },
+    .{ .value = "inferred_first=[2.5, 1.0] float" },
+    .{ .value = "inferred_last=[1.0, 2.5] float" },
+    .{ .value = "element_compound=[1.75, 1.875, 9.0]" },
+    .{ .value = "sum=6.5" },
+};
+
+/// The largest finite f64 and the smallest normal and subnormal ones, in the
+/// positional notation every float renders in.
+const f64_max_text = "17976931348623157" ++ "0" ** 292 ++ ".0";
+const f64_min_normal_text = "0." ++ "0" ** 307 ++ "22250738585072014";
+const f64_min_subnormal_text = "0." ++ "0" ** 323 ++ "5";
+
+pub const expected_float_edge_results = [_]print_result{
+    .{ .value = "plain=1.0 0.5 -2.25 123456789.125" },
+    .{ .value = "exponents=10000000000.0 0.00000015" },
+    .{ .value = "rounding=0.30000000000000004" },
+    .{ .value = "max=" ++ f64_max_text },
+    .{ .value = "max_string=" ++ f64_max_text },
+    .{ .value = "max_array=[" ++ f64_max_text ++ "]" },
+    .{ .value = "neg_max=-" ++ f64_max_text },
+    .{ .value = "min_normal=" ++ f64_min_normal_text },
+    .{ .value = "min_subnormal=" ++ f64_min_subnormal_text },
+    .{ .value = "min_subnormal_string=" ++ f64_min_subnormal_text },
+    .{ .value = "runtime_overflow=inf" },
+    .{ .value = "runtime_neg_overflow=-inf" },
+    .{ .value = "folded_overflow=inf" },
+    .{ .value = "folded_neg_overflow=-inf" },
+    .{ .value = "runtime_inf=inf -inf" },
+    .{ .value = "folded_inf=inf -inf" },
+    .{ .value = "inf_string=inf" },
+    .{ .value = "inf_array=[inf, -inf]" },
+    .{ .value = "inf_arith=inf -inf" },
+    .{ .value = "runtime_underflow=0.0" },
+    .{ .value = "folded_underflow=0.0" },
+    .{ .value = "neg_zero_literal=-0.0" },
+    .{ .value = "neg_zero_runtime=-0.0" },
+    .{ .value = "neg_zero_call=-0.0" },
+    .{ .value = "neg_zero_product=-0.0" },
+    .{ .value = "neg_zero_string=-0.0" },
+    .{ .value = "neg_zero_array=[-0.0, 0.0]" },
+    .{ .value = "pos_zero_again=0.0" },
+    .{ .value = "neg_zero_sign=-inf -inf -inf" },
+};
+
+pub const expected_float_convert_results = [_]print_result{
+    .{ .value = "int_trunc=2 -2 0 0" },
+    .{ .value = "int_exact=1000 9000000000000000 int" },
+    .{ .value = "byte_trunc=0x02 0xFF" },
+    .{ .value = "float_widen=7.0 16.0 -3.0 float" },
+    .{ .value = "float_rounds=9007199254740992.0" },
+    .{ .value = "float_parse=3.25 -0.5 1000.0 42.0" },
+    .{ .value = "float_parse_inf=inf -inf" },
+    .{ .value = "float_parse_nan_unequal=true" },
+    .{ .value = "string=0.5 2.0 -1.25 10000000000.0" },
+    .{ .value = "round_trip=true true" },
+};
+
 pub const expected_floored_arith_results = [_]print_result{
     .{ .value = "c_pow2_mod=1" },
     .{ .value = "c_pow2_idiv=1543" },
@@ -271,6 +416,10 @@ pub const expected_module_method_calls_results = [_]print_result{
 
 pub const expected_module_qualified_collision_results = [_]print_result{
     .{ .value = "105 211" },
+};
+
+pub const expected_module_type_identity_results = [_]print_result{
+    .{ .value = "a:1 b:two a:1 a:3" },
 };
 
 pub const expected_module_alias_owner_results = [_]print_result{
@@ -329,6 +478,23 @@ pub const expected_inline_zig_qualified_enum_results = [_]print_result{
     .{ .value = "1" },
     .{ .value = ".OutOfBounds" },
     .{ .value = ".EmptyCollection" },
+};
+
+pub const expected_inline_zig_errors_results = [_]print_result{
+    .{ .value = "a: ok" },
+    .{ .value = "b: .NotFound" },
+    .{ .value = "c: .IsDirectory" },
+    .{ .value = "d: .NotFound" },
+    .{ .value = "e: [payload]" },
+    .{ .value = "f: .IsDirectory" },
+    .{ .value = "g: 7" },
+};
+
+pub const expected_union_nothing_narrow_results = [_]print_result{
+    .{ .value = "a: nothing" },
+    .{ .value = "b: error" },
+    .{ .value = "c: payload" },
+    .{ .value = "d: error" },
 };
 
 pub const expected_std_file_list_results = [_]print_result{
@@ -977,9 +1143,9 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "int", .value = "10" },
     .{ .type = "float", .value = "0.0" },
     .{ .type = "int", .value = "50" },
-    .{ .type = ">int | float | byte", .value = "10" },
-    .{ .type = "int | >float | byte", .value = "12.345" },
-    .{ .type = "int | float | >byte", .value = "0x0A" },
+    .{ .type = ">int | byte | float", .value = "10" },
+    .{ .type = "int | byte | >float", .value = "12.345" },
+    .{ .type = "int | >byte | float", .value = "0x0A" },
     .{ .type = "int", .value = "17" },
     .{ .type = ">int | MyErrorSet", .value = "10" },
     .{ .type = "int | >MyErrorSet", .value = ".Failed" },

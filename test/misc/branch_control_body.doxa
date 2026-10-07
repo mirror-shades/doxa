@@ -4,54 +4,54 @@ function maybeInt(s :: string) returns int | nothing {
 }
 
 # `as` fallback continues instead of yielding a value
-function sumSkippingBlanks(list :: string[]) returns int {
+function sumSkippingBlanks(items :: string[]) returns int {
     var total is 0
-    for i while i < @length(list) do i += 1 {
-        const v is maybeInt(list[i]) as int else continue
+    for i while i < @length(items) do i += 1 {
+        const v is maybeInt(items[i]) as int else continue
         total += v
     }
     return total
 }
 
 # `as` fallback returns instead of yielding a value
-function firstValueOr(list :: string[], fallback :: int) returns int {
-    for i while i < @length(list) do i += 1 {
-        const v is maybeInt(list[i]) as int else return fallback
+function firstValueOr(items :: string[], fallback :: int) returns int {
+    for i while i < @length(items) do i += 1 {
+        const v is maybeInt(items[i]) as int else return fallback
         return v
     }
     return -1
 }
 
 # `as` success branch diverges
-function countBlanks(list :: string[]) returns int {
+function countBlanks(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        maybeInt(list[i]) as int then continue else n += 1
+    for i while i < @length(items) do i += 1 {
+        maybeInt(items[i]) as int then continue else n += 1
     }
     return n
 }
 
 # `if` else branch continues
-function countNonBlank(list :: string[]) returns int {
+function countNonBlank(items :: string[]) returns int {
     var n is 0
-    for i while i < @length(list) do i += 1 {
-        if list[i] != "" then n += 1 else continue
+    for i while i < @length(items) do i += 1 {
+        if items[i] != "" then n += 1 else continue
     }
     return n
 }
 
 # `if` else branch returns
-function firstNonBlank(list :: string[]) returns string {
-    for i while i < @length(list) do i += 1 {
-        if list[i] != "" then return list[i] else continue
+function firstNonBlank(items :: string[]) returns string {
+    for i while i < @length(items) do i += 1 {
+        if items[i] != "" then return items[i] else continue
     }
     return "none"
 }
 
 # `match` else arm continues
-function tagOf(s :: string, list :: string[]) returns int {
+function tagOf(s :: string, items :: string[]) returns int {
     var out is 0
-    for i while i < @length(list) do i += 1 {
+    for i while i < @length(items) do i += 1 {
         match s {
             "a" then out is 1,
             else continue

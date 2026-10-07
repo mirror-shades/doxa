@@ -1,12 +1,17 @@
 const std = @import("std");
+const ast = @import("../ast/ast.zig");
 const HIRTypes = @import("../codegen/hir/soxa_types.zig");
+const TypeIndex = @import("type_index.zig").TypeIndex;
+const ModuleGraph = @import("../module/graph.zig").ModuleGraph;
 
 const GroupId = HIRTypes.GroupId;
+const TypeRef = ast.TypeRef;
 
+/// Every group of the compilation, by identity, with its flattened members.
 pub const GroupTable = struct {
     allocator: std.mem.Allocator,
     entries: std.ArrayListUnmanaged(Entry) = .empty,
-    name_to_id: std.StringHashMapUnmanaged(GroupId) = .empty,
+    index: TypeIndex(GroupId) = .{},
 
     pub const MemberKind = enum {
         Enum,
@@ -14,15 +19,21 @@ pub const GroupTable = struct {
         Group,
     };
 
+    /// A flattened member: the qualifier the group writes for it, and the
+    /// member type's identity and table id.
     pub const Member = struct {
         qualifier: []const u8,
         kind: MemberKind,
+        ref: TypeRef,
         id: u32,
     };
 
     pub const Entry = struct {
         id: GroupId,
-        qualified_name: []const u8,
+        ref: TypeRef,
+        /// Canonical codegen key (`ModuleGraph.typeKey`); set by `assignKeys`.
+        key: ?[]const u8 = null,
+        declared: bool = false,
         members: []Member,
     };
 
@@ -32,41 +43,46 @@ pub const GroupTable = struct {
 
     pub fn deinit(self: *GroupTable) void {
         for (self.entries.items) |entry| {
-            self.allocator.free(entry.qualified_name);
-            for (entry.members) |member| {
-                self.allocator.free(member.qualifier);
-            }
+            for (entry.members) |member| self.allocator.free(member.qualifier);
             self.allocator.free(entry.members);
         }
         self.entries.deinit(self.allocator);
-        self.name_to_id.deinit(self.allocator);
+        self.index.deinit(self.allocator);
     }
 
-    pub fn registerGroup(self: *GroupTable, qualified_name: []const u8, group_members: []Member) !GroupId {
-        if (self.name_to_id.get(qualified_name)) |existing| {
-            return existing;
-        }
-
-        const owned_name = try self.allocator.dupe(u8, qualified_name);
+    /// The id of `ref`, allocating a placeholder the first time it is seen.
+    pub fn idFor(self: *GroupTable, ref: TypeRef) !GroupId {
+        if (self.index.get(ref)) |id| return id;
         const id: GroupId = @intCast(self.entries.items.len);
-
-        var stored_members = try self.allocator.alloc(Member, group_members.len);
-        for (group_members, 0..) |member, i| {
-            stored_members[i] = .{
-                .qualifier = try self.allocator.dupe(u8, member.qualifier),
-                .kind = member.kind,
-                .id = member.id,
-            };
-        }
-
-        try self.entries.append(self.allocator, Entry{
-            .id = id,
-            .qualified_name = owned_name,
-            .members = stored_members,
-        });
-
-        try self.name_to_id.put(self.allocator, owned_name, id);
+        try self.entries.append(self.allocator, .{ .id = id, .ref = ref, .members = &.{} });
+        try self.index.put(self.allocator, ref, id);
         return id;
+    }
+
+    /// Record the flattened members of `ref`. A group's members are fixed by
+    /// its one declaration, so a second registration leaves them unchanged.
+    pub fn registerGroup(self: *GroupTable, ref: TypeRef, group_members: []const Member) !GroupId {
+        const id = try self.idFor(ref);
+        const entry = &self.entries.items[id];
+        if (entry.declared) return id;
+
+        const stored = try self.allocator.alloc(Member, group_members.len);
+        for (group_members, 0..) |member, i| {
+            stored[i] = member;
+            stored[i].qualifier = try self.allocator.dupe(u8, member.qualifier);
+        }
+        entry.members = stored;
+        entry.declared = true;
+        return id;
+    }
+
+    /// Give every entry its canonical key. Called once the graph is final.
+    pub fn assignKeys(self: *GroupTable, graph: *const ModuleGraph) !void {
+        for (self.entries.items) |*entry| {
+            const key = try graph.typeKey(self.allocator, entry.ref);
+            entry.key = key;
+            try self.index.putKey(self.allocator, key, entry.id);
+        }
     }
 
     pub fn getEntryById(self: *GroupTable, id: GroupId) ?*Entry {
@@ -74,8 +90,18 @@ pub const GroupTable = struct {
         return &self.entries.items[id];
     }
 
-    pub fn getIdByName(self: *const GroupTable, qualified_name: []const u8) ?GroupId {
-        return self.name_to_id.get(qualified_name);
+    pub fn idOf(self: *const GroupTable, ref: TypeRef) ?GroupId {
+        return self.index.get(ref);
+    }
+
+    pub fn idByKey(self: *const GroupTable, key: []const u8) ?GroupId {
+        return self.index.getByKey(key);
+    }
+
+    /// Whether `id`'s members are recorded: its declaration has been registered.
+    pub fn isDeclared(self: *const GroupTable, id: GroupId) bool {
+        if (id >= self.entries.items.len) return false;
+        return self.entries.items[id].declared;
     }
 
     pub fn members(self: *const GroupTable, id: GroupId) ?[]const Member {
@@ -83,8 +109,18 @@ pub const GroupTable = struct {
         return self.entries.items[id].members;
     }
 
-    pub fn getName(self: *const GroupTable, id: GroupId) ?[]const u8 {
+    pub fn refOf(self: *const GroupTable, id: GroupId) ?TypeRef {
         if (id >= self.entries.items.len) return null;
-        return self.entries.items[id].qualified_name;
+        return self.entries.items[id].ref;
+    }
+
+    pub fn keyOf(self: *const GroupTable, id: GroupId) ?[]const u8 {
+        if (id >= self.entries.items.len) return null;
+        return self.entries.items[id].key;
+    }
+
+    pub fn displayName(self: *const GroupTable, id: GroupId) ?[]const u8 {
+        const ref = self.refOf(id) orelse return null;
+        return ref.name;
     }
 };

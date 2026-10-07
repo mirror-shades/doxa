@@ -1,0 +1,22 @@
+# A peek is its operand's value: `x is <expr>?` declares x with <expr>'s type.
+# The HIR generator used to type a declaration from its own inference, which
+# had no case for a peek and fell back to `string`, so the variable's first
+# arithmetic or comparison failed HIR verification.
+
+function unit() returns float {
+    return 0.75
+}
+
+const rand is unit()?
+const coinflip is (rand > 0.5)?
+const result is if coinflip then "spire" else "peak"
+var count is 7?
+
+public entry function main() {
+    @print("{rand} {coinflip} {result}\n")
+    count += 1
+    @print("{count}\n")
+    const local is 2.5?
+    const scaled is local * 2
+    @print("{scaled} {@type(scaled)}\n")
+}

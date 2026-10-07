@@ -1,2 +1,2 @@
-module std from "std/std.doxa"
+module std from @std()
 const result is std.http.downloadUrl("http://localhost/t", "o.bin")
