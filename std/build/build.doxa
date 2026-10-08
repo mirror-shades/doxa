@@ -45,13 +45,30 @@ zig Build {
     // single-threaded `Io` backed by the page allocator.
     fn buildIo() std.Io {
         const State = struct {
-            var threaded: std.Io.Threaded = init: {
-                var t = std.Io.Threaded.init_single_threaded;
-                t.allocator = std.heap.page_allocator;
-                break :init t;
-            };
+            var threaded: std.Io.Threaded = undefined;
+            var initialized: bool = false;
         };
+        if (!State.initialized) {
+            State.threaded = std.Io.Threaded.init_single_threaded;
+            State.threaded.allocator = std.heap.page_allocator;
+            // `init_single_threaded` starts with an empty environment on POSIX,
+            // so a child spawned through it inherits nothing: no HOME, and a
+            // nested `zig` then cannot resolve its cache directory
+            // (`AppDataDirUnavailable`). Point the Io at this process's real
+            // environment.
+            State.threaded.environ = .{ .process_environ = .{ .block = processEnvironBlock() } };
+            State.threaded.environ_initialized = false;
+            State.initialized = true;
+        }
         return State.threaded.io();
+    }
+
+    fn processEnvironBlock() std.process.Environ.Block {
+        if (builtin.os.tag == .windows) return .global;
+        const c_environ = std.c.environ;
+        var count: usize = 0;
+        while (c_environ[count] != null) : (count += 1) {}
+        return .{ .slice = c_environ[0..count :null] };
     }
 
     // Append `--<prefix>=<value>` for every newline-separated entry in `joined`.

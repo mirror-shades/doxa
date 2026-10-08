@@ -29,6 +29,11 @@ pub fn check(gpa: Allocator, pipeline: cases.Pipeline) !void {
     const doxa: harness.Doxa = try .init(gpa, io);
     defer doxa.deinit(gpa);
 
+    // Some cases download into `test/out`, which only the compile pipeline
+    // otherwise creates. A fresh checkout running the run pipeline first would
+    // have no such directory, so the downloads fail. Make it exist here.
+    std.Io.Dir.cwd().createDirPath(io, "test/out") catch {};
+
     var selected: std.ArrayList(Case) = .empty;
     defer selected.deinit(gpa);
     var programs: std.ArrayList(usize) = .empty;
