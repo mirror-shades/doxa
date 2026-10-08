@@ -3042,7 +3042,7 @@ const USER_SOURCE =
 fn analyzeInto(server: *Server, src: []const u8) !void {
     const text = try std.testing.allocator.dupe(u8, src);
     defer std.testing.allocator.free(text);
-    var doc = Document{ .path = "test.doxa", .text = text };
+    var doc = Document{ .path = "test/misc/lazy/direct.doxa", .text = text };
     try server.performAnalysis(std.testing.io, &doc, "file:///test.doxa");
 }
 
