@@ -52,5 +52,47 @@ modify(^(x + 1)) # ❌ temporaries not allowed
 f(^obj.field) # ❌ partial object aliasing not allowed
 g(^x, x) # ❌ aliased and by-value in same call
 
+Types
+An alias argument lends its storage, so the callee may both read it and store
+into it. Its type must therefore be exactly the parameter's (E1025): a narrower
+variable could be handed a value it cannot hold, and a wider one could be read
+as something it is not.
+
+```
+function reset(^x :: int | string) {
+    x is 0
+}
+
+var s :: string is "hi"
+reset(^s) # ❌ reset may store an int into a string
+```
+
+The one exception is a union parameter that preserves its member: every store
+into it goes through a narrowing of it to a single member (`as`, or a `match`
+arm), so it only ever stores back the member it was found to hold. A narrowing
+to a smaller union, such as the `else` of `x as int` on an `int | string |
+float`, does not count. Such a parameter may be lent a variable of any one member
+type, and the variable keeps its type.
+
+```
+function exclaim(^x :: int | string) {
+    match x {
+        string then x is x + "!",
+        int then x is x + 1,
+    }
+}
+
+var s :: string is "hi"
+exclaim(^s) # ✓ s is "hi!"
+```
+
+This is what lets `std.methods.push`, `insert` and `clear` take any
+collection.
+
+Lending a union parameter on to another counts as storing through it: it
+preserves its member only if the parameter it is lent to does. A call through
+a function value cannot be checked against the callee's body, so it never
+takes a member-typed variable for a union parameter.
+
 Design Intent
 This model offers mutation semantics without full pointers, preserving deterministic lifetime and memory safety under stack-based allocation. By forcing explicit syntax and disallowing escaping or partial aliasing, it avoids common pitfalls of traditional references while retaining enough flexibility for in-place updates.

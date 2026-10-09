@@ -114,8 +114,8 @@ storage** and lets LLVM optimize it like C:
 - Dynamic arrays carry an `%ArrayHeader`, but scalar element *reads* are inline GEP loads computed in
   the IR, which is what lets LLVM hoist and vectorize element loops.
 - Scope elision removes the `doxa_scope_enter` / `doxa_scope_exit` round trip from functions whose
-  values are all scalar, so a leaf call in a tight loop is a plain call, not two page-allocator
-  transactions.
+  values are all scalar, so a leaf call in a tight loop is a plain call. Where the round trip remains,
+  it reuses a spare scope node and its retained buffers rather than allocating and freeing pages.
 - Union values are the *only* runtime-tagged box; everything else is native.
 
 This is the C-like floor. It is why the measured scalar, string, and integer workloads sit within a

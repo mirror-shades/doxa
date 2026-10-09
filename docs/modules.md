@@ -120,10 +120,10 @@ Circular import detected:
 A name bound twice in one file — by declarations, aliases, imports, or `zig`
 blocks — is an error pointing at both sites.
 
-## Type declarations
+## Type and function declarations
 
-`struct`, `enum`, and `group` declarations appear at the top level of a file. A
-type declared inside a block or function is an error (E2029).
+`struct`, `enum`, `group`, and `function` declarations appear at the top level
+of a file. One declared inside a block or function is an error (E2029).
 
 ## Zig
 

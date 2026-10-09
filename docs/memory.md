@@ -63,7 +63,7 @@ Aliases can be chained — `levelOne(^x)` calls `levelTwo(^x)` — passing the a
 
 ## Native Runtime Model
 
-The compiled backend implements the arena model directly. The runtime keeps a **scope-arena stack** (`src/runtime/scope_arena.zig`): a linked list of `std.heap.ArenaAllocator` nodes. The IR printer emits calls to `doxa_scope_enter()` and `doxa_scope_exit()` only for managed lexical lifetimes, plus `doxa_scope_reset()` for reusable loop bodies. The program root scope is pushed once at the start of `doxa_program_main` and is never freed — the OS reclaims it at process exit.
+The compiled backend implements the arena model directly. The runtime keeps a **scope-arena stack** (`src/runtime/scope_arena.zig`): a linked list of `std.heap.ArenaAllocator` nodes. The IR printer emits calls to `doxa_scope_enter()` and `doxa_scope_exit()` only for managed lexical lifetimes, plus `doxa_scope_reset()` for reusable loop bodies. The program root scope is pushed once at the start of `doxa_program_main` and is never freed — the OS reclaims it at process exit. Exited scope nodes are not returned to the OS: they are rewound and kept on a bounded spare list (at most 64 nodes, each keeping at most 64 KiB of its buffers), so entering a scope does not cost a page allocation and the memory held for reuse stays bounded.
 
 Loop bodies have two logical lifetimes: a loop scope for state that persists between iterations and a body scope for iteration-local values. The body arena is entered once, reset at each iteration boundary, and exited once when the loop ends. `continue` resets the body before continuing; `break` exits both scopes; `return` unwinds all active scopes after preparing any escaping result.
 
@@ -101,7 +101,7 @@ Structs and arrays are cloned recursively: string fields and array fields are re
 
 ### Advantages
 - **Fast allocation:** Arena allocation is bump-pointer, extremely efficient
-- **Bulk deallocation:** Scopes clean up in O(1) via a single `arena.deinit()`
+- **Bulk deallocation:** Scopes clean up in O(1) by rewinding their arena; the node and up to 64 KiB of its buffers are kept for the next scope
 - **Cache-friendly:** Related data allocated contiguously within the arena
 - **No GC pauses:** Deterministic cleanup timing, scope-exit bounded
 - **Memory safe:** No dangling pointers, no use-after-free, no leaks by construction

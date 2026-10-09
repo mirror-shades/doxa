@@ -44,6 +44,8 @@ overloading:
   ([Modules](modules.md)).
 - A struct names each member once: no two fields, no two methods or functions,
   and no method or function sharing a field's name (E1002).
+- Functions and types are declared at file scope only (E2029), so a function
+  never hides another inside a body.
 
 A binding that is not visible does not conflict, so sibling blocks may each
 declare the same name:
