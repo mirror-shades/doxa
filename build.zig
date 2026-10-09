@@ -310,6 +310,7 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run all tests");
     test_step.dependOn(&wiring.step);
+    test_step.dependOn(&TypeAuthority.create(b).step);
     if (can_run_target) {
         test_step.dependOn(&run_unit_tests.step);
         test_step.dependOn(&run_lsp_tests.step);
@@ -523,5 +524,99 @@ const TestWiring = struct {
             }
         }
         return .{ .imports = try imports.toOwnedSlice(arena), .declares_tests = declares_tests };
+    }
+};
+
+/// Fails `zig build test` when codegen grows a second derivation of a type
+/// (plan/type-authority.md). The analyzer types every expression once; codegen
+/// lowers that answer. So under `src/codegen/` no function is named `infer…`,
+/// and each of the analyzer's per-node tables is read in exactly one place —
+/// the accessor that fails the compile when the analyzer has no answer.
+const TypeAuthority = struct {
+    step: std.Build.Step,
+
+    /// Each analyzer table codegen may read, and the one accessor reading it.
+    const accessors = [_]struct { read: []const u8, by: []const u8 }{
+        .{ .read = "getCachedExprType", .by = "typeInfoOf" },
+        .{ .read = "getStoreTarget", .by = "storeTarget" },
+    };
+
+    fn create(b: *std.Build) *TypeAuthority {
+        const check = b.allocator.create(TypeAuthority) catch @panic("OOM");
+        check.* = .{ .step = .init(.{ .id = .custom, .name = "check type authority", .owner = b, .makeFn = make }) };
+        return check;
+    }
+
+    fn make(step: *std.Build.Step, options: std.Build.Step.MakeOptions) !void {
+        const b = step.owner;
+        const io = b.graph.io;
+        var arena_state: std.heap.ArenaAllocator = .init(options.gpa);
+        defer arena_state.deinit();
+        const arena = arena_state.allocator();
+
+        var dir = try b.build_root.handle.openDir(io, "src/codegen", .{ .iterate = true });
+        defer dir.close(io);
+        var walker = try dir.walk(arena);
+        defer walker.deinit();
+        while (try walker.next(io)) |entry| {
+            if (entry.kind != .file or !std.mem.endsWith(u8, entry.path, ".zig")) continue;
+            const path = try std.fmt.allocPrint(arena, "src/codegen/{s}", .{entry.path});
+            std.mem.replaceScalar(u8, path, '\\', '/');
+            const source = try b.build_root.handle.readFileAllocOptions(io, path, arena, .unlimited, .of(u8), 0);
+            try scan(step, path, source);
+        }
+        if (step.result_error_msgs.items.len != 0) return error.MakeFailed;
+    }
+
+    /// Tokenizes `source`, so comments and string contents never count.
+    fn scan(step: *std.Build.Step, path: []const u8, source: [:0]const u8) !void {
+        var tokens: std.zig.Tokenizer = .init(source);
+        // The outermost function whose body the scan is in, and the brace
+        // depth of that body; a declared function whose body is still ahead.
+        var function: ?[]const u8 = null;
+        var function_depth: usize = 0;
+        var declared: ?[]const u8 = null;
+        var depth: usize = 0;
+        var previous: std.zig.Token.Tag = .invalid;
+        while (true) {
+            const token = tokens.next();
+            defer previous = token.tag;
+            const text = source[token.loc.start..token.loc.end];
+            switch (token.tag) {
+                .eof => break,
+                .l_brace => {
+                    depth += 1;
+                    // An inline error set (`error{...}`) is not the body.
+                    if (declared != null and previous != .keyword_error) {
+                        if (function == null) {
+                            function = declared;
+                            function_depth = depth;
+                        }
+                        declared = null;
+                    }
+                },
+                .r_brace => {
+                    if (function != null and depth == function_depth) function = null;
+                    depth -= 1;
+                },
+                .semicolon => declared = null, // an extern or a fn type
+                .identifier => {
+                    if (previous == .keyword_fn) {
+                        if (std.mem.startsWith(u8, text, "infer")) {
+                            try step.addError("{s}: codegen declares `{s}`; a type comes from the analyzer (`typeOf`), never from codegen inference", .{ path, text });
+                        }
+                        declared = text;
+                        continue;
+                    }
+                    for (accessors) |accessor| {
+                        if (!std.mem.eql(u8, text, accessor.read)) continue;
+                        if (!std.mem.eql(u8, function orelse "", accessor.by)) {
+                            try step.addError("{s}: `{s}` reads the analyzer's table directly; go through `{s}`", .{ path, accessor.read, accessor.by });
+                        }
+                    }
+                },
+                else => {},
+            }
+        }
     }
 };
