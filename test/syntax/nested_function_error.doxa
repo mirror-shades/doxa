@@ -1,0 +1,12 @@
+# Functions are declared at file scope only.
+function helper() returns int {
+    return 1
+}
+
+function outer() returns int {
+    function helper() returns int {
+        return 2
+    }
+    return helper()
+}
+@print("{outer()}\n")

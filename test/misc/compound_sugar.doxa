@@ -1,0 +1,33 @@
+# `target op= value` is `target is target op value`, for a name, an element
+# and a field alike: typed and lowered as the operation it spells.
+
+struct Counter {
+    public n :: int,
+    public label :: string,
+}
+
+entry function main() {
+    var b :: byte is 10
+    b += 1
+    b *= 2
+    b -= 2
+    var i is 7
+    i //= 2
+    i **= 2
+    var f is 1.5
+    f += 1
+    f /= 2
+    var s is "a"
+    s += "b"
+    var xs :: int[] is [1]
+    xs += [2, 3]
+    xs[0] += 10
+    var c is $Counter{ n is 1, label is "c" }
+    c.n *= 5
+    c.label += "!"
+    var u :: int | string is 4
+    u as int then {
+        u += 1
+    } else {}
+    @print("{b} {i} {f} {s} {xs} {c.n} {c.label} {u}\n")
+}

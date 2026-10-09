@@ -1,0 +1,8 @@
+# An empty array literal takes its element type from its context: a sibling
+# element, or the built-in it is handed to.
+var pairs is [[], [1]]
+pairs?
+var deep is [[[]], [[2]]]
+deep?
+@length([])?
+@pack([])?

@@ -1,0 +1,9 @@
+# A union `^` parameter that stores another member may not be lent storage of
+# one member type: `s` is a string, and `reset` would store an int into it.
+function reset(^x :: int | string) {
+    x is 0
+}
+
+var s :: string is "hi"
+reset(^s)
+@print("{s}\n")

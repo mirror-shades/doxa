@@ -1,0 +1,28 @@
+# A union `^` parameter that only stores through a narrowing of itself keeps
+# the member it was lent, so it may be lent storage of one member type, and
+# may lend itself on to another such parameter.
+function exclaim(^x :: int | string) {
+    match x {
+        string then x is x + "!",
+        int then x is x + 1,
+    }
+}
+
+function relay(^y :: int | string) {
+    exclaim(^y)
+}
+
+# A parameter that stores another member still takes storage of its own type.
+function reset(^z :: int | string) {
+    z is 0
+}
+
+var s :: string is "hi"
+var n :: int is 41
+var u :: int | string is "x"
+exclaim(^s)
+relay(^n)
+reset(^u)
+s?
+n?
+u?

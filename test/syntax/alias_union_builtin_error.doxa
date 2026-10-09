@@ -1,0 +1,7 @@
+# A builtin cannot reach an un-narrowed union, so it cannot change its member.
+function grow(^x :: string | int[]) {
+    @push(x, "!")
+}
+var s :: string is "hi"
+grow(^s)
+s?

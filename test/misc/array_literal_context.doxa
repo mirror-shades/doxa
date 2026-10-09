@@ -1,0 +1,35 @@
+# An array literal is typed by the array its context expects: a declaration,
+# a struct field, an argument, a return type, an `@push` target. Its elements
+# take that element type, and it takes that storage.
+
+struct Bag {
+    public bytes :: byte[],
+    public fs :: float[],
+    public grid :: int[2],
+}
+
+function total(xs :: float[]) returns float {
+    var t is 0.0
+    each x in xs { t += x }
+    return t
+}
+
+function rows() returns byte[][] {
+    return [[65, 66, 67]]
+}
+
+entry function main() {
+    var empty :: string[] is []
+    @push(empty, "a")
+    const fs :: float[] is [1, 2, -3]
+    var fixed :: int[3] is [7, 8, 9]
+    var bag is $Bag{ bytes is [72, 105], fs is [], grid is [4, 5] }
+    @push(bag.fs, 0.5)
+    var nested :: float[][] is [[1], [2, 3]]
+    @push(nested, [4])
+    @print("{empty} {fs} {fixed} {@pack(bag.bytes)} {bag.fs} {bag.grid} {nested} {total([1, 2])}\n")
+    # B022: an inner byte[] literal under a return type and an @push target.
+    var pushed :: byte[][] is []
+    @push(pushed, [65, 66, 67])
+    @print("{@pack(rows()[0])} {@pack(pushed[0])}\n")
+}

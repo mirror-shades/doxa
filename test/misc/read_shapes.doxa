@@ -1,0 +1,87 @@
+# A read takes the analyzer's type for that occurrence, whatever the form of
+# the operand: a local, a parameter, a field, an index, an `each` binding, a
+# call result, a module-qualified name, and a name narrowed by `as` or by a
+# `match` arm.
+
+module values from "./moddata/store_values.doxa"
+
+struct Box {
+    public items :: int[],
+    public label :: string,
+
+    public method grow() {
+        @push(this.items, @length(this.items))
+    }
+}
+
+map Counts {
+    "a" then 1
+}
+
+function box() returns Box {
+    return $Box{ items is [1, 2], label is "box" }
+}
+
+function words() returns string[] {
+    return ["ab", "cde"]
+}
+
+function lengths(xs :: int[], s :: string) returns string {
+    return "{@length(xs)} {@length(s)} {xs[1] + 1} {s[0]}"
+}
+
+function narrowedParam(x :: int[] | string) returns string {
+    match x {
+        int[] then { return "array {@length(x)} {x[0] + 10}" }
+        string then { return "string {@length(x)} {x + "!"}" }
+    }
+}
+
+entry function main() {
+    # A local and a parameter.
+    var xs :: int[] is [3, 4, 5]
+    var s is "hello"
+    @print("{lengths(xs, s)}\n")
+
+    # A field, through a local and through a call result.
+    var b is box()
+    @print("{@length(b.items)} {b.items[0] + b.items[1]} {b.label + "!"} {box().label} {box().items[1]}\n")
+
+    # Indexing: an array of strings, a string, a map, a call result.
+    const ws is words()
+    @print("{ws[1]} {@length(ws[1])} {s[1]} {Counts["a"] as int else 0} {words()[0] + "?"}\n")
+
+    # An `each` binding.
+    var total is 0
+    each w in ws {
+        total += @length(w)
+    }
+    @print("{total}\n")
+
+    # A module-qualified name and call.
+    @print("{values.LIMIT + 1} {values.NAME + "!"} {values.seven() * 2} {@length(values.NAME)}\n")
+
+    # A name narrowed by `as`, in each branch.
+    var u :: int[] | string is [7, 8]
+    u as int[] then {
+        @print("then {@length(u)} {u[1] + 1}\n")
+    } else {
+        @print("else {@length(u)}\n")
+    }
+    u is "narrow"
+    u as int[] then {
+        @print("then {@length(u)}\n")
+    } else {
+        @print("else {@length(u)} {u + "?"}\n")
+    }
+
+    # A name narrowed by a `match` arm, as a parameter.
+    @print("{narrowedParam([5, 6])} {narrowedParam("abc")}\n")
+
+    # A method called on a receiver narrowed out of a union.
+    var maybe :: nothing | Box is box()
+    maybe as Box then {
+        maybe.grow()
+        @print("{@length(maybe.items)} {maybe.items[2]}\n")
+    } else {}
+}

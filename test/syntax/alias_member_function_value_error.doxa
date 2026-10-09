@@ -1,0 +1,12 @@
+# A loan through a function value cannot be checked against the callee's body,
+# so a member-typed variable may not be lent through one.
+function exclaim(^x :: int | string) {
+    match x {
+        string then x is x + "!",
+        int then x is x + 1,
+    }
+}
+const f is exclaim
+var s :: string is "hi"
+f(^s)
+s?

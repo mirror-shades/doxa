@@ -1246,7 +1246,7 @@ pub const expected_bigfile_results = [_]peek_result{
     .{ .type = "string[]", .value = "[\"hello\"]" },
     .{ .type = "string[]", .value = "[\"world\"]" },
     .{ .type = "string", .value = "\"hello\"" },
-    .{ .type = "nothing[][]", .value = "[[]]" },
+    .{ .type = "string[][]", .value = "[[]]" },
     .{ .type = "string[][]", .value = "[[\"hello\", \"world\"], [\"goodbye\", \"sun\"]]" },
     .{ .type = "string[][]", .value = "[]" },
     .{ .type = "string[][]", .value = "[[]]" },

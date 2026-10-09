@@ -1,0 +1,3 @@
+# An empty literal nested in another has no context either.
+var grid is [[]]
+@print("{@length(grid)}\n")

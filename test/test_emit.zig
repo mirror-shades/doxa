@@ -446,6 +446,114 @@ const probe =
     \\}
 ;
 
+// Scope elision judges what a function allocates, not what it handles: a
+// function that only reads a heap parameter it was handed drops its scope
+// arena, while one that mutates the parameter (and so snapshots it into its
+// own arena on entry) keeps it.
+const heapReaderSource =
+    \\struct Board {
+    \\    public cells :: int[],
+    \\}
+    \\function spaceAt(b :: Board, i :: int) returns int {
+    \\    return b.cells[i]
+    \\}
+    \\function isFlankedBy(b :: Board, i :: int) returns int {
+    \\    return spaceAt(b, i - 1) + spaceAt(b, i + 1)
+    \\}
+    \\function marked(b :: Board, i :: int) returns int {
+    \\    b.cells[i] is 9
+    \\    return b.cells[i]
+    \\}
+    \\public entry function main() {
+    \\    const b is $Board { cells is [1, 2, 3] }
+    \\    @print("{isFlankedBy(b, 1)} {marked(b, 0)}\n")
+    \\}
+;
+
+/// The body of the function whose link name ends in `$<name>`.
+fn functionBody(ir_text: []const u8, name: []const u8) ?[]const u8 {
+    var lines = std.mem.splitScalar(u8, ir_text, '\n');
+    while (lines.next()) |line| {
+        if (!std.mem.startsWith(u8, line, "define ")) continue;
+        const open = std.mem.indexOfScalar(u8, line, '(') orelse continue;
+        const head = line[0..open];
+        if (!std.mem.endsWith(u8, head, name) or head.len <= name.len or head[head.len - name.len - 1] != '$') continue;
+        const start = lines.index orelse return null;
+        const end = std.mem.indexOfPos(u8, ir_text, start, "\n}\n") orelse return null;
+        return ir_text[start..end];
+    }
+    return null;
+}
+
+test "scope elision: a function that only reads a heap parameter drops its scope" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ir_text = try emitIrFor(allocator, &tmp, heapReaderSource, "--opt=0");
+    defer allocator.free(ir_text);
+
+    for ([_][]const u8{ "spaceAt", "isFlankedBy" }) |name| {
+        const body = functionBody(ir_text, name) orelse return error.FunctionNotEmitted;
+        try testing.expect(std.mem.indexOf(u8, body, "@doxa_scope_enter") == null);
+    }
+    const mutator = functionBody(ir_text, "marked") orelse return error.FunctionNotEmitted;
+    try testing.expect(std.mem.indexOf(u8, mutator, "@doxa_scope_enter") != null);
+}
+
+// A method takes its receiver as a `^` alias, which names the caller's storage
+// and allocates nothing. Lending it is safe exactly when the callee's own scope
+// is dead, so a read-only method, a function calling it on a parameter, and a
+// method calling it on a field all drop their scopes; a method that stores into
+// its receiver keeps its scope, and so does every caller lending it one.
+const methodReaderSource =
+    \\struct Board {
+    \\    public cells :: int[],
+    \\    public label :: string,
+    \\    public method spaceAt(i :: int) returns int {
+    \\        return this.cells[i]
+    \\    }
+    \\    public method rename(name :: string) returns int {
+    \\        this.label is name
+    \\        return 0
+    \\    }
+    \\}
+    \\struct Game {
+    \\    public board :: Board,
+    \\    public method evaluate() returns int {
+    \\        return this.board.spaceAt(0) + this.board.spaceAt(1)
+    \\    }
+    \\    public method relabel() returns int {
+    \\        return this.board.rename("b")
+    \\    }
+    \\}
+    \\function isFlankedBy(b :: Board, i :: int) returns tetra {
+    \\    return b.spaceAt(i - 1) == b.spaceAt(i + 1)
+    \\}
+    \\public entry function main() {
+    \\    var g is $Game { board is $Board { cells is [1, 2, 1], label is "a" } }
+    \\    @print("{isFlankedBy(g.board, 1)} {g.evaluate()} {g.relabel()}\n")
+    \\}
+;
+
+test "scope elision: a read-only method and every caller lending it a receiver drop their scopes" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const allocator = testing.allocator;
+
+    const ir_text = try emitIrFor(allocator, &tmp, methodReaderSource, "--opt=0");
+    defer allocator.free(ir_text);
+
+    for ([_][]const u8{ "spaceAt", "isFlankedBy", "evaluate" }) |name| {
+        const body = functionBody(ir_text, name) orelse return error.FunctionNotEmitted;
+        try testing.expect(std.mem.indexOf(u8, body, "@doxa_scope_enter") == null);
+    }
+    for ([_][]const u8{ "rename", "relabel" }) |name| {
+        const body = functionBody(ir_text, name) orelse return error.FunctionNotEmitted;
+        try testing.expect(std.mem.indexOf(u8, body, "@doxa_scope_enter") != null);
+    }
+}
+
 test "module: every function carries the tune-cpu attribute group" {
     var tmp = testing.tmpDir(.{});
     defer tmp.cleanup();

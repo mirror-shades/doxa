@@ -1,0 +1,13 @@
+# Lending a union `^` parameter on to one that stores another member makes it
+# store another member too.
+function reset(^x :: int | string) {
+    x is 0
+}
+
+function relay(^y :: int | string) {
+    reset(^y)
+}
+
+var s :: string is "hi"
+relay(^s)
+@print("{s}\n")

@@ -1,0 +1,38 @@
+# An array literal is typed by its annotation, element by element: members of
+# one group make an array of that group, however the elements differ.
+enum IOError { NotFound, Denied }
+enum ParseError { BadToken, Eof }
+group Error { IOError, ParseError }
+
+function describe(e :: Error) returns string {
+    return match e {
+        IOError then "io",
+        ParseError then "parse",
+    }
+}
+
+const top :: Error[] is [IOError.NotFound, ParseError.Eof]
+@print("{describe(top[0])} {describe(top[1])}\n")
+
+function local() {
+    var grid :: Error[][] is [[IOError.Denied], [ParseError.BadToken, IOError.NotFound]]
+    @print("{describe(grid[1][0])} {describe(grid[1][1])} {@length(grid)}\n")
+}
+local()
+
+# Every position with an expected type types a literal the same way: an
+# assignment, an argument, a return, and an element store.
+function count(xs :: Error[]) returns int {
+    return @length(xs)
+}
+
+function pair() returns Error[] {
+    return [IOError.Denied, ParseError.Eof]
+}
+
+var reassigned :: Error[] is []
+reassigned is [ParseError.BadToken, IOError.NotFound]
+var rows :: Error[][] is []
+@push(rows, [IOError.NotFound, ParseError.Eof])
+rows[0] is [ParseError.Eof]
+@print("{describe(reassigned[0])} {count([IOError.Denied, ParseError.Eof])} {describe(pair()[1])} {describe(rows[0][0])}\n")

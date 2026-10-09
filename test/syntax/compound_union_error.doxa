@@ -1,0 +1,6 @@
+# `y += 1` is `y is y + 1`: arithmetic on a union needs a narrowed operand.
+entry function main() {
+    var y :: int | string is 1
+    y += 1
+    y?
+}

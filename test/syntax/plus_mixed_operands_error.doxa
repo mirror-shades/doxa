@@ -1,0 +1,6 @@
+# `+` adds two numbers or joins two strings or two arrays; a number beside a
+# string is neither.
+entry function main() {
+    const n is 1 + "a"
+    @print("{n}\n")
+}

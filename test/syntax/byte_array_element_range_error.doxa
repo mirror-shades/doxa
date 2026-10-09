@@ -1,0 +1,5 @@
+# An element of a byte[] literal is a byte, so it must fit one.
+entry function main() {
+    const xs :: byte[] is [1, 256]
+    @print("{xs}\n")
+}
