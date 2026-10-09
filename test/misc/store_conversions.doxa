@@ -1,0 +1,62 @@
+# Every field and element store receives a value already of its slot's type:
+# the generator converts it (`convertValue`), and the emitter checks it
+# (`verifyStore`). Pins each store site with a value that needs converting.
+
+enum Light { Red, Green }
+enum Sound { Low, High }
+group Signal { Light, Sound }
+
+function name(s :: Signal) returns string {
+    return match s {
+        Light then "light",
+        Sound then "sound",
+    }
+}
+
+map Levels :: string returns float {
+    "a" then 1,
+}
+
+map ByLight :: Light returns int {
+    .Red then 1,
+}
+
+struct Reading {
+    public level :: float,
+    public note :: int | string
+}
+
+public entry function main() {
+    var n is 3
+
+    var dynamic :: float[] is [0.5]
+    dynamic[0] is n
+    @push(dynamic, n)
+    @insert(dynamic, 0, n)
+    @print("{dynamic[0]} {dynamic[1]} {dynamic[2]}\n")
+
+    var fixed :: float[2]
+    fixed[1] is n
+    @print("{fixed[0]} {fixed[1]}\n")
+
+    var flags :: tetra[2]
+    flags[0] is n > 2
+    flags[1] is n < 2
+    @print("{flags[0]} {flags[1]}\n")
+
+    var r is $Reading { level is 1.5, note is "start" }
+    r.note is n
+    @print("{r.level} {r.note}\n")
+    r.note is "end"
+    @print("{r.note}\n")
+
+    var signals :: Signal[] is [Light.Red]
+    signals[0] is Sound.High
+    @push(signals, Light.Green)
+    @insert(signals, 0, Sound.Low)
+    @print("{name(signals[0])} {name(signals[1])} {name(signals[2])}\n")
+
+    Levels["b"] is n
+    ByLight[Light.Green] is n
+    @print("{Levels["a"]} {Levels["b"]} {ByLight[Light.Red]} {ByLight[Light.Green]}\n")
+}

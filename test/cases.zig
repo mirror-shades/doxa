@@ -414,6 +414,31 @@ const shared_cases = [_]Case{
         },
     },
     .{
+        .name = "every field and element store receives its slot's type",
+        .path = "./test/misc/store_conversions.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "3.0 3.0 3.0" },
+            .{ .value = "0.0 3.0" },
+            .{ .value = "true false" },
+            .{ .value = "1.5 3" },
+            .{ .value = "end" },
+            .{ .value = "sound sound light" },
+            .{ .value = "1.0 3.0 1 3" },
+        },
+    },
+    .{
+        .name = "a boxed enum is named through the box registry",
+        .path = "./test/misc/box_enum_names.doxa",
+        .expected_print = &[_]print_result{
+            .{ .value = "ParseError.Eof" },
+            .{ .value = "IOError.Denied" },
+            .{ .value = "[IOError.Denied, ParseError.BadToken]" },
+            .{ .value = "IOError.NotFound" },
+            .{ .value = "[[ParseError.Eof], [IOError.Denied]]" },
+            .{ .value = "ParseError.Eof" },
+        },
+    },
+    .{
         .name = "a union peek names the group it was written with",
         .path = "./test/misc/group_union_peek.doxa",
         .mode = .peek,
@@ -962,6 +987,13 @@ const shared_cases = [_]Case{
 /// Programs the compiler must reject, each pinned to the code and text of the
 /// error it reports.
 const rejected_cases = [_]Case{
+    .{
+        .name = "a map entry store is checked against the map's value type",
+        .path = "./test/misc/map_store_type_error.doxa",
+        .mode = .reject,
+        .expect_error = "E1003",
+        .expect_stderr = "String is not assignable to type Float",
+    },
     .{
         .name = "syntax error",
         .path = "./test/syntax/equals_for_assign.doxa",
